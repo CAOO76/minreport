@@ -2,7 +2,9 @@ package com.minreport.app;
 
 import android.Manifest;
 import android.app.Activity;
+import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import androidx.activity.result.ActivityResult;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.PermissionState;
@@ -17,9 +19,11 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.nio.charset.StandardCharsets;
+import org.json.JSONObject;
 
 /**
- * Capacitor plugin launching the native ARCore VIO + Depth spatial scanner activity.
+ * Capacitor plugin launching the native ARCore VIO + Depth spatial scanner
+ * and 2.00 m field calibration flows, and reading stored calibration state.
  */
 @CapacitorPlugin(
     name = "MinreportSpatialScanner",
@@ -35,7 +39,52 @@ public class MinreportSpatialScannerPlugin extends Plugin {
             requestPermissionForAlias("camera", call, "cameraPermissionCallback");
             return;
         }
-        launchScannerActivity(call);
+        launchScannerActivity(call, MinreportSpatialScannerActivity.MODE_SCAN);
+    }
+
+    @PluginMethod
+    public void startCalibration(final PluginCall call) {
+        if (getPermissionState("camera") != PermissionState.GRANTED) {
+            requestPermissionForAlias("camera", call, "cameraPermissionCallback");
+            return;
+        }
+        launchScannerActivity(call, MinreportSpatialScannerActivity.MODE_CALIBRATE);
+    }
+
+    @PluginMethod
+    public void getCalibrationStatus(final PluginCall call) {
+        final Context context = getContext();
+        if (context == null) {
+            call.reject("Android context unavailable", "CONTEXT_UNAVAILABLE");
+            return;
+        }
+
+        final SharedPreferences prefs = context.getSharedPreferences(
+            MinreportSpatialScannerActivity.PREFS_CALIBRATION_NAME,
+            Context.MODE_PRIVATE
+        );
+        final boolean calibrated = prefs.getBoolean("calibrated", false);
+        final float scaleFactor = prefs.getFloat("scaleFactor", 1.0f);
+        final boolean valid = calibrated && scaleFactor >= 0.85f && scaleFactor <= 1.15f;
+
+        final JSObject result = new JSObject();
+        result.put("calibrated", valid);
+        result.put("scaleFactor", valid ? round4(scaleFactor) : 1.0);
+        result.put("referenceDistanceM", 2.0);
+        if (valid) {
+            result.put("measuredDistanceM", round4(prefs.getFloat("measuredDistanceM", 2.0f)));
+            result.put("planeNoiseRmsM", round4(prefs.getFloat("planeNoiseRmsM", 0.0f)));
+            result.put("imuPitchOffsetDeg", round2(prefs.getFloat("imuPitchOffsetDeg", 0.0f)));
+            result.put("imuRollOffsetDeg", round2(prefs.getFloat("imuRollOffsetDeg", 0.0f)));
+            result.put("calibratedAt", prefs.getLong("calibratedAt", 0L));
+        } else {
+            result.put("measuredDistanceM", JSONObject.NULL);
+            result.put("planeNoiseRmsM", JSONObject.NULL);
+            result.put("imuPitchOffsetDeg", JSONObject.NULL);
+            result.put("imuRollOffsetDeg", JSONObject.NULL);
+            result.put("calibratedAt", JSONObject.NULL);
+        }
+        call.resolve(result);
     }
 
     @PermissionCallback
@@ -47,10 +96,13 @@ public class MinreportSpatialScannerPlugin extends Plugin {
             call.reject("Camera permission is required for spatial scanning", "CAMERA_PERMISSION_DENIED");
             return;
         }
-        launchScannerActivity(call);
+        final String mode = "startCalibration".equals(call.getMethodName())
+            ? MinreportSpatialScannerActivity.MODE_CALIBRATE
+            : MinreportSpatialScannerActivity.MODE_SCAN;
+        launchScannerActivity(call, mode);
     }
 
-    private void launchScannerActivity(final PluginCall call) {
+    private void launchScannerActivity(final PluginCall call, final String mode) {
         final Activity activity = getActivity();
         if (activity == null || activity.isFinishing() || activity.isDestroyed()) {
             call.reject("Activity unavailable to launch spatial scanner", "ACTIVITY_UNAVAILABLE");
@@ -58,11 +110,12 @@ public class MinreportSpatialScannerPlugin extends Plugin {
         }
 
         final Intent intent = new Intent(activity, MinreportSpatialScannerActivity.class);
-        startActivityForResult(call, intent, "handleScanResult");
+        intent.putExtra(MinreportSpatialScannerActivity.EXTRA_SCAN_MODE, mode);
+        startActivityForResult(call, intent, "handleActivityResult");
     }
 
     @ActivityCallback
-    private void handleScanResult(final PluginCall call, final ActivityResult result) {
+    private void handleActivityResult(final PluginCall call, final ActivityResult result) {
         if (call == null) {
             return;
         }
@@ -77,7 +130,7 @@ public class MinreportSpatialScannerPlugin extends Plugin {
         final String resultFilePath =
             result.getData().getStringExtra(MinreportSpatialScannerActivity.EXTRA_RESULT_FILE_PATH);
         if (resultFilePath == null || resultFilePath.isEmpty()) {
-            call.reject("Spatial scan finished without result file", "SCAN_RESULT_MISSING");
+            call.reject("Spatial activity finished without result file", "SCAN_RESULT_MISSING");
             return;
         }
 
@@ -88,14 +141,12 @@ public class MinreportSpatialScannerPlugin extends Plugin {
             call.resolve(payload);
         } catch (Exception e) {
             call.reject(
-                e.getMessage() != null ? e.getMessage() : "Failed to parse spatial scan payload",
+                e.getMessage() != null ? e.getMessage() : "Failed to parse spatial activity payload",
                 "SCAN_RESULT_PARSE_ERROR",
                 e
             );
         } finally {
             if (resultFile.exists()) {
-                // Clean temporary JSON file once read into JSObject.
-                // Keyframe JPEG paths remain in cacheDir for JS to ingest via Capacitor.convertFileSrc().
                 //noinspection ResultOfMethodCallIgnored
                 resultFile.delete();
             }
@@ -114,5 +165,13 @@ public class MinreportSpatialScannerPlugin extends Plugin {
             }
             return out.toString(StandardCharsets.UTF_8.name());
         }
+    }
+
+    private static double round2(final double val) {
+        return Math.round(val * 100.0) / 100.0;
+    }
+
+    private static double round4(final double val) {
+        return Math.round(val * 10000.0) / 10000.0;
     }
 }

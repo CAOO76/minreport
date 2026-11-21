@@ -14,6 +14,14 @@ import { usePlatform } from './core/hooks/usePlatform';
 import { useMinReportSession } from '../../context/MinReportSessionContext';
 import { M3LinearProgress } from '../../components/common/M3LinearProgress';
 
+const MobileAcopiosHub = lazy(() =>
+    import('./components/MobileAcopiosHub').then((m) => ({ default: m.MobileAcopiosHub }))
+);
+const MobileCalibrationView = lazy(() =>
+    import('./components/MobileCalibrationView').then((m) => ({
+        default: m.MobileCalibrationView,
+    }))
+);
 const MobileFaenaList = lazy(() =>
     import('./components/MobileFaenaList').then((m) => ({ default: m.MobileFaenaList }))
 );
@@ -24,9 +32,6 @@ const MobileFaenaMonitoring = lazy(() =>
     import('./components/MobileFaenaMonitoring').then((m) => ({
         default: m.MobileFaenaMonitoring,
     }))
-);
-const StockList = lazy(() =>
-    import('./components/StockList').then((m) => ({ default: m.StockList }))
 );
 const QuickStockpileCapture = lazy(() =>
     import('./components/QuickStockpileCapture').then((m) => ({ default: m.QuickStockpileCapture }))
@@ -86,7 +91,7 @@ export const GeolappApp: React.FC<GeolappAppProps> = ({
         if (typeof window !== 'undefined' && !isNative && window.innerWidth >= 1024) {
             return 'analytics';
         }
-        return 'faenas';
+        return 'hub';
     });
 
     const [assets, setAssets] = useState<StockpileAsset[]>([]);
@@ -218,6 +223,26 @@ export const GeolappApp: React.FC<GeolappAppProps> = ({
                 setView(activeFaenaMeta ? 'home' : 'faenas');
                 return;
             }
+            if (target === 'hub') {
+                if (isDesktopLayout) {
+                    setView('analytics');
+                    return;
+                }
+                setSelectedAsset(null);
+                setSelectedMeasurement(null);
+                setView('hub');
+                return;
+            }
+            if (target === 'calibration') {
+                if (isDesktopLayout) {
+                    setView('analytics');
+                    return;
+                }
+                setSelectedAsset(null);
+                setSelectedMeasurement(null);
+                setView('calibration');
+                return;
+            }
             if (target === 'faenas') {
                 if (isDesktopLayout) {
                     setView('analytics');
@@ -233,12 +258,7 @@ export const GeolappApp: React.FC<GeolappAppProps> = ({
                     setView('analytics');
                     return;
                 }
-                if (
-                    view === 'summary' ||
-                    view === 'dashboard' ||
-                    view === 'detail' ||
-                    view === 'monitoring'
-                ) {
+                if (view === 'summary' || view === 'detail' || view === 'monitoring') {
                     setSelectedAsset(null);
                     setSelectedMeasurement(null);
                     setView(activeFaenaMeta ? 'home' : 'faenas');
@@ -253,7 +273,7 @@ export const GeolappApp: React.FC<GeolappAppProps> = ({
                 setView('monitoring');
                 return;
             }
-            if (target === 'quick-capture' || target === 'register') {
+            if (target === 'quick-capture') {
                 if (isDesktopLayout) {
                     setView('analytics');
                     return;
@@ -269,14 +289,6 @@ export const GeolappApp: React.FC<GeolappAppProps> = ({
                     return;
                 }
                 setView('faenas');
-                return;
-            }
-            if (
-                target === 'capture-select' ||
-                (!isDesktopLayout && (target === 'capture' || target === 'geometry-select'))
-            ) {
-                setCaptureTargetAsset(selectedAsset);
-                setView('quick-capture');
                 return;
             }
             setView(target);
@@ -344,6 +356,17 @@ export const GeolappApp: React.FC<GeolappAppProps> = ({
         }
     }, [selectedAsset, view]);
 
+    const mobileHubElement = (
+        <MobileAcopiosHub
+            onSelectMeasure={() => setView('faenas')}
+            onSelectCalibrate={() => setView('calibration')}
+            onBackToHome={onExitModule}
+            connectivitySlot={mobileConnectivitySlot}
+            sitesCount={miningSites.length}
+            assetsCount={assets.length}
+        />
+    );
+
     const mobileFaenaListElement = (
         <MobileFaenaList
             sites={miningSites}
@@ -351,7 +374,7 @@ export const GeolappApp: React.FC<GeolappAppProps> = ({
             measurements={allMeasurements}
             isLoading={isLoadingAssets}
             onSelectFaena={handleSelectFaenaFromList}
-            onBackToHome={onExitModule}
+            onBackToHome={() => setView('hub')}
             connectivitySlot={mobileConnectivitySlot}
         />
     );
@@ -396,6 +419,18 @@ export const GeolappApp: React.FC<GeolappAppProps> = ({
         }
 
         switch (view) {
+            case 'hub':
+                return mobileHubElement;
+
+            case 'calibration':
+                return (
+                    <MobileCalibrationView
+                        tenantId={resolvedTenantId}
+                        onBack={() => setView('hub')}
+                        connectivitySlot={mobileConnectivitySlot}
+                    />
+                );
+
             case 'faenas':
             case 'analytics':
                 return mobileFaenaListElement;
@@ -412,27 +447,10 @@ export const GeolappApp: React.FC<GeolappAppProps> = ({
                     />
                 );
 
-            case 'list':
-                return (
-                    <StockList
-                        assets={assets}
-                        isLoading={isLoadingAssets}
-                        onSelectAsset={handleSelectAsset}
-                        onBack={() => setView(activeFaenaMeta ? 'home' : 'faenas')}
-                        onAddNew={
-                            !activeFaenaMeta || activeFaenaMeta.isUnassigned
-                                ? undefined
-                                : handleStartNewStockpileInFaena
-                        }
-                    />
-                );
-
             case 'quick-capture':
-            case 'register':
                 return (
                     <QuickStockpileCapture
                         existingAsset={captureTargetAsset}
-                        allowManualFallback={false}
                         sites={miningSites}
                         selectedFaenaId={activeSiteIdForCapture}
                         onComplete={(res) => void handleQuickCaptureComplete(res)}
@@ -449,7 +467,6 @@ export const GeolappApp: React.FC<GeolappAppProps> = ({
                 );
 
             case 'summary':
-            case 'dashboard':
                 return selectedAsset ? (
                     <StockpileDossierView
                         asset={selectedAsset}
@@ -489,27 +506,12 @@ export const GeolappApp: React.FC<GeolappAppProps> = ({
                     mobileHomeElement
                 );
 
-            case 'capture-select':
-            case 'geometry-select':
-            case 'capture':
-                return (
-                    <QuickStockpileCapture
-                        existingAsset={selectedAsset}
-                        sites={miningSites}
-                        selectedFaenaId={activeSiteIdForCapture}
-                        onComplete={(res) => void handleQuickCaptureComplete(res)}
-                        onCancel={() =>
-                            setView(selectedAsset ? 'summary' : activeFaenaMeta ? 'home' : 'faenas')
-                        }
-                    />
-                );
-
             case 'scanner':
                 return selectedAsset ? (
                     <MobileScanner
                         assetId={selectedAsset.id}
                         onSuccess={handleMeasurementCreated}
-                        onBack={() => setView('capture-select')}
+                        onBack={() => setView('summary')}
                     />
                 ) : (
                     <QuickStockpileCapture
@@ -521,8 +523,10 @@ export const GeolappApp: React.FC<GeolappAppProps> = ({
                 );
 
             case 'home':
-            default:
                 return mobileHomeElement;
+
+            default:
+                return mobileHubElement;
         }
     };
 

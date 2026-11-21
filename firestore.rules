@@ -31,7 +31,9 @@ rules_version = '2';
 //     edu_sandbox_fleet):
 //     Requieren tenantId/tenant_id/accountId string no vacío con pertenencia verificada, inmutabilidad cross-tenant en update y delete exclusivo isTenantAdminOrOwner.
 //   - /stockpiles/{stkId}: Acopios STOCKPILE CONTROL Next-Gen — Aislamiento multi-tenant estricto + descripción, mapa estático CAS (static_map_url/sha256/bytes), deltas de volumen, proyecto (project_id/project_name), cierre de ciclo (closed_at/by, closure_reason ['SHIPPED'|'ZERO_VOLUME'|'MANUAL_CLOSE'], dispatch_reference, shipped_weight_t, pre_closure_volume_m3) y bloqueo data: Base64 en URLs.
-//   - /stockpiles/{stkId}/measurements/{measId}: Mediciones STOCKPILE CONTROL Next-Gen — volumen_m3 >= 0, peso_t >= 0, cadena previa (previous_measurement_id/photo_url), deltas, metadatos de cierre y bloqueo data: Base64 en photo_url/previous_photo_url.
+//   - /stockpiles/{stkId}/measurements/{measId}: Mediciones STOCKPILE CONTROL Next-Gen — volumen_m3 >= 0, peso_t >= 0, cadena previa (previous_measurement_id/photo_url), deltas, metadatos de cierre y bloqueo data: Base64 en photo_url/previous_photo_url/mesh_url.
+//   - /device_calibrations/{calId}: Calibración geométrica on-demand por dispositivo (R5) — Aislamiento multi-tenant estricto, rango scaleFactor [0.85..1.15], distancias y calibratedAt > 0, campos opcionales (id, calibrationId, deviceId, deviceModel, platform <= 32, calibratedBy, userId, actorUid, tenantId, region, planeNoiseRmsM, imuPitchOffsetDeg, imuRollOffsetDeg, createdAt), sin PII (actorEmail/email/ipAddress prohibidos), append-only en cliente (update == false, delete exclusivo isAdmin).
+//   - /device_compatibility_registry/{deviceId}: Registro global del motor on-demand de compatibilidad móvil — Lectura autenticada (isAuthenticated), escritura bloqueada en cliente (exclusivo Cloud Run Admin SDK).
 //   - /financial_events/{eventId}: Append-Only estricto (create exclusivo Admin/Owner de cuenta, update/delete == false).
 //   - /audit_ledger/{logId}: Cadena SHA-256 Server-Only (create/update/delete == false; lectura Admin o auditor titular sin cruce multi-tenant).
 //   - Ledgers Operativos Inmutables (event_ledger, financial_ledger): Append-Only (update/delete == false).
@@ -73,21 +75,34 @@ service cloud.firestore {
       let userDoc = get(/databases/$(database)/documents/users/$(request.auth.uid));
       return userDoc != null &&
         userDoc.data != null &&
-        ('role' in userDoc.data) &&
-        (userDoc.data.role in allowedRoles) &&
-        (!('status' in userDoc.data) || !(userDoc.data.status in ['REVOKED', 'SUSPENDED']));
+        userDoc.data.get('role', null) in allowedRoles &&
+        !(userDoc.data.get('status', '') in ['REVOKED', 'SUSPENDED']);
+    }
+
+    function isDevRootTokenClaim() {
+      return request.auth.uid == 'dev-master-root-uid' ||
+        request.auth.token.get('role', '') == 'DEV_ROOT' ||
+        request.auth.token.get('isMasterDev', false) == true ||
+        (
+          request.auth.token.get('email_verified', false) == true &&
+          request.auth.token.get('email', '') == 'dev@minreport.com'
+        );
+    }
+
+    function isSuperAdminTokenClaim() {
+      return request.auth.uid == 'super-admin-uid' ||
+        request.auth.token.get('role', '') == 'SUPER_ADMIN' ||
+        request.auth.token.get('admin', false) == true ||
+        (
+          request.auth.token.get('email_verified', false) == true &&
+          request.auth.token.get('email', '') == 'admin@minreport.com'
+        );
     }
 
     // 1º Jerarquía Soberana — DEV_ROOT
     function isDevRoot() {
       return request.auth != null && (
-        ('role' in request.auth.token && request.auth.token.role == 'DEV_ROOT') ||
-        ('isMasterDev' in request.auth.token && request.auth.token.isMasterDev == true) ||
-        request.auth.uid == 'dev-master-root-uid' ||
-        ('email' in request.auth.token &&
-          request.auth.token.email == 'dev@minreport.com' &&
-          'email_verified' in request.auth.token &&
-          request.auth.token.email_verified == true) ||
+        isDevRootTokenClaim() ||
         hasServerAssignedRole(['DEV_ROOT'])
       );
     }
@@ -95,13 +110,7 @@ service cloud.firestore {
     // 2º Jerarquía Soberana — SUPER_ADMIN
     function isSuperAdmin() {
       return request.auth != null && (
-        ('role' in request.auth.token && request.auth.token.role == 'SUPER_ADMIN') ||
-        ('admin' in request.auth.token && request.auth.token.admin == true) ||
-        request.auth.uid == 'super-admin-uid' ||
-        ('email' in request.auth.token &&
-          request.auth.token.email == 'admin@minreport.com' &&
-          'email_verified' in request.auth.token &&
-          request.auth.token.email_verified == true) ||
+        isSuperAdminTokenClaim() ||
         hasServerAssignedRole(['SUPER_ADMIN'])
       );
     }
@@ -135,7 +144,18 @@ service cloud.firestore {
 
     // Privilegio Transversal de Sistema (1º DEV + 2º ADMIN + 3º TEST-PILOT)
     function isSystemPrivileged() {
-      return isDevRoot() || isSuperAdmin() || isTestPilot();
+      return request.auth != null && (
+        request.auth.uid in ['dev-master-root-uid', 'super-admin-uid'] ||
+        request.auth.token.get('role', '') in ['DEV_ROOT', 'SUPER_ADMIN'] ||
+        request.auth.token.get('isMasterDev', false) == true ||
+        request.auth.token.get('admin', false) == true ||
+        (
+          request.auth.token.get('email_verified', false) == true &&
+          request.auth.token.get('email', '') in ['dev@minreport.com', 'admin@minreport.com']
+        ) ||
+        isTestPilot() ||
+        hasServerAssignedRole(['DEV_ROOT', 'SUPER_ADMIN'])
+      );
     }
 
     // Curación Técnica de Ingeniería OPERMAQ (1º DEV + 3º TEST-PILOT; excluye mutación directa de 2º ADMIN)
@@ -143,23 +163,31 @@ service cloud.firestore {
       return isDevRoot() || isTestPilot();
     }
 
-    // 4º y 5º Jerarquía Soberana — Pertenencia estricta a cuenta B2B / EDU (Aislamiento Multi-Tenant puro)
-    function isAccountMember(accountId) {
+    // Pertenencia directa B2B / EDU sin doble evaluación de isSystemPrivileged ni bypass TEST_PILOT revocado
+    function isDirectAccountMember(accountId) {
       return request.auth != null &&
         accountId is string &&
         accountId.size() > 0 &&
         accountId.size() <= 128 &&
+        !('pilotExpiresAt' in request.auth.token) &&
+        request.auth.token.get('role', '') != 'TEST_PILOT' &&
         (
-          isSystemPrivileged() ||
-          ('activeAccountId' in request.auth.token && request.auth.token.activeAccountId == accountId) ||
-          ('tenantId' in request.auth.token && request.auth.token.tenantId == accountId) ||
+          request.auth.token.get('activeAccountId', '') == accountId ||
+          request.auth.token.get('tenantId', '') == accountId ||
           exists(/databases/$(database)/documents/accounts/$(accountId)/members/$(request.auth.uid)) ||
           (
             exists(/databases/$(database)/documents/accounts/$(accountId)) &&
-            'ownerId' in get(/databases/$(database)/documents/accounts/$(accountId)).data &&
-            get(/databases/$(database)/documents/accounts/$(accountId)).data.ownerId == request.auth.uid
+            get(/databases/$(database)/documents/accounts/$(accountId)).data.get('ownerId', '') == request.auth.uid
           )
         );
+    }
+
+    // 4º y 5º Jerarquía Soberana — Pertenencia estricta a cuenta B2B / EDU (Aislamiento Multi-Tenant puro)
+    function isAccountMember(accountId) {
+      return accountId is string &&
+        accountId.size() > 0 &&
+        accountId.size() <= 128 &&
+        (isDirectAccountMember(accountId) || isSystemPrivileged());
     }
 
     // Administración Interna de Cuenta / Tenant (Global Admin, Titular ownerId, o Miembro/Claim con rol OWNER/ADMIN)
@@ -234,36 +262,49 @@ service cloud.firestore {
 
     // Extrae identificador multi-tenant soportando tenantId, tenant_id y accountId
     function docTenantId(data) {
-      return ('tenantId' in data && data.tenantId is string && data.tenantId.size() > 0)
-        ? data.tenantId
-        : (
-          ('tenant_id' in data && data.tenant_id is string && data.tenant_id.size() > 0)
-            ? data.tenant_id
-            : (
-              ('accountId' in data && data.accountId is string && data.accountId.size() > 0)
-                ? data.accountId
-                : null
-            )
-        );
+      let tid = data.get('tenantId', null);
+      let tidS = data.get('tenant_id', null);
+      let aid = data.get('accountId', null);
+      return (tid is string && tid.size() > 0)
+        ? tid
+        : ((tidS is string && tidS.size() > 0) ? tidS : ((aid is string && aid.size() > 0) ? aid : null));
     }
 
     // Impide ataques de confusión entre llaves multi-tenant en un mismo documento
-    function isValidOptionalTenantField(data, field) {
-      return !(field in data) ||
-        data[field] == null ||
-        (data[field] is string && data[field].size() > 0 && data[field].size() <= 128);
+    function isConsistentTenantFields(data) {
+      let tid = data.get('tenantId', null);
+      let tidS = data.get('tenant_id', null);
+      let aid = data.get('accountId', null);
+      return (tid == null || (tid is string && tid.size() > 0 && tid.size() <= 128)) &&
+        (tidS == null || (tidS is string && tidS.size() > 0 && tidS.size() <= 128)) &&
+        (aid == null || (aid is string && aid.size() > 0 && aid.size() <= 128)) &&
+        (tid == null || tidS == null || tid == tidS) &&
+        (tid == null || aid == null || tid == aid) &&
+        (tidS == null || aid == null || tidS == aid);
     }
 
-    function isConsistentTenantFields(data) {
-      let hasTid = 'tenantId' in data && data.tenantId != null;
-      let hasTidSnake = 'tenant_id' in data && data.tenant_id != null;
-      let hasAid = 'accountId' in data && data.accountId != null;
-      return isValidOptionalTenantField(data, 'tenantId') &&
-        isValidOptionalTenantField(data, 'tenant_id') &&
-        isValidOptionalTenantField(data, 'accountId') &&
-        (!hasTid || !hasTidSnake || data.tenantId == data.tenant_id) &&
-        (!hasTid || !hasAid || data.tenantId == data.accountId) &&
-        (!hasTidSnake || !hasAid || data.tenant_id == data.accountId);
+    // Evalúa pertenencia e inmutabilidad multi-tenant evaluando docTenantId y membresía directa una sola vez
+    // (evita re-evaluar isSystemPrivileged cuando la regla llamante ya lo comprobó antes)
+    function isTenantMatchCreate(newData) {
+      let tid = docTenantId(newData);
+      return tid is string && isDirectAccountMember(tid);
+    }
+
+    function isTenantMatchUpdate(oldData, newData) {
+      let oldTid = docTenantId(oldData);
+      return oldTid is string &&
+        isDirectAccountMember(oldTid) &&
+        docTenantId(newData) == oldTid;
+    }
+
+    function isMeasurementCreateTenantValid(stkId, newData) {
+      let tid = docTenantId(newData);
+      return tid is string &&
+        isDirectAccountMember(tid) &&
+        (
+          !exists(/databases/$(database)/documents/stockpiles/$(stkId)) ||
+          tid == docTenantId(get(/databases/$(database)/documents/stockpiles/$(stkId)).data)
+        );
     }
 
     // Evalúa lectura multi-tenant alineada con el planificador estático de queries de Firestore
@@ -486,127 +527,91 @@ service cloud.firestore {
         (!('updatedByUid' in data) || data.updatedByUid == null || (data.updatedByUid is string && data.updatedByUid.size() <= 128));
     }
 
-    // Helpers reutilizables para campos opcionales y anti-Base64 (STOCKPILE CONTROL Next-Gen)
-    function isValidOptionalStringLimit(data, field, maxLen) {
-      return !(field in data) ||
-        data[field] == null ||
-        (data[field] is string && data[field].size() <= maxLen);
+    // Rechazo barato de data: URLs sin regex PCRE costoso (STOCKPILE CONTROL Next-Gen)
+    function isNoDataUrlPrefix(s) {
+      let t = s.trim();
+      return !(t.size() >= 5 && t[0:5].lower() == 'data:');
     }
 
-    function isValidOptionalNumber(data, field) {
-      return !(field in data) ||
-        data[field] == null ||
-        data[field] is number;
+    function isSafeUrlField(d, k) {
+      let v = d.get(k, null);
+      return v == null || (v is string && v.size() <= 2048 && isNoDataUrlPrefix(v));
     }
 
-    function isValidOptionalNonNegNumber(data, field) {
-      return !(field in data) ||
-        data[field] == null ||
-        (data[field] is number && data[field] >= 0);
-    }
-
-    function isValidOptionalBool(data, field) {
-      return !(field in data) ||
-        data[field] == null ||
-        data[field] is bool;
-    }
-
-    function isValidOptionalNoDataUrl(data, field, maxLen) {
-      return !(field in data) ||
-        data[field] == null ||
-        (
-          data[field] is string &&
-          data[field].size() <= maxLen &&
-          (
-            data[field] == '' ||
-            (
-              !data[field].matches('(?is)^\\s*data:.*') &&
-              !data[field].matches('(?is).*data:[a-z0-9.+/-]*;base64,.*')
-            )
-          )
-        );
-    }
-
-    function isValidOptionalClosureReason(data) {
-      return !('closure_reason' in data) ||
-        data.closure_reason == null ||
-        (data.closure_reason is string && data.closure_reason in ['SHIPPED', 'ZERO_VOLUME', 'MANUAL_CLOSE']);
-    }
-
-    // Validador de dominio para acopios en /stockpiles/{stkId} (STOCKPILE CONTROL Next-Gen — Create & Update)
+    // Validador ultra-compacto de dominio para acopios en /stockpiles/{stkId} (STOCKPILE CONTROL Next-Gen — Create & Update)
     function isValidStockpilePayload(data) {
+      let name = data.get('name', null);
+      let vol = data.get('last_volume_m3', null);
+      let weight = data.get('last_weight_t', null);
+      let perim = data.get('perimeter_photo_urls', null);
       return isBoundedPayload(data) &&
-        isValidOptionalStringLimit(data, 'id', 128) &&
-        isValidOptionalStringLimit(data, 'name', 240) &&
-        isValidOptionalStringLimit(data, 'tag', 240) &&
-        isValidOptionalStringLimit(data, 'description', 2500) &&
-        (!('clase' in data) || data.clase == null || (data.clase is string && data.clase in ['mineral', 'esteril', 'baja_ley'])) &&
-        isValidOptionalStringLimit(data, 'material', 64) &&
-        (!('status' in data) || data.status == null || (data.status is string && data.status in ['ACTIVE', 'ARCHIVED', 'CONCILIATED', 'CLOSED'])) &&
-        isValidOptionalStringLimit(data, 'createdBy', 160) &&
-        isValidOptionalStringLimit(data, 'location_ref', 300) &&
-        isValidOptionalStringLimit(data, 'project_id', 128) &&
-        isValidOptionalStringLimit(data, 'project_name', 240) &&
-        isValidOptionalNoDataUrl(data, 'initial_photo_url', 2048) &&
-        isValidOptionalNoDataUrl(data, 'last_photo_url', 2048) &&
-        isValidOptionalNoDataUrl(data, 'thumbnail_url', 2048) &&
-        isValidOptionalNoDataUrl(data, 'static_map_url', 2048) &&
-        isValidOptionalStringLimit(data, 'static_map_sha256', 128) &&
-        isValidOptionalNonNegNumber(data, 'static_map_original_bytes') &&
-        isValidOptionalNonNegNumber(data, 'static_map_optimized_bytes') &&
-        isValidOptionalNonNegNumber(data, 'static_map_savings_pct') &&
-        isValidOptionalNonNegNumber(data, 'last_volume_m3') &&
-        isValidOptionalNonNegNumber(data, 'last_weight_t') &&
-        isValidOptionalNonNegNumber(data, 'volume_m3') &&
-        isValidOptionalNonNegNumber(data, 'volumen') &&
-        isValidOptionalNonNegNumber(data, 'volumeM3') &&
-        isValidOptionalNonNegNumber(data, 'weight_t') &&
-        isValidOptionalNonNegNumber(data, 'peso_final_toneladas') &&
-        isValidOptionalNonNegNumber(data, 'tonnage') &&
-        isValidOptionalNumber(data, 'last_delta_volumen_m3') &&
-        isValidOptionalNumber(data, 'last_delta_volumen_pct') &&
-        isValidOptionalStringLimit(data, 'last_geometry_type', 80) &&
-        isValidOptionalNonNegNumber(data, 'closed_at') &&
-        isValidOptionalStringLimit(data, 'closed_by', 160) &&
-        isValidOptionalClosureReason(data) &&
-        isValidOptionalStringLimit(data, 'dispatch_reference', 240) &&
-        isValidOptionalNonNegNumber(data, 'shipped_weight_t') &&
-        isValidOptionalNonNegNumber(data, 'pre_closure_volume_m3') &&
-        isValidOptionalNoDataUrl(data, 'mesh_url', 2048) &&
-        isValidOptionalStringLimit(data, 'mesh_sha256', 128) &&
-        isValidOptionalNonNegNumber(data, 'cas_original_bytes') &&
-        isValidOptionalNonNegNumber(data, 'cas_optimized_bytes') &&
-        isValidOptionalNonNegNumber(data, 'cas_savings_pct') &&
-        (!('perimeter_photo_urls' in data) || data.perimeter_photo_urls == null || (data.perimeter_photo_urls is list && data.perimeter_photo_urls.size() <= 32));
+        data.get('clase', null) in [null, 'mineral', 'esteril', 'baja_ley'] &&
+        data.get('status', null) in [null, 'ACTIVE', 'ARCHIVED', 'CONCILIATED', 'CLOSED'] &&
+        data.get('closure_reason', null) in [null, 'SHIPPED', 'ZERO_VOLUME', 'MANUAL_CLOSE'] &&
+        (name == null || (name is string && name.size() <= 240)) &&
+        isSafeUrlField(data, 'initial_photo_url') &&
+        isSafeUrlField(data, 'last_photo_url') &&
+        isSafeUrlField(data, 'thumbnail_url') &&
+        isSafeUrlField(data, 'static_map_url') &&
+        isSafeUrlField(data, 'mesh_url') &&
+        (vol == null || (vol is number && vol >= 0)) &&
+        (weight == null || (weight is number && weight >= 0)) &&
+        (perim == null || (perim is list && perim.size() <= 32));
     }
 
-    // Validador de dominio para mediciones en /stockpiles/{stkId}/measurements/{measId} (STOCKPILE CONTROL Next-Gen — Create & Update)
+    // Validador ultra-compacto de dominio para mediciones en /stockpiles/{stkId}/measurements/{measId} (STOCKPILE CONTROL Next-Gen — Create & Update)
     function isValidStockpileMeasurementPayload(data) {
+      let vol = data.get('volumen_m3', null);
+      let peso = data.get('peso_t', null);
+      let perim = data.get('perimeter_photo_urls', null);
       return isBoundedPayload(data) &&
-        isValidOptionalStringLimit(data, 'id', 128) &&
-        isValidOptionalStringLimit(data, 'assetId', 128) &&
-        isValidOptionalStringLimit(data, 'user_id', 160) &&
-        (!('method' in data) || data.method == null || (data.method is string && data.method in ['digital', 'manual'])) &&
-        (!('timestamp' in data) || data.timestamp == null || data.timestamp is timestamp || (data.timestamp is number && data.timestamp >= 0)) &&
-        (!('volumen_m3' in data) || (data.volumen_m3 is number && data.volumen_m3 >= 0)) &&
-        (!('peso_t' in data) || (data.peso_t is number && data.peso_t >= 0)) &&
-        isValidOptionalNonNegNumber(data, 'density_factor') &&
-        isValidOptionalNoDataUrl(data, 'photo_url', 2048) &&
-        isValidOptionalStringLimit(data, 'previous_measurement_id', 128) &&
-        isValidOptionalNoDataUrl(data, 'previous_photo_url', 2048) &&
-        isValidOptionalNumber(data, 'delta_volumen') &&
-        isValidOptionalNumber(data, 'delta_volumen_pct') &&
-        isValidOptionalNumber(data, 'delta_peso') &&
-        isValidOptionalBool(data, 'is_closure_measurement') &&
-        isValidOptionalClosureReason(data) &&
-        isValidOptionalStringLimit(data, 'dispatch_reference', 240) &&
-        isValidOptionalNoDataUrl(data, 'mesh_url', 2048) &&
-        isValidOptionalStringLimit(data, 'mesh_sha256', 128) &&
-        isValidOptionalNonNegNumber(data, 'cas_original_bytes') &&
-        isValidOptionalNonNegNumber(data, 'cas_optimized_bytes') &&
-        isValidOptionalNonNegNumber(data, 'cas_savings_pct') &&
-        isValidOptionalBool(data, 'ignored') &&
-        (!('perimeter_photo_urls' in data) || data.perimeter_photo_urls == null || (data.perimeter_photo_urls is list && data.perimeter_photo_urls.size() <= 32));
+        data.get('method', null) in [null, 'digital', 'manual'] &&
+        data.get('closure_reason', null) in [null, 'SHIPPED', 'ZERO_VOLUME', 'MANUAL_CLOSE'] &&
+        (!('volumen_m3' in data) || (vol is number && vol >= 0)) &&
+        (!('peso_t' in data) || (peso is number && peso >= 0)) &&
+        isSafeUrlField(data, 'photo_url') &&
+        isSafeUrlField(data, 'previous_photo_url') &&
+        isSafeUrlField(data, 'mesh_url') &&
+        (perim == null || (perim is list && perim.size() <= 32));
+    }
+
+    function isOptCalStr(d, k, maxLen) {
+      return d.get(k, null) == null || (d[k] is string && d[k].size() <= maxLen);
+    }
+
+    // Validador compacto de calibración on-demand en /device_calibrations/{calId} (R5 — Create)
+    function isValidDeviceCalibrationPayload(data) {
+      return data is map &&
+        data.keys().size() <= 40 &&
+        data.keys().hasAll(['scaleFactor', 'referenceDistanceM', 'measuredDistanceM', 'calibratedAt']) &&
+        !('actorEmail' in data) &&
+        !('email' in data) &&
+        !('ipAddress' in data) &&
+        data.scaleFactor is number &&
+        data.scaleFactor >= 0.85 &&
+        data.scaleFactor <= 1.15 &&
+        data.referenceDistanceM is number &&
+        data.referenceDistanceM > 0 &&
+        data.referenceDistanceM <= 1000 &&
+        data.measuredDistanceM is number &&
+        data.measuredDistanceM > 0 &&
+        data.measuredDistanceM <= 1000 &&
+        data.calibratedAt is number &&
+        data.calibratedAt > 0 &&
+        (data.get('id', null) == null || (data.id is string && data.id.size() > 0 && data.id.size() <= 128)) &&
+        (data.get('tenantId', null) == null || (data.tenantId is string && data.tenantId.size() > 0 && data.tenantId.size() <= 128)) &&
+        isOptCalStr(data, 'calibrationId', 128) &&
+        isOptCalStr(data, 'deviceId', 160) &&
+        isOptCalStr(data, 'deviceModel', 160) &&
+        isOptCalStr(data, 'platform', 32) &&
+        isOptCalStr(data, 'calibratedBy', 160) &&
+        isOptCalStr(data, 'userId', 160) &&
+        isOptCalStr(data, 'actorUid', 160) &&
+        isOptCalStr(data, 'region', 64) &&
+        (data.get('planeNoiseRmsM', null) == null || (data.planeNoiseRmsM is number && data.planeNoiseRmsM >= 0 && data.planeNoiseRmsM <= 100)) &&
+        (data.get('imuPitchOffsetDeg', null) == null || (data.imuPitchOffsetDeg is number && data.imuPitchOffsetDeg >= -180 && data.imuPitchOffsetDeg <= 180)) &&
+        (data.get('imuRollOffsetDeg', null) == null || (data.imuRollOffsetDeg is number && data.imuRollOffsetDeg >= -180 && data.imuRollOffsetDeg <= 180)) &&
+        (data.get('createdAt', null) == null || data.createdAt is timestamp || (data.createdAt is number && data.createdAt >= 0));
     }
 
     // ===============================================================
@@ -1260,17 +1265,13 @@ service cloud.firestore {
         isValidStockpilePayload(request.resource.data) &&
         (
           isSystemPrivileged() ||
-          (docTenantId(request.resource.data) is string && isAccountMember(docTenantId(request.resource.data)))
+          isTenantMatchCreate(request.resource.data)
         );
       allow update: if isAuthenticated() &&
         isValidStockpilePayload(request.resource.data) &&
         (
           isSystemPrivileged() ||
-          (
-            docTenantId(resource.data) is string &&
-            isAccountMember(docTenantId(resource.data)) &&
-            docTenantId(request.resource.data) == docTenantId(resource.data)
-          )
+          isTenantMatchUpdate(resource.data, request.resource.data)
         );
       allow delete: if isAuthenticated() && (
         isAdmin() ||
@@ -1291,30 +1292,43 @@ service cloud.firestore {
           isValidStockpileMeasurementPayload(request.resource.data) &&
           (
             isSystemPrivileged() ||
-            (
-              docTenantId(request.resource.data) is string &&
-              isAccountMember(docTenantId(request.resource.data)) &&
-              (
-                !exists(/databases/$(database)/documents/stockpiles/$(stkId)) ||
-                docTenantId(request.resource.data) == docTenantId(get(/databases/$(database)/documents/stockpiles/$(stkId)).data)
-              )
-            )
+            isMeasurementCreateTenantValid(stkId, request.resource.data)
           );
         allow update: if isAuthenticated() &&
           isValidStockpileMeasurementPayload(request.resource.data) &&
           (
             isSystemPrivileged() ||
-            (
-              docTenantId(resource.data) is string &&
-              isAccountMember(docTenantId(resource.data)) &&
-              docTenantId(request.resource.data) == docTenantId(resource.data)
-            )
+            isTenantMatchUpdate(resource.data, request.resource.data)
           );
         allow delete: if isAuthenticated() && (
           isAdmin() ||
           (docTenantId(resource.data) is string && isTenantAdminOrOwner(docTenantId(resource.data)))
         );
       }
+    }
+
+    // Calibración geométrica on-demand por dispositivo y faena (R5 — Aislamiento Multi-Tenant, Append-Only cliente)
+    match /device_calibrations/{calId} {
+      allow read: if isAuthenticated() && (isSystemPrivileged() || canReadTenantDoc(resource.data));
+      allow create: if isAuthenticated() &&
+        isBoundedPayload(request.resource.data) &&
+        isValidDeviceCalibrationPayload(request.resource.data) &&
+        (
+          isSystemPrivileged() ||
+          (
+            isTenantMatchCreate(request.resource.data) &&
+            request.resource.data.get('actorUid', null) in [null, request.auth.uid] &&
+            request.resource.data.get('userId', null) in [null, request.auth.uid]
+          )
+        );
+      allow update: if false;
+      allow delete: if isAuthenticated() && isAdmin();
+    }
+
+    // Registro global del motor on-demand de compatibilidad móvil (Lectura autenticada; escritura exclusiva Cloud Run Admin SDK)
+    match /device_compatibility_registry/{deviceId} {
+      allow read: if isAuthenticated();
+      allow write: if false;
     }
 
     // Eventos financieros multi-tenant (Append-Only estricto; alta exclusiva Admin/Owner de cuenta, cero edición/borrado)

@@ -42,11 +42,6 @@ export const MobileFaenaList: React.FC<MobileFaenaListProps> = ({
         return unassigned ? [...registered, unassigned] : registered;
     }, [assets, measurements, sites]);
 
-    const maxVolume = useMemo(
-        () => rows.reduce((acc, item) => Math.max(acc, item.activeVolumeM3), 0),
-        [rows]
-    );
-
     return (
         <div className="h-full w-full flex-1 flex flex-col bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] font-atkinson overflow-hidden rounded-none shadow-none select-none">
             <header className="shrink-0 min-h-[56px] pt-[env(safe-area-inset-top)] px-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] flex items-center justify-between gap-fib-8">
@@ -64,7 +59,7 @@ export const MobileFaenaList: React.FC<MobileFaenaListProps> = ({
                             <span className="material-symbols-outlined text-[24px]">arrow_back</span>
                         </button>
                     )}
-                    <h1 className="text-h2-section font-mono font-bold uppercase tabular-nums truncate text-[#0F172A] dark:text-[#F3F4F6] px-1">
+                    <h1 className="text-[18px] font-mono font-bold uppercase tabular-nums truncate text-[#0F172A] dark:text-[#F3F4F6] px-1">
                         {t('desktop.breadcrumb_faenas', 'FAENAS')}
                     </h1>
                 </div>
@@ -80,7 +75,7 @@ export const MobileFaenaList: React.FC<MobileFaenaListProps> = ({
                 {!isLoading && rows.length === 0 && (
                     <div className="py-fib-89 px-fib-21 flex flex-col items-center justify-center gap-fib-8 text-[#94A3B8] dark:text-[#5A6072]">
                         <span className="material-symbols-outlined text-[36px]">domain</span>
-                        <span className="text-h2-section font-mono font-bold tabular-nums">0</span>
+                        <span className="text-[20px] font-mono font-bold tabular-nums">0</span>
                     </div>
                 )}
 
@@ -91,10 +86,6 @@ export const MobileFaenaList: React.FC<MobileFaenaListProps> = ({
                             const label = isUnassigned
                                 ? t('faenas.unassigned', 'SIN FAENA ASIGNADA')
                                 : item.faenaName;
-                            const volumeRatioPct =
-                                maxVolume > 0
-                                    ? Math.min(100, Math.max(0, (item.activeVolumeM3 / maxVolume) * 100))
-                                    : 0;
                             return (
                                 <button
                                     key={item.faenaId}
@@ -103,13 +94,13 @@ export const MobileFaenaList: React.FC<MobileFaenaListProps> = ({
                                         void triggerFieldImpact('LIGHT');
                                         onSelectFaena(item.faenaId);
                                     }}
-                                    className="w-full min-h-[68px] text-left px-fib-21 py-fib-13 bg-transparent hover:bg-[#F8FAFC] dark:hover:bg-[#07090D] active:bg-[#F8FAFC] dark:active:bg-[#07090D] border-0 transition-colors flex items-center justify-between gap-fib-13 cursor-pointer rounded-none shadow-none"
+                                    className="w-full min-h-[72px] text-left px-fib-21 py-fib-13 bg-transparent hover:bg-[#F8FAFC] dark:hover:bg-[#07090D] active:bg-[#F8FAFC] dark:active:bg-[#07090D] border-0 transition-colors flex items-center justify-between gap-fib-13 cursor-pointer rounded-none shadow-none"
                                 >
-                                    <div className="flex-1 min-w-0 space-y-1.5">
-                                        <span className="block text-body-main font-mono font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6] truncate">
+                                    <div className="flex-1 min-w-0 space-y-1">
+                                        <span className="block text-[20px] font-mono font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6] truncate">
                                             {label}
                                         </span>
-                                        <span className="block text-microcopy font-mono tabular-nums text-[#475569] dark:text-[#8A93A6]">
+                                        <span className="block text-[18px] font-mono tabular-nums text-[#475569] dark:text-[#8A93A6]">
                                             {item.activeCount}{' '}
                                             {t('faenas.active_count_label', 'ACTIVOS')} ·{' '}
                                             <span className="font-bold text-[#C68346]">
@@ -119,14 +110,8 @@ export const MobileFaenaList: React.FC<MobileFaenaListProps> = ({
                                                 m³
                                             </span>
                                         </span>
-                                        <div className="w-full h-[2px] bg-[#E2E8F0] dark:bg-[#12151C] rounded-none overflow-hidden">
-                                            <div
-                                                className="h-full bg-[#C68346] rounded-none transition-[width] duration-300"
-                                                style={{ width: `${volumeRatioPct}%` }}
-                                            />
-                                        </div>
                                     </div>
-                                    <span className="material-symbols-outlined text-[20px] text-[#475569] dark:text-[#8A93A6] shrink-0">
+                                    <span className="material-symbols-outlined text-[24px] text-[#475569] dark:text-[#8A93A6] shrink-0">
                                         chevron_right
                                     </span>
                                 </button>

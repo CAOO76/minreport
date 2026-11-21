@@ -1,5 +1,4 @@
-import { Router, type Request, type Response } from 'express';
-import { OAuth2Client } from 'google-auth-library';
+import { Router, type Response } from 'express';
 import { z } from 'zod';
 import { env } from '../config/env';
 import { db } from '../config/firebase';
@@ -8,6 +7,7 @@ import { AuditLedger } from '../core/audit-ledger';
 import {
     AISwarmUnavailableError,
     ResilientAIClient,
+    UngroundedEvidenceError,
 } from '../core/resilient-ai-client';
 import { CasStorageService } from '../core/media/CasStorageService';
 import { MediaDigestorServer } from '../core/media/MediaDigestorServer';
@@ -29,10 +29,9 @@ import {
     SpatialVolumeValidationError,
 } from '../modules/geolapp/spatial-volume.engine';
 import {
-    getSpatialDeviceCatalog,
-    importGooglePlayDeviceCatalogCsv,
-    SpatialCatalogValidationError,
-    syncSpatialDeviceCatalogFromOfficialSources,
+    checkDeviceCompatibilityOnDemand,
+    DeviceCompatibilityValidationError,
+    listRegisteredDeviceCompatibility,
 } from '../modules/geolapp/device-compatibility.service';
 import {
     computeStockpileVolumeV2,
@@ -100,7 +99,7 @@ const RosinRammlerHitlSchema = z
 const HitlPatchSchema = z.object({
     name: z.string().trim().min(1).max(160).optional(),
     description: z.string().trim().max(2500).optional(),
-    clase: z.enum(['mineral', 'esteril', 'baja_ley']).optional(),
+    clase: z.enum(['mineral', 'esteril', 'baja_ley']).nullable().optional(),
     status: StockpileStatusSchema.optional(),
     location_ref: z.string().trim().max(240).optional(),
     project_id: z.string().trim().max(128).nullable().optional(),
@@ -1458,7 +1457,6 @@ const DigitalAiExtractedSchema = z.object({
     slope_angle_left_deg: z.number().finite().min(5).max(89).nullable().optional(),
     slope_angle_right_deg: z.number().finite().min(5).max(89).nullable().optional(),
     slope_angle_avg_deg: z.number().finite().min(5).max(89).nullable().optional(),
-    suggested_density_t_m3: z.number().finite().min(0.5).max(8).nullable().optional(),
     estimated_dimensions_m: z
         .object({
             a: z.number().finite().positive().max(1000),
@@ -1474,14 +1472,23 @@ const DigitalAiExtractedSchema = z.object({
 });
 
 const STOCKPILE_CLASSIFICATION_QUESTIONS = {
+    is_stockpile_scene: {
+        type: 'choice' as const,
+        instructions: 'Indica si la escena corresponde realmente a un acopio de material granular/mineral/árido o a un objeto ajeno.',
+        criteria: {
+            ACOPIO_MINERAL_ARIDO: 'Montículo o acopio real de mineral, concentrado, ripio o áridos en cancha o bunker',
+            NO_ES_ACOPIO: 'Objeto ajeno, caja, habitación, suelo plano sin pila o equipamiento sin acopio',
+        },
+    },
     geometry_type: {
         type: 'choice' as const,
-        instructions: 'Identifica la forma geométrica dominante del acopio fotografiado.',
+        instructions: 'Identifica la forma geométrica dominante del acopio fotografiado o si no corresponde a un acopio minero/árido.',
         criteria: {
             CONO_ELIPTICO: 'Pila cónica con vértice agudo y huella circular o elíptica libre',
             CONO_ELIPTICO_TRUNCADO: 'Pila cónica o botadero con plataforma superior plana horizontal',
             PILA_LONGITUDINAL_WINDROW: 'Cordón o camellón alargado lineal con cabeceras redondeadas',
             ACOPIO_CONTRA_MURO: 'Acopio descargado contra muro de contención o pared trasera/bunker',
+            INDETERMINADO: 'Objeto pequeño, caja, equipo, suelo vacío o escena que no corresponde a un acopio minero/árido',
         },
     },
     wall_confinement: {
@@ -1491,19 +1498,6 @@ const STOCKPILE_CLASSIFICATION_QUESTIONS = {
             NONE: 'Acopio exento sin muros de contención',
             SINGLE_WALL: 'Apoyado contra 1 muro trasero con extremos laterales libres',
             BUNKER_3_WALLS: 'Confinado lateralmente dentro de bunker/cajón de 3 muros',
-        },
-    },
-    copper_domain: {
-        type: 'choice' as const,
-        instructions: 'Clasifica el material / dominio mineral visual más probable.',
-        criteria: {
-            OXIDO_CU: 'Tonalidades verdosas/azuladas o mineral oxidado de cobre',
-            MIXTO_CU: 'Transición mixta óxido-sulfuro de cobre',
-            SULFURO_SECUNDARIO_CU: 'Calcocita/covelina o sulfuro secundario oscuro/azulado',
-            SULFURO_PRIMARIO_CU: 'Calcopirita/pirita o mena sulfurada primaria grisácea metálica',
-            CONCENTRADO_CU: 'Concentrado fino de flotación oscuro/brillante',
-            BAJA_LEY_CU: 'Mineral marginal o ripio mineralizado de baja ley',
-            ESTERIL_RIPIOS: 'Roca estéril, lastre o árido sin mineralización relevante',
         },
     },
     tipo_granulometria: {
@@ -1567,42 +1561,67 @@ function parseStockpileDecisionChoices(decisionRes: any) {
         decisionRes?.answers?.geometry_type?.type === 'choice'
             ? decisionRes.answers.geometry_type.choice
             : 'CONO_ELIPTICO';
+    const rawSceneChoice =
+        decisionRes?.answers?.is_stockpile_scene?.type === 'choice'
+            ? decisionRes.answers.is_stockpile_scene.choice
+            : null;
+    const legacyNoAcopioChoice =
+        decisionRes?.answers?.copper_domain?.type === 'choice' &&
+        decisionRes.answers.copper_domain.choice === 'NO_ES_ACOPIO' &&
+        decisionRes.answers.copper_domain.confidence >= 0.45;
+
+    const isNonStockpile =
+        rawGeomChoice === 'INDETERMINADO' ||
+        rawSceneChoice === 'NO_ES_ACOPIO' ||
+        legacyNoAcopioChoice;
+
     const geometryType = (
-        ['CONO_ELIPTICO', 'CONO_ELIPTICO_TRUNCADO', 'PILA_LONGITUDINAL_WINDROW', 'ACOPIO_CONTRA_MURO'].includes(
-            rawGeomChoice
-        )
-            ? rawGeomChoice
-            : 'CONO_ELIPTICO'
+        isNonStockpile
+            ? 'INDETERMINADO'
+            : [
+                    'CONO_ELIPTICO',
+                    'CONO_ELIPTICO_TRUNCADO',
+                    'PILA_LONGITUDINAL_WINDROW',
+                    'ACOPIO_CONTRA_MURO',
+                ].includes(rawGeomChoice)
+              ? rawGeomChoice
+              : 'CONO_ELIPTICO'
     ) as
         | 'CONO_ELIPTICO'
         | 'CONO_ELIPTICO_TRUNCADO'
         | 'PILA_LONGITUDINAL_WINDROW'
-        | 'ACOPIO_CONTRA_MURO';
+        | 'ACOPIO_CONTRA_MURO'
+        | 'INDETERMINADO';
 
     const rawWallChoice =
         decisionRes?.answers?.wall_confinement?.type === 'choice'
             ? decisionRes.answers.wall_confinement.choice
             : 'NONE';
     const wallConfinement = (
-        ['NONE', 'SINGLE_WALL', 'BUNKER_3_WALLS'].includes(rawWallChoice)
-            ? rawWallChoice
-            : geometryType === 'ACOPIO_CONTRA_MURO'
-              ? 'SINGLE_WALL'
-              : 'NONE'
+        isNonStockpile
+            ? 'NONE'
+            : ['NONE', 'SINGLE_WALL', 'BUNKER_3_WALLS'].includes(rawWallChoice)
+              ? rawWallChoice
+              : geometryType === 'ACOPIO_CONTRA_MURO'
+                ? 'SINGLE_WALL'
+                : 'NONE'
     ) as 'NONE' | 'SINGLE_WALL' | 'BUNKER_3_WALLS';
 
-    const copperDomain =
-        decisionRes?.answers?.copper_domain?.type === 'choice' &&
-        decisionRes.answers.copper_domain.confidence >= 0.45
-            ? decisionRes.answers.copper_domain.choice
-            : null;
-    const granulometry =
-        decisionRes?.answers?.tipo_granulometria?.type === 'choice' &&
-        decisionRes.answers.tipo_granulometria.confidence >= 0.45
-            ? decisionRes.answers.tipo_granulometria.choice
-            : null;
+    const aiSuggestedGranulometry = isNonStockpile
+        ? null
+        : decisionRes?.answers?.tipo_granulometria?.type === 'choice' &&
+            decisionRes.answers.tipo_granulometria.confidence >= 0.55
+          ? decisionRes.answers.tipo_granulometria.choice
+          : null;
 
-    return { geometryType, wallConfinement, copperDomain, granulometry };
+    return {
+        geometryType,
+        wallConfinement,
+        copperDomain: null,
+        granulometry: null,
+        aiSuggestedGranulometry,
+        isNonStockpile,
+    };
 }
 
 async function runDigitalStockpileAnalyze(params: {
@@ -1643,14 +1662,13 @@ async function runDigitalStockpileAnalyze(params: {
         .join('\n');
 
     const extractionPrompt = [
-        `Eres ingeniero geotécnico/geomensor de MINREPORT · ACOPIOS. Analiza las fotografías del acopio de mineral o árido.`,
+        `Eres ingeniero geotécnico/geomensor de MINREPORT · ACOPIOS. Analiza las fotografías del acopio de material granular/árido.`,
         `Idioma de reasoning: ${body.locale}.`,
         `1. Determina los ángulos aparentes de talud izquierdo, derecho y promedio compensando la inclinación IMU si existe.`,
         `2. Verifica si el objeto ancla declarado (${body.scaleAnchorType}${anchorMeters ? ` = ${anchorMeters} m` : ''}) es claramente visible junto al acopio.`,
-        `3. REGLA CERO ALUCINACIONES: Si anchor_detected es false Y no se proveyó cota base de referencia (${hasExplicitReferenceBase ? body.referenceBaseMeters : 'ninguna'}), DEBES devolver estimated_dimensions_m: null. Jamás inventes metros sin referencia métrica real.`,
-        `4. Estima suggested_density_t_m3 solo acorde al tipo visual de mineral/árido (1.40 - 2.60 t/m3), o null si es indistinguible.`,
+        `3. REGLA CERO ALUCINACIONES: Si anchor_detected es false Y no se proveyó cota base de referencia (${hasExplicitReferenceBase ? body.referenceBaseMeters : 'ninguna'}), DEBES devolver estimated_dimensions_m: null. Jamás inventes metros ni densidad ni dominio mineral.`,
         contextLines,
-        `Responde ÚNICAMENTE JSON válido exacto: {"anchor_detected": boolean, "slope_angle_left_deg": number|null, "slope_angle_right_deg": number|null, "slope_angle_avg_deg": number|null, "suggested_density_t_m3": number|null, "estimated_dimensions_m": {"a": number, "b": number, "h": number, "ap": number, "bp": number}|null, "confidence": number, "reasoning": string|null}.`,
+        `Responde ÚNICAMENTE JSON válido exacto: {"anchor_detected": boolean, "slope_angle_left_deg": number|null, "slope_angle_right_deg": number|null, "slope_angle_avg_deg": number|null, "estimated_dimensions_m": {"a": number, "b": number, "h": number, "ap": number, "bp": number}|null, "confidence": number, "reasoning": string|null}.`,
     ].join('\n');
 
     const [genRes, decisionRes] = await Promise.all([
@@ -1682,13 +1700,12 @@ async function runDigitalStockpileAnalyze(params: {
               slope_angle_left_deg: null,
               slope_angle_right_deg: null,
               slope_angle_avg_deg: null,
-              suggested_density_t_m3: null,
               estimated_dimensions_m: null,
               confidence: 0.5,
               reasoning: 'Respuesta parcial del analizador visual.',
           };
 
-    const { geometryType, wallConfinement, copperDomain, granulometry } =
+    const { geometryType, wallConfinement, aiSuggestedGranulometry, isNonStockpile } =
         parseStockpileDecisionChoices(decisionRes);
 
     const anchorDetected = Boolean(extracted.anchor_detected && body.scaleAnchorType !== 'NONE');
@@ -1726,7 +1743,7 @@ async function runDigitalStockpileAnalyze(params: {
 
     let volumeM3 = 0;
     let slopeWarning: string | null = null;
-    if (dimensionsM) {
+    if (!isNonStockpile && dimensionsM) {
         const confinementForCalc: SlopeConfinementMode =
             wallConfinement === 'BUNKER_3_WALLS' ? 'BUNKER_3_WALLS' : 'SINGLE_WALL';
         volumeM3 = computeStockpileVolumeV2({
@@ -1744,22 +1761,16 @@ async function runDigitalStockpileAnalyze(params: {
         slopeWarning = `Ángulo detectado ${avgSlope}° supera talud natural típico (37°–45°).`;
     }
 
-    const densityVal =
-        typeof extracted.suggested_density_t_m3 === 'number'
-            ? Math.round(extracted.suggested_density_t_m3 * 100) / 100
-            : null;
-    const weightT =
-        volumeM3 > 0 && densityVal ? Math.round(volumeM3 * densityVal * 100) / 100 : 0;
-
     return {
         verified: true,
         scaleVerified,
         pendingScaleCalibration: !scaleVerified,
         geometryType,
         wallConfinement,
-        copperDomain,
-        granulometry,
-        suggestedDensityTm3: densityVal,
+        copperDomain: null,
+        granulometry: null,
+        aiSuggestedGranulometry,
+        suggestedDensityTm3: null,
         slopeAngleLeftDeg: extracted.slope_angle_left_deg ?? null,
         slopeAngleRightDeg: extracted.slope_angle_right_deg ?? null,
         slopeAngleAvgDeg: avgSlope,
@@ -1767,13 +1778,13 @@ async function runDigitalStockpileAnalyze(params: {
         anchorDetected,
         dimensionsM,
         volumeM3,
-        weightT,
+        weightT: 0,
         confidence: extracted.confidence ?? 0.75,
         reasoning:
             extracted.reasoning ||
             (scaleVerified
                 ? 'Cubicación digital verificada con referencia métrica y talud IA.'
-                : 'Material y talud detectados. Falta referencia física de escala en encuadre o 1 cota base.'),
+                : 'Geometría y talud detectados. Falta referencia física de escala en encuadre o 1 cota base.'),
         modelUsed: genRes.model,
     };
 }
@@ -1906,23 +1917,11 @@ router.post(
                 last_geometry_type: result.geometryType,
                 geometria: result.geometryType,
                 wall_confinement: result.wallConfinement,
-                ...(result.copperDomain && !existingData.copper_domain
-                    ? { copper_domain: result.copperDomain }
-                    : {}),
-                ...(result.granulometry && !existingData.tipo_granulometria
-                    ? { tipo_granulometria: result.granulometry }
-                    : {}),
-                ...(result.suggestedDensityTm3 && !existingData.density_factor
-                    ? { density_factor: result.suggestedDensityTm3 }
-                    : {}),
                 ...(result.scaleVerified && result.volumeM3 > 0
                     ? {
                           last_volume_m3: result.volumeM3,
                           volumen: result.volumeM3,
                           volume_m3: result.volumeM3,
-                          last_weight_t: result.weightT,
-                          weight_t: result.weightT,
-                          peso_final_toneladas: result.weightT,
                       }
                     : {}),
                 updatedAt: now,
@@ -1953,10 +1952,6 @@ router.post(
                             ...(result.scaleVerified && result.volumeM3 > 0
                                 ? {
                                       volumen_m3: result.volumeM3,
-                                      peso_t: result.weightT,
-                                      ...(result.suggestedDensityTm3
-                                          ? { density_factor: result.suggestedDensityTm3 }
-                                          : {}),
                                   }
                                 : {}),
                             updatedAt: now,
@@ -1995,209 +1990,95 @@ router.post(
     }
 );
 
-const ImportDeviceCatalogCsvBodySchema = z.object({
-    csvText: z.string().min(20).max(5_000_000),
-    confirmationKeyword: z.literal('ACTUALIZAR'),
+const DeviceCompatibilityCheckBodySchema = z.object({
+    query: z.string().trim().min(2).max(120),
+    forceRefresh: z.boolean().optional().default(false),
 });
 
 /**
- * GET /api/geolapp/device-catalog
- * Retorna el catálogo vivo de compatibilidad hardware (Android/iOS) en `southamerica-west1`.
+ * GET /api/geolapp/device-compatibility
+ * Retorna exclusivamente los dispositivos consultados on-demand y persistidos en `device_compatibility_registry`
+ * (`southamerica-west1`). Cero listados predefinidos.
  */
-router.get('/device-catalog', requireAuth, async (_req: AuthRequest, res: Response) => {
+async function handleListDeviceCompatibility(_req: AuthRequest, res: Response) {
     try {
-        const catalog = await getSpatialDeviceCatalog();
+        const registry = await listRegisteredDeviceCompatibility();
         return res.status(200).json({
             success: true,
-            catalog,
+            registry,
+            catalog: registry,
         });
     } catch (error) {
-        console.error('[MINREPORT-ACOPIOS] Error consultando device-catalog:', error);
-        return res.status(500).json({ error: 'Error consultando catalogo de compatibilidad.' });
+        console.error('[MINREPORT-ACOPIOS] Error consultando device-compatibility:', error);
+        return res.status(500).json({ error: 'Error consultando registro de compatibilidad.' });
     }
-});
+}
+
+router.get('/device-compatibility', requireAuth, handleListDeviceCompatibility);
+router.get('/device-catalog', requireAuth, handleListDeviceCompatibility);
 
 /**
- * POST /api/geolapp/device-catalog/sync
- * Sincroniza el catálogo vivo desde fuentes oficiales ARCore (`DEV_ROOT` o `SUPER_ADMIN`).
+ * POST /api/geolapp/device-compatibility/check
+ * Motor On-Demand de compatibilidad móvil:
+ * - Si el modelo ya fue consultado y persistido (`!forceRefresh`), responde en caché sin gastar búsqueda/IA.
+ * - Si no existe en BD, evalúa con Gemini Grounded + Zod, calcula veredicto determinísticamente en servidor
+ *   y persiste en `device_compatibility_registry` (`southamerica-west1`) + `AuditLedger`.
  */
-router.post(
-    '/device-catalog/sync',
-    requireAuth,
-    mutationRateLimiter,
-    async (req: AuthRequest, res: Response) => {
-        try {
-            const privilege = resolveCallerPrivilege(req.user);
-            if (!privilege.uid) {
-                return res.status(401).json({ error: 'No autorizado: token de sesion ausente.' });
-            }
-            if (!privilege.isDevRoot && !privilege.isSuperAdmin) {
-                return res.status(403).json({
-                    error: 'FORBIDDEN: Solo DEV_ROOT o SUPER_ADMIN pueden sincronizar el catalogo de dispositivos.',
-                });
-            }
+async function handleCheckDeviceCompatibility(req: AuthRequest, res: Response) {
+    try {
+        const parsedBody = DeviceCompatibilityCheckBodySchema.safeParse(req.body || {});
+        if (!parsedBody.success) {
+            return res.status(400).json({
+                error: 'Modelo inválido: ingrese entre 2 y 120 caracteres.',
+                details: parsedBody.error.flatten(),
+            });
+        }
 
-            const syncResult = await syncSpatialDeviceCatalogFromOfficialSources({
+        const privilege = resolveCallerPrivilege(req.user);
+        if (!privilege.uid) {
+            return res.status(401).json({ error: 'No autorizado: sesion requerida.' });
+        }
+
+        const result = await checkDeviceCompatibilityOnDemand({
+            query: parsedBody.data.query,
+            forceRefresh: parsedBody.data.forceRefresh,
+            actor: {
                 uid: privilege.uid,
                 email: privilege.emailLower || privilege.uid,
                 tenantId: 'global',
                 ipAddress: extractClientIp(req),
-            });
+            },
+        });
 
-            return res.status(200).json({
-                success: true,
-                catalog: syncResult.catalog,
-                syncedFromRemote: syncResult.syncedFromRemote,
-                fallbackUsed: syncResult.fallbackUsed,
-                warning: syncResult.warning,
+        return res.status(200).json({
+            success: true,
+            device: result.device,
+            cached: result.cached,
+            registry: result.registry,
+        });
+    } catch (error: any) {
+        if (error instanceof DeviceCompatibilityValidationError) {
+            return res.status(error.statusCode).json({
+                error: error.message,
+                code: error.code,
             });
-        } catch (error) {
-            console.error('[MINREPORT-ACOPIOS] Error sincronizando device-catalog:', error);
-            return res.status(500).json({ error: 'Error sincronizando catalogo oficial de dispositivos.' });
         }
-    }
-);
-
-export const schedulerOidcClient = new OAuth2Client();
-
-const DEFAULT_SCHEDULER_CLOUD_RUN_AUDIENCE = 'https://minreport-api-d7uuryuo4a-tl.a.run.app';
-const DEFAULT_SCHEDULER_SA = '493995072778-compute@developer.gserviceaccount.com';
-
-/**
- * POST /api/geolapp/internal/device-catalog/scheduled-sync
- * Cron semanal ejecutado por Cloud Scheduler mediante verificación estricta Google OIDC (Fail-Closed).
- */
-router.post(
-    '/internal/device-catalog/scheduled-sync',
-    mutationRateLimiter,
-    async (req: Request, res: Response) => {
-        try {
-            const authHeader = String(req.headers.authorization || '').trim();
-            if (!authHeader.startsWith('Bearer ')) {
-                return res.status(401).json({ error: 'UNAUTHORIZED: Token OIDC ausente.' });
-            }
-            const idToken = authHeader.slice(7).trim();
-            if (!idToken) {
-                return res.status(401).json({ error: 'UNAUTHORIZED: Token OIDC ausente.' });
-            }
-
-            const allowedAudiences = Array.from(
-                new Set(
-                    [process.env.CLOUD_RUN_SERVICE_URL, DEFAULT_SCHEDULER_CLOUD_RUN_AUDIENCE]
-                        .filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
-                        .map((v) => v.trim().replace(/\/+$/, ''))
-                )
-            );
-
-            let payload: Record<string, any> | undefined;
-            try {
-                const ticket = await schedulerOidcClient.verifyIdToken({
-                    idToken,
-                    audience: allowedAudiences,
-                });
-                payload = ticket.getPayload() as Record<string, any> | undefined;
-            } catch {
-                return res.status(401).json({ error: 'UNAUTHORIZED: Token OIDC invalido.' });
-            }
-
-            const configuredSAs = String(process.env.SPATIAL_CATALOG_SCHEDULER_SA || '')
-                .split(',')
-                .map((s) => s.trim().toLowerCase())
-                .filter(Boolean);
-            const allowedServiceAccounts = new Set<string>([
-                DEFAULT_SCHEDULER_SA,
-                ...configuredSAs,
-            ]);
-
-            const tokenEmail = String(payload?.email || '').trim().toLowerCase();
-            if (
-                payload?.email_verified !== true ||
-                !tokenEmail ||
-                !allowedServiceAccounts.has(tokenEmail)
-            ) {
-                return res.status(403).json({
-                    error: 'FORBIDDEN: Service Account no autorizada para cron de catalogo.',
-                });
-            }
-
-            const syncResult = await syncSpatialDeviceCatalogFromOfficialSources({
-                uid: 'cloud-scheduler',
-                email: tokenEmail,
-                tenantId: 'global',
-                ipAddress: extractClientIp(req),
+        if (error instanceof UngroundedEvidenceError) {
+            return res.status(422).json({
+                error: error.message,
+                code: error.code,
             });
-
-            return res.status(200).json({
-                success: true,
-                syncedFromRemote: syncResult.syncedFromRemote,
-                fallbackUsed: syncResult.fallbackUsed,
-                warning: syncResult.warning,
-                totalCount: syncResult.catalog.totalCount,
-                optimalCount: syncResult.catalog.optimalCount,
-                vioCount: syncResult.catalog.vioCount,
-                ruggedCount: syncResult.catalog.ruggedCount,
-                sourceHash: syncResult.catalog.sourceHash,
-                updatedAtIso: syncResult.catalog.updatedAtIso,
-            });
-        } catch (error) {
-            console.error('[MINREPORT-ACOPIOS] Error en scheduled-sync device-catalog:', error);
-            return res.status(500).json({ error: 'Error ejecutando sincronizacion programada.' });
         }
-    }
-);
-
-/**
- * POST /api/geolapp/device-catalog/import-csv
- * Importa CSV oficial de Google Play Console Device Catalog bajo compuerta HITL (`ACTUALIZAR`).
- */
-router.post(
-    '/device-catalog/import-csv',
-    requireAuth,
-    mutationRateLimiter,
-    async (req: AuthRequest, res: Response) => {
-        try {
-            const privilege = resolveCallerPrivilege(req.user);
-            if (!privilege.uid) {
-                return res.status(401).json({ error: 'No autorizado: token de sesion ausente.' });
-            }
-            if (!privilege.isDevRoot && !privilege.isSuperAdmin) {
-                return res.status(403).json({
-                    error: 'FORBIDDEN: Solo DEV_ROOT o SUPER_ADMIN pueden importar catalogo CSV.',
-                });
-            }
-
-            const parsedBody = ImportDeviceCatalogCsvBodySchema.safeParse(req.body || {});
-            if (!parsedBody.success) {
-                return res.status(400).json({
-                    error: 'Payload CSV invalido: requiere csvText y confirmationKeyword="ACTUALIZAR".',
-                    details: parsedBody.error.flatten(),
-                });
-            }
-
-            const result = await importGooglePlayDeviceCatalogCsv({
-                csvText: parsedBody.data.csvText,
-                actor: {
-                    uid: privilege.uid,
-                    email: privilege.emailLower || privilege.uid,
-                    tenantId: 'global',
-                    ipAddress: extractClientIp(req),
-                },
-            });
-
-            return res.status(200).json({
-                success: true,
-                catalog: result.catalog,
-                importedCount: result.importedCount,
-            });
-        } catch (error: any) {
-            if (error instanceof SpatialCatalogValidationError) {
-                return res.status(400).json({ error: error.message });
-            }
-            console.error('[MINREPORT-ACOPIOS] Error importando device-catalog CSV:', error);
-            return res.status(500).json({ error: 'Error importando CSV de Google Play Console.' });
+        if (error instanceof AISwarmUnavailableError) {
+            return res.status(503).json({ error: error.message });
         }
+        console.error('[MINREPORT-ACOPIOS] Error verificando compatibilidad de dispositivo:', error);
+        return res.status(500).json({ error: 'Error evaluando compatibilidad del dispositivo.' });
     }
-);
+}
+
+router.post('/device-compatibility/check', requireAuth, aiRateLimiter, handleCheckDeviceCompatibility);
+router.post('/device-catalog/check', requireAuth, aiRateLimiter, handleCheckDeviceCompatibility);
 
 const SpatialPointTupleSchema = z.tuple([
     z.number().finite(),
@@ -2215,7 +2096,13 @@ const SpatialAnalyzeBodySchema = z.object({
     scanId: z.string().trim().max(128).optional(),
     depthMode: z.enum(['RAW_DEPTH_ONLY', 'AUTOMATIC', 'VIO_POINTCLOUD']),
     coveragePct: z.number().finite().min(0).max(100),
-    sectorsCovered: z.number().int().min(0).max(16),
+    sectorsCovered: z.number().int().min(0).max(32),
+    sectorsTotal: z.number().int().min(1).max(32).optional(),
+    roiRadiusM: z.number().finite().positive().max(100).optional(),
+    calibrationScaleFactor: z.number().finite().min(0.85).max(1.15).optional(),
+    calibrationId: z.string().trim().max(128).optional(),
+    calibrationPlaneNoiseRmsM: z.number().finite().nonnegative().max(1).optional(),
+    deviceCalibratedAt: z.number().finite().nonnegative().optional(),
     keyframeCount: z.number().int().min(1).max(512),
     loopClosed: z.boolean(),
     anchorCenter: z
@@ -2235,10 +2122,28 @@ const SpatialAnalyzeBodySchema = z.object({
     locale: z.enum(['es', 'en', 'pt']).optional().default('es'),
 });
 
-const SpatialDensityExtractSchema = z.object({
-    suggested_density_t_m3: z.number().finite().min(0.5).max(8).nullable().optional(),
-    reasoning: z.string().trim().max(600).nullable().optional(),
+const DeviceCalibrationBodySchema = z.object({
+    scaleFactor: z.number().finite().min(0.85).max(1.15),
+    referenceDistanceM: z.number().finite().positive().max(50),
+    measuredDistanceM: z.number().finite().positive().max(50),
+    planeNoiseRmsM: z.number().finite().nonnegative().max(1),
+    imuPitchOffsetDeg: z.number().finite().min(-90).max(90),
+    imuRollOffsetDeg: z.number().finite().min(-180).max(180),
+    calibratedAt: z.number().finite().nonnegative(),
+    tenantId: z.string().trim().max(128).optional(),
+    deviceModel: z.string().trim().max(120).optional(),
+    platform: z.string().trim().max(32).optional(),
 });
+
+function resolveScopedTenantId(req: AuthRequest, bodyTenantId?: string): string {
+    const isDevCaller = resolveCallerPrivilege(req.user).isDevRoot;
+    return String(
+        bodyTenantId ||
+            req.headers['x-active-account-id'] ||
+            req.headers['x-tenant-id'] ||
+            (isDevCaller ? 'dev-master-sandbox' : '')
+    ).trim();
+}
 
 async function runSpatialStockpileAnalyze(params: {
     tenantId: string;
@@ -2254,13 +2159,20 @@ async function runSpatialStockpileAnalyze(params: {
         anchorCenter: body.anchorCenter,
         coveragePct: body.coveragePct,
         sectorsCovered: body.sectorsCovered,
+        sectorsTotal: body.sectorsTotal,
+        roiRadiusM: body.roiRadiusM,
+        calibrationScaleFactor: body.calibrationScaleFactor,
+        calibrationId: body.calibrationId,
+        calibrationPlaneNoiseRmsM: body.calibrationPlaneNoiseRmsM,
+        deviceCalibratedAt: body.deviceCalibratedAt,
         loopClosed: body.loopClosed,
         depthMode: body.depthMode,
     });
 
     if (!(spatial.volumeM3 > 0)) {
         throw new SpatialVolumeValidationError(
-            'El volumen cubicado desde la nube 3D debe ser > 0 m3.'
+            'El volumen cubicado desde la nube 3D debe ser > 0 m3.',
+            'INVALID_POINT_CLOUD'
         );
     }
 
@@ -2297,6 +2209,8 @@ async function runSpatialStockpileAnalyze(params: {
                 wallConfinement: 'NONE' as const,
                 copperDomain: null,
                 granulometry: null,
+                aiSuggestedGranulometry: null,
+                isNonStockpile: false,
                 suggestedDensityTm3: null,
                 reasoning: `Cubicación métrica 3D (${body.depthMode}, cobertura ${body.coveragePct}%, pie ${spatial.toeScore}/100).`,
             };
@@ -2308,63 +2222,34 @@ async function runSpatialStockpileAnalyze(params: {
             `Talud medio medido: ${spatial.slopeAngleAvgDeg ?? 'N/A'}°`,
         ].join('\n');
 
-        const densityPrompt = [
-            `Eres ingeniero geo-metalúrgico de MINREPORT · ACOPIOS.`,
-            `El volumen métrico 3D ya fue medido por fotogrametría/Depth (${spatial.volumeM3} m3); NO estimes dimensiones ni volumen.`,
-            `Idioma de reasoning: ${body.locale}.`,
-            `Estima únicamente suggested_density_t_m3 (1.40 - 2.60 t/m3) acorde al material visible en la fotografía, o null si no es determinable con certeza.`,
-            contextLines,
-            `Responde ÚNICAMENTE JSON válido: {"suggested_density_t_m3": number|null, "reasoning": string|null}.`,
-        ].join('\n');
-
-        const [genRes, decisionRes] = await Promise.all([
-            ResilientAIClient.generate({
-                prompt: densityPrompt,
-                module: 'stockpile',
-                tenantId,
-                thinkingLevel: 'low',
-                requireHITL: false,
-                responseMimeType: 'application/json',
-                media: mediaParts,
-            }).catch(() => null),
-            ResilientAIClient.decide({
-                module: 'stockpile',
-                tenantId,
-                dataClassification: 'TENANT_PRIVATE',
-                inputText: contextLines,
-                media: mediaParts,
-                questions: STOCKPILE_CLASSIFICATION_QUESTIONS,
-            }).catch(() => null),
-        ]);
+        const decisionRes = await ResilientAIClient.decide({
+            module: 'stockpile',
+            tenantId,
+            dataClassification: 'TENANT_PRIVATE',
+            inputText: contextLines,
+            media: mediaParts,
+            questions: STOCKPILE_CLASSIFICATION_QUESTIONS,
+        }).catch(() => null);
 
         const choices = parseStockpileDecisionChoices(decisionRes);
-        const parsedDensityRaw = genRes ? parseJsonObjectFromAiText(genRes.text) : null;
-        const densityParsed = SpatialDensityExtractSchema.safeParse(parsedDensityRaw || {});
-
-        const suggestedDensityTm3 =
-            densityParsed.success && typeof densityParsed.data.suggested_density_t_m3 === 'number'
-                ? Math.round(densityParsed.data.suggested_density_t_m3 * 100) / 100
-                : null;
-        const reasoning =
-            (densityParsed.success && densityParsed.data.reasoning) ||
-            `Cubicación métrica 3D (${body.depthMode}, cobertura ${body.coveragePct}%, pie ${spatial.toeScore}/100).`;
+        const reasoning = choices.isNonStockpile
+            ? 'Escena detectada como no correspondiente a acopio mineral/árido; sin asignación de densidad.'
+            : `Cubicación métrica 3D (${body.depthMode}, cobertura ${body.coveragePct}%, pie ${spatial.toeScore}/100).`;
 
         return {
             geometryType: choices.geometryType,
             wallConfinement: choices.wallConfinement,
-            copperDomain: choices.copperDomain,
-            granulometry: choices.granulometry,
-            suggestedDensityTm3,
+            copperDomain: null,
+            granulometry: null,
+            aiSuggestedGranulometry: choices.aiSuggestedGranulometry,
+            isNonStockpile: choices.isNonStockpile,
+            suggestedDensityTm3: null,
             reasoning,
         };
     })();
 
     const [descriptor, visual] = await Promise.all([persistMeshPromise, visualClassifyPromise]);
 
-    const weightT =
-        visual.suggestedDensityTm3 !== null
-            ? Math.round(spatial.volumeM3 * visual.suggestedDensityTm3 * 100) / 100
-            : 0;
     const savingsPct =
         typeof descriptor.savingsPct === 'number'
             ? descriptor.savingsPct
@@ -2374,8 +2259,9 @@ async function runSpatialStockpileAnalyze(params: {
         result: {
             verified: true,
             scaleVerified: true,
+            isNonStockpile: visual.isNonStockpile,
             volumeM3: spatial.volumeM3,
-            weightT,
+            weightT: 0,
             uncertaintyPct: spatial.uncertaintyPct,
             toeScore: spatial.toeScore,
             coveragePct: body.coveragePct,
@@ -2383,9 +2269,10 @@ async function runSpatialStockpileAnalyze(params: {
             groundSlopeDeg: spatial.groundSlopeDeg,
             geometryType: visual.geometryType,
             wallConfinement: visual.wallConfinement,
-            copperDomain: visual.copperDomain,
-            granulometry: visual.granulometry,
-            suggestedDensityTm3: visual.suggestedDensityTm3,
+            copperDomain: null,
+            granulometry: null,
+            aiSuggestedGranulometry: visual.aiSuggestedGranulometry,
+            suggestedDensityTm3: null,
             slopeAngleLeftDeg: spatial.slopeAngleLeftDeg,
             slopeAngleRightDeg: spatial.slopeAngleRightDeg,
             slopeAngleAvgDeg: spatial.slopeAngleAvgDeg,
@@ -2407,6 +2294,152 @@ async function runSpatialStockpileAnalyze(params: {
 }
 
 /**
+ * GET /api/geolapp/device-calibrations
+ * Lista el historial auditable append-only de calibraciones por tenant (`southamerica-west1`, sin PII).
+ */
+router.get(
+    '/device-calibrations',
+    requireAuth,
+    async (req: AuthRequest, res: Response) => {
+        try {
+            const queryTenant =
+                typeof req.query?.tenantId === 'string' ? req.query.tenantId : undefined;
+            const headerTenant = resolveScopedTenantId(req, queryTenant);
+            const authz = await authorizeStockpileTenantMutation(req, headerTenant);
+            if (!authz.authorized) {
+                return res.status(authz.status).json({ error: authz.error || 'TENANT_ACCESS_DENIED' });
+            }
+
+            const snap = await db
+                .collection('device_calibrations')
+                .where('tenantId', '==', headerTenant)
+                .limit(100)
+                .get();
+
+            const calibrations = (snap?.docs || [])
+                .map((docSnap) => {
+                    const d = (typeof docSnap.data === 'function' ? docSnap.data() : {}) || {};
+                    return {
+                        calibrationId: String(d.calibrationId || docSnap.id || ''),
+                        tenantId: String(d.tenantId || headerTenant),
+                        actorUid: String(d.actorUid || ''),
+                        scaleFactor: Number(d.scaleFactor ?? 1),
+                        referenceDistanceM: Number(d.referenceDistanceM ?? 2),
+                        measuredDistanceM: Number(d.measuredDistanceM ?? 2),
+                        planeNoiseRmsM: Number(d.planeNoiseRmsM ?? 0),
+                        imuPitchOffsetDeg: Number(d.imuPitchOffsetDeg ?? 0),
+                        imuRollOffsetDeg: Number(d.imuRollOffsetDeg ?? 0),
+                        calibratedAt: Number(d.calibratedAt || d.createdAt || 0),
+                        ...(typeof d.deviceModel === 'string' && d.deviceModel
+                            ? { deviceModel: d.deviceModel }
+                            : {}),
+                        ...(typeof d.platform === 'string' && d.platform
+                            ? { platform: d.platform }
+                            : {}),
+                        region: String(d.region || 'southamerica-west1'),
+                        createdAt: Number(d.createdAt || d.calibratedAt || 0),
+                    };
+                })
+                .filter((item) => item.calibrationId.length > 0 && item.calibratedAt > 0)
+                .sort((a, b) => b.calibratedAt - a.calibratedAt)
+                .slice(0, 50);
+
+            return res.status(200).json({
+                success: true,
+                calibrations,
+            });
+        } catch (error) {
+            console.error('[MINREPORT-ACOPIOS] Error consultando device-calibrations:', error);
+            return res.status(500).json({ error: 'Error consultando historial de calibraciones.' });
+        }
+    }
+);
+
+/**
+ * POST /api/geolapp/device-calibration
+ * Registra y audita la calibración métrica en terreno (`southamerica-west1`, sin PII).
+ */
+router.post(
+    '/device-calibration',
+    requireAuth,
+    mutationRateLimiter,
+    async (req: AuthRequest, res: Response) => {
+        try {
+            const parsedBody = DeviceCalibrationBodySchema.safeParse(req.body || {});
+            if (!parsedBody.success) {
+                return res.status(400).json({
+                    error: 'Payload de calibracion de dispositivo invalido.',
+                    details: parsedBody.error.flatten(),
+                });
+            }
+
+            const headerTenant = resolveScopedTenantId(req, parsedBody.data.tenantId);
+            const authz = await authorizeStockpileTenantMutation(req, headerTenant);
+            if (!authz.authorized) {
+                return res.status(authz.status).json({ error: authz.error || 'TENANT_ACCESS_DENIED' });
+            }
+
+            const d = parsedBody.data;
+            const docRef = db.collection('device_calibrations').doc();
+            const calibrationId = docRef.id;
+            const calibrationDoc = {
+                calibrationId,
+                tenantId: headerTenant,
+                actorUid: authz.uid,
+                scaleFactor: Number(d.scaleFactor.toFixed(4)),
+                referenceDistanceM: Number(d.referenceDistanceM.toFixed(4)),
+                measuredDistanceM: Number(d.measuredDistanceM.toFixed(4)),
+                planeNoiseRmsM: Number(d.planeNoiseRmsM.toFixed(5)),
+                imuPitchOffsetDeg: Number(d.imuPitchOffsetDeg.toFixed(2)),
+                imuRollOffsetDeg: Number(d.imuRollOffsetDeg.toFixed(2)),
+                calibratedAt: d.calibratedAt,
+                ...(d.deviceModel ? { deviceModel: d.deviceModel } : {}),
+                ...(d.platform ? { platform: d.platform } : {}),
+                region: 'southamerica-west1',
+                createdAt: Date.now(),
+            };
+
+            await docRef.set(calibrationDoc);
+
+            await AuditLedger.record({
+                tenantId: headerTenant,
+                actorUid: authz.uid,
+                actorEmail: authz.emailLower || authz.uid,
+                action: 'DEVICE_SPATIAL_CALIBRATION_RECORDED',
+                module: 'stockpile',
+                targetEntity: calibrationId,
+                details: {
+                    scaleFactor: calibrationDoc.scaleFactor,
+                    referenceDistanceM: calibrationDoc.referenceDistanceM,
+                    measuredDistanceM: calibrationDoc.measuredDistanceM,
+                    planeNoiseRmsM: calibrationDoc.planeNoiseRmsM,
+                    ...(calibrationDoc.deviceModel ? { deviceModel: calibrationDoc.deviceModel } : {}),
+                    calibratedAt: calibrationDoc.calibratedAt,
+                },
+                ipAddress: extractClientIp(req),
+            }).catch(() => {});
+
+            return res.status(200).json({
+                calibrationId,
+                calibrated: true,
+                scaleFactor: calibrationDoc.scaleFactor,
+                referenceDistanceM: calibrationDoc.referenceDistanceM,
+                measuredDistanceM: calibrationDoc.measuredDistanceM,
+                planeNoiseRmsM: calibrationDoc.planeNoiseRmsM,
+                imuPitchOffsetDeg: calibrationDoc.imuPitchOffsetDeg,
+                imuRollOffsetDeg: calibrationDoc.imuRollOffsetDeg,
+                calibratedAt: calibrationDoc.calibratedAt,
+                ...(calibrationDoc.deviceModel ? { deviceModel: calibrationDoc.deviceModel } : {}),
+                ...(calibrationDoc.platform ? { platform: calibrationDoc.platform } : {}),
+            });
+        } catch (error) {
+            console.error('[MINREPORT-ACOPIOS] Error en device-calibration:', error);
+            return res.status(500).json({ error: 'Error registrando calibracion de dispositivo.' });
+        }
+    }
+);
+
+/**
  * POST /api/geolapp/spatial-analyze
  * Cubicación espacial métrica real desde ARCore VIO/Depth (preview o captura nueva).
  */
@@ -2424,14 +2457,7 @@ router.post(
                 });
             }
 
-            const isDevCaller = resolveCallerPrivilege(req.user).isDevRoot;
-            const headerTenant = String(
-                parsedBody.data.tenantId ||
-                    req.headers['x-active-account-id'] ||
-                    req.headers['x-tenant-id'] ||
-                    (isDevCaller ? 'dev-master-sandbox' : '')
-            ).trim();
-
+            const headerTenant = resolveScopedTenantId(req, parsedBody.data.tenantId);
             const authz = await authorizeStockpileTenantMutation(req, headerTenant);
             if (!authz.authorized) {
                 return res.status(authz.status).json({ error: authz.error || 'TENANT_ACCESS_DENIED' });
@@ -2459,6 +2485,7 @@ router.post(
                     groundSlopeDeg: result.groundSlopeDeg,
                     meshSha256: result.meshSha256,
                     meshSource: result.meshSource,
+                    isNonStockpile: result.isNonStockpile,
                 },
                 ipAddress: extractClientIp(req),
             }).catch(() => {});
@@ -2466,7 +2493,12 @@ router.post(
             return res.status(200).json(result);
         } catch (error: any) {
             if (error instanceof SpatialVolumeValidationError) {
-                return res.status(400).json({ error: error.message });
+                const rejectionCode = error.code || 'INVALID_POINT_CLOUD';
+                return res.status(422).json({
+                    error: rejectionCode,
+                    rejectionCode,
+                    message: error.message,
+                });
             }
             console.error('[MINREPORT-ACOPIOS] Error en spatial-analyze:', error);
             return res.status(500).json({ error: 'Error ejecutando análisis espacial 3D.' });
@@ -2529,12 +2561,13 @@ router.post(
             });
 
             const now = Date.now();
-            const resolvedWeightT =
-                result.weightT > 0
-                    ? result.weightT
-                    : typeof existingData.density_factor === 'number' && existingData.density_factor > 0
-                      ? Math.round(result.volumeM3 * existingData.density_factor * 100) / 100
-                      : 0;
+            const resolvedWeightT = result.isNonStockpile
+                ? 0
+                : result.weightT > 0
+                  ? result.weightT
+                  : typeof existingData.density_factor === 'number' && existingData.density_factor > 0
+                    ? Math.round(result.volumeM3 * existingData.density_factor * 100) / 100
+                    : 0;
 
             const assetPatch: Record<string, unknown> = {
                 analysis_status: 'AI_VERIFIED',
@@ -2573,15 +2606,6 @@ router.post(
                 last_geometry_type: result.geometryType,
                 geometria: result.geometryType,
                 wall_confinement: result.wallConfinement,
-                ...(result.copperDomain && !existingData.copper_domain
-                    ? { copper_domain: result.copperDomain }
-                    : {}),
-                ...(result.granulometry && !existingData.tipo_granulometria
-                    ? { tipo_granulometria: result.granulometry }
-                    : {}),
-                ...(result.suggestedDensityTm3 && !existingData.density_factor
-                    ? { density_factor: result.suggestedDensityTm3 }
-                    : {}),
                 updatedAt: now,
             };
 
@@ -2613,9 +2637,6 @@ router.post(
                             type: result.geometryType,
                             dimensions: result.dimensionsM,
                         },
-                        ...(result.suggestedDensityTm3
-                            ? { density_factor: result.suggestedDensityTm3 }
-                            : {}),
                         updatedAt: now,
                     },
                     { merge: true }
@@ -2641,6 +2662,7 @@ router.post(
                     meshSha256: result.meshSha256,
                     meshSource: result.meshSource,
                     tinVolumeM3: persistence.meshResult.tinVolumeM3,
+                    isNonStockpile: result.isNonStockpile,
                 },
                 ipAddress: extractClientIp(req),
             }).catch(() => {});
@@ -2651,7 +2673,12 @@ router.post(
             });
         } catch (error: any) {
             if (error instanceof SpatialVolumeValidationError) {
-                return res.status(400).json({ error: error.message });
+                const rejectionCode = error.code || 'INVALID_POINT_CLOUD';
+                return res.status(422).json({
+                    error: rejectionCode,
+                    rejectionCode,
+                    message: error.message,
+                });
             }
             console.error('[MINREPORT-ACOPIOS] Error en stockpiles/:id/spatial-analyze:', error);
             return res.status(500).json({ error: 'Error ejecutando análisis espacial 3D en acopio.' });

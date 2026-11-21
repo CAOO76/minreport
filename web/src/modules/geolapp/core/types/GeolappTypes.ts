@@ -26,7 +26,9 @@ export type GeolappGeometryType =
     | 'CONO_ELIPTICO_TRUNCADO'
     | 'CONO_TRUNCADO_PERIMETRO'
     | 'PILA_LONGITUDINAL_WINDROW'
-    | 'ACOPIO_CONTRA_MURO';
+    | 'ACOPIO_CONTRA_MURO'
+    | 'INDETERMINADO'
+    | 'NO_ES_ACOPIO';
 
 export type GeolappDigitalScaleAnchorType =
     | 'ARCORE_VIO_DEPTH'
@@ -137,7 +139,7 @@ export interface StockpileAsset {
     accountId?: string;
     name: string;
     description?: string;
-    clase: 'mineral' | 'esteril' | 'baja_ley';
+    clase?: 'mineral' | 'esteril' | 'baja_ley' | null;
     status?: StockpileStatus;
     createdAt: number;
     createdBy: string;
@@ -245,6 +247,7 @@ export interface StockpileAsset {
     coverage_pct?: number | null;
     depth_mode?: string | null;
     ground_slope_deg?: number | null;
+    is_non_stockpile?: boolean;
     detected_slope_angle_deg?: number;
     slope_warning?: string | null;
     wall_confinement?: 'NONE' | 'SINGLE_WALL' | 'BUNKER_3_WALLS';
@@ -362,6 +365,7 @@ export interface StockpileMeasurement {
     coverage_pct?: number | null;
     depth_mode?: string | null;
     ground_slope_deg?: number | null;
+    is_non_stockpile?: boolean;
     detected_slope_angle_deg?: number;
     slope_left_deg?: number;
     slope_right_deg?: number;

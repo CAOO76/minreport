@@ -1259,26 +1259,25 @@ function extractOpeningTags(source: string, tagNames: string[]): string[] {
         'modules/geolapp/GeolappApp.tsx',
         'modules/geolapp/GeolappModule.tsx',
         'modules/geolapp/layouts/MainLayout.tsx',
+        'modules/geolapp/components/MobileAcopiosHub.tsx',
+        'modules/geolapp/components/MobileCalibrationView.tsx',
         'modules/geolapp/components/MobileFaenaList.tsx',
         'modules/geolapp/components/MobileHome.tsx',
         'modules/geolapp/components/MobileFaenaMonitoring.tsx',
         'modules/geolapp/components/StockpileDossierView.tsx',
+        'modules/geolapp/components/StockpileVisualStage.tsx',
         'modules/geolapp/components/QuickStockpileCapture.tsx',
         'modules/geolapp/components/MobileScanner.tsx',
-        'modules/geolapp/components/StockpileRegistration.tsx',
-        'modules/geolapp/components/ManualCapture.tsx',
-        'modules/geolapp/components/StockList.tsx',
-        'modules/geolapp/components/StockpileSummary.tsx',
-        'modules/geolapp/components/StockpileDashboard.tsx',
         'modules/geolapp/components/MeasurementDetail.tsx',
         'modules/geolapp/components/DesktopAnalytics.tsx',
         'modules/geolapp/components/desktop/DesktopShell.tsx',
+        'modules/geolapp/components/desktop/DesktopCalibrationAuditView.tsx',
+        'modules/geolapp/components/desktop/DesktopDeviceCompatibilityView.tsx',
         'modules/geolapp/components/desktop/DesktopFaenaDirectory.tsx',
         'modules/geolapp/components/desktop/DesktopFaenaStockpiles.tsx',
         'modules/geolapp/components/desktop/DesktopStageWorkspace.tsx',
         'modules/geolapp/components/desktop/DesktopDossierPanel.tsx',
         'modules/geolapp/components/desktop/DesktopFaenaMonitoring.tsx',
-        'modules/geolapp/components/desktop/DesktopQuickCaptureModal.tsx',
         'modules/geolapp/components/StockpileStaticMapCard.tsx',
         'modules/geolapp/components/ExternalSensorsPanel.tsx',
         'components/mobile/MobileAppTopBar.tsx',
@@ -1466,13 +1465,46 @@ function extractOpeningTags(source: string, tagNames: string[]): string[] {
         'DesktopStageWorkspace debe incluir visor Comparativa de Campaña con enlace al Gemelo 3D'
     );
 
-    const desktopQuickModalSrc = fs.readFileSync(
-        path.join(WEB_SRC, 'modules/geolapp/components/desktop/DesktopQuickCaptureModal.tsx'),
-        'utf8'
+    for (const removedRel of [
+        'modules/geolapp/components/CaptureSelection.tsx',
+        'modules/geolapp/components/FieldNumPad.tsx',
+        'modules/geolapp/components/GeometrySelection.tsx',
+        'modules/geolapp/components/StockpileDashboard.tsx',
+        'modules/geolapp/components/StockpileRegistration.tsx',
+        'modules/geolapp/components/StockpileSummary.tsx',
+        'modules/geolapp/components/ManualCapture.tsx',
+        'modules/geolapp/components/StockList.tsx',
+        'modules/geolapp/components/desktop/DesktopQuickCaptureModal.tsx',
+    ]) {
+        assert.equal(
+            fs.existsSync(path.join(WEB_SRC, removedRel)),
+            false,
+            `${removedRel} debe permanecer eliminado`
+        );
+    }
+
+    assert.equal(
+        desktopStageSrc.includes('onNewMeasurement'),
+        false,
+        'DesktopStageWorkspace no debe incluir onNewMeasurement en escritorio'
+    );
+    assert.equal(
+        desktopStageSrc.includes('analytics.cubicar_button'),
+        false,
+        'DesktopStageWorkspace no debe incluir botón CUBICAR en escritorio'
     );
     assert.ok(
-        desktopQuickModalSrc.includes('!open || !existingAsset'),
-        'DesktopQuickCaptureModal debe bloquear apertura sin acopio existente'
+        desktopShellSrc.includes('DesktopCalibrationAuditView'),
+        'DesktopShell debe integrar DesktopCalibrationAuditView'
+    );
+    const staticMapCardSrc = fs.readFileSync(
+        path.join(WEB_SRC, 'modules/geolapp/components/StockpileStaticMapCard.tsx'),
+        'utf8'
+    );
+    assert.equal(
+        staticMapCardSrc.includes('SovereignGeoMapLazy'),
+        false,
+        'StockpileStaticMapCard no debe incluir mapa interactivo SovereignGeoMapLazy'
     );
 
     const devLaunchpadSrc = fs.readFileSync(
@@ -1499,8 +1531,13 @@ function extractOpeningTags(source: string, tagNames: string[]): string[] {
         'utf8'
     );
     assert.ok(
-        geolappAppSrc.includes("return 'faenas'"),
-        'GeolappApp móvil debe iniciar en listado de faenas'
+        geolappAppSrc.includes("return 'hub'"),
+        'GeolappApp móvil debe iniciar en hub medir/calibrar'
+    );
+    assert.ok(
+        geolappAppSrc.includes('MobileAcopiosHub') &&
+            geolappAppSrc.includes('MobileCalibrationView'),
+        'GeolappApp debe montar MobileAcopiosHub y MobileCalibrationView'
     );
     assert.ok(
         /canRegisterDevFaena\s*=\s*Boolean\(\s*isDesktopLayout/.test(geolappAppSrc),

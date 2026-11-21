@@ -166,14 +166,18 @@ function fitCameraToBox(
     controls: OrbitControls,
     box: GlbBoundingBoxM
 ): void {
-    const maxDim = Math.max(box.widthX, box.heightY, box.depthZ, 2);
-    const fovRad = (camera.fov * Math.PI) / 180;
-    const distance = Math.max(4, (maxDim / (2 * Math.tan(fovRad / 2))) * 1.65);
-    const targetY = Math.max(0.2, box.heightY * 0.42);
-    camera.position.set(distance * 0.85, Math.max(box.heightY * 1.15, distance * 0.52), distance * 0.85);
-    camera.near = Math.max(0.05, distance * 0.01);
+    const maxDim = Math.max(box.widthX, box.heightY, box.depthZ, 0.25);
+    const distance = Math.max(maxDim * 2.1, 0.65);
+    const targetY = Math.max(0.05, box.heightY * 0.42);
+    camera.position.set(
+        distance * 0.85,
+        Math.max(box.heightY * 1.15, distance * 0.52),
+        distance * 0.85
+    );
+    camera.near = Math.max(0.01, distance * 0.01);
     camera.far = Math.max(500, distance * 25);
     camera.updateProjectionMatrix();
+    controls.minDistance = Math.max(0.25, distance * 0.25);
     controls.target.set(0, targetY, 0);
     controls.update();
 }
@@ -202,6 +206,8 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
 
     const [isWireframe, setIsWireframe] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
+    const [loadFailed, setLoadFailed] = useState(false);
+    const [retryCounter, setRetryCounter] = useState(0);
     const [webglUnavailable, setWebglUnavailable] = useState(false);
     const [isDark, setIsDark] = useState<boolean>(() =>
         typeof document !== 'undefined'
@@ -238,16 +244,19 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
 
         if (!cleanUrl && !hasFallback) {
             setIsLoading(false);
+            setLoadFailed(false);
             setMeshBuffer(null);
             setTelemetry(null);
             return;
         }
 
         setIsLoading(true);
+        setLoadFailed(false);
 
         (async () => {
             let resolvedBuffer: ArrayBuffer | null = null;
             let resolvedMeta: ParsedMeshTelemetry | null = null;
+            let remoteFailed = false;
 
             if (cleanUrl) {
                 const fetched = await resolveStockpileMeshBinary(cleanUrl);
@@ -269,7 +278,11 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
                             savingsPct: casMetrics?.savingsPct,
                             sourceLabel: meshSource || fetched.sourceLabel,
                         };
+                    } else {
+                        remoteFailed = true;
                     }
+                } else {
+                    remoteFailed = true;
                 }
             }
 
@@ -303,6 +316,7 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
             }
 
             if (cancelled) return;
+            setLoadFailed(Boolean(!resolvedBuffer && remoteFailed));
             setMeshBuffer(resolvedBuffer);
             setTelemetry(resolvedMeta);
             setIsLoading(false);
@@ -312,7 +326,7 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
             cancelled = true;
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [meshUrl, fallbackKey, meshSource]);
+    }, [meshUrl, fallbackKey, meshSource, retryCounter]);
 
     // Actualizar material wireframe/sólido sin recrear la escena
     const applyWireframeState = useCallback((root: THREE.Object3D | null, wireframe: boolean) => {
@@ -386,7 +400,7 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
         controls.enableDamping = true;
         controls.dampingFactor = 0.08;
         controls.maxPolarAngle = Math.PI * 0.495;
-        controls.minDistance = 1.5;
+        controls.minDistance = 0.25;
 
         const hemiLight = new THREE.HemisphereLight(0xffffff, 0x334155, 0.85);
         scene.add(hemiLight);
@@ -434,7 +448,7 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
 
                 const computed = computeStatsFromGltfRoot(root);
                 const gridExtent = Math.max(
-                    12,
+                    4,
                     Math.ceil(Math.max(computed.boundingBoxM.widthX, computed.boundingBoxM.depthZ) * 1.8)
                 );
                 const divisions = Math.min(40, Math.max(12, Math.round(gridExtent)));
@@ -494,6 +508,7 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
                         return;
                     }
                 }
+                setLoadFailed(true);
                 setMeshBuffer(null);
             });
 
@@ -615,21 +630,9 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
             : UNDECLARED_VALUE;
 
     const hasRenderableMesh = Boolean(meshBuffer);
+    const hasCleanMeshUrl = typeof meshUrl === 'string' && meshUrl.trim().length > 0;
 
     if (compact) {
-        const compactDimsText =
-            hasDimensions && bbox
-                ? `${bbox.widthX.toFixed(1)}×${bbox.depthZ.toFixed(1)}×${bbox.heightY.toFixed(1)} m`
-                : '--';
-        const compactVolText =
-            effectiveTinVolume !== null && Number.isFinite(effectiveTinVolume)
-                ? `${effectiveTinVolume.toFixed(2)} m³`
-                : '--';
-        const compactTriText =
-            telemetry && telemetry.triangleCount > 0
-                ? `${telemetry.triangleCount.toLocaleString('en-US')} TRI`
-                : '-- TRI';
-
         return (
             <section
                 aria-label={t('twin3d.title', 'GEMELO DIGITAL 3D (.GLB)')}
@@ -645,10 +648,6 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
                         </div>
                     )}
 
-                    <span className="absolute top-fib-8 left-fib-13 z-10 pointer-events-none font-mono tabular-nums text-microcopy uppercase text-[#C68346]">
-                        TIN · GLB
-                    </span>
-
                     <div className="absolute top-fib-8 right-fib-8 z-10 flex items-center gap-fib-8">
                         <button
                             type="button"
@@ -657,11 +656,11 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
                             aria-label={t('twin3d.wireframe_toggle', 'MODO WIREFRAME')}
                             aria-pressed={isWireframe}
                             disabled={!hasRenderableMesh || webglUnavailable}
-                            className={`${FLAT_ICON_BTN_CLASS} min-w-[40px] min-h-[40px] ${
+                            className={`${FLAT_ICON_BTN_CLASS} min-w-[44px] min-h-[44px] ${
                                 isWireframe ? 'text-[#00AEEF] dark:text-[#00AEEF]' : ''
                             } disabled:opacity-40 disabled:cursor-not-allowed`}
                         >
-                            <span className="material-symbols-outlined text-[18px]">grid_4x4</span>
+                            <span className="material-symbols-outlined text-[20px]">grid_4x4</span>
                         </button>
 
                         <button
@@ -670,9 +669,9 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
                             title={t('twin3d.reset_camera', 'Centrar cámara 3D')}
                             aria-label={t('twin3d.reset_camera', 'Centrar cámara 3D')}
                             disabled={!hasRenderableMesh || webglUnavailable}
-                            className={`${FLAT_ICON_BTN_CLASS} min-w-[40px] min-h-[40px] disabled:opacity-40 disabled:cursor-not-allowed`}
+                            className={`${FLAT_ICON_BTN_CLASS} min-w-[44px] min-h-[44px] disabled:opacity-40 disabled:cursor-not-allowed`}
                         >
-                            <span className="material-symbols-outlined text-[18px]">
+                            <span className="material-symbols-outlined text-[20px]">
                                 center_focus_strong
                             </span>
                         </button>
@@ -687,31 +686,27 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
                     ) : (
                         <div
                             style={{ height: `${heightPx}px` }}
-                            className="w-full px-fib-21 flex flex-col items-center justify-center gap-fib-8 text-center"
+                            className="w-full px-fib-21 flex flex-col items-center justify-center gap-fib-13 text-center"
                         >
-                            <span className="material-symbols-outlined text-[28px] text-[#94A3B8] dark:text-[#5A6072]">
+                            <span className="material-symbols-outlined text-[32px] text-[#94A3B8] dark:text-[#5A6072]">
                                 deployed_code
                             </span>
-                            <span className="text-microcopy font-mono text-[#94A3B8] dark:text-[#5A6072]">
-                                {isLoading
-                                    ? t('twin3d.loading_mesh', 'CARGANDO MALLA .glb...')
-                                    : webglUnavailable
-                                      ? 'WEBGL OFF'
-                                      : PENDING_RECORD}
-                            </span>
+                            {!isLoading && (
+                                <span className="text-microcopy font-mono uppercase text-[#94A3B8] dark:text-[#5A6072]">
+                                    {t('twin3d.no_model_3d', 'SIN MODELO 3D')}
+                                </span>
+                            )}
+                            {!isLoading && loadFailed && hasCleanMeshUrl && (
+                                <button
+                                    type="button"
+                                    onClick={() => setRetryCounter((c) => c + 1)}
+                                    className="min-h-[48px] px-fib-13 border border-[#E2E8F0] dark:border-[#12151C] bg-transparent text-[#00AEEF] font-mono text-microcopy font-bold uppercase cursor-pointer rounded-none shadow-none"
+                                >
+                                    {t('twin3d.retry_load', 'REINTENTAR')}
+                                </button>
+                            )}
                         </div>
                     )}
-                </div>
-
-                <div className="flex items-center justify-between gap-fib-8 px-fib-13 py-fib-8 border-t border-[#E2E8F0] dark:border-[#12151C] bg-transparent font-mono tabular-nums text-microcopy text-[#475569] dark:text-[#8A93A6]">
-                    <div className="flex items-center gap-fib-8 min-w-0 truncate">
-                        <span className="truncate">{compactDimsText}</span>
-                        <span aria-hidden="true">·</span>
-                        <span className="text-[#C68346] font-bold shrink-0">{compactVolText}</span>
-                        <span aria-hidden="true">·</span>
-                        <span className="shrink-0">{compactTriText}</span>
-                    </div>
-                    <span className="uppercase text-[#00AEEF] shrink-0">3D</span>
                 </div>
             </section>
         );

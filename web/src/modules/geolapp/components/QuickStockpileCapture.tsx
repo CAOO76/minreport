@@ -8,20 +8,15 @@ import {
     saveCaptureDraft,
 } from '../../../core/offline/OfflineSessionVault';
 import type {
-    GeolappGeometryType,
     GeolappGnssStatus,
     MiningSiteProfile,
     StockpileAsset,
 } from '../core/types/GeolappTypes';
 import { triggerFieldImpact } from '../core/utils/fieldHaptics';
-import { ManualCapture } from './ManualCapture';
 import { MobileScanner } from './MobileScanner';
 
 export interface QuickStockpileCaptureProps {
     existingAsset?: StockpileAsset | null;
-    initialMethod?: 'manual' | 'digital';
-    initialGeometry?: GeolappGeometryType;
-    allowManualFallback?: boolean;
     sites?: MiningSiteProfile[];
     selectedFaenaId?: string | null;
     onComplete: (result: {
@@ -35,9 +30,6 @@ export interface QuickStockpileCaptureProps {
 
 export const QuickStockpileCapture: React.FC<QuickStockpileCaptureProps> = ({
     existingAsset,
-    initialMethod = 'digital',
-    initialGeometry,
-    allowManualFallback = false,
     sites = [],
     selectedFaenaId = null,
     onComplete,
@@ -77,16 +69,6 @@ export const QuickStockpileCapture: React.FC<QuickStockpileCaptureProps> = ({
         }
         return null;
     }, [existingAsset, selectedFaenaId, sites]);
-
-    const [method, setMethod] = useState<'manual' | 'digital'>(() =>
-        allowManualFallback ? initialMethod : 'digital'
-    );
-
-    useEffect(() => {
-        if (!allowManualFallback) {
-            setMethod('digital');
-        }
-    }, [allowManualFallback]);
 
     const [geoPoint, setGeoPoint] = useState<StockpileAsset['geo_point'] | undefined>(
         existingAsset?.geo_point
@@ -250,7 +232,7 @@ export const QuickStockpileCapture: React.FC<QuickStockpileCaptureProps> = ({
                                         }
                                     }}
                                     aria-label={t('registration.name_label', 'ID / NOMBRE DEL ACOPIO')}
-                                    className="flex-1 min-w-0 h-10 px-fib-8 bg-transparent border-0 border-b border-[#C68346] outline-none font-mono font-bold text-data-dense uppercase text-[#0F172A] dark:text-[#F3F4F6] rounded-none"
+                                    className="flex-1 min-w-0 h-11 px-fib-8 bg-transparent border-0 border-b border-[#C68346] outline-none font-mono font-bold text-[18px] uppercase text-[#0F172A] dark:text-[#F3F4F6] rounded-none"
                                 />
                             ) : (
                                 <button
@@ -262,17 +244,17 @@ export const QuickStockpileCapture: React.FC<QuickStockpileCaptureProps> = ({
                                     aria-label={t('digital_v2.edit_code', 'Editar código')}
                                     className="flex-1 min-w-0 min-h-[48px] bg-transparent border-0 text-left flex items-center gap-fib-8 cursor-pointer rounded-none px-0"
                                 >
-                                    <span className="text-h2-section font-mono font-bold uppercase truncate text-[#0F172A] dark:text-[#F3F4F6]">
+                                    <span className="text-[18px] font-mono font-bold uppercase truncate text-[#0F172A] dark:text-[#F3F4F6]">
                                         {stockpileName}
                                     </span>
-                                    <span className="material-symbols-outlined text-[16px] text-[#475569] dark:text-[#8A93A6] shrink-0">
+                                    <span className="material-symbols-outlined text-[18px] text-[#475569] dark:text-[#8A93A6] shrink-0">
                                         edit
                                     </span>
                                 </button>
                             )}
                         </div>
                     ) : (
-                        <span className="flex-1 min-w-0 text-h2-section font-mono font-bold uppercase truncate text-[#0F172A] dark:text-[#F3F4F6]">
+                        <span className="flex-1 min-w-0 text-[18px] font-mono font-bold uppercase truncate text-[#0F172A] dark:text-[#F3F4F6]">
                             {existingAsset?.name}
                         </span>
                     )}
@@ -295,58 +277,17 @@ export const QuickStockpileCapture: React.FC<QuickStockpileCaptureProps> = ({
                         />
                     </button>
                 </div>
-
-                {allowManualFallback && (
-                    <div className="grid grid-cols-2 border-t border-[#E2E8F0] dark:border-[#12151C] bg-transparent rounded-none">
-                        <button
-                            type="button"
-                            onClick={() => setMethod('digital')}
-                            className={`min-h-[44px] font-mono text-microcopy font-bold uppercase border-0 border-b-2 cursor-pointer flex items-center justify-center gap-fib-8 rounded-none bg-transparent ${
-                                method === 'digital'
-                                    ? 'border-[#C68346] text-[#C68346]'
-                                    : 'border-transparent text-[#475569] dark:text-[#8A93A6]'
-                            }`}
-                        >
-                            <span className="material-symbols-outlined text-[18px]">
-                                photo_camera
-                            </span>
-                            <span>{t('digital_v2.mode_digital', 'DIGITAL IA')}</span>
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => setMethod('manual')}
-                            className={`min-h-[44px] font-mono text-microcopy font-bold uppercase border-0 border-b-2 cursor-pointer flex items-center justify-center gap-fib-8 rounded-none bg-transparent ${
-                                method === 'manual'
-                                    ? 'border-[#C68346] text-[#C68346]'
-                                    : 'border-transparent text-[#475569] dark:text-[#8A93A6]'
-                            }`}
-                        >
-                            <span className="material-symbols-outlined text-[18px]">straighten</span>
-                            <span>{t('capture.manual_title', 'COTAS ESCRITORIO')}</span>
-                        </button>
-                    </div>
-                )}
             </header>
 
             <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-                {allowManualFallback && method === 'manual' ? (
-                    <ManualCapture
-                        assetId={existingAsset?.id}
-                        draftAsset={draftAssetPayload}
-                        initialGeometry={initialGeometry}
-                        onSuccess={handleChildSuccess}
-                        onBack={onCancel}
-                        hideHeader
-                    />
-                ) : (
-                    <MobileScanner
-                        assetId={existingAsset?.id}
-                        draftAsset={draftAssetPayload}
-                        onSuccess={handleChildSuccess}
-                        onBack={onCancel}
-                        hideHeader
-                    />
-                )}
+                <MobileScanner
+                    assetId={existingAsset?.id}
+                    assetName={existingAsset?.name || stockpileName}
+                    draftAsset={draftAssetPayload}
+                    onSuccess={handleChildSuccess}
+                    onBack={onCancel}
+                    hideHeader
+                />
             </div>
         </div>
     );

@@ -1,5 +1,6 @@
 {
   "core_common": {
+    "copy_value": "Copiar valor",
     "undeclared_tech_value": "[Informação técnica não declarada na ficha]"
   },
   "common": {
@@ -16,7 +17,8 @@
     "undeclared_tech_data": "[Informação técnica não declarada na ficha]",
     "pending_record": "[Pendente de registro]",
     "brand_header": "MINREPORT",
-    "module_title": "MINREPORT · PILHAS"
+    "module_title": "MINREPORT · PILHAS",
+    "refresh": "ATUALIZAR"
   },
   "home": {
     "brand_header": "MINREPORT · PILHAS",
@@ -214,7 +216,23 @@
     "spatial_scan_btn": "ESCANEAR 3D",
     "spatial_coverage_label": "COBERTURA",
     "spatial_toe_label": "PÉ",
-    "spatial_uncertainty_label": "MARGEM"
+    "spatial_uncertainty_label": "MARGEM",
+    "analyze_error": "ERRO AO CALCULAR VOLUME",
+    "analyze_required": "EXECUTE A ANÁLISE ANTES DE SALVAR",
+    "calculating_volume": "CALCULANDO VOLUME...",
+    "calibrate_btn": "CALIBRAR",
+    "calibrated_status": "TELEFONE CALIBRADO",
+    "calibrating": "CALIBRANDO...",
+    "discard_retry_btn": "DESCARTAR E REPETIR",
+    "measure_volume_btn": "MEDIR VOLUME",
+    "remeasure_btn": "MEDIR NOVAMENTE",
+    "save_measurement_btn": "SALVAR MEDIÇÃO",
+    "domain_optional_label": "CLASSIFICAÇÃO MATERIAL (OPCIONAL)",
+    "granulometry_optional_label": "GRANULOMETRIA (OPCIONAL)",
+    "ai_granulometry_optin": "IA",
+    "density_optional_placeholder": "DENSIDADE (t/m³, OPCIONAL)",
+    "ready_cal_factor_prefix": "CAL",
+    "ready_uncalibrated": "NÃO CALIBRADO"
   },
   "geometries": {
     "kicker": "GEOMETRIA",
@@ -355,7 +373,13 @@
     "ignored_label": "IGNORADO",
     "evolution_chart_title": "EVOLUÇÃO TEMPORAL DE VOLUME E TONELAGEM",
     "static_map_title": "MAPA SATELITAL ESTÁTICO",
-    "static_map_no_interaction": "SEM INTERAÇÃO"
+    "static_map_no_interaction": "SEM INTERAÇÃO",
+    "static_satellite_label": "REFERÊNCIA SATELITAL CAS",
+    "refresh_static_map": "Atualizar imagem satelital",
+    "loading_static_map": "Carregando imagem satelital",
+    "static_satellite_alt": "Referência satelital estática CAS",
+    "static_map_pending": "[Imagem satelital pendente]",
+    "static_map_no_coords": "[Sem coordenadas WGS84 declaradas]"
   },
   "twin3d": {
     "title": "GÊMEO DIGITAL 3D (.glb)",
@@ -382,7 +406,9 @@
     "source_server_tin": "TIN PARAMÉTRICO (southamerica-west1)",
     "source_local_tin": "TIN LOCAL DETERMINÍSTICO",
     "webgl_fallback_notice": "Contexto WebGL indisponível; exibindo ficha métrica tabular.",
-    "no_mesh_declared": "[Informação técnica não declarada na ficha]"
+    "no_mesh_declared": "[Informação técnica não declarada na ficha]",
+    "no_model_3d": "SEM MODELO 3D",
+    "retry_load": "TENTAR NOVAMENTE"
   },
   "rosin_rammler": {
     "title": "GRANULOMETRIA ROSIN-RAMMLER (RRSB)",
@@ -593,7 +619,8 @@
     "tab_spec": "FICHA TÉCNICA",
     "tab_summary": "RESUMO",
     "tonnage_label": "TONELAGEM",
-    "volume_label": "VOLUME"
+    "volume_label": "VOLUME",
+    "measure_again_btn": "MEDIR NOVAMENTE"
   },
   "faenas": {
     "all": "TODAS AS MINAS",
@@ -617,12 +644,14 @@
     "mode_photo": "FOTO",
     "mode_3d": "3D",
     "mode_dual": "FOTO + 3D",
+    "mode_map": "MAPA",
     "reconstruct_3d": "RECONSTRUIR 3D",
     "wireframe": "WIREFRAME",
     "reset_camera": "CENTRALIZAR CÂMERA",
     "latest_short": "ÚLTIMA",
     "initial_short": "INICIAL",
-    "mode_aria": "Modo visual"
+    "mode_aria": "Modo visual",
+    "no_photo": "SEM FOTO"
   },
   "visual3d": {
     "uncertainty_label": "INCERTEZA",
@@ -704,7 +733,58 @@
     "tier_needs_update": "ATUALIZAR ARCORE",
     "tier_incompatible": "INCOMPATÍVEL",
     "mobile_incompatible_banner": "DISPOSITIVO INCOMPATÍVEL COM ARCORE",
+    "mobile_no_depth_sensor": "ESTE TELEFONE NÃO TEM SENSOR DE PROFUNDIDADE",
     "mobile_update_arcore": "ATUALIZAR SERVIÇOS AR",
-    "mobile_optimal_badge": "ARCORE · DEPTH"
+    "mobile_optimal_badge": "ARCORE · DEPTH",
+    "ondemand_title": "MOTOR ON-DEMAND COMPATIBILIDADE MÓVEL",
+    "registered_count": "REGISTRADOS",
+    "query_placeholder": "DIGITE MARCA E MODELO (EX. SAMSUNG GALAXY A17 5G)",
+    "check_btn": "VERIFICAR",
+    "checking_btn": "AVALIANDO IA...",
+    "loading_aria": "Verificando hardware móvel",
+    "check_error": "Não foi possível verificar a compatibilidade com evidência web.",
+    "source_cache": "CACHE BD (0 TOKENS)",
+    "source_live_ai": "AVALIAÇÃO IA GROUNDED",
+    "copy_key": "Copiar chave",
+    "sources_label": "FONTES VERIFICADAS",
+    "db_table_title": "BASE DE DADOS DE EQUIPOS CONSULTADOS",
+    "filter_registered_placeholder": "FILTRAR HISTÓRICO CONSULTADO",
+    "empty_registry": "[Nenhum equipamento consultado ainda]",
+    "recheck_action": "Reavaliar"
+  },
+  "hub": {
+    "module_title": "PILHAS",
+    "measure_action": "MEDIR",
+    "calibrate_action": "CALIBRAR",
+    "cal_factor_prefix": "CAL",
+    "cal_pending": "NÃO CALIBRADO",
+    "sites_unit": "MINAS",
+    "assets_unit": "PILHAS"
+  },
+  "calibration": {
+    "mobile_header": "CALIBRAÇÃO",
+    "desktop_title": "AUDITORIA DE CALIBRAÇÕES EM CAMPO",
+    "active_factor_label": "FATOR ESCALA AR",
+    "status_valid": "CALIBRADO",
+    "status_pending": "NÃO CALIBRADO",
+    "synced": "CLOUD",
+    "queued_offline": "FILA",
+    "calibrating_aria": "CALIBRANDO",
+    "running": "CALIBRANDO...",
+    "start_action": "CALIBRAR TRENA 2.00 m",
+    "native_only": "[APENAS DISPOSITIVO NATIVO ARCORE]",
+    "history_title": "HISTÓRICO AUDITÁVEL",
+    "loading_history_aria": "CARREGANDO HISTÓRICO",
+    "empty_history": "[Sem calibrações registradas]",
+    "error_generic": "Erro ao executar calibração AR.",
+    "error_load_audit": "Erro ao carregar registro de calibrações.",
+    "filter_placeholder": "MODELO / ID CALIBRAÇÃO",
+    "col_date": "DATA UTC",
+    "col_device": "DISPOSITIVO",
+    "col_scale": "ESCALA",
+    "col_distances": "REF / MEDIDO (m)",
+    "col_rms": "RMS PLANO",
+    "col_imu": "PITCH / ROLL",
+    "col_status": "REGIÃO / ESTADO"
   }
 }

@@ -201,9 +201,9 @@ function testMobileDigitalOnlyAndOfflineSyncContracts(): void {
         path.join(WEB_SRC, 'modules/geolapp/components/MobileScanner.tsx'),
         'utf8'
     );
-    const manualCaptureSrc = fs.readFileSync(
-        path.join(WEB_SRC, 'modules/geolapp/components/ManualCapture.tsx'),
-        'utf8'
+    const manualCapturePath = path.join(
+        WEB_SRC,
+        'modules/geolapp/components/ManualCapture.tsx'
     );
     const quickCaptureSrc = fs.readFileSync(
         path.join(WEB_SRC, 'modules/geolapp/components/QuickStockpileCapture.tsx'),
@@ -226,9 +226,9 @@ function testMobileDigitalOnlyAndOfflineSyncContracts(): void {
         'utf8'
     );
 
-    // Purga de sensores externos / nubes de puntos / RTK en captura móvil
+    // Purga total de cubicación manual en escritorio/móvil, sensores externos y animate-spin
     assert.equal(mobileScannerSrc.includes('ExternalSensorsPanel'), false);
-    assert.equal(manualCaptureSrc.includes('ExternalSensorsPanel'), false);
+    assert.equal(fs.existsSync(manualCapturePath), false, 'ManualCapture.tsx debe estar eliminado');
     assert.equal(mobileScannerSrc.includes('animate-spin'), false);
 
     // Capacidades digitales limpias en MobileScanner (cámara + galería + guardar un toque + ARCore + XCover + CAS)
@@ -250,8 +250,9 @@ function testMobileDigitalOnlyAndOfflineSyncContracts(): void {
     assert.ok(mobileScannerSrc.includes('GEOLAPP_DIGITAL_AI_ANALYZE'), 'Debe encolar análisis IA offline');
     assert.ok(mobileScannerSrc.includes('PENDING_AI_SYNC'), 'Debe marcar estado PENDING_AI_SYNC offline');
 
-    // QuickStockpileCapture debe bloquear flujo manual en móvil por defecto y exponer modo subterráneo
-    assert.ok(quickCaptureSrc.includes('allowManualFallback = false'));
+    // QuickStockpileCapture solo renderiza cámara móvil y expone modo subterráneo
+    assert.equal(quickCaptureSrc.includes('ManualCapture'), false);
+    assert.equal(quickCaptureSrc.includes('COTAS ESCRITORIO'), false);
     assert.ok(quickCaptureSrc.includes('UNDERGROUND_NO_FIX'));
 
     // Barra inferior móvil sin Analytics

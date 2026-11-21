@@ -572,7 +572,7 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
         const fallbackAsset: StockpileAsset = asset ?? {
             id: measurement.assetId,
             name: measurement.assetId,
-            clase: 'mineral',
+            clase: null,
             createdAt: measurement.timestamp,
             createdBy: measurement.user_id || '',
             last_volume_m3: measurement.volumen_m3,

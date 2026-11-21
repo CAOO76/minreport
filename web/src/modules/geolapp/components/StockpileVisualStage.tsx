@@ -2,12 +2,12 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { M3LinearProgress } from '../../../components/common/M3LinearProgress';
 import { SecureImage } from '../../../components/common/SecureImage';
-import { useResolvedStockpileImage } from '../core/services/StorageService';
+import { useResolvedStockpileImageState } from '../core/services/StorageService';
 import type { BoulderDetectionBox2D } from '../core/types/GeolappTypes';
 import { isValidBox2D } from '../core/utils/rosinRammler';
 import { StockpileTwin3DLazy } from './StockpileTwin3DLazy';
 
-export type StockpileVisualMode = 'PHOTO' | '3D' | 'DUAL';
+export type StockpileVisualMode = 'PHOTO' | '3D' | 'DUAL' | 'MAP';
 
 export interface StockpileVisualStageProps {
     photoUrl?: string | null;
@@ -34,6 +34,7 @@ export interface StockpileVisualStageProps {
     coveragePct?: number | null;
     depthMode?: string | null;
     altLabel?: string;
+    mapNode?: React.ReactNode;
     isMobile?: boolean;
     heightPx?: number;
     canReconstruct3D?: boolean;
@@ -43,6 +44,8 @@ export interface StockpileVisualStageProps {
     defaultMode?: StockpileVisualMode;
     onModeChange?: (mode: StockpileVisualMode) => void;
     hideModeToolbar?: boolean;
+    compact?: boolean;
+    showMetrologyFooter?: boolean;
 }
 
 type ActivePhotoSource =
@@ -77,24 +80,41 @@ const StagePhotoThumb: React.FC<{
     active: boolean;
     onSelect: () => void;
 }> = ({ url, label, active, onSelect }) => {
-    const resolved = useResolvedStockpileImage(url);
+    const { resolvedUrl: resolved, isLoading } = useResolvedStockpileImageState(url);
+    const [failedUrl, setFailedUrl] = useState<string | null>(null);
+    const hasValidImage = Boolean(resolved) && failedUrl !== resolved;
+
     return (
         <button
             type="button"
             onClick={onSelect}
             aria-label={label}
             aria-pressed={active}
-            className={`w-12 h-12 shrink-0 p-0 overflow-hidden rounded-none shadow-none bg-[#F8FAFC] dark:bg-[#030508] cursor-pointer flex items-center justify-center ${
+            className={`w-12 h-12 shrink-0 p-0 overflow-hidden rounded-none shadow-none bg-[#F8FAFC] dark:bg-[#030508] cursor-pointer flex items-center justify-center relative ${
                 active
                     ? 'border-2 border-[#C68346]'
                     : 'border border-[#E2E8F0] dark:border-[#12151C] opacity-75 hover:opacity-100'
             }`}
         >
-            {resolved ? (
-                <SecureImage src={resolved} alt={label} className="w-full h-full object-cover" />
+            {isLoading ? (
+                <div className="w-full h-full flex flex-col items-center justify-center relative">
+                    <div className="absolute top-0 left-0 right-0">
+                        <M3LinearProgress indeterminate ariaLabel={label} />
+                    </div>
+                    <span className="material-symbols-outlined text-[16px] text-[#94A3B8] dark:text-[#5A6072]">
+                        photo_camera
+                    </span>
+                </div>
+            ) : hasValidImage ? (
+                <SecureImage
+                    src={resolved}
+                    alt={label}
+                    className="w-full h-full object-cover"
+                    onError={() => setFailedUrl(resolved)}
+                />
             ) : (
                 <span className="material-symbols-outlined text-[16px] text-[#94A3B8] dark:text-[#5A6072]">
-                    photo_camera
+                    image_not_supported
                 </span>
             )}
         </button>
@@ -118,6 +138,7 @@ export const StockpileVisualStage: React.FC<StockpileVisualStageProps> = ({
     coveragePct,
     depthMode,
     altLabel,
+    mapNode,
     isMobile = false,
     heightPx,
     canReconstruct3D = false,
@@ -127,6 +148,8 @@ export const StockpileVisualStage: React.FC<StockpileVisualStageProps> = ({
     defaultMode,
     onModeChange,
     hideModeToolbar = false,
+    compact,
+    showMetrologyFooter,
 }) => {
     const { t } = useTranslation();
 
@@ -184,7 +207,10 @@ export const StockpileVisualStage: React.FC<StockpileVisualStageProps> = ({
         return normalizedLatest || normalizedInitial || cleanPerimeterUrls[0] || '';
     }, [activePhotoSource, normalizedLatest, normalizedInitial, cleanPerimeterUrls]);
 
-    const resolvedPhoto = useResolvedStockpileImage(activeRawPhotoUrl || null);
+    const { resolvedUrl: resolvedPhoto, isLoading: isPhotoLoading } = useResolvedStockpileImageState(
+        activeRawPhotoUrl || null
+    );
+    const [photoLoadFailedForUrl, setPhotoLoadFailedForUrl] = useState<string | null>(null);
 
     const validBoulders = useMemo(
         () =>
@@ -241,7 +267,7 @@ export const StockpileVisualStage: React.FC<StockpileVisualStageProps> = ({
         return items;
     }, [cleanPerimeterUrls, normalizedLatest, t]);
 
-    const modeOptions: Array<{ id: StockpileVisualMode; label: string }> = isMobile
+    const baseModeOptions: Array<{ id: StockpileVisualMode; label: string }> = isMobile
         ? [
               { id: 'PHOTO', label: t('visual.mode_photo', 'FOTO') },
               { id: '3D', label: t('visual.mode_3d', '3D') },
@@ -251,6 +277,9 @@ export const StockpileVisualStage: React.FC<StockpileVisualStageProps> = ({
               { id: '3D', label: t('visual.mode_3d', '3D') },
               { id: 'DUAL', label: t('visual.mode_dual', 'FOTO + 3D') },
           ];
+    const modeOptions: Array<{ id: StockpileVisualMode; label: string }> = mapNode
+        ? [...baseModeOptions, { id: 'MAP', label: t('visual.mode_map', 'MAPA') }]
+        : baseModeOptions;
 
     const showPhotoPanel = effectiveMode === 'PHOTO' || effectiveMode === 'DUAL';
     const show3DPanel = effectiveMode === '3D' || effectiveMode === 'DUAL';
@@ -275,7 +304,9 @@ export const StockpileVisualStage: React.FC<StockpileVisualStageProps> = ({
               ? `${casOptText}${casPctText ? ` ${casPctText}` : ''}`
               : casPctText;
 
-    const showMetrologyFooter = Boolean(
+    const effectiveCompact = compact ?? isMobile;
+    const effectiveShowMetrologyFooter = showMetrologyFooter ?? !effectiveCompact;
+    const hasMetrologyData = Boolean(
         hasTinVolume ||
             hasUncertainty ||
             hasCoverage ||
@@ -341,12 +372,22 @@ export const StockpileVisualStage: React.FC<StockpileVisualStageProps> = ({
                     </div>
                 )}
 
-                {resolvedPhoto ? (
+                {isPhotoLoading ? (
+                    <div className="w-full h-full flex flex-col items-center justify-center bg-[#F8FAFC] dark:bg-[#030508] rounded-none shadow-none relative">
+                        <div className="absolute top-0 left-0 right-0">
+                            <M3LinearProgress indeterminate ariaLabel={t('common.loading', 'CARGANDO...')} />
+                        </div>
+                        <span className="material-symbols-outlined text-[28px] text-[#94A3B8] dark:text-[#5A6072]">
+                            photo_camera
+                        </span>
+                    </div>
+                ) : resolvedPhoto && photoLoadFailedForUrl !== resolvedPhoto ? (
                     <>
                         <SecureImage
                             src={resolvedPhoto}
                             alt={altLabel || t('digital_v2.photo_alt', 'Captura acopio')}
                             className="w-full h-full object-contain"
+                            onError={() => setPhotoLoadFailedForUrl(resolvedPhoto)}
                         />
                         {showBoulderOverlay && (
                             <svg
@@ -392,9 +433,14 @@ export const StockpileVisualStage: React.FC<StockpileVisualStageProps> = ({
                         )}
                     </>
                 ) : (
-                    <span className="material-symbols-outlined text-[36px] text-[#94A3B8] dark:text-[#5A6072]">
-                        image_not_supported
-                    </span>
+                    <div className="w-full h-full flex flex-col items-center justify-center gap-2 bg-[#F8FAFC] dark:bg-[#030508] rounded-none shadow-none">
+                        <span className="material-symbols-outlined text-[36px] text-[#94A3B8] dark:text-[#5A6072]">
+                            image_not_supported
+                        </span>
+                        <span className="font-mono tabular-nums text-microcopy font-bold uppercase tracking-[0.06em] text-[#94A3B8] dark:text-[#5A6072]">
+                            {t('visual.no_photo', 'SIN FOTO')}
+                        </span>
+                    </div>
                 )}
 
                 {showSlopeOverlay && slopeAngleDeg != null && (
@@ -490,8 +536,10 @@ export const StockpileVisualStage: React.FC<StockpileVisualStageProps> = ({
                             </span>
                         </button>
                     ) : (
-                        <span className="text-microcopy font-mono text-[#94A3B8] dark:text-[#5A6072]">
-                            {t('common.pending_record', PENDING_RECORD)}
+                        <span className="text-microcopy font-mono font-bold uppercase text-[#94A3B8] dark:text-[#5A6072]">
+                            {effectiveCompact
+                                ? t('twin3d.no_model_3d', 'SIN MODELO 3D')
+                                : t('common.pending_record', PENDING_RECORD)}
                         </span>
                     )}
                 </div>
@@ -557,7 +605,9 @@ export const StockpileVisualStage: React.FC<StockpileVisualStageProps> = ({
                 />
             )}
 
-            {effectiveMode === 'DUAL' ? (
+            {effectiveMode === 'MAP' && mapNode ? (
+                mapNode
+            ) : effectiveMode === 'DUAL' ? (
                 <div className="grid grid-cols-1 lg:grid-cols-[1fr_1.618fr] gap-fib-13 items-start">
                     {photoPanel}
                     {twinPanel}
@@ -569,7 +619,7 @@ export const StockpileVisualStage: React.FC<StockpileVisualStageProps> = ({
                 </>
             )}
 
-            {showMetrologyFooter && (
+            {effectiveShowMetrologyFooter && hasMetrologyData && (
                 <div className="flex flex-wrap items-center justify-between gap-fib-8 px-fib-13 py-fib-8 border-t border-[#E2E8F0] dark:border-[#12151C] bg-transparent font-mono tabular-nums text-microcopy text-[#475569] dark:text-[#8A93A6] rounded-none shadow-none">
                     <div className="flex flex-wrap items-center gap-fib-13 min-w-0">
                         {hasTinVolume && (

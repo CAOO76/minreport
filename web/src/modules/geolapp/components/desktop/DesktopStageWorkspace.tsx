@@ -41,7 +41,6 @@ export interface DesktopStageWorkspaceProps {
     measurements: StockpileMeasurement[];
     selectedMeasurementId?: string | null;
     onSelectMeasurement: (m: StockpileMeasurement) => void;
-    onNewMeasurement: () => void;
     onRequestClosure: () => void;
     onRequestReopen: () => void;
     onRequestDelete: () => void;
@@ -252,7 +251,6 @@ export const DesktopStageWorkspace: React.FC<DesktopStageWorkspaceProps> = ({
     measurements,
     selectedMeasurementId,
     onSelectMeasurement,
-    onNewMeasurement,
     onRequestClosure,
     onRequestReopen,
     onRequestDelete,
@@ -459,29 +457,17 @@ export const DesktopStageWorkspace: React.FC<DesktopStageWorkspaceProps> = ({
 
                 <div className="flex items-center gap-fib-8 shrink-0">
                     {!isClosed ? (
-                        <>
-                            <button
-                                type="button"
-                                onClick={onNewMeasurement}
-                                className="px-fib-13 py-2 bg-[#C68346] hover:bg-[#b5753b] text-white font-mono text-microcopy font-bold uppercase border-0 cursor-pointer flex items-center gap-1 rounded-none"
-                            >
-                                <span className="material-symbols-outlined text-[16px]">
-                                    add_a_photo
-                                </span>
-                                <span>{t('analytics.cubicar_button', 'CUBICAR')}</span>
-                            </button>
-                            <button
-                                type="button"
-                                onClick={onRequestClosure}
-                                title={t('lifecycle.close_shipment_action', 'Cerrar por embarque')}
-                                aria-label={t('lifecycle.close_shipment_action', 'Cerrar por embarque')}
-                                className="bg-transparent border-0 outline-none p-1.5 text-[#475569] dark:text-[#8A93A6] hover:text-[#C68346] cursor-pointer rounded-none"
-                            >
-                                <span className="material-symbols-outlined text-[20px]">
-                                    local_shipping
-                                </span>
-                            </button>
-                        </>
+                        <button
+                            type="button"
+                            onClick={onRequestClosure}
+                            title={t('lifecycle.close_shipment_action', 'Cerrar por embarque')}
+                            aria-label={t('lifecycle.close_shipment_action', 'Cerrar por embarque')}
+                            className="bg-transparent border-0 outline-none p-1.5 text-[#475569] dark:text-[#8A93A6] hover:text-[#C68346] cursor-pointer rounded-none"
+                        >
+                            <span className="material-symbols-outlined text-[20px]">
+                                local_shipping
+                            </span>
+                        </button>
                     ) : (
                         <button
                             type="button"
@@ -633,6 +619,14 @@ export const DesktopStageWorkspace: React.FC<DesktopStageWorkspaceProps> = ({
                                 casMetrics={effMeshCas}
                                 meshSource={effMeshSource}
                                 altLabel={asset.name}
+                                mapNode={
+                                    <StockpileStaticMapCard
+                                        asset={asset}
+                                        fix={canonicalFix}
+                                        heightPx={320}
+                                        flat={false}
+                                    />
+                                }
                                 isMobile={false}
                                 heightPx={320}
                                 canReconstruct3D={hasDeclaredGeometry}
@@ -643,72 +637,57 @@ export const DesktopStageWorkspace: React.FC<DesktopStageWorkspaceProps> = ({
                             />
                         </div>
 
-                        {/* Golden Ratio Temporal Chart + Static Satellite Map */}
-                        <div
-                            className={
-                                chartData.length > 0
-                                    ? 'grid grid-cols-1 xl:grid-cols-[1.618fr_1fr] gap-fib-13 items-stretch'
-                                    : ''
-                            }
-                        >
-                            {chartData.length > 0 && (
-                                <div className="p-fib-13 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] rounded-none">
-                                    <h3 className="text-microcopy font-mono font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6] mb-fib-13">
-                                        {t(
-                                            'analytics.evolution_chart_title',
-                                            'EVOLUCIÓN VOLUMEN (m³)'
-                                        )}
-                                    </h3>
-                                    <div className="h-52 w-full">
-                                        <ResponsiveContainer width="100%" height="100%">
-                                            <AreaChart data={chartData}>
-                                                <CartesianGrid
-                                                    strokeDasharray="3 3"
-                                                    stroke={isDark ? '#12151C' : '#E2E8F0'}
-                                                />
-                                                <XAxis
-                                                    dataKey="date"
-                                                    tick={{
-                                                        fill: isDark ? '#8A93A6' : '#475569',
-                                                        fontSize: 11,
-                                                    }}
-                                                />
-                                                <YAxis
-                                                    tick={{
-                                                        fill: isDark ? '#8A93A6' : '#475569',
-                                                        fontSize: 11,
-                                                    }}
-                                                />
-                                                <Tooltip
-                                                    contentStyle={{
-                                                        backgroundColor: isDark
-                                                            ? '#07090D'
-                                                            : '#FFFFFF',
-                                                        borderColor: isDark ? '#12151C' : '#E2E8F0',
-                                                        borderRadius: 0,
-                                                        color: isDark ? '#F3F4F6' : '#0F172A',
-                                                    }}
-                                                />
-                                                <Area
-                                                    type="monotone"
-                                                    dataKey="volumen"
-                                                    stroke="#C68346"
-                                                    fill="#C68346"
-                                                    fillOpacity={0.18}
-                                                    strokeWidth={2}
-                                                />
-                                            </AreaChart>
-                                        </ResponsiveContainer>
-                                    </div>
+                        {chartData.length > 0 && (
+                            <div className="p-fib-13 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] rounded-none">
+                                <h3 className="text-microcopy font-mono font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6] mb-fib-13">
+                                    {t(
+                                        'analytics.evolution_chart_title',
+                                        'EVOLUCIÓN VOLUMEN (m³)'
+                                    )}
+                                </h3>
+                                <div className="h-52 w-full">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <AreaChart data={chartData}>
+                                            <CartesianGrid
+                                                strokeDasharray="3 3"
+                                                stroke={isDark ? '#12151C' : '#E2E8F0'}
+                                            />
+                                            <XAxis
+                                                dataKey="date"
+                                                tick={{
+                                                    fill: isDark ? '#8A93A6' : '#475569',
+                                                    fontSize: 11,
+                                                }}
+                                            />
+                                            <YAxis
+                                                tick={{
+                                                    fill: isDark ? '#8A93A6' : '#475569',
+                                                    fontSize: 11,
+                                                }}
+                                            />
+                                            <Tooltip
+                                                contentStyle={{
+                                                    backgroundColor: isDark
+                                                        ? '#07090D'
+                                                        : '#FFFFFF',
+                                                    borderColor: isDark ? '#12151C' : '#E2E8F0',
+                                                    borderRadius: 0,
+                                                    color: isDark ? '#F3F4F6' : '#0F172A',
+                                                }}
+                                            />
+                                            <Area
+                                                type="monotone"
+                                                dataKey="volumen"
+                                                stroke="#C68346"
+                                                fill="#C68346"
+                                                fillOpacity={0.18}
+                                                strokeWidth={2}
+                                            />
+                                        </AreaChart>
+                                    </ResponsiveContainer>
                                 </div>
-                            )}
-
-                            <StockpileStaticMapCard
-                                asset={asset}
-                                fix={canonicalFix}
-                                heightPx={208}
-                            />
-                        </div>
+                            </div>
+                        )}
                     </>
                 )}
 

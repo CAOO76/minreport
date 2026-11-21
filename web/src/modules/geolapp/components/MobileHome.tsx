@@ -80,7 +80,7 @@ const MobileHomeAssetRow: React.FC<{
 
                 <div className="flex-1 min-w-0 space-y-0.5">
                     <div className="flex items-center justify-between gap-fib-8">
-                        <span className="text-body-main font-mono font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6] truncate">
+                        <span className="text-[18px] font-mono font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6] truncate">
                             {asset.name}
                         </span>
                         <div className="flex items-center gap-fib-8 shrink-0 font-mono text-microcopy font-bold uppercase tabular-nums">
@@ -104,21 +104,21 @@ const MobileHomeAssetRow: React.FC<{
                     </span>
 
                     <div className="flex items-baseline flex-wrap gap-x-fib-13 gap-y-0.5 font-mono tabular-nums">
-                        <span className="text-data-dense font-bold text-[#C68346]">
+                        <span className="text-[18px] font-bold text-[#C68346]">
                             {volume > 0
-                                ? `${volume.toLocaleString(undefined, { maximumFractionDigits: 1 })} m³`
+                                ? `${volume < 10 ? volume.toFixed(2) : volume.toFixed(1)} m³`
                                 : isPendingAi || isPendingScale
                                   ? '-- m³'
                                   : '0 m³'}
                         </span>
                         {tonnage > 0 && (
-                            <span className="text-microcopy text-[#475569] dark:text-[#8A93A6]">
+                            <span className="text-[15px] text-[#475569] dark:text-[#8A93A6]">
                                 {tonnage.toLocaleString(undefined, { maximumFractionDigits: 1 })} t
                             </span>
                         )}
                         {typeof slopeDeg === 'number' && Number.isFinite(slopeDeg) && (
                             <span
-                                className={`text-microcopy font-bold ${
+                                className={`text-[15px] font-bold ${
                                     isSlopeException ? 'text-[#C68346]' : 'text-[#00AEEF]'
                                 }`}
                             >
@@ -215,7 +215,7 @@ export const MobileHome: React.FC<MobileHomeProps> = ({
                     >
                         <span className="material-symbols-outlined text-[24px]">arrow_back</span>
                     </button>
-                    <h1 className="text-h2-section font-mono font-bold uppercase truncate text-[#0F172A] dark:text-[#F3F4F6]">
+                    <h1 className="text-[18px] font-mono font-bold uppercase truncate text-[#0F172A] dark:text-[#F3F4F6]">
                         {faenaName}
                     </h1>
                 </div>

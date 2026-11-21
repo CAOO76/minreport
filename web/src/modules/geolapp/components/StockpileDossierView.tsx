@@ -8,7 +8,6 @@ import {
     type Reconstruct3DResult,
 } from '../core/services/photogrammetry3d.service';
 import { triggerFieldImpact, triggerFieldNotification } from '../core/utils/fieldHaptics';
-import { CopyButton } from '../../../components/common/CopyButton';
 import {
     HitlConfirmModal,
     type HitlComparisonDiffItem,
@@ -22,6 +21,7 @@ import {
 import { SecureImage } from '../../../components/common/SecureImage';
 import { calculationEngine, computeStockpileMeasurementChain } from '../core/services/calculation-engine';
 import { dataService } from '../core/services/DataService';
+import { formatStockpileVolumeM3 } from '../core/services/spatialScannerService';
 import { useResolvedStockpileImage } from '../core/services/StorageService';
 import {
     COPPER_DOMAIN_OPTIONS,
@@ -176,7 +176,7 @@ const HistoryRowItem: React.FC<{
                     </div>
 
                     <div className="min-w-0 flex flex-col gap-0.5">
-                        <span className="text-data-dense font-mono font-bold tabular-nums text-[#0F172A] dark:text-[#F3F4F6] truncate">
+                        <span className="text-[16px] font-mono font-bold tabular-nums text-[#0F172A] dark:text-[#F3F4F6] truncate">
                             {new Date(m.timestamp).toLocaleDateString()}
                         </span>
                         <span className="text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6] truncate">
@@ -188,8 +188,8 @@ const HistoryRowItem: React.FC<{
                 </div>
 
                 <div className="text-right font-mono tabular-nums shrink-0">
-                    <span className="block text-data-dense font-bold text-[#0F172A] dark:text-[#F3F4F6]">
-                        {m.volumen_m3.toFixed(1)} m³
+                    <span className="block text-[18px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                        {formatStockpileVolumeM3(m.volumen_m3)} m³
                     </span>
                     <span
                         className={`block text-microcopy ${
@@ -274,13 +274,13 @@ const MobileEvolutionSvgChart: React.FC<{
                 <span>
                     MAX{' '}
                     <strong className="text-[#0F172A] dark:text-[#F3F4F6]">
-                        {maxVal.toLocaleString(undefined, { maximumFractionDigits: 1 })} m³
+                        {formatStockpileVolumeM3(maxVal)} m³
                     </strong>
                 </span>
                 <span>
                     MIN{' '}
                     <strong className="text-[#0F172A] dark:text-[#F3F4F6]">
-                        {minVal.toLocaleString(undefined, { maximumFractionDigits: 1 })} m³
+                        {formatStockpileVolumeM3(minVal)} m³
                     </strong>
                 </span>
             </div>
@@ -331,7 +331,7 @@ const MobileEvolutionSvgChart: React.FC<{
                         key={pt.m.id}
                         role="button"
                         tabIndex={0}
-                        aria-label={`${new Date(pt.m.timestamp).toLocaleDateString()} · ${pt.m.volumen_m3.toFixed(1)} m³`}
+                        aria-label={`${new Date(pt.m.timestamp).toLocaleDateString()} · ${formatStockpileVolumeM3(pt.m.volumen_m3)} m³`}
                         onClick={() => {
                             void triggerFieldImpact('LIGHT');
                             onSelectMeasurement(pt.m);
@@ -482,13 +482,39 @@ export const StockpileDossierView: React.FC<StockpileDossierViewProps> = ({
             : null;
     }, [latestMeas]);
 
-    const latestMeshUrl = localMeshResult?.meshUrl ?? latestMeas?.mesh_url ?? asset.mesh_url ?? null;
+    const latestMeshRecord = useMemo(() => {
+        const activeWithMesh = orderedMeasurements
+            .filter((item) => !item.ignored && Boolean(item.mesh_url))
+            .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+        if (activeWithMesh.length > 0) return activeWithMesh[0];
+        const anyWithMesh = orderedMeasurements
+            .filter((item) => Boolean(item.mesh_url))
+            .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+        return anyWithMesh[0] ?? null;
+    }, [orderedMeasurements]);
+
+    const latestMeshUrl =
+        localMeshResult?.meshUrl ??
+        latestMeas?.mesh_url ??
+        latestMeshRecord?.mesh_url ??
+        asset.mesh_url ??
+        null;
     const latestTinVolumeM3 =
-        localMeshResult?.tinVolumeM3 ?? latestMeas?.tin_volume_m3 ?? asset.tin_volume_m3 ?? null;
+        localMeshResult?.tinVolumeM3 ??
+        latestMeas?.tin_volume_m3 ??
+        latestMeshRecord?.tin_volume_m3 ??
+        asset.tin_volume_m3 ??
+        null;
     const latestMeshSource =
-        localMeshResult?.source ?? latestMeas?.mesh_source ?? asset.mesh_source;
+        localMeshResult?.source ??
+        latestMeas?.mesh_source ??
+        latestMeshRecord?.mesh_source ??
+        asset.mesh_source;
     const latestMeshSha =
-        localMeshResult?.sha256 ?? latestMeas?.mesh_sha256 ?? asset.mesh_sha256;
+        localMeshResult?.sha256 ??
+        latestMeas?.mesh_sha256 ??
+        latestMeshRecord?.mesh_sha256 ??
+        asset.mesh_sha256;
     const latestCasMetrics =
         localMeshResult ||
         latestMeas?.mesh_original_bytes !== undefined ||
@@ -633,10 +659,6 @@ export const StockpileDossierView: React.FC<StockpileDossierViewProps> = ({
         ? t(`copper_domains.${asset.copper_domain}`, asset.copper_domain)
         : null;
     const deltaPctRaw = chain.summary.lastDeltaVolumenPct ?? asset.last_delta_volumen_pct;
-    const deltaPctCompact =
-        typeof deltaPctRaw === 'number' && Number.isFinite(deltaPctRaw)
-            ? `${deltaPctRaw > 0 ? '+' : ''}${deltaPctRaw.toFixed(1)}%`
-            : '--';
     const deltaText = formatSignedDelta(
         chain.summary.lastDeltaVolumenM3 ?? asset.last_delta_volumen_m3,
         deltaPctRaw
@@ -860,9 +882,16 @@ export const StockpileDossierView: React.FC<StockpileDossierViewProps> = ({
         isOnline;
 
     if (isMobile) {
-        const mobileMode: StockpileVisualMode = visualMode === '3D' ? '3D' : 'PHOTO';
-        const rhoStr = asset.density_factor != null ? `${asset.density_factor} t/m³` : '--';
-        const p80Str = typeof asset.p80_mm === 'number' ? `${asset.p80_mm.toFixed(1)} mm` : '--';
+        const mobileMode: StockpileVisualMode =
+            visualMode === '3D' ? '3D' : visualMode === 'MAP' ? 'MAP' : 'PHOTO';
+        const lastMeasuredTs = latestMeas?.timestamp ?? asset.last_measured_at ?? asset.captured_at;
+        const lastMeasuredStr =
+            typeof lastMeasuredTs === 'number' && Number.isFinite(lastMeasuredTs)
+                ? new Date(lastMeasuredTs).toLocaleString([], {
+                      dateStyle: 'short',
+                      timeStyle: 'short',
+                  })
+                : '--';
 
         return (
             <div className="h-full w-full flex-1 bg-[#FFFFFF] dark:bg-[#000000] flex flex-col font-atkinson text-[#0F172A] dark:text-[#F3F4F6] overflow-hidden rounded-none shadow-none select-none">
@@ -876,84 +905,54 @@ export const StockpileDossierView: React.FC<StockpileDossierViewProps> = ({
                         >
                             <span className="material-symbols-outlined text-[24px]">arrow_back</span>
                         </button>
-                        <h1 className="text-h2-section font-mono font-bold uppercase truncate">
+                        <h1 className="text-[18px] font-mono font-bold uppercase truncate">
                             {asset.name}
                         </h1>
                     </div>
 
-                    <div className="flex items-center gap-1 shrink-0">
-                        <div
-                            role="tablist"
-                            aria-label={t('visual.mode_aria', 'Modo visual')}
-                            className="flex items-center gap-fib-8"
-                        >
-                            {(['PHOTO', '3D'] as const).map((m) => {
-                                const active = mobileMode === m;
-                                const label =
-                                    m === 'PHOTO'
-                                        ? t('visual.mode_photo', 'FOTO')
-                                        : t('visual.mode_3d', '3D');
-                                return (
-                                    <button
-                                        key={m}
-                                        type="button"
-                                        role="tab"
-                                        aria-selected={active}
-                                        onClick={() => {
-                                            void triggerFieldImpact('LIGHT');
-                                            setVisualMode(m);
-                                        }}
-                                        className={`min-h-[48px] px-1.5 bg-transparent border-0 border-b-2 font-mono text-microcopy font-bold uppercase cursor-pointer rounded-none transition-colors ${
-                                            active
-                                                ? 'border-[#C68346] text-[#C68346]'
-                                                : 'border-transparent text-[#475569] dark:text-[#8A93A6]'
-                                        }`}
-                                    >
-                                        {label}
-                                    </button>
-                                );
-                            })}
-                        </div>
-
-                        <button
-                            type="button"
-                            onClick={() => void handleExportPdf()}
-                            disabled={isExportingPdf}
-                            aria-label={t('pdf.export_button', 'Exportar PDF')}
-                            title={t('pdf.export_button', 'Exportar PDF')}
-                            className="min-w-[44px] min-h-[48px] bg-transparent border-0 outline-none p-1 text-[#475569] dark:text-[#8A93A6] hover:text-[#C68346] cursor-pointer disabled:opacity-40 rounded-none flex items-center justify-center"
-                        >
-                            <span className="material-symbols-outlined text-[20px]">
-                                picture_as_pdf
-                            </span>
-                        </button>
-
-                        <button
-                            type="button"
-                            onClick={() =>
-                                isPendingDigitalAi
-                                    ? void handleAnalyzeDigitalNow()
-                                    : setShowAiDrawer(true)
-                            }
-                            disabled={isAnalyzingDigital}
-                            aria-label={t('ai_enrich.open_button', 'Asistente IA')}
-                            title={t('ai_enrich.open_button', 'Asistente IA')}
-                            className="min-w-[44px] min-h-[48px] bg-transparent border-0 outline-none p-1 text-[#00AEEF] hover:text-[#0F172A] dark:hover:text-white cursor-pointer disabled:opacity-40 rounded-none flex items-center justify-center"
-                        >
-                            <span className="material-symbols-outlined text-[20px]">
-                                auto_awesome
-                            </span>
-                        </button>
+                    <div
+                        role="tablist"
+                        aria-label={t('visual.mode_aria', 'Modo visual')}
+                        className="flex items-center gap-fib-8 shrink-0"
+                    >
+                        {(['PHOTO', '3D', 'MAP'] as const).map((m) => {
+                            const active = mobileMode === m;
+                            const label =
+                                m === 'PHOTO'
+                                    ? t('visual.mode_photo', 'FOTO')
+                                    : m === '3D'
+                                      ? t('visual.mode_3d', '3D')
+                                      : t('visual.mode_map', 'MAPA');
+                            return (
+                                <button
+                                    key={m}
+                                    type="button"
+                                    role="tab"
+                                    aria-selected={active}
+                                    onClick={() => {
+                                        void triggerFieldImpact('LIGHT');
+                                        setVisualMode(m);
+                                    }}
+                                    className={`min-h-[48px] px-2 bg-transparent border-0 border-b-2 font-mono text-[15px] font-bold uppercase cursor-pointer rounded-none transition-colors ${
+                                        active
+                                            ? 'border-[#C68346] text-[#C68346]'
+                                            : 'border-transparent text-[#475569] dark:text-[#8A93A6]'
+                                    }`}
+                                >
+                                    {label}
+                                </button>
+                            );
+                        })}
                     </div>
                 </header>
 
-                {(isExportingPdf || isAnalyzingDigital || isReconstructing3D) && (
-                    <M3LinearProgress indeterminate ariaLabel="IA / PDF / 3D" />
+                {(isExportingPdf || isReconstructing3D) && (
+                    <M3LinearProgress indeterminate ariaLabel="PDF / 3D" />
                 )}
 
                 <div className="flex-1 min-h-0 overflow-y-auto">
                     {statusText && (
-                        <div className="px-fib-13 py-fib-8 border-b border-[#00AEEF] text-data-dense font-mono flex items-center justify-between gap-fib-8 rounded-none">
+                        <div className="px-fib-13 py-fib-8 border-b border-[#00AEEF] text-[16px] font-mono flex items-center justify-between gap-fib-8 rounded-none">
                             <span className="text-[#00AEEF]">{statusText}</span>
                             <button
                                 type="button"
@@ -961,7 +960,7 @@ export const StockpileDossierView: React.FC<StockpileDossierViewProps> = ({
                                 aria-label={t('common.close_button', 'CERRAR')}
                                 className="min-w-[44px] min-h-[44px] bg-transparent border-0 p-1 cursor-pointer text-[#475569] dark:text-[#8A93A6] rounded-none flex items-center justify-center"
                             >
-                                <span className="material-symbols-outlined text-[16px]">close</span>
+                                <span className="material-symbols-outlined text-[18px]">close</span>
                             </button>
                         </div>
                     )}
@@ -1003,7 +1002,7 @@ export const StockpileDossierView: React.FC<StockpileDossierViewProps> = ({
                                     'lifecycle.dispatch_reference_label',
                                     'GUÍA / LOTE DE EMBARQUE'
                                 )}
-                                className="w-full h-10 px-fib-8 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-data-dense rounded-none"
+                                className="w-full h-12 px-fib-8 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-[16px] rounded-none"
                             />
                             <input
                                 type="text"
@@ -1018,19 +1017,19 @@ export const StockpileDossierView: React.FC<StockpileDossierViewProps> = ({
                                     'lifecycle.shipped_weight_label',
                                     'TONELAJE EMBARCADO [t]'
                                 )}
-                                className="w-full h-10 px-fib-8 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono tabular-nums text-data-dense rounded-none"
+                                className="w-full h-12 px-fib-8 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono tabular-nums text-[16px] rounded-none"
                             />
                             <div className="flex items-center gap-fib-8">
                                 <button
                                     type="submit"
-                                    className="flex-1 min-h-[48px] bg-[#C68346] text-white font-mono text-microcopy font-bold uppercase border-0 cursor-pointer rounded-none"
+                                    className="flex-1 min-h-[52px] bg-[#C68346] text-white font-mono text-[16px] font-bold uppercase border-0 cursor-pointer rounded-none"
                                 >
                                     {t('lifecycle.confirm_shipment_hitl', 'VERIFICAR EMBARQUE')}
                                 </button>
                                 <button
                                     type="button"
                                     onClick={() => setShowShipmentForm(false)}
-                                    className="min-h-[48px] px-fib-13 border border-[#E2E8F0] dark:border-[#12151C] font-mono text-microcopy font-bold uppercase bg-transparent cursor-pointer rounded-none"
+                                    className="min-h-[52px] px-fib-13 border border-[#E2E8F0] dark:border-[#12151C] font-mono text-[16px] font-bold uppercase bg-transparent cursor-pointer rounded-none"
                                 >
                                     {t('common.cancel_button', 'CANCELAR')}
                                 </button>
@@ -1038,10 +1037,12 @@ export const StockpileDossierView: React.FC<StockpileDossierViewProps> = ({
                         </form>
                     )}
 
-                    {/* 1. Visor Foto Real / Malla 3D */}
+                    {/* 1. Visor Foto Real / Malla 3D compacto */}
                     <div className="border-b border-[#E2E8F0] dark:border-[#12151C]">
                         <StockpileVisualStage
                             isMobile={true}
+                            compact={true}
+                            showMetrologyFooter={false}
                             mode={mobileMode}
                             onModeChange={setVisualMode}
                             hideModeToolbar={true}
@@ -1065,6 +1066,14 @@ export const StockpileDossierView: React.FC<StockpileDossierViewProps> = ({
                             coveragePct={latestCoveragePct}
                             depthMode={latestDepthMode}
                             altLabel={asset.name}
+                            mapNode={
+                                <StockpileStaticMapCard
+                                    asset={asset}
+                                    fix={canonicalFix}
+                                    heightPx={260}
+                                    flat={true}
+                                />
+                            }
                             canReconstruct3D={canReconstruct3D}
                             isReconstructing3D={isReconstructing3D}
                             onReconstruct3D={() => void handleReconstruct3D()}
@@ -1072,61 +1081,55 @@ export const StockpileDossierView: React.FC<StockpileDossierViewProps> = ({
                         />
                     </div>
 
-                    {/* 2. Franja KPI 4 columnas */}
-                    <section className="grid grid-cols-4 border-b border-[#E2E8F0] dark:border-[#12151C] divide-x divide-[#E2E8F0] dark:divide-[#12151C] font-mono tabular-nums">
-                        <div className="px-fib-8 py-fib-13 min-w-0">
-                            <span className="block text-microcopy uppercase text-[#475569] dark:text-[#8A93A6] truncate">
-                                VOL m³
-                            </span>
-                            <div className="flex items-baseline gap-1 min-w-0 flex-wrap">
-                                <span className="text-data-dense font-bold text-[#C68346] truncate">
-                                    {summary.volumeM3.toLocaleString(undefined, {
-                                        maximumFractionDigits: 1,
-                                    })}
+                    {/* 2. Lecturas Esenciales Móvil: VOLUMEN, TONELADAS, TALUD, ÚLTIMA MEDICIÓN */}
+                    <section className="divide-y divide-[#E2E8F0] dark:divide-[#12151C] border-b border-[#E2E8F0] dark:border-[#12151C] font-mono tabular-nums">
+                        <div className="grid grid-cols-2 divide-x divide-[#E2E8F0] dark:divide-[#12151C]">
+                            <div className="px-fib-13 py-fib-13 min-w-0">
+                                <span className="block text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">
+                                    VOLUMEN
                                 </span>
-                                {typeof latestUncertaintyPct === 'number' &&
-                                    Number.isFinite(latestUncertaintyPct) &&
-                                    latestUncertaintyPct > 0 && (
-                                        <span
-                                            className={`text-microcopy font-bold shrink-0 ${
-                                                latestUncertaintyPct <= 5
-                                                    ? 'text-[#00AEEF]'
-                                                    : latestUncertaintyPct > 8
-                                                      ? 'text-[#C68346]'
-                                                      : 'text-[#475569] dark:text-[#8A93A6]'
-                                            }`}
-                                        >
-                                            ± {latestUncertaintyPct.toFixed(1)}%
-                                        </span>
-                                    )}
+                                <div className="flex items-baseline gap-fib-8 flex-wrap">
+                                    <span className="text-[24px] font-bold text-[#C68346]">
+                                        {formatStockpileVolumeM3(summary.volumeM3)} m³
+                                    </span>
+                                    {typeof latestUncertaintyPct === 'number' &&
+                                        Number.isFinite(latestUncertaintyPct) &&
+                                        latestUncertaintyPct > 0 && (
+                                            <span
+                                                className={`text-[15px] font-bold ${
+                                                    latestUncertaintyPct <= 5
+                                                        ? 'text-[#00AEEF]'
+                                                        : latestUncertaintyPct > 8
+                                                          ? 'text-[#C68346]'
+                                                          : 'text-[#475569] dark:text-[#8A93A6]'
+                                                }`}
+                                            >
+                                                ± {latestUncertaintyPct.toFixed(1)}%
+                                            </span>
+                                        )}
+                                </div>
+                            </div>
+
+                            <div className="px-fib-13 py-fib-13 min-w-0">
+                                <span className="block text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">
+                                    TONELADAS
+                                </span>
+                                <span className="block text-[24px] font-bold text-[#0F172A] dark:text-[#F3F4F6] truncate">
+                                    {summary.weightT > 0
+                                        ? `${summary.weightT.toLocaleString(undefined, {
+                                              maximumFractionDigits: 1,
+                                          })} t`
+                                        : '--'}
+                                </span>
                             </div>
                         </div>
-                        <div className="px-fib-8 py-fib-13 min-w-0">
-                            <span className="block text-microcopy uppercase text-[#475569] dark:text-[#8A93A6] truncate">
-                                PESO t
-                            </span>
-                            <span className="block text-data-dense font-bold text-[#0F172A] dark:text-[#F3F4F6] truncate">
-                                {summary.weightT > 0
-                                    ? summary.weightT.toLocaleString(undefined, {
-                                          maximumFractionDigits: 1,
-                                      })
-                                    : '--'}
-                            </span>
-                        </div>
-                        <div className="px-fib-8 py-fib-13 min-w-0">
-                            <span className="block text-microcopy uppercase text-[#475569] dark:text-[#8A93A6] truncate">
-                                Δ %
-                            </span>
-                            <span className="block text-data-dense font-bold text-[#00AEEF] truncate">
-                                {deltaPctCompact}
-                            </span>
-                        </div>
-                        <div className="px-fib-8 py-fib-13 min-w-0">
-                            <span className="block text-microcopy uppercase text-[#475569] dark:text-[#8A93A6] truncate">
-                                TALUD °
+
+                        <div className="px-fib-13 py-fib-13 flex items-center justify-between gap-fib-8">
+                            <span className="text-[16px] uppercase text-[#475569] dark:text-[#8A93A6] shrink-0">
+                                TALUD
                             </span>
                             <span
-                                className={`block text-data-dense font-bold truncate ${
+                                className={`text-[18px] font-bold ${
                                     slopeAngleDeg == null
                                         ? 'text-[#94A3B8] dark:text-[#5A6072]'
                                         : isSlopeException
@@ -1139,6 +1142,43 @@ export const StockpileDossierView: React.FC<StockpileDossierViewProps> = ({
                                     : '--'}
                             </span>
                         </div>
+
+                        <div className="px-fib-13 py-fib-13 flex items-center justify-between gap-fib-8">
+                            <span className="text-[16px] uppercase text-[#475569] dark:text-[#8A93A6] shrink-0">
+                                ÚLTIMA MEDICIÓN
+                            </span>
+                            <span className="text-[16px] font-bold text-[#0F172A] dark:text-[#F3F4F6] truncate">
+                                {lastMeasuredStr}
+                            </span>
+                        </div>
+                    </section>
+
+                    {/* CTA Principal Móvil */}
+                    <section className="px-fib-13 py-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C]">
+                        {!isClosed ? (
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    void triggerFieldImpact('MEDIUM');
+                                    onNewMeasurement();
+                                }}
+                                aria-label={t('dossier.measure_again_btn', 'MEDIR DE NUEVO')}
+                                className="w-full min-h-[64px] px-fib-21 bg-[#C68346] hover:bg-[#b5753b] text-white font-mono text-[20px] font-bold uppercase border-0 cursor-pointer rounded-none shadow-none"
+                            >
+                                {t('dossier.measure_again_btn', 'MEDIR DE NUEVO')}
+                            </button>
+                        ) : (
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    void triggerFieldImpact('MEDIUM');
+                                    handleTriggerClosure();
+                                }}
+                                className="w-full min-h-[64px] px-fib-21 bg-[#00AEEF] text-white font-mono text-[20px] font-bold uppercase border-0 cursor-pointer rounded-none shadow-none"
+                            >
+                                {t('lifecycle.reopen_action', 'REABRIR CICLO (HITL)')}
+                            </button>
+                        )}
                     </section>
 
                     {/* 3. Gráfico SVG Vectorial Evolución Volumétrica */}
@@ -1154,66 +1194,9 @@ export const StockpileDossierView: React.FC<StockpileDossierViewProps> = ({
                         </div>
                     )}
 
-                    {/* 4. Filas técnicas hairline compactas: UTM, ρ / P80, CAS */}
-                    <section className="divide-y divide-[#E2E8F0] dark:divide-[#12151C] border-b border-[#E2E8F0] dark:border-[#12151C] font-mono tabular-nums">
-                        <div className="px-fib-13 py-fib-13 flex items-center justify-between gap-fib-8">
-                            <span className="text-microcopy uppercase text-[#475569] dark:text-[#8A93A6] shrink-0">
-                                UTM
-                            </span>
-                            <div className="flex items-center gap-1 min-w-0">
-                                <span
-                                    className={`text-data-dense truncate ${
-                                        canonicalFix
-                                            ? 'text-[#0F172A] dark:text-[#F3F4F6] select-text'
-                                            : 'text-[#94A3B8] dark:text-[#5A6072]'
-                                    }`}
-                                >
-                                    {canonicalFix?.utm.formatted || '--'}
-                                </span>
-                                {canonicalFix && <CopyButton value={canonicalFix.utm.formatted} />}
-                            </div>
-                        </div>
-
-                        <div className="px-fib-13 py-fib-13 flex items-center justify-between gap-fib-8">
-                            <span className="text-microcopy uppercase text-[#475569] dark:text-[#8A93A6] shrink-0">
-                                ρ / P80
-                            </span>
-                            <span className="text-data-dense text-[#0F172A] dark:text-[#F3F4F6] truncate">
-                                {rhoStr} · {p80Str}
-                            </span>
-                        </div>
-
-                        <div className="px-fib-13 py-fib-13 flex items-center justify-between gap-fib-8">
-                            <span className="text-microcopy uppercase text-[#475569] dark:text-[#8A93A6] shrink-0">
-                                CAS
-                            </span>
-                            <span
-                                className={`text-data-dense truncate ${
-                                    casTrace
-                                        ? 'text-[#00AEEF]'
-                                        : 'text-[#94A3B8] dark:text-[#5A6072]'
-                                }`}
-                            >
-                                {casTrace || '--'}
-                            </span>
-                        </div>
-
-                        {typeof latestGroundSlopeDeg === 'number' &&
-                            Number.isFinite(latestGroundSlopeDeg) && (
-                                <div className="px-fib-13 py-fib-13 flex items-center justify-between gap-fib-8">
-                                    <span className="text-microcopy uppercase text-[#475569] dark:text-[#8A93A6] shrink-0">
-                                        {t('visual3d.ground_slope_label', 'PENDIENTE PISO')}
-                                    </span>
-                                    <span className="text-data-dense text-[#0F172A] dark:text-[#F3F4F6] truncate">
-                                        {latestGroundSlopeDeg.toFixed(1)}°
-                                    </span>
-                                </div>
-                            )}
-                    </section>
-
-                    {/* 5. Historial inmediato de mediciones */}
-                    <section className="pb-fib-21">
-                        <div className="px-fib-13 py-fib-8 border-b border-[#E2E8F0] dark:border-[#12151C] flex items-center justify-between font-mono text-microcopy font-bold uppercase tabular-nums text-[#475569] dark:text-[#8A93A6]">
+                    {/* 4. Historial inmediato de mediciones */}
+                    <section>
+                        <div className="px-fib-13 py-fib-8 border-b border-[#E2E8F0] dark:border-[#12151C] flex items-center justify-between font-mono text-[15px] font-bold uppercase tabular-nums text-[#475569] dark:text-[#8A93A6]">
                             <span>
                                 {t('dossier.tab_history', 'HISTORIAL')} ·{' '}
                                 {String(orderedMeasurements.length).padStart(2, '0')}
@@ -1243,17 +1226,33 @@ export const StockpileDossierView: React.FC<StockpileDossierViewProps> = ({
                             ))}
                         </div>
                     </section>
-                </div>
 
-                <GeolappAiEnrichDrawer
-                    open={showAiDrawer}
-                    asset={asset}
-                    hideLabUpload={true}
-                    onClose={() => setShowAiDrawer(false)}
-                    onApplied={() =>
-                        setStatusText(t('hitl.save_success', 'Ficha enriquecida bajo AuditLedger.'))
-                    }
-                />
+                    {/* 5. Acciones secundarias debajo (PDF fuera de cabecera móvil + Cierre HITL) */}
+                    <section className="px-fib-13 py-fib-21 border-t border-[#E2E8F0] dark:border-[#12151C] space-y-fib-13 pb-[calc(env(safe-area-inset-bottom)+21px)]">
+                        <button
+                            type="button"
+                            onClick={() => void handleExportPdf()}
+                            disabled={isExportingPdf}
+                            aria-label={t('pdf.export_button', 'EXPORTAR PDF')}
+                            className="w-full min-h-[52px] px-fib-13 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#0F172A] dark:text-[#F3F4F6] hover:border-[#C68346] font-mono text-[16px] font-bold uppercase cursor-pointer disabled:opacity-40 rounded-none shadow-none"
+                        >
+                            {t('pdf.export_button', 'EXPORTAR PDF')}
+                        </button>
+
+                        {!isClosed && (
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    void triggerFieldImpact('LIGHT');
+                                    handleTriggerClosure();
+                                }}
+                                className="w-full min-h-[48px] px-fib-13 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] hover:text-[#C68346] font-mono text-[15px] font-bold uppercase cursor-pointer rounded-none shadow-none"
+                            >
+                                {t('lifecycle.close_shipment_action', 'CERRAR POR EMBARQUE')}
+                            </button>
+                        )}
+                    </section>
+                </div>
 
                 <HitlConfirmModal
                     open={Boolean(pendingHitl)}
@@ -1525,6 +1524,14 @@ export const StockpileDossierView: React.FC<StockpileDossierViewProps> = ({
                                 coveragePct={latestCoveragePct}
                                 depthMode={latestDepthMode}
                                 altLabel={asset.name}
+                                mapNode={
+                                    <StockpileStaticMapCard
+                                        asset={asset}
+                                        fix={canonicalFix}
+                                        heightPx={320}
+                                        flat={false}
+                                    />
+                                }
                                 canReconstruct3D={canReconstruct3D}
                                 isReconstructing3D={isReconstructing3D}
                                 onReconstruct3D={() => void handleReconstruct3D()}
@@ -1536,13 +1543,6 @@ export const StockpileDossierView: React.FC<StockpileDossierViewProps> = ({
                                 </div>
                             )}
                         </section>
-
-                        <StockpileStaticMapCard
-                            asset={asset}
-                            fix={canonicalFix}
-                            heightPx={200}
-                            flat={false}
-                        />
                     </div>
                 )}
 

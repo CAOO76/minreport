@@ -513,6 +513,7 @@ export class DataService {
 
         if (
             latestMeas &&
+            asset.clase &&
             declaredShape &&
             volumeM3 > 0 &&
             typeof declaredDensity === 'number' &&
@@ -523,7 +524,7 @@ export class DataService {
             const validation = StockpileSurveyTelemetrySchema.safeParse({
                 surveyId: latestMeas.id,
                 tag: asset.name,
-                material: asset.clase || 'mineral',
+                material: asset.clase,
                 shape: declaredShape,
                 volumeM3,
                 density: declaredDensity,
@@ -548,7 +549,7 @@ export class DataService {
             tenantId: activeTenant,
             accountId: activeTenant,
             tag: asset.name,
-            material: asset.clase || 'mineral',
+            ...(asset.clase ? { material: asset.clase } : {}),
             ...(declaredShape ? { shape: declaredShape } : {}),
             volumeM3,
             ...(typeof declaredDensity === 'number' && declaredDensity > 0
@@ -570,7 +571,7 @@ export class DataService {
                     id: asset.id,
                     tenantId: activeTenant,
                     tag: asset.name,
-                    material: asset.clase || 'mineral',
+                    material: asset.clase || 'UNDECLARED',
                     shape: effectiveSurveyShape,
                     volumeM3: Number.isFinite(volumeM3) ? volumeM3 : 0,
                     density:
@@ -612,7 +613,12 @@ export class DataService {
                 await offlineStorage.deleteSyncTask(surveyTaskId).catch(() => {});
                 await syncQueueEngine.refreshPendingCount().catch(() => {});
             } catch (err) {
-                console.warn('[DataService] Guardado remoto de activo diferido a cola offline:', err);
+                console.error(
+                    '[DataService] Error crítico escribiendo documento padre en stockpiles:',
+                    err
+                );
+                await syncQueueEngine.refreshPendingCount().catch(() => {});
+                throw err;
             }
         }
     }
@@ -665,10 +671,12 @@ export class DataService {
                 await offlineStorage.deleteSyncTask(measTaskId).catch(() => {});
                 await syncQueueEngine.refreshPendingCount().catch(() => {});
             } catch (err) {
-                console.warn(
-                    '[DataService] Guardado remoto en subcoleccion measurements diferido a cola offline:',
+                console.error(
+                    '[DataService] Error crítico escribiendo subcolección measurements:',
                     err
                 );
+                await syncQueueEngine.refreshPendingCount().catch(() => {});
+                throw err;
             }
         }
     }
@@ -702,10 +710,15 @@ export class DataService {
             description:
                 typeof rawDoc.description === 'string' ? rawDoc.description : undefined,
             clase:
-                rawDoc.clase ||
-                (rawDoc.material === 'esteril' || rawDoc.material === 'baja_ley'
-                    ? rawDoc.material
-                    : 'mineral'),
+                rawDoc.clase === 'mineral' ||
+                rawDoc.clase === 'esteril' ||
+                rawDoc.clase === 'baja_ley'
+                    ? rawDoc.clase
+                    : rawDoc.material === 'mineral' ||
+                        rawDoc.material === 'esteril' ||
+                        rawDoc.material === 'baja_ley'
+                      ? rawDoc.material
+                      : null,
             status: rawDoc.status || 'ACTIVE',
             createdAt:
                 typeof rawDoc.createdAt === 'number'
@@ -945,7 +958,7 @@ export class DataService {
             ...params.asset,
             id: assetId,
             name: resolvedName,
-            clase: params.asset.clase || 'mineral',
+            clase: params.asset.clase ?? null,
             status: params.asset.status || 'ACTIVE',
             tenantId: activeTenant,
             accountId: activeTenant,
@@ -974,6 +987,23 @@ export class DataService {
             cas_original_bytes: newM.cas_original_bytes ?? params.asset.cas_original_bytes,
             cas_optimized_bytes: newM.cas_optimized_bytes ?? params.asset.cas_optimized_bytes,
             cas_savings_pct: newM.cas_savings_pct ?? params.asset.cas_savings_pct,
+            uncertainty_pct:
+                newM.uncertainty_pct !== undefined
+                    ? newM.uncertainty_pct
+                    : params.asset.uncertainty_pct,
+            toe_score: newM.toe_score !== undefined ? newM.toe_score : params.asset.toe_score,
+            coverage_pct:
+                newM.coverage_pct !== undefined ? newM.coverage_pct : params.asset.coverage_pct,
+            depth_mode: newM.depth_mode !== undefined ? newM.depth_mode : params.asset.depth_mode,
+            ground_slope_deg:
+                newM.ground_slope_deg !== undefined
+                    ? newM.ground_slope_deg
+                    : params.asset.ground_slope_deg,
+            mesh_url: newM.mesh_url ?? params.asset.mesh_url,
+            mesh_sha256: newM.mesh_sha256 ?? params.asset.mesh_sha256,
+            mesh_source: newM.mesh_source ?? params.asset.mesh_source,
+            tin_volume_m3: newM.tin_volume_m3 ?? params.asset.tin_volume_m3,
+            is_non_stockpile: newM.is_non_stockpile ?? params.asset.is_non_stockpile,
             analysis_status: newM.analysis_status ?? params.asset.analysis_status,
             detected_slope_angle_deg:
                 newM.detected_slope_angle_deg ?? params.asset.detected_slope_angle_deg,
@@ -1224,9 +1254,11 @@ export class DataService {
                 id: assetId,
                 name: typeof sanitizedPatch.name === 'string' ? sanitizedPatch.name : `ACOPIO-${assetId}`,
                 clase:
-                    sanitizedPatch.clase === 'esteril' || sanitizedPatch.clase === 'baja_ley'
+                    sanitizedPatch.clase === 'mineral' ||
+                    sanitizedPatch.clase === 'esteril' ||
+                    sanitizedPatch.clase === 'baja_ley'
                         ? sanitizedPatch.clase
-                        : 'mineral',
+                        : null,
                 createdAt: Date.now(),
                 createdBy: this.getUserId(),
             }),
@@ -1401,10 +1433,6 @@ export class DataService {
         );
         const newM = chain.enrichedMeasurements.find((item) => item.id === id) || draftM;
 
-        await this.saveMeasurementLocal(newM, false);
-        await this.persistMeasurementToCloudAndQueue(newM);
-        await this.persistChainMeasurementUpdates(existingMeasurements, chain.enrichedMeasurements);
-
         const allAssetMeasurements = chain.enrichedMeasurements;
 
         if (asset) {
@@ -1452,6 +1480,23 @@ export class DataService {
                 density_factor: newM.density_factor ?? asset.density_factor,
                 geometria: newM.geometry?.type ?? asset.geometria,
                 copper_domain: newM.copper_domain ?? asset.copper_domain,
+                uncertainty_pct:
+                    newM.uncertainty_pct !== undefined
+                        ? newM.uncertainty_pct
+                        : asset.uncertainty_pct,
+                toe_score: newM.toe_score !== undefined ? newM.toe_score : asset.toe_score,
+                coverage_pct:
+                    newM.coverage_pct !== undefined ? newM.coverage_pct : asset.coverage_pct,
+                depth_mode: newM.depth_mode !== undefined ? newM.depth_mode : asset.depth_mode,
+                ground_slope_deg:
+                    newM.ground_slope_deg !== undefined
+                        ? newM.ground_slope_deg
+                        : asset.ground_slope_deg,
+                mesh_url: newM.mesh_url ?? asset.mesh_url,
+                mesh_sha256: newM.mesh_sha256 ?? asset.mesh_sha256,
+                mesh_source: newM.mesh_source ?? asset.mesh_source,
+                tin_volume_m3: newM.tin_volume_m3 ?? asset.tin_volume_m3,
+                is_non_stockpile: newM.is_non_stockpile ?? asset.is_non_stockpile,
                 moisture_pct:
                     newM.moisture_pct !== undefined ? newM.moisture_pct : asset.moisture_pct,
                 tml_pct: newM.tml_pct !== undefined ? newM.tml_pct : asset.tml_pct,
@@ -1490,9 +1535,23 @@ export class DataService {
                     : {}),
             };
             await this.writeMeta(K.asset(st, measurement.assetId), updated);
+            // Padre en Firestore debe existir/actualizarse antes que subcolección measurements
             await this.persistAssetToCloudAndQueue(updated, allAssetMeasurements);
+            await this.saveMeasurementLocal(newM, false);
+            await this.persistMeasurementToCloudAndQueue(newM);
+            await this.persistChainMeasurementUpdates(
+                existingMeasurements,
+                chain.enrichedMeasurements
+            );
             bus.emit(`asset:${measurement.assetId}`, updated);
             this.getAllAssetsLocal().then((all) => bus.emit('assets', all));
+        } else {
+            await this.saveMeasurementLocal(newM, false);
+            await this.persistMeasurementToCloudAndQueue(newM);
+            await this.persistChainMeasurementUpdates(
+                existingMeasurements,
+                chain.enrichedMeasurements
+            );
         }
 
         bus.emit(`meas:${measurement.assetId}`, allAssetMeasurements);
@@ -1993,7 +2052,8 @@ export class DataService {
     async ensureStaticSatelliteMap(
         assetId: string,
         lat: number,
-        lng: number
+        lng: number,
+        options?: { forceRefresh?: boolean }
     ): Promise<string | null> {
         if (
             !assetId ||
@@ -2004,15 +2064,22 @@ export class DataService {
             return null;
         }
         const existing = await this.getAsset(assetId);
-        if (existing?.static_map_url && !existing.static_map_url.startsWith('data:')) {
+        if (
+            !options?.forceRefresh &&
+            existing?.static_map_url &&
+            !existing.static_map_url.startsWith('data:')
+        ) {
             return existing.static_map_url;
         }
 
         const dedupKey = `${this.safeTenant}:${assetId}:${lat.toFixed(5)}:${lng.toFixed(5)}`;
-        if (this.attemptedStaticMapKeys.has(dedupKey) || !this.isOnline || !this.tenantId) {
+        if (
+            (!options?.forceRefresh && this.attemptedStaticMapKeys.has(dedupKey)) ||
+            !this.isOnline ||
+            !this.tenantId
+        ) {
             return existing?.static_map_url || null;
         }
-        this.attemptedStaticMapKeys.add(dedupKey);
 
         try {
             const resp = await coreAuthFetch(
@@ -2027,6 +2094,9 @@ export class DataService {
                 }
             );
             if (!resp.ok) {
+                if (resp.status === 400 || resp.status === 404) {
+                    this.attemptedStaticMapKeys.add(dedupKey);
+                }
                 return existing?.static_map_url || null;
             }
             const json = (await resp.json().catch(() => null)) as {
@@ -2044,6 +2114,7 @@ export class DataService {
                 json.staticMapUrl.trim().length > 0 &&
                 !json.staticMapUrl.startsWith('data:')
             ) {
+                this.attemptedStaticMapKeys.add(dedupKey);
                 if (existing) {
                     const st = this.safeTenant;
                     const updated: StockpileAsset = {

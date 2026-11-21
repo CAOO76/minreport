@@ -12,11 +12,11 @@
 
 import { useState, useEffect } from 'react';
 import { ref, uploadBytes, getDownloadURL, deleteObject, listAll } from 'firebase/storage';
-import { auth, storage as firebaseStorage } from '../../../../config/firebase';
+import { storage as firebaseStorage } from '../../../../config/firebase';
 import { mediaDigestorClient } from '../../../../core/media/MediaDigestorClient';
+import { coreAuthFetch } from '../../../../core/network/coreAuthFetch';
 import { offlineStorage } from '../../../../core/offline/OfflineStorage';
 import { syncQueueEngine } from '../../../../core/offline/SyncQueueEngine';
-import { getApiUrl } from '../../../../utils/network';
 
 export interface UploadOptions {
     maxWidth?: number;
@@ -55,30 +55,71 @@ async function computeSha256Hex(buffer: ArrayBuffer): Promise<string> {
 }
 
 /**
- * Resuelve referencias locales `offline-cas://<sha256>.<ext>` desde IndexedDB (`offlineStorage`)
- * a Object URLs temporales para renderizado en UI o exportación PDF offline.
+ * Detecta rutas CAS/Blob protegidas (`/api/media/blob/...` o `/api/media/cas/...`),
+ * ya sean rutas relativas o URLs absolutas que contengan dichos prefijos.
+ */
+export function isProtectedCasMediaUrl(url?: string | null): boolean {
+    if (typeof url !== 'string') return false;
+    const trimmed = url.trim();
+    if (!trimmed) return false;
+    return (
+        trimmed.startsWith('/api/media/') ||
+        trimmed.includes('/api/media/blob/') ||
+        trimmed.includes('/api/media/cas/')
+    );
+}
+
+function needsAsyncImageResolution(url?: string | null): boolean {
+    if (typeof url !== 'string') return false;
+    const trimmed = url.trim();
+    if (!trimmed) return false;
+    return trimmed.startsWith('offline-cas://') || isProtectedCasMediaUrl(trimmed);
+}
+
+/**
+ * Resuelve referencias locales `offline-cas://<sha256>.<ext>` (IndexedDB) y rutas protegidas
+ * `/api/media/blob/...` o `/api/media/cas/...` (vía `coreAuthFetch` autenticado) a Object URLs temporales.
  */
 export async function resolveStockpileImageUrl(
     url?: string | null
 ): Promise<{ resolvedUrl: string; revoke?: () => void }> {
-    if (!url) return { resolvedUrl: '' };
-    if (!url.startsWith('offline-cas://')) {
-        return { resolvedUrl: url };
+    const trimmed = typeof url === 'string' ? url.trim() : '';
+    if (!trimmed) return { resolvedUrl: '' };
+
+    if (trimmed.startsWith('offline-cas://')) {
+        try {
+            const refPart = trimmed.replace('offline-cas://', '').split('?')[0];
+            const sha256 = refPart.split('.')[0];
+            if (!sha256) return { resolvedUrl: '' };
+            const record = await offlineStorage.getCasBlob(sha256);
+            if (!record?.blob) return { resolvedUrl: '' };
+            const objUrl = URL.createObjectURL(record.blob);
+            return {
+                resolvedUrl: objUrl,
+                revoke: () => URL.revokeObjectURL(objUrl),
+            };
+        } catch {
+            return { resolvedUrl: '' };
+        }
     }
-    try {
-        const refPart = url.replace('offline-cas://', '');
-        const sha256 = refPart.split('.')[0];
-        if (!sha256) return { resolvedUrl: '' };
-        const record = await offlineStorage.getCasBlob(sha256);
-        if (!record?.blob) return { resolvedUrl: '' };
-        const objUrl = URL.createObjectURL(record.blob);
-        return {
-            resolvedUrl: objUrl,
-            revoke: () => URL.revokeObjectURL(objUrl),
-        };
-    } catch {
-        return { resolvedUrl: '' };
+
+    if (isProtectedCasMediaUrl(trimmed)) {
+        try {
+            const response = await coreAuthFetch(trimmed, { method: 'GET' });
+            if (!response.ok) return { resolvedUrl: '' };
+            const blob = await response.blob();
+            if (!blob || blob.size === 0) return { resolvedUrl: '' };
+            const objUrl = URL.createObjectURL(blob);
+            return {
+                resolvedUrl: objUrl,
+                revoke: () => URL.revokeObjectURL(objUrl),
+            };
+        } catch {
+            return { resolvedUrl: '' };
+        }
     }
+
+    return { resolvedUrl: trimmed };
 }
 
 export interface ResolvedStockpileMeshBinary {
@@ -88,7 +129,7 @@ export interface ResolvedStockpileMeshBinary {
 
 /**
  * Resuelve el binario `.glb` desde `offline-cas://<sha256>.glb` (IndexedDB),
- * endpoint autenticado `/api/media/cas/...` o URL `https://...` remota.
+ * endpoints autenticados `/api/media/blob/...` o `/api/media/cas/...` o URL `https://...` remota.
  */
 export async function resolveStockpileMeshBinary(
     url: string
@@ -112,27 +153,9 @@ export async function resolveStockpileMeshBinary(
         }
     }
 
-    if (trimmed.startsWith('/api/media/cas/') || trimmed.includes('/api/media/cas/')) {
+    if (isProtectedCasMediaUrl(trimmed)) {
         try {
-            const resolvedEndpoint = trimmed.startsWith('/') ? getApiUrl(trimmed) : trimmed;
-            const headers: Record<string, string> = {};
-            const idToken =
-                (await auth?.currentUser?.getIdToken().catch(() => null)) ||
-                (typeof window !== 'undefined'
-                    ? window.localStorage.getItem('dev_auth_token') ||
-                      window.localStorage.getItem('dev_vault_token')
-                    : null);
-            if (idToken) {
-                headers['Authorization'] = `Bearer ${idToken}`;
-            }
-            const activeAccount =
-                typeof window !== 'undefined'
-                    ? window.localStorage.getItem('minreport_active_account_id')?.trim()
-                    : '';
-            if (activeAccount) {
-                headers['X-Active-Account-Id'] = activeAccount;
-            }
-            const response = await fetch(resolvedEndpoint, { method: 'GET', headers });
+            const response = await coreAuthFetch(trimmed, { method: 'GET' });
             if (!response.ok) {
                 return { arrayBuffer: null, sourceLabel: `CAS_HTTP_${response.status}` };
             }
@@ -166,43 +189,79 @@ export async function resolveStockpileMeshBinary(
     return { arrayBuffer: null, sourceLabel: 'UNSUPPORTED_SCHEME' };
 }
 
+export interface ResolvedStockpileImageState {
+    resolvedUrl: string;
+    isLoading: boolean;
+}
+
 /**
- * Hook React con liberación automática de Object URL para visualizar `offline-cas://...` o URLs remotas CAS.
+ * Hook React con estado de carga y liberación automática de Object URL para `offline-cas://...`
+ * y rutas protegidas `/api/media/*` (evita disparar `<img src="/api/media/...">` sin token).
  */
-export function useResolvedStockpileImage(url?: string | null): string {
-    const [resolved, setResolved] = useState<string>(() =>
-        url && !url.startsWith('offline-cas://') ? url : ''
-    );
+export function useResolvedStockpileImageState(
+    url?: string | null
+): ResolvedStockpileImageState {
+    const trimmed = typeof url === 'string' ? url.trim() : '';
+    const requiresAsync = needsAsyncImageResolution(trimmed);
+
+    const [state, setState] = useState<{
+        sourceUrl: string;
+        resolvedUrl: string;
+        isLoading: boolean;
+    }>(() => ({
+        sourceUrl: trimmed,
+        resolvedUrl: trimmed && !requiresAsync ? trimmed : '',
+        isLoading: Boolean(trimmed && requiresAsync),
+    }));
 
     useEffect(() => {
         let active = true;
         let cleanup: (() => void) | undefined;
 
-        if (!url) {
-            setResolved('');
+        if (!trimmed) {
+            setState({ sourceUrl: '', resolvedUrl: '', isLoading: false });
             return;
         }
-        if (!url.startsWith('offline-cas://')) {
-            setResolved(url);
+        if (!requiresAsync) {
+            setState({ sourceUrl: trimmed, resolvedUrl: trimmed, isLoading: false });
             return;
         }
 
-        resolveStockpileImageUrl(url).then(({ resolvedUrl, revoke }) => {
+        setState({ sourceUrl: trimmed, resolvedUrl: '', isLoading: true });
+
+        resolveStockpileImageUrl(trimmed).then(({ resolvedUrl, revoke }) => {
             if (!active) {
                 if (revoke) revoke();
                 return;
             }
             cleanup = revoke;
-            setResolved(resolvedUrl);
+            setState({ sourceUrl: trimmed, resolvedUrl, isLoading: false });
         });
 
         return () => {
             active = false;
             if (cleanup) cleanup();
         };
-    }, [url]);
+    }, [trimmed, requiresAsync]);
 
-    return resolved;
+    if (state.sourceUrl !== trimmed) {
+        if (!trimmed) return { resolvedUrl: '', isLoading: false };
+        if (!requiresAsync) return { resolvedUrl: trimmed, isLoading: false };
+        return { resolvedUrl: '', isLoading: true };
+    }
+
+    return {
+        resolvedUrl: state.resolvedUrl,
+        isLoading: state.isLoading,
+    };
+}
+
+/**
+ * Hook React con liberación automática de Object URL para visualizar `offline-cas://...`,
+ * rutas protegidas `/api/media/*` o URLs públicas CAS.
+ */
+export function useResolvedStockpileImage(url?: string | null): string {
+    return useResolvedStockpileImageState(url).resolvedUrl;
 }
 
 export class StorageService {

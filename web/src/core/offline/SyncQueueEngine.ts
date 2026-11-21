@@ -22,6 +22,7 @@ export type SyncTaskType =
     | 'MINING_SITE_PROFILE'
     | 'STOCKPILE_SURVEY'
     | 'STOCKPILE_MEASUREMENT'
+    | 'DEVICE_CALIBRATION'
     | 'OPERMAQ_API_MUTATION'
     | 'CAS_MEDIA_UPLOAD'
     | 'GEO_REPORT_STAMP'
@@ -93,6 +94,7 @@ type SyncStateListener = (state: SyncState) => void;
 const TASK_PRIORITY: Record<SyncTaskType, number> = {
     CAS_MEDIA_UPLOAD: 1,
     MINING_SITE_PROFILE: 1,
+    DEVICE_CALIBRATION: 2,
     STOCKPILE_SURVEY: 2,
     STOCKPILE_MEASUREMENT: 3,
     GEOLAPP_DIGITAL_AI_ANALYZE: 4,
@@ -126,7 +128,7 @@ const StockpileSurveySyncSchema = z.object({
     id: z.string().min(1),
     tenantId: z.string().min(1, 'tenantId es obligatorio en STOCKPILE_SURVEY'),
     tag: z.string().min(1),
-    material: z.string().min(1),
+    material: z.string().min(1).optional(),
     shape: z.enum(['elliptic-cone', 'truncated-elliptic-cone', 'perimeter-cone', 'windrow', 'toe-wall']).default('elliptic-cone'),
     volumeM3: z.number().nonnegative().default(0),
     density: z.number().nonnegative().optional().default(0),
@@ -166,7 +168,12 @@ function isRemoteMediaUrl(url?: string | null): url is string {
     if (trimmed.startsWith('blob:') || trimmed.startsWith('offline-cas://') || trimmed.startsWith('data:')) {
         return false;
     }
-    return trimmed.startsWith('https://') || trimmed.startsWith('http://') || trimmed.startsWith('/api/media/cas/');
+    return (
+        trimmed.startsWith('https://') ||
+        trimmed.startsWith('http://') ||
+        trimmed.startsWith('/api/media/cas/') ||
+        trimmed.startsWith('/api/media/blob/')
+    );
 }
 
 function extractOfflineCasSha256(url: string): string | null {
@@ -614,7 +621,20 @@ class SyncQueueEngine {
             await this.probeBackendHealth();
 
             const allTasks: SyncTask[] = await offlineStorage.getAllSyncTasks();
-            const pendingTasks = allTasks
+            // Purga automática de tareas residuales obsoletas (`asset_1795234411019`)
+            for (const stale of allTasks) {
+                const p = (stale.payload || {}) as Record<string, any>;
+                if (
+                    p.id === 'asset_1795234411019' ||
+                    p.assetId === 'asset_1795234411019' ||
+                    p.stockpileId === 'asset_1795234411019'
+                ) {
+                    await offlineStorage.deleteSyncTask(stale.id);
+                }
+            }
+
+            const refreshedTasks: SyncTask[] = await offlineStorage.getAllSyncTasks();
+            const pendingTasks = refreshedTasks
                 .filter((t) => t.status === 'PENDING' || t.status === 'FAILED')
                 .sort((a, b) => {
                     const pa = TASK_PRIORITY[a.type] ?? 9;
@@ -831,12 +851,19 @@ class SyncQueueEngine {
                     throw new Error('Esperando subida CAS de fotografía antes de sincronizar acopio.');
                 }
                 const { measurements: _ignoredMeasurements, ...compactRaw } = resolvedRaw;
+                const rawMaterial = String(resolvedRaw.material || resolvedRaw.clase || '').trim();
+                const hasDeclaredMaterial =
+                    rawMaterial.length > 0 && rawMaterial.toUpperCase() !== 'UNDECLARED';
+                const { material: _droppedMaterial, ...compactWithoutMaterial } = compactRaw as Record<
+                    string,
+                    unknown
+                >;
                 const validated = StockpileSurveySyncSchema.parse({
-                    ...compactRaw,
+                    ...compactWithoutMaterial,
                     id: String(resolvedRaw.id || resolvedRaw.surveyId || ''),
                     tenantId: resolveActiveTenantId(resolvedRaw.tenantId || resolvedRaw.accountId),
                     tag: String(resolvedRaw.tag || resolvedRaw.name || 'ACOPIO'),
-                    material: String(resolvedRaw.material || resolvedRaw.clase || 'mineral'),
+                    ...(hasDeclaredMaterial ? { material: rawMaterial } : {}),
                     lastSurvey: String(
                         resolvedRaw.lastSurvey ||
                             resolvedRaw.surveyDate ||
@@ -1109,6 +1136,84 @@ class SyncQueueEngine {
                         (errJson as any)?.error ||
                             `HTTP ${res.status} al sincronizar GEO_REPORT_STAMP en /api/geo/report-stamp`
                     );
+                }
+                break;
+            }
+            case 'DEVICE_CALIBRATION': {
+                const raw = (task.payload || {}) as Record<string, any>;
+                const tenantId = resolveActiveTenantId(raw.tenantId || raw.accountId);
+                const headers: Record<string, string> = {
+                    'Content-Type': 'application/json',
+                };
+                if (tenantId) {
+                    headers['X-Active-Account-Id'] = tenantId;
+                }
+
+                const res = await coreAuthFetch('/api/geolapp/device-calibration', {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({
+                        scaleFactor: Number(raw.scaleFactor ?? 1),
+                        referenceDistanceM: Number(raw.referenceDistanceM ?? 2),
+                        measuredDistanceM: Number(raw.measuredDistanceM ?? 2),
+                        planeNoiseRmsM: Number(raw.planeNoiseRmsM ?? 0),
+                        imuPitchOffsetDeg: Number(raw.imuPitchOffsetDeg ?? 0),
+                        imuRollOffsetDeg: Number(raw.imuRollOffsetDeg ?? 0),
+                        calibratedAt: Number(raw.calibratedAt ?? Date.now()),
+                        ...(tenantId ? { tenantId } : {}),
+                        ...(typeof raw.deviceModel === 'string' && raw.deviceModel
+                            ? { deviceModel: raw.deviceModel.slice(0, 120) }
+                            : {}),
+                        ...(typeof raw.platform === 'string' && raw.platform
+                            ? { platform: raw.platform.slice(0, 32) }
+                            : {}),
+                    }),
+                });
+
+                if (!res.ok) {
+                    const errJson = await res.json().catch(() => ({}));
+                    throw new Error(
+                        (errJson as any)?.error ||
+                            `HTTP ${res.status} al sincronizar DEVICE_CALIBRATION`
+                    );
+                }
+
+                const savedJson = (await res.json().catch(() => ({}))) as {
+                    calibrationId?: string;
+                    calibratedAt?: number;
+                };
+                const targetCalAt = Number(raw.calibratedAt ?? 0);
+                const resolvedCalId =
+                    savedJson.calibrationId ||
+                    (typeof raw.calibrationId === 'string' ? raw.calibrationId : undefined);
+
+                const histRaw = await offlineStorage.getOfflineMetadata<Array<Record<string, any>>>(
+                    'spatial_device_calibration_history_v1'
+                );
+                if (Array.isArray(histRaw)) {
+                    const nextHist = histRaw.map((entry) =>
+                        Number(entry?.calibratedAt) === targetCalAt
+                            ? {
+                                  ...entry,
+                                  calibrationId: resolvedCalId || entry.calibrationId,
+                                  syncedToCloud: true,
+                              }
+                            : entry
+                    );
+                    await offlineStorage.putOfflineMetadata(
+                        'spatial_device_calibration_history_v1',
+                        nextHist
+                    );
+                }
+                const currentCached = await offlineStorage.getOfflineMetadata<Record<string, any>>(
+                    'spatial_device_calibration'
+                );
+                if (currentCached && Number(currentCached.calibratedAt) === targetCalAt) {
+                    await offlineStorage.putOfflineMetadata('spatial_device_calibration', {
+                        ...currentCached,
+                        calibrationId: resolvedCalId || currentCached.calibrationId,
+                        syncedToCloud: true,
+                    });
                 }
                 break;
             }

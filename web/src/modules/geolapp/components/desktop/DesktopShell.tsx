@@ -6,13 +6,13 @@ import type {
     StockpileAsset,
     StockpileMeasurement,
 } from '../../core/types/GeolappTypes';
+import { DesktopCalibrationAuditView } from './DesktopCalibrationAuditView';
 import { DesktopClosureModal, type ClosureModalMode } from './DesktopClosureModal';
 import { DesktopDeviceCompatibilityView } from './DesktopDeviceCompatibilityView';
 import { DesktopDossierPanel } from './DesktopDossierPanel';
 import { DesktopFaenaDirectory } from './DesktopFaenaDirectory';
 import { DesktopFaenaMonitoring } from './DesktopFaenaMonitoring';
 import { DesktopFaenaStockpiles } from './DesktopFaenaStockpiles';
-import { DesktopQuickCaptureModal } from './DesktopQuickCaptureModal';
 import { DesktopStageWorkspace } from './DesktopStageWorkspace';
 
 export interface DesktopShellProps {
@@ -33,6 +33,7 @@ type DesktopNavLevel =
     | 'FAENA_STOCKPILES'
     | 'STOCKPILE_STAGE'
     | 'MONITORING'
+    | 'CALIBRATIONS'
     | 'COMPATIBILITY';
 
 export const DesktopShell: React.FC<DesktopShellProps> = ({
@@ -51,7 +52,6 @@ export const DesktopShell: React.FC<DesktopShellProps> = ({
     const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
     const [selectedMeasurementId, setSelectedMeasurementId] = useState<string | null>(null);
 
-    const [captureModalAsset, setCaptureModalAsset] = useState<StockpileAsset | null>(null);
     const [closureMode, setClosureMode] = useState<ClosureModalMode>(null);
 
     const faenaScopedAssets = useMemo(() => {
@@ -293,6 +293,26 @@ export const DesktopShell: React.FC<DesktopShellProps> = ({
 
                     <button
                         type="button"
+                        onClick={() => setNavLevel('CALIBRATIONS')}
+                        title={t('calibration.desktop_title', 'AUDITORÍA DE CALIBRACIONES DE CAMPO')}
+                        aria-label={t(
+                            'calibration.desktop_title',
+                            'AUDITORÍA DE CALIBRACIONES DE CAMPO'
+                        )}
+                        aria-pressed={navLevel === 'CALIBRATIONS'}
+                        className={`relative h-[52px] px-2 bg-transparent border-0 border-b-2 outline-none cursor-pointer flex items-center justify-center rounded-none transition-colors ${
+                            navLevel === 'CALIBRATIONS'
+                                ? 'border-[#C68346] text-[#C68346]'
+                                : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
+                        }`}
+                    >
+                        <span className="material-symbols-outlined text-[24px]">
+                            compass_calibration
+                        </span>
+                    </button>
+
+                    <button
+                        type="button"
                         onClick={() => setNavLevel('COMPATIBILITY')}
                         title={t('compatibility.nav_tooltip', 'COMPATIBILIDAD HARDWARE')}
                         aria-label={t('compatibility.nav_tooltip', 'COMPATIBILIDAD HARDWARE')}
@@ -341,6 +361,8 @@ export const DesktopShell: React.FC<DesktopShellProps> = ({
                     />
                 )}
 
+                {navLevel === 'CALIBRATIONS' && <DesktopCalibrationAuditView />}
+
                 {navLevel === 'COMPATIBILITY' && <DesktopDeviceCompatibilityView />}
 
                 {navLevel === 'STOCKPILE_STAGE' && activeAsset && (
@@ -350,7 +372,6 @@ export const DesktopShell: React.FC<DesktopShellProps> = ({
                             measurements={activeAssetMeasurements}
                             selectedMeasurementId={selectedMeasurementId}
                             onSelectMeasurement={(m) => setSelectedMeasurementId(m.id)}
-                            onNewMeasurement={() => setCaptureModalAsset(activeAsset)}
                             onRequestClosure={() => setClosureMode('CLOSE_SHIPMENT')}
                             onRequestReopen={() => setClosureMode('REOPEN_CYCLE')}
                             onRequestDelete={() => setClosureMode('DELETE_ASSET')}
@@ -359,13 +380,6 @@ export const DesktopShell: React.FC<DesktopShellProps> = ({
                     </div>
                 )}
             </div>
-
-            <DesktopQuickCaptureModal
-                open={Boolean(captureModalAsset)}
-                existingAsset={captureModalAsset}
-                onClose={() => setCaptureModalAsset(null)}
-                onCompleted={(assetId) => setSelectedAssetId(assetId)}
-            />
 
             <DesktopClosureModal
                 mode={closureMode}

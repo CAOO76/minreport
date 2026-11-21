@@ -35,6 +35,12 @@ export interface SpatialVolumeInput {
     anchorCenter?: { x: number; y: number; z: number } | null;
     coveragePct?: number;
     sectorsCovered?: number;
+    sectorsTotal?: number;
+    roiRadiusM?: number;
+    calibrationScaleFactor?: number;
+    calibrationId?: string;
+    calibrationPlaneNoiseRmsM?: number;
+    deviceCalibratedAt?: number;
     loopClosed?: boolean;
     depthMode?: 'RAW_DEPTH_ONLY' | 'AUTOMATIC' | 'VIO_POINTCLOUD' | string;
 }
@@ -62,12 +68,19 @@ export interface SpatialVolumeResult {
     surfaceGrid: SpatialSurfaceGrid;
 }
 
-export class SpatialVolumeValidationError extends Error {
-    public readonly statusCode = 400;
+export type SpatialRejectionCode =
+    | 'OBJECT_TOO_SMALL'
+    | 'INSUFFICIENT_COVERAGE'
+    | 'INVALID_POINT_CLOUD';
 
-    constructor(message: string) {
+export class SpatialVolumeValidationError extends Error {
+    public readonly statusCode = 422;
+    public readonly code: SpatialRejectionCode;
+
+    constructor(message: string, code: SpatialRejectionCode = 'INVALID_POINT_CLOUD') {
         super(message);
         this.name = 'SpatialVolumeValidationError';
+        this.code = code;
     }
 }
 
@@ -269,14 +282,20 @@ function selectGroundCandidates(
     for (const bucket of sectorBuckets) {
         if (bucket.length === 0) continue;
         const rSectorMax = Math.max(...bucket.map((b) => b.r));
-        // Preferir borde externo del sector (92%..100%) + mínimos Y en la mitad exterior
-        const outerSlice = bucket.filter((b) => b.r >= rSectorMax * 0.92);
-        const lowerHalfSlice = bucket
-            .filter((b) => b.r >= rSectorMax * 0.55)
+        // Preferir puntos del borde más externo (r >= 94% o mayores radios) ordenados por y ascendente
+        const byRadiusDesc = [...bucket].sort((a, b) => b.r - a.r || a.pt[1] - b.pt[1]);
+        const outerSlice = bucket
+            .filter((b) => b.r >= rSectorMax * 0.94)
             .sort((a, b) => a.pt[1] - b.pt[1]);
-        const lowTake = Math.max(1, Math.min(4, Math.ceil(lowerHalfSlice.length * 0.12)));
+        const lowerHalfSlice = bucket
+            .filter((b) => b.r >= rSectorMax * 0.72)
+            .sort((a, b) => a.pt[1] - b.pt[1]);
+        const lowTake = Math.max(1, Math.min(2, Math.ceil(lowerHalfSlice.length * 0.1)));
 
-        for (const item of outerSlice.slice(0, 6)) {
+        for (const item of byRadiusDesc.slice(0, 2)) {
+            candidates.push(item.pt);
+        }
+        for (const item of outerSlice.slice(0, 2)) {
             candidates.push(item.pt);
         }
         for (let i = 0; i < lowTake; i++) {
@@ -394,17 +413,19 @@ export function fitInclinedGroundPlane(
 
         if (inliers.length < 3) continue;
 
-        // Penalizar planos que dejan puntos del acopio muy por debajo del supuesto suelo
+        // Penalizar planos que dejan puntos del acopio por debajo del supuesto suelo
+        const belowLimit = groundSamples.length >= 6 ? -RANSAC_INLIER_TOL_M * 1.2 : -0.025;
         let belowCount = 0;
         for (const pt of supportSample) {
             const h = pt[1] - (plane.a * pt[0] + plane.b * pt[2] + plane.d);
-            if (h < -RANSAC_INLIER_TOL_M * 1.2) {
+            if (h < belowLimit) {
                 belowCount += 1;
             }
         }
         const belowRatio = supportSample.length > 0 ? belowCount / supportSample.length : 0;
         const rmsInliers = Math.sqrt(errorSumSq / inliers.length);
-        const score = inliers.length - belowRatio * nCand * 1.5 - rmsInliers * 8;
+        const belowPenaltyWeight = groundSamples.length >= 6 ? 1.5 : 2.5;
+        const score = inliers.length - belowRatio * nCand * belowPenaltyWeight - rmsInliers * 8;
 
         if (score > bestScore) {
             bestScore = score;
@@ -419,7 +440,19 @@ export function fitInclinedGroundPlane(
 
     const refined = fitPlaneOls(bestInliers) ?? bestPlane;
     const refinedSlopeTan = Math.hypot(refined.a, refined.b);
-    const finalPlane = refinedSlopeTan <= MAX_GROUND_TAN ? refined : bestPlane;
+    let finalPlane = refinedSlopeTan <= MAX_GROUND_TAN ? refined : bestPlane;
+
+    // Sin muestras dedicadas de suelo, el borde de la pila tiene sesgo positivo (h >= 0);
+    // anclar el intercepto d al percentil inferior de los inliers evita truncar la base.
+    if (groundSamples.length < 6 && bestInliers.length >= 6) {
+        const inlierOffsets = bestInliers
+            .map((pt) => pt[1] - (finalPlane.a * pt[0] + finalPlane.b * pt[2]))
+            .sort((a, b) => a - b);
+        finalPlane = {
+            ...finalPlane,
+            d: percentile(inlierOffsets, 0.15),
+        };
+    }
 
     // Recalcular inliers finales y RMS
     const finalResiduals: number[] = [];
@@ -483,52 +516,107 @@ function computeToeCoverageScore(
     return Math.round(clamp(sectorRatio * 100 * fitFactor, 0, 100));
 }
 
-interface Point2D {
-    x: number;
-    z: number;
-}
+function selectPrimaryClusterMask(
+    observed: Uint8Array,
+    heightsM: number[],
+    nx: number,
+    nz: number,
+    originX: number,
+    originZ: number,
+    cellSizeM: number,
+    targetCx: number,
+    targetCz: number
+): Uint8Array {
+    const total = nx * nz;
+    const inCluster = new Uint8Array(total);
+    const visited = new Uint8Array(total);
 
-function cross2D(o: Point2D, a: Point2D, b: Point2D): number {
-    return (a.x - o.x) * (b.z - o.z) - (a.z - o.z) * (b.x - o.x);
-}
+    interface ClusterCandidate {
+        cells: number[];
+        minDistSq: number;
+        centroidDistSq: number;
+    }
 
-function computeConvexHull2D(pts: Point2D[]): Point2D[] {
-    if (pts.length <= 2) return pts;
-    const sorted = [...pts].sort((p, q) => (p.x !== q.x ? p.x - q.x : p.z - q.z));
-    const lower: Point2D[] = [];
-    for (const p of sorted) {
-        while (lower.length >= 2 && cross2D(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) {
-            lower.pop();
+    const clusters: ClusterCandidate[] = [];
+    const queue: number[] = [];
+
+    for (let iz = 1; iz < nz - 1; iz++) {
+        for (let ix = 1; ix < nx - 1; ix++) {
+            const startIdx = iz * nx + ix;
+            if (visited[startIdx] || !observed[startIdx] || heightsM[startIdx] <= 0.02) {
+                continue;
+            }
+
+            visited[startIdx] = 1;
+            queue.length = 0;
+            queue.push(startIdx);
+            const cells: number[] = [];
+            let minDistSq = Infinity;
+            let sumX = 0;
+            let sumZ = 0;
+
+            let head = 0;
+            while (head < queue.length) {
+                const curr = queue[head++];
+                cells.push(curr);
+                const cxCell = curr % nx;
+                const czCell = Math.floor(curr / nx);
+                const wx = originX + cxCell * cellSizeM;
+                const wz = originZ + czCell * cellSizeM;
+                sumX += wx;
+                sumZ += wz;
+                const dSq = (wx - targetCx) ** 2 + (wz - targetCz) ** 2;
+                if (dSq < minDistSq) minDistSq = dSq;
+
+                for (let dz = -1; dz <= 1; dz++) {
+                    for (let dx = -1; dx <= 1; dx++) {
+                        if (dx === 0 && dz === 0) continue;
+                        const nxCell = cxCell + dx;
+                        const nzCell = czCell + dz;
+                        if (nxCell <= 0 || nxCell >= nx - 1 || nzCell <= 0 || nzCell >= nz - 1) {
+                            continue;
+                        }
+                        const nIdx = nzCell * nx + nxCell;
+                        if (visited[nIdx] || !observed[nIdx] || heightsM[nIdx] <= 0.02) {
+                            continue;
+                        }
+                        visited[nIdx] = 1;
+                        queue.push(nIdx);
+                    }
+                }
+            }
+
+            const meanX = sumX / cells.length;
+            const meanZ = sumZ / cells.length;
+            const centroidDistSq = (meanX - targetCx) ** 2 + (meanZ - targetCz) ** 2;
+            clusters.push({ cells, minDistSq, centroidDistSq });
         }
-        lower.push(p);
     }
-    const upper: Point2D[] = [];
-    for (let i = sorted.length - 1; i >= 0; i--) {
-        const p = sorted[i];
-        while (upper.length >= 2 && cross2D(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) {
-            upper.pop();
-        }
-        upper.push(p);
-    }
-    lower.pop();
-    upper.pop();
-    return [...lower, ...upper];
-}
 
-function isPointInsideConvexPolygon(px: number, pz: number, hull: Point2D[]): boolean {
-    if (hull.length < 3) return false;
-    let hasPos = false;
-    let hasNeg = false;
-    const pt = { x: px, z: pz };
-    for (let i = 0; i < hull.length; i++) {
-        const a = hull[i];
-        const b = hull[(i + 1) % hull.length];
-        const cp = cross2D(a, b, pt);
-        if (cp > 1e-9) hasPos = true;
-        else if (cp < -1e-9) hasNeg = true;
-        if (hasPos && hasNeg) return false;
+    if (clusters.length === 0) {
+        return inCluster;
     }
-    return true;
+
+    const nearbyMulti = clusters.filter(
+        (c) => c.cells.length >= 2 && Math.sqrt(c.minDistSq) <= Math.max(0.2, cellSizeM * 4)
+    );
+    const pool = nearbyMulti.length > 0 ? nearbyMulti : clusters;
+    const distTieTolSq = (cellSizeM * 1.5) ** 2;
+
+    pool.sort((a, b) => {
+        if (Math.abs(a.minDistSq - b.minDistSq) > distTieTolSq) {
+            return a.minDistSq - b.minDistSq;
+        }
+        if (Math.abs(a.centroidDistSq - b.centroidDistSq) > distTieTolSq) {
+            return a.centroidDistSq - b.centroidDistSq;
+        }
+        return b.cells.length - a.cells.length;
+    });
+
+    for (const idx of pool[0].cells) {
+        inCluster[idx] = 1;
+    }
+    return inCluster;
 }
 
 function computePrincipalFootprintAxes(
@@ -601,19 +689,107 @@ function computePrincipalFootprintAxes(
 
 /**
  * Calcula volumen métrico real desde nube 3D ARCore VIO/Depth:
- * Toe Solver RANSAC -> Grilla <= 64×64 -> Percentil 85 por celda -> Relajación armónica interior ->
- * Taludes por gradiente real -> Incertidumbre calibrada ±Δ%.
+ * Calibración -> Recorte ROI -> Toe Solver RANSAC -> Grilla adaptativa (0.04m o 0.08..0.25m) ->
+ * Mediana p50 por celda -> Clustering 8-conectado -> Micro-huecos (>= 5 vecinos) ->
+ * Compuertas físicas (OBJECT_TOO_SMALL / INSUFFICIENT_COVERAGE) -> Incertidumbre ±Δ%.
  */
 export function computeSpatialStockpileVolume(input: SpatialVolumeInput): SpatialVolumeResult {
-    const points = sanitizePoints(input.pointsM);
-    if (points.length < 20) {
+    const rawPoints = sanitizePoints(input.pointsM);
+    if (rawPoints.length < 20) {
         throw new SpatialVolumeValidationError(
-            `Nube espacial insuficiente (${points.length} puntos; minimo 20 requeridos).`
+            `Nube espacial insuficiente (${rawPoints.length} puntos; minimo 20 requeridos).`,
+            'INVALID_POINT_CLOUD'
         );
     }
 
-    const groundSamples = sanitizePoints(input.groundSamplesM);
-    const groundPlane = fitInclinedGroundPlane(points, groundSamples, input.anchorCenter);
+    const effectiveSectorsTotal =
+        typeof input.sectorsTotal === 'number' &&
+        Number.isFinite(input.sectorsTotal) &&
+        input.sectorsTotal > 0
+            ? input.sectorsTotal
+            : RADIAL_SECTORS;
+
+    const declaredCoveragePct =
+        typeof input.coveragePct === 'number' && Number.isFinite(input.coveragePct)
+            ? clamp(input.coveragePct, 0, 100)
+            : typeof input.sectorsCovered === 'number' && Number.isFinite(input.sectorsCovered)
+              ? clamp((input.sectorsCovered / effectiveSectorsTotal) * 100, 0, 100)
+              : null;
+
+    if (declaredCoveragePct !== null && declaredCoveragePct < 35) {
+        throw new SpatialVolumeValidationError(
+            'Falta rodear más el acopio para obtener una medición confiable',
+            'INSUFFICIENT_COVERAGE'
+        );
+    }
+
+    const scaleFactor =
+        typeof input.calibrationScaleFactor === 'number' &&
+        Number.isFinite(input.calibrationScaleFactor)
+            ? clamp(input.calibrationScaleFactor, 0.85, 1.15)
+            : 1.0;
+
+    const scaledPoints: SpatialPoint3D[] =
+        scaleFactor === 1.0
+            ? rawPoints
+            : rawPoints.map(([x, y, z]) => [x * scaleFactor, y * scaleFactor, z * scaleFactor]);
+
+    const rawGroundSamples = sanitizePoints(input.groundSamplesM);
+    const scaledGroundSamples: SpatialPoint3D[] =
+        scaleFactor === 1.0
+            ? rawGroundSamples
+            : rawGroundSamples.map(([x, y, z]) => [
+                  x * scaleFactor,
+                  y * scaleFactor,
+                  z * scaleFactor,
+              ]);
+
+    const scaledAnchorCenter =
+        input.anchorCenter &&
+        Number.isFinite(input.anchorCenter.x) &&
+        Number.isFinite(input.anchorCenter.y) &&
+        Number.isFinite(input.anchorCenter.z)
+            ? {
+                  x: input.anchorCenter.x * scaleFactor,
+                  y: input.anchorCenter.y * scaleFactor,
+                  z: input.anchorCenter.z * scaleFactor,
+              }
+            : null;
+
+    const effectiveRoiRadiusM =
+        typeof input.roiRadiusM === 'number' &&
+        Number.isFinite(input.roiRadiusM) &&
+        input.roiRadiusM > 0
+            ? input.roiRadiusM * scaleFactor
+            : undefined;
+
+    const roiCenterX = scaledAnchorCenter
+        ? scaledAnchorCenter.x
+        : median(scaledPoints.map((p) => p[0]));
+    const roiCenterZ = scaledAnchorCenter
+        ? scaledAnchorCenter.z
+        : median(scaledPoints.map((p) => p[2]));
+
+    const points = effectiveRoiRadiusM
+        ? scaledPoints.filter(
+              ([x, , z]) => Math.hypot(x - roiCenterX, z - roiCenterZ) <= effectiveRoiRadiusM * 1.15
+          )
+        : scaledPoints;
+
+    const groundSamples = effectiveRoiRadiusM
+        ? scaledGroundSamples.filter(
+              ([x, , z]) => Math.hypot(x - roiCenterX, z - roiCenterZ) <= effectiveRoiRadiusM * 1.35
+          )
+        : scaledGroundSamples;
+
+    if (points.length < 10) {
+        throw new SpatialVolumeValidationError(
+            'Los puntos dentro del radio seleccionado son insuficientes para medir.',
+            'INVALID_POINT_CLOUD'
+        );
+    }
+
+    const groundPlane = fitInclinedGroundPlane(points, groundSamples, scaledAnchorCenter);
 
     const relativePoints: Array<{ x: number; z: number; h: number }> = [];
     for (const [x, y, z] of points) {
@@ -625,7 +801,8 @@ export function computeSpatialStockpileVolume(input: SpatialVolumeInput): Spatia
 
     if (relativePoints.length < 10) {
         throw new SpatialVolumeValidationError(
-            'Los puntos capturados no definen un acopio valido sobre el plano base.'
+            'Los puntos capturados no definen un acopio valido sobre el plano base.',
+            'INVALID_POINT_CLOUD'
         );
     }
 
@@ -634,21 +811,28 @@ export function computeSpatialStockpileVolume(input: SpatialVolumeInput): Spatia
 
     const xs = boundSource.map((p) => p.x).sort((a, b) => a - b);
     const zs = boundSource.map((p) => p.z).sort((a, b) => a - b);
-    const minX = boundSource.length >= 50 ? percentile(xs, 0.01) : xs[0];
-    const maxX = boundSource.length >= 50 ? percentile(xs, 0.99) : xs[xs.length - 1];
-    const minZ = boundSource.length >= 50 ? percentile(zs, 0.01) : zs[0];
-    const maxZ = boundSource.length >= 50 ? percentile(zs, 0.99) : zs[zs.length - 1];
+    const minX = xs[0];
+    const maxX = xs[xs.length - 1];
+    const minZ = zs[0];
+    const maxZ = zs[zs.length - 1];
 
-    const spanX = Math.max(0.4, maxX - minX);
-    const spanZ = Math.max(0.4, maxZ - minZ);
+    const spanX = Math.max(0.04, maxX - minX);
+    const spanZ = Math.max(0.04, maxZ - minZ);
     const maxSpan = Math.max(spanX, spanZ);
 
-    // Grilla métrica nx × nz <= 64 × 64, cellSizeM entre 0.08m y 0.35m (adaptada a densidad de nube)
+    // Grilla métrica nx × nz <= 64 × 64: 0.04m para objetos/ROI <= 2.5m; 0.08..0.25m en acopios grandes
     const minCellForLimit = maxSpan / 60;
-    const densityCellSize = Math.sqrt((spanX * spanZ) / Math.max(40, pilePoints.length * 0.75));
-    const cellSizeM = Number(
-        Math.max(clamp(Math.max(maxSpan / 48, densityCellSize), 0.08, 0.35), minCellForLimit).toFixed(4)
-    );
+    const isSmallOrCompact =
+        (effectiveRoiRadiusM !== undefined && effectiveRoiRadiusM <= 2.5) || maxSpan < 2.5;
+    let cellSizeM: number;
+    if (isSmallOrCompact) {
+        cellSizeM = Number(Math.max(0.04, minCellForLimit).toFixed(4));
+    } else {
+        const densityCellSize = Math.sqrt((spanX * spanZ) / Math.max(40, pilePoints.length * 0.95));
+        cellSizeM = Number(
+            Math.max(clamp(Math.max(maxSpan / 48, densityCellSize), 0.08, 0.25), minCellForLimit).toFixed(4)
+        );
+    }
 
     const nx = Math.min(64, Math.max(8, Math.ceil(spanX / cellSizeM) + 2));
     const nz = Math.min(64, Math.max(8, Math.ceil(spanZ / cellSizeM) + 2));
@@ -669,7 +853,6 @@ export function computeSpatialStockpileVolume(input: SpatialVolumeInput): Spatia
 
     const observed = new Uint8Array(totalCells);
     const heightsM = new Array<number>(totalCells).fill(0);
-    const observedPileCoords: Point2D[] = [];
 
     for (let iz = 0; iz < nz; iz++) {
         for (let ix = 0; ix < nx; ix++) {
@@ -679,53 +862,57 @@ export function computeSpatialStockpileVolume(input: SpatialVolumeInput): Spatia
 
             observed[idx] = 1;
             const sorted = [...bucket].sort((a, b) => a - b);
-            const repHeight = percentile(sorted, 0.85);
+            const repHeight = percentile(sorted, 0.5);
             // Borde exterior de grilla siempre en 0 para cerrar malla watertight
             const isGridBorder = ix === 0 || ix === nx - 1 || iz === 0 || iz === nz - 1;
             heightsM[idx] = isGridBorder ? 0 : Number(repHeight.toFixed(4));
-            if (!isGridBorder && heightsM[idx] > 0.02) {
-                observedPileCoords.push({ x: ix, z: iz });
-            }
         }
     }
 
-    // Máscara interior convexa + interpolación armónica (24 pasos Gauss-Seidel) en celdas sin muestra
-    const interiorMask = new Uint8Array(totalCells);
-    if (observedPileCoords.length >= 3) {
-        const hull = computeConvexHull2D(observedPileCoords);
-        if (hull.length >= 3) {
-            for (let iz = 1; iz < nz - 1; iz++) {
-                for (let ix = 1; ix < nx - 1; ix++) {
-                    const idx = iz * nx + ix;
-                    if (observed[idx]) continue;
-                    if (isPointInsideConvexPolygon(ix, iz, hull)) {
-                        interiorMask[idx] = 1;
-                    }
-                }
-            }
+    // Clustering 8-conectado: conservar únicamente el componente conectado principal más cercano a anchorCenter
+    const targetClusterCx = scaledAnchorCenter ? scaledAnchorCenter.x : centerX;
+    const targetClusterCz = scaledAnchorCenter ? scaledAnchorCenter.z : centerZ;
+    const primaryCluster = selectPrimaryClusterMask(
+        observed,
+        heightsM,
+        nx,
+        nz,
+        originX,
+        originZ,
+        cellSizeM,
+        targetClusterCx,
+        targetClusterCz
+    );
+
+    for (let idx = 0; idx < totalCells; idx++) {
+        if (!primaryCluster[idx]) {
+            heightsM[idx] = 0;
         }
     }
 
-    // Inicializar celdas interiores desde promedio de vecinos observados en un radio local
+    // Interpolar únicamente micro-huecos rodeados por >= 5 vecinos observados del mismo clúster conectado
+    const microHoleMask = new Uint8Array(totalCells);
     for (let iz = 1; iz < nz - 1; iz++) {
         for (let ix = 1; ix < nx - 1; ix++) {
             const idx = iz * nx + ix;
-            if (!interiorMask[idx]) continue;
+            if (primaryCluster[idx]) continue;
+
+            let clusterNeighbors = 0;
             let sum = 0;
-            let cnt = 0;
-            for (let dz = -2; dz <= 2; dz++) {
-                for (let dx = -2; dx <= 2; dx++) {
-                    const jx = ix + dx;
-                    const jz = iz + dz;
-                    if (jx < 0 || jx >= nx || jz < 0 || jz >= nz) continue;
-                    const jIdx = jz * nx + jx;
-                    if (observed[jIdx]) {
+            for (let dz = -1; dz <= 1; dz++) {
+                for (let dx = -1; dx <= 1; dx++) {
+                    if (dx === 0 && dz === 0) continue;
+                    const jIdx = (iz + dz) * nx + (ix + dx);
+                    if (primaryCluster[jIdx]) {
+                        clusterNeighbors += 1;
                         sum += heightsM[jIdx];
-                        cnt += 1;
                     }
                 }
             }
-            heightsM[idx] = cnt > 0 ? sum / cnt : 0.25;
+            if (clusterNeighbors >= 5) {
+                microHoleMask[idx] = 1;
+                heightsM[idx] = clusterNeighbors > 0 ? sum / clusterNeighbors : 0.0;
+            }
         }
     }
 
@@ -733,7 +920,7 @@ export function computeSpatialStockpileVolume(input: SpatialVolumeInput): Spatia
         for (let iz = 1; iz < nz - 1; iz++) {
             for (let ix = 1; ix < nx - 1; ix++) {
                 const idx = iz * nx + ix;
-                if (!interiorMask[idx]) continue;
+                if (!microHoleMask[idx]) continue;
                 const avg =
                     0.25 *
                     (heightsM[idx - 1] +
@@ -767,6 +954,13 @@ export function computeSpatialStockpileVolume(input: SpatialVolumeInput): Spatia
         }
     }
 
+    if (maxH < 0.25) {
+        throw new SpatialVolumeValidationError(
+            'Objeto muy bajo para medir con cámara (mínimo 25 cm de altura)',
+            'OBJECT_TOO_SMALL'
+        );
+    }
+
     const volumeM3 = round2(rawVolume);
     const heightM = round2(maxH);
     const footprintAreaM2 = round2(activeFootprintCells.length * cellArea);
@@ -776,12 +970,12 @@ export function computeSpatialStockpileVolume(input: SpatialVolumeInput): Spatia
         cellSizeM
     );
 
-    // Taludes desde gradientes reales |∇h| en flancos (0.15*H < h < 0.85*H)
+    // Talud honesto: únicamente si maxH >= 0.50 m
     const flankAnglesAll: number[] = [];
     const flankAnglesLeft: number[] = [];
     const flankAnglesRight: number[] = [];
 
-    if (maxH > 0.1) {
+    if (maxH >= 0.5) {
         const minFlankH = 0.15 * maxH;
         const maxFlankH = 0.85 * maxH;
 
@@ -809,25 +1003,30 @@ export function computeSpatialStockpileVolume(input: SpatialVolumeInput): Spatia
         }
     }
 
-    const slopeAngleAvgDeg = flankAnglesAll.length > 0 ? round1(median(flankAnglesAll)) : null;
+    const slopeAngleAvgDeg =
+        maxH >= 0.5 && flankAnglesAll.length > 0 ? round1(median(flankAnglesAll)) : null;
     const slopeAngleLeftDeg =
-        flankAnglesLeft.length > 0 ? round1(median(flankAnglesLeft)) : slopeAngleAvgDeg;
+        maxH >= 0.5
+            ? flankAnglesLeft.length > 0
+                ? round1(median(flankAnglesLeft))
+                : slopeAngleAvgDeg
+            : null;
     const slopeAngleRightDeg =
-        flankAnglesRight.length > 0 ? round1(median(flankAnglesRight)) : slopeAngleAvgDeg;
+        maxH >= 0.5
+            ? flankAnglesRight.length > 0
+                ? round1(median(flankAnglesRight))
+                : slopeAngleAvgDeg
+            : null;
 
     let slopeWarning: string | null = null;
-    if (slopeAngleAvgDeg !== null && slopeAngleAvgDeg > 48) {
+    if (maxH >= 0.5 && slopeAngleAvgDeg !== null && slopeAngleAvgDeg > 48) {
         slopeWarning = `Talud medido ${slopeAngleAvgDeg}° supera ángulo límite físico natural (~45°–48°).`;
-    } else if (slopeAngleAvgDeg !== null && slopeAngleAvgDeg > 38) {
+    } else if (maxH >= 0.5 && slopeAngleAvgDeg !== null && slopeAngleAvgDeg > 38) {
         slopeWarning = `Talud medido ${slopeAngleAvgDeg}° supera referencia de 38°. Verificar estabilidad operativa.`;
     }
 
     const effectiveCoveragePct = clamp(
-        typeof input.coveragePct === 'number' && Number.isFinite(input.coveragePct)
-            ? input.coveragePct
-            : typeof input.sectorsCovered === 'number' && Number.isFinite(input.sectorsCovered)
-              ? (input.sectorsCovered / RADIAL_SECTORS) * 100
-              : groundPlane.toeScore,
+        declaredCoveragePct !== null ? declaredCoveragePct : groundPlane.toeScore,
         0,
         100
     );

@@ -8,9 +8,57 @@ import { Capacitor, registerPlugin } from '@capacitor/core';
 import { mediaDigestorClient } from '../../../../core/media/MediaDigestorClient';
 import { coreAuthFetch } from '../../../../core/network/coreAuthFetch';
 import { offlineStorage } from '../../../../core/offline/OfflineStorage';
+import { syncQueueEngine } from '../../../../core/offline/SyncQueueEngine';
+import { probeSpatialDeviceCapability } from './spatialDeviceCapability';
 import type { CopperMineralDomain, GeolappGeometryType } from '../types/GeolappTypes';
 
 export type SpatialDepthMode = 'RAW_DEPTH_ONLY' | 'AUTOMATIC' | 'VIO_POINTCLOUD';
+
+const CALIBRATION_STORAGE_KEY = 'minreport_spatial_device_calibration_v1';
+const CALIBRATION_HISTORY_STORAGE_KEY = 'spatial_device_calibration_history_v1';
+export const CALIBRATION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * Formatea m³ para operación industrial: 2 decimales si < 10 m³, 1 decimal si >= 10 m³.
+ */
+export function formatStockpileVolumeM3(volumeM3: number): string {
+    if (!Number.isFinite(volumeM3) || volumeM3 <= 0) {
+        return '0.00';
+    }
+    return volumeM3 < 10 ? volumeM3.toFixed(2) : volumeM3.toFixed(1);
+}
+
+export class SpatialScanRejectedError extends Error {
+    public readonly status = 422;
+    public readonly rejectionCode: string;
+
+    constructor(rejectionCode: string, message: string) {
+        super(message);
+        this.name = 'SpatialScanRejectedError';
+        this.rejectionCode = rejectionCode;
+    }
+}
+
+export interface NativeCalibrationResult {
+    cancelled?: boolean;
+    calibrated: boolean;
+    scaleFactor: number;
+    referenceDistanceM: number;
+    measuredDistanceM?: number;
+    planeNoiseRmsM?: number;
+    imuPitchOffsetDeg?: number;
+    imuRollOffsetDeg?: number;
+    calibratedAt: number;
+    calibrationId?: string;
+    localId?: string;
+    deviceModel?: string;
+    platform?: string;
+    actorUid?: string;
+    region?: string;
+    syncedToCloud?: boolean;
+}
+
+export type DeviceCalibrationRecord = NativeCalibrationResult;
 
 export interface SpatialScanKeyframe {
     index: number;
@@ -26,6 +74,8 @@ export interface SpatialScanNativeResult {
     depthMode?: SpatialDepthMode;
     coveragePct?: number;
     sectorsCovered?: number;
+    sectorsTotal?: number;
+    roiRadiusM?: number;
     keyframeCount?: number;
     loopClosed?: boolean;
     anchorCenter?: { x: number; y: number; z: number };
@@ -33,6 +83,10 @@ export interface SpatialScanNativeResult {
     groundSamplesM?: Array<[number, number, number]>;
     keyframes?: SpatialScanKeyframe[];
     rejectedBlurCount?: number;
+    calibrationScaleFactor?: number;
+    calibrationId?: string;
+    calibrationPlaneNoiseRmsM?: number;
+    deviceCalibratedAt?: number;
 }
 
 export interface SpatialOfflineStoredPayload {
@@ -41,12 +95,18 @@ export interface SpatialOfflineStoredPayload {
     depthMode: SpatialDepthMode;
     coveragePct: number;
     sectorsCovered: number;
+    sectorsTotal?: number;
+    roiRadiusM?: number;
     keyframeCount: number;
     loopClosed: boolean;
     anchorCenter?: { x: number; y: number; z: number };
     pointsM: Array<[number, number, number]>;
     groundSamplesM?: Array<[number, number, number]>;
     rejectedBlurCount?: number;
+    calibrationScaleFactor?: number;
+    calibrationId?: string;
+    calibrationPlaneNoiseRmsM?: number;
+    deviceCalibratedAt?: number;
 }
 
 export interface SpatialAnalyzeRequest {
@@ -58,6 +118,10 @@ export interface SpatialAnalyzeRequest {
     extraBlobs?: Blob[];
     photoUrl?: string;
     locale?: 'es' | 'en' | 'pt';
+    calibrationId?: string;
+    calibrationScaleFactor?: number;
+    calibrationPlaneNoiseRmsM?: number;
+    deviceCalibratedAt?: number;
 }
 
 export interface SpatialAnalyzeResult {
@@ -71,9 +135,11 @@ export interface SpatialAnalyzeResult {
     depthMode: SpatialDepthMode | string;
     groundSlopeDeg: number;
     geometryType: GeolappGeometryType;
+    isNonStockpile?: boolean;
     wallConfinement?: 'NONE' | 'SINGLE_WALL' | 'BUNKER_3_WALLS';
     copperDomain: CopperMineralDomain | null;
     granulometry: 'COLPAS' | 'GRANSA' | 'MIXTO' | 'FINOS' | null;
+    aiSuggestedGranulometry?: 'COLPAS' | 'GRANSA' | 'MIXTO' | 'FINOS' | null;
     suggestedDensityTm3: number | null;
     slopeAngleLeftDeg?: number | null;
     slopeAngleRightDeg?: number | null;
@@ -83,11 +149,14 @@ export interface SpatialAnalyzeResult {
     meshUrl: string | null;
     meshSha256: string | null;
     meshSource: string | null;
+    tinVolumeM3?: number | null;
     reasoning: string;
 }
 
 interface MinreportSpatialScannerNative {
     startSpatialScan(): Promise<SpatialScanNativeResult>;
+    startCalibration(): Promise<NativeCalibrationResult>;
+    getCalibrationStatus(): Promise<NativeCalibrationResult>;
 }
 
 const MinreportSpatialScanner =
@@ -132,9 +201,244 @@ async function computeBlobSha256Hex(blob: Blob): Promise<string> {
     return `spatial_${Date.now()}_${buffer.byteLength}`;
 }
 
-function buildStoredPayload(scan: SpatialScanNativeResult): SpatialOfflineStoredPayload {
+export function getCachedCalibration(): NativeCalibrationResult | null {
+    if (typeof window === 'undefined') return null;
+    try {
+        const raw = window.localStorage.getItem(CALIBRATION_STORAGE_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw) as NativeCalibrationResult;
+        return parsed && typeof parsed.scaleFactor === 'number' ? parsed : null;
+    } catch {
+        return null;
+    }
+}
+
+export function isCalibrationValid(cal?: NativeCalibrationResult | null): boolean {
+    if (!cal || !cal.calibrated) return false;
+    if (
+        typeof cal.scaleFactor !== 'number' ||
+        !Number.isFinite(cal.scaleFactor) ||
+        cal.scaleFactor < 0.85 ||
+        cal.scaleFactor > 1.15
+    ) {
+        return false;
+    }
+    if (typeof cal.calibratedAt !== 'number' || cal.calibratedAt <= 0) return false;
+    return Date.now() - cal.calibratedAt <= CALIBRATION_MAX_AGE_MS;
+}
+
+export function calibrationRemainingDays(cal: NativeCalibrationResult | null): number {
+    if (!cal || !cal.calibrated || typeof cal.calibratedAt !== 'number' || cal.calibratedAt <= 0) {
+        return 0;
+    }
+    const remainingMs = cal.calibratedAt + CALIBRATION_MAX_AGE_MS - Date.now();
+    if (remainingMs <= 0) return 0;
+    return Math.ceil(remainingMs / (24 * 60 * 60 * 1000));
+}
+
+function mergeAndSortCalibrations(items: NativeCalibrationResult[]): NativeCalibrationResult[] {
+    const byKey = new Map<string, NativeCalibrationResult>();
+    for (const item of items) {
+        if (!item || !item.calibratedAt) continue;
+        const key = item.calibrationId
+            ? `id:${item.calibrationId}`
+            : `ts:${item.calibratedAt}:${Number(item.scaleFactor || 1).toFixed(4)}`;
+        const prev = byKey.get(key);
+        if (!prev || (!prev.syncedToCloud && item.syncedToCloud)) {
+            byKey.set(key, item);
+        }
+    }
+    return Array.from(byKey.values())
+        .sort((a, b) => Number(b.calibratedAt || 0) - Number(a.calibratedAt || 0))
+        .slice(0, 50);
+}
+
+async function persistCachedCalibration(cal: NativeCalibrationResult): Promise<void> {
+    if (typeof window !== 'undefined') {
+        try {
+            window.localStorage.setItem(CALIBRATION_STORAGE_KEY, JSON.stringify(cal));
+        } catch {
+            // Ignorar cuotas de localStorage
+        }
+    }
+    try {
+        await offlineStorage.putOfflineMetadata('spatial_device_calibration', cal);
+    } catch {
+        // Entorno sin IndexedDB
+    }
+}
+
+async function appendLocalCalibrationHistory(
+    cal: NativeCalibrationResult
+): Promise<NativeCalibrationResult[]> {
+    const existing = await getCachedCalibrationHistory();
+    const next = mergeAndSortCalibrations([cal, ...existing]);
+    if (typeof window !== 'undefined') {
+        try {
+            window.localStorage.setItem(CALIBRATION_HISTORY_STORAGE_KEY, JSON.stringify(next));
+        } catch {
+            // Ignorar cuotas de localStorage
+        }
+    }
+    try {
+        await offlineStorage.putOfflineMetadata(CALIBRATION_HISTORY_STORAGE_KEY, next);
+    } catch {
+        // Entorno sin IndexedDB
+    }
+    return next;
+}
+
+export async function getCachedCalibrationHistory(): Promise<NativeCalibrationResult[]> {
+    try {
+        const stored = await offlineStorage.getOfflineMetadata<NativeCalibrationResult[]>(
+            CALIBRATION_HISTORY_STORAGE_KEY
+        );
+        if (Array.isArray(stored) && stored.length > 0) {
+            return mergeAndSortCalibrations(stored);
+        }
+    } catch {
+        // Fallback localStorage
+    }
+    if (typeof window !== 'undefined') {
+        try {
+            const raw = window.localStorage.getItem(CALIBRATION_HISTORY_STORAGE_KEY);
+            if (raw) {
+                const parsed = JSON.parse(raw) as NativeCalibrationResult[];
+                if (Array.isArray(parsed)) {
+                    return mergeAndSortCalibrations(parsed);
+                }
+            }
+        } catch {
+            // Ignorar JSON corrupto
+        }
+    }
+    const single = getCachedCalibration();
+    return single && single.calibratedAt > 0 ? [single] : [];
+}
+
+/**
+ * Obtiene el historial auditable de calibraciones del tenant en `southamerica-west1`,
+ * combinando registros cloud con calibraciones pendientes en cola offline.
+ */
+export async function fetchDeviceCalibrationHistory(
+    tenantId?: string
+): Promise<NativeCalibrationResult[]> {
+    const localHistory = await getCachedCalibrationHistory();
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+        return localHistory;
+    }
+
+    try {
+        const headers: Record<string, string> = {};
+        if (tenantId) {
+            headers['X-Active-Account-Id'] = tenantId;
+        }
+        const url = tenantId
+            ? `/api/geolapp/device-calibrations?tenantId=${encodeURIComponent(tenantId)}`
+            : '/api/geolapp/device-calibrations';
+        const res = await coreAuthFetch(url, { method: 'GET', headers });
+        if (!res.ok) {
+            return localHistory;
+        }
+        const data = (await res.json().catch(() => ({}))) as {
+            calibrations?: Array<Record<string, any>>;
+        };
+        const remoteItems: NativeCalibrationResult[] = (data.calibrations || []).map((row) => ({
+            calibrated: true,
+            calibrationId: String(row.calibrationId || ''),
+            scaleFactor: Number(row.scaleFactor ?? 1),
+            referenceDistanceM: Number(row.referenceDistanceM ?? 2),
+            measuredDistanceM:
+                typeof row.measuredDistanceM === 'number' ? row.measuredDistanceM : undefined,
+            planeNoiseRmsM:
+                typeof row.planeNoiseRmsM === 'number' ? row.planeNoiseRmsM : undefined,
+            imuPitchOffsetDeg:
+                typeof row.imuPitchOffsetDeg === 'number' ? row.imuPitchOffsetDeg : undefined,
+            imuRollOffsetDeg:
+                typeof row.imuRollOffsetDeg === 'number' ? row.imuRollOffsetDeg : undefined,
+            calibratedAt: Number(row.calibratedAt || row.createdAt || 0),
+            deviceModel: typeof row.deviceModel === 'string' ? row.deviceModel : undefined,
+            platform: typeof row.platform === 'string' ? row.platform : undefined,
+            actorUid: typeof row.actorUid === 'string' ? row.actorUid : undefined,
+            region: typeof row.region === 'string' ? row.region : 'southamerica-west1',
+            syncedToCloud: true,
+        }));
+
+        const pendingLocal = localHistory.filter(
+            (loc) =>
+                !loc.syncedToCloud &&
+                !remoteItems.some(
+                    (rem) =>
+                        rem.calibratedAt === loc.calibratedAt &&
+                        Math.abs(rem.scaleFactor - loc.scaleFactor) < 0.0005
+                )
+        );
+
+        const merged = mergeAndSortCalibrations([...remoteItems, ...pendingLocal]);
+        if (typeof window !== 'undefined') {
+            try {
+                window.localStorage.setItem(CALIBRATION_HISTORY_STORAGE_KEY, JSON.stringify(merged));
+            } catch {
+                // Ignorar cuota
+            }
+        }
+        try {
+            await offlineStorage.putOfflineMetadata(CALIBRATION_HISTORY_STORAGE_KEY, merged);
+        } catch {
+            // Entorno sin IDB
+        }
+        return merged;
+    } catch {
+        return localHistory;
+    }
+}
+
+function buildStoredPayload(
+    scan: SpatialScanNativeResult,
+    overrides?: {
+        calibrationId?: string;
+        calibrationScaleFactor?: number;
+        calibrationPlaneNoiseRmsM?: number;
+        deviceCalibratedAt?: number;
+    }
+): SpatialOfflineStoredPayload {
     const pointsM = Array.isArray(scan.pointsM) ? scan.pointsM : [];
     const groundSamplesM = Array.isArray(scan.groundSamplesM) ? scan.groundSamplesM : undefined;
+    const cachedCal = getCachedCalibration();
+    const fallbackCalValid = isCalibrationValid(cachedCal);
+
+    const calibrationScaleFactor =
+        typeof overrides?.calibrationScaleFactor === 'number'
+            ? overrides.calibrationScaleFactor
+            : typeof scan.calibrationScaleFactor === 'number'
+              ? scan.calibrationScaleFactor
+              : fallbackCalValid && cachedCal
+                ? cachedCal.scaleFactor
+                : undefined;
+
+    const calibrationId =
+        overrides?.calibrationId ||
+        scan.calibrationId ||
+        (fallbackCalValid && cachedCal?.calibrationId ? cachedCal.calibrationId : undefined);
+
+    const calibrationPlaneNoiseRmsM =
+        typeof overrides?.calibrationPlaneNoiseRmsM === 'number'
+            ? overrides.calibrationPlaneNoiseRmsM
+            : typeof scan.calibrationPlaneNoiseRmsM === 'number'
+              ? scan.calibrationPlaneNoiseRmsM
+              : fallbackCalValid && cachedCal
+                ? cachedCal.planeNoiseRmsM
+                : undefined;
+
+    const deviceCalibratedAt =
+        typeof overrides?.deviceCalibratedAt === 'number'
+            ? overrides.deviceCalibratedAt
+            : typeof scan.deviceCalibratedAt === 'number'
+              ? scan.deviceCalibratedAt
+              : fallbackCalValid && cachedCal
+                ? cachedCal.calibratedAt
+                : undefined;
+
     return {
         scanId: scan.scanId,
         deviceModel: scan.deviceModel,
@@ -144,6 +448,14 @@ function buildStoredPayload(scan: SpatialScanNativeResult): SpatialOfflineStored
             typeof scan.sectorsCovered === 'number' && Number.isFinite(scan.sectorsCovered)
                 ? scan.sectorsCovered
                 : 0,
+        sectorsTotal:
+            typeof scan.sectorsTotal === 'number' && Number.isFinite(scan.sectorsTotal)
+                ? scan.sectorsTotal
+                : undefined,
+        roiRadiusM:
+            typeof scan.roiRadiusM === 'number' && Number.isFinite(scan.roiRadiusM)
+                ? scan.roiRadiusM
+                : undefined,
         keyframeCount: Math.max(
             1,
             typeof scan.keyframeCount === 'number' && Number.isFinite(scan.keyframeCount)
@@ -157,7 +469,243 @@ function buildStoredPayload(scan: SpatialScanNativeResult): SpatialOfflineStored
         pointsM,
         groundSamplesM,
         rejectedBlurCount: scan.rejectedBlurCount,
+        ...(typeof calibrationScaleFactor === 'number' ? { calibrationScaleFactor } : {}),
+        ...(calibrationId ? { calibrationId } : {}),
+        ...(typeof calibrationPlaneNoiseRmsM === 'number' ? { calibrationPlaneNoiseRmsM } : {}),
+        ...(typeof deviceCalibratedAt === 'number' ? { deviceCalibratedAt } : {}),
     };
+}
+
+/**
+ * Consulta el estado persistido de calibración métrica (2.00 m con huincha) en Android
+ * con fallback limpio a caché local offline.
+ */
+export async function getNativeCalibrationStatus(): Promise<NativeCalibrationResult> {
+    const cached = getCachedCalibration();
+    const idbCached =
+        cached ||
+        (await offlineStorage
+            .getOfflineMetadata<NativeCalibrationResult>('spatial_device_calibration')
+            .catch(() => null));
+
+    if (Capacitor.isNativePlatform()) {
+        try {
+            const nativeRes = await MinreportSpatialScanner.getCalibrationStatus();
+            if (nativeRes && nativeRes.calibrated) {
+                const merged: NativeCalibrationResult = {
+                    ...nativeRes,
+                    calibrationId:
+                        idbCached?.calibratedAt === nativeRes.calibratedAt
+                            ? idbCached.calibrationId
+                            : nativeRes.calibrationId,
+                    syncedToCloud:
+                        idbCached?.calibratedAt === nativeRes.calibratedAt
+                            ? idbCached.syncedToCloud
+                            : false,
+                };
+                await persistCachedCalibration(merged);
+                return merged;
+            }
+        } catch {
+            // Mantener fallback a caché local
+        }
+    }
+
+    return (
+        idbCached || {
+            calibrated: false,
+            scaleFactor: 1.0,
+            referenceDistanceM: 2.0,
+            calibratedAt: 0,
+        }
+    );
+}
+
+/**
+ * Envía y audita la calibración del dispositivo en `southamerica-west1` (`POST /api/geolapp/device-calibration`).
+ */
+export async function syncDeviceCalibrationToBackend(
+    cal: NativeCalibrationResult,
+    tenantId?: string
+): Promise<NativeCalibrationResult> {
+    const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+    };
+    if (tenantId) {
+        headers['X-Active-Account-Id'] = tenantId;
+    }
+
+    const measuredDistanceM =
+        typeof cal.measuredDistanceM === 'number' && Number.isFinite(cal.measuredDistanceM)
+            ? cal.measuredDistanceM
+            : Number(((cal.referenceDistanceM || 2.0) / (cal.scaleFactor || 1.0)).toFixed(4));
+
+    let deviceModel = cal.deviceModel;
+    let platform = cal.platform;
+    if (!deviceModel || !platform) {
+        try {
+            const cap = await probeSpatialDeviceCapability();
+            if (!deviceModel) {
+                const rawModel = [cap.manufacturer, cap.model].filter(Boolean).join(' ').trim();
+                deviceModel = rawModel ? rawModel.slice(0, 120) : undefined;
+            }
+            if (!platform && cap.platform) {
+                platform = cap.platform.toUpperCase();
+            }
+        } catch {
+            // Best-effort sin bloquear calibración
+        }
+    }
+
+    const calibratedAt = cal.calibratedAt || Date.now();
+    const enrichedLocal: NativeCalibrationResult = {
+        ...cal,
+        measuredDistanceM,
+        calibratedAt,
+        ...(deviceModel ? { deviceModel } : {}),
+        ...(platform ? { platform } : {}),
+    };
+
+    const res = await coreAuthFetch('/api/geolapp/device-calibration', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+            scaleFactor: enrichedLocal.scaleFactor,
+            referenceDistanceM: enrichedLocal.referenceDistanceM || 2.0,
+            measuredDistanceM,
+            planeNoiseRmsM: enrichedLocal.planeNoiseRmsM ?? 0,
+            imuPitchOffsetDeg: enrichedLocal.imuPitchOffsetDeg ?? 0,
+            imuRollOffsetDeg: enrichedLocal.imuRollOffsetDeg ?? 0,
+            calibratedAt,
+            tenantId,
+            ...(deviceModel ? { deviceModel } : {}),
+            ...(platform ? { platform } : {}),
+        }),
+    });
+
+    const data = (await res.json().catch(() => ({}))) as { calibrationId?: string };
+    if (!res.ok) {
+        return { ...enrichedLocal, syncedToCloud: false };
+    }
+
+    const synced: NativeCalibrationResult = {
+        ...enrichedLocal,
+        calibrationId: data.calibrationId || enrichedLocal.calibrationId,
+        syncedToCloud: true,
+    };
+    await persistCachedCalibration(synced);
+    await appendLocalCalibrationHistory(synced);
+    return synced;
+}
+
+/**
+ * Inicia el asistente nativo de calibración de huincha 2.00 m en suelo plano (`MinreportSpatialScanner.startCalibration`).
+ * Registra siempre historial local + cloud (`POST /api/geolapp/device-calibration`) con cola offline automática.
+ */
+export async function startNativeCalibration(tenantId?: string): Promise<NativeCalibrationResult> {
+    if (!Capacitor.isNativePlatform()) {
+        return {
+            cancelled: true,
+            calibrated: false,
+            scaleFactor: 1.0,
+            referenceDistanceM: 2.0,
+            calibratedAt: 0,
+        };
+    }
+
+    let raw: NativeCalibrationResult;
+    try {
+        raw = await MinreportSpatialScanner.startCalibration();
+    } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err || '');
+        if (/cancel/i.test(msg)) {
+            return {
+                cancelled: true,
+                calibrated: false,
+                scaleFactor: 1.0,
+                referenceDistanceM: 2.0,
+                calibratedAt: 0,
+            };
+        }
+        throw err instanceof Error ? err : new Error(msg || 'Error calibrando sensor espacial.');
+    }
+
+    if (!raw || raw.cancelled || !raw.calibrated) {
+        return {
+            cancelled: Boolean(raw?.cancelled ?? true),
+            calibrated: false,
+            scaleFactor: 1.0,
+            referenceDistanceM: 2.0,
+            calibratedAt: 0,
+        };
+    }
+
+    let deviceModel = raw.deviceModel;
+    let platform = raw.platform;
+    try {
+        const cap = await probeSpatialDeviceCapability();
+        if (!deviceModel) {
+            const rawModel = [cap.manufacturer, cap.model].filter(Boolean).join(' ').trim();
+            deviceModel = rawModel ? rawModel.slice(0, 120) : undefined;
+        }
+        if (!platform && cap.platform) {
+            platform = cap.platform.toUpperCase();
+        }
+    } catch {
+        // Ignorar fallo de sonda hardware
+    }
+
+    const calibratedAt = raw.calibratedAt || Date.now();
+    const measuredDistanceM =
+        typeof raw.measuredDistanceM === 'number' && Number.isFinite(raw.measuredDistanceM)
+            ? raw.measuredDistanceM
+            : Number(((raw.referenceDistanceM || 2.0) / (raw.scaleFactor || 1.0)).toFixed(4));
+
+    const localCal: NativeCalibrationResult = {
+        ...raw,
+        localId: `cal_${calibratedAt}`,
+        measuredDistanceM,
+        calibratedAt,
+        ...(deviceModel ? { deviceModel } : {}),
+        ...(platform ? { platform } : {}),
+        syncedToCloud: false,
+    };
+    await persistCachedCalibration(localCal);
+    await appendLocalCalibrationHistory(localCal);
+
+    try {
+        const synced = await syncDeviceCalibrationToBackend(localCal, tenantId);
+        if (synced.syncedToCloud) {
+            return synced;
+        }
+    } catch {
+        // Sin conectividad: encolar sincronización offline garantizada
+    }
+
+    try {
+        await syncQueueEngine.enqueue({
+            module: 'stockpile',
+            entityType: 'DEVICE_CALIBRATION',
+            tenantId,
+            payload: {
+                id: localCal.localId,
+                scaleFactor: localCal.scaleFactor,
+                referenceDistanceM: localCal.referenceDistanceM || 2.0,
+                measuredDistanceM,
+                planeNoiseRmsM: localCal.planeNoiseRmsM ?? 0,
+                imuPitchOffsetDeg: localCal.imuPitchOffsetDeg ?? 0,
+                imuRollOffsetDeg: localCal.imuRollOffsetDeg ?? 0,
+                calibratedAt,
+                ...(tenantId ? { tenantId } : {}),
+                ...(deviceModel ? { deviceModel } : {}),
+                ...(platform ? { platform } : {}),
+            },
+        });
+    } catch {
+        // Ignorar error de encolado offline
+    }
+
+    return localCal;
 }
 
 /**
@@ -269,7 +817,12 @@ export async function loadOfflineSpatialPayload(
 export async function analyzeSpatialScan(
     request: SpatialAnalyzeRequest
 ): Promise<SpatialAnalyzeResult> {
-    const storedBody = buildStoredPayload(request.scan);
+    const storedBody = buildStoredPayload(request.scan, {
+        calibrationId: request.calibrationId,
+        calibrationScaleFactor: request.calibrationScaleFactor,
+        calibrationPlaneNoiseRmsM: request.calibrationPlaneNoiseRmsM,
+        deviceCalibratedAt: request.deviceCalibratedAt,
+    });
 
     let imageBase64: string | undefined;
     let imageMimeType: string | undefined;
@@ -323,10 +876,21 @@ export async function analyzeSpatialScan(
         }),
     });
 
-    const data = await res.json().catch(() => ({}));
+    const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        rejectionCode?: string;
+        message?: string;
+    };
+    if (res.status === 422) {
+        const rejectionCode = String(data?.rejectionCode || data?.error || 'INVALID_POINT_CLOUD');
+        const message = String(
+            data?.message || data?.error || 'La captura fue rechazada por validación física.'
+        );
+        throw new SpatialScanRejectedError(rejectionCode, message);
+    }
     if (!res.ok) {
         const err = new Error(
-            (data as { error?: string })?.error || `HTTP ${res.status} en análisis espacial 3D`
+            data?.message || data?.error || `HTTP ${res.status} en análisis espacial 3D`
         ) as Error & { status?: number };
         err.status = res.status;
         throw err;

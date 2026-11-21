@@ -59,9 +59,9 @@ export const COPPER_DOMAIN_OPTIONS: Array<{
 
 export function mapCopperDomainToClase(
     domain?: CopperDomainCode | null
-): 'mineral' | 'baja_ley' | 'esteril' {
+): 'mineral' | 'baja_ley' | 'esteril' | null {
     const match = COPPER_DOMAIN_OPTIONS.find((opt) => opt.value === domain);
-    return match ? match.legacyClase : 'mineral';
+    return match ? match.legacyClase : null;
 }
 
 export function getCopperDomainOption(domain?: string | null) {

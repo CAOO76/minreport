@@ -29,6 +29,8 @@ export interface DigitalAnalyzeResult {
     wallConfinement: 'NONE' | 'SINGLE_WALL' | 'BUNKER_3_WALLS';
     copperDomain: CopperMineralDomain | null;
     granulometry: 'COLPAS' | 'GRANSA' | 'MIXTO' | 'FINOS' | null;
+    aiSuggestedGranulometry?: 'COLPAS' | 'GRANSA' | 'MIXTO' | 'FINOS' | null;
+    isNonStockpile?: boolean;
     suggestedDensityTm3: number | null;
     slopeAngleLeftDeg: number | null;
     slopeAngleRightDeg: number | null;

@@ -1,5 +1,6 @@
 {
   "core_common": {
+    "copy_value": "Copiar valor",
     "undeclared_tech_value": "[Información técnica no declarada en ficha]"
   },
   "common": {
@@ -16,7 +17,8 @@
     "undeclared_tech_data": "[Información técnica no declarada en ficha]",
     "pending_record": "[Pendiente de registro]",
     "brand_header": "MINREPORT",
-    "module_title": "MINREPORT · ACOPIOS"
+    "module_title": "MINREPORT · ACOPIOS",
+    "refresh": "REFRESCAR"
   },
   "home": {
     "brand_header": "MINREPORT · ACOPIOS",
@@ -214,7 +216,23 @@
     "spatial_scan_btn": "ESCANEAR 3D",
     "spatial_coverage_label": "COBERTURA",
     "spatial_toe_label": "PIE",
-    "spatial_uncertainty_label": "MARGEN"
+    "spatial_uncertainty_label": "MARGEN",
+    "analyze_error": "ERROR AL CALCULAR VOLUMEN",
+    "analyze_required": "EJECUTA ANÁLISIS ANTES DE GUARDAR",
+    "calculating_volume": "CALCULANDO VOLUMEN...",
+    "calibrate_btn": "CALIBRAR",
+    "calibrated_status": "TELÉFONO CALIBRADO",
+    "calibrating": "CALIBRANDO...",
+    "discard_retry_btn": "DESCARTAR Y REPETIR",
+    "measure_volume_btn": "MEDIR VOLUMEN",
+    "remeasure_btn": "VOLVER A MEDIR",
+    "save_measurement_btn": "GUARDAR MEDICIÓN",
+    "domain_optional_label": "CLASIFICACIÓN MATERIAL (OPCIONAL)",
+    "granulometry_optional_label": "GRANULOMETRÍA (OPCIONAL)",
+    "ai_granulometry_optin": "IA",
+    "density_optional_placeholder": "DENSIDAD (t/m³, OPCIONAL)",
+    "ready_cal_factor_prefix": "CAL",
+    "ready_uncalibrated": "SIN CALIBRAR"
   },
   "geometries": {
     "kicker": "GEOMETRÍA",
@@ -355,7 +373,13 @@
     "ignored_label": "IGNORADO",
     "evolution_chart_title": "EVOLUCIÓN TEMPORAL DE VOLUMEN Y TONELAJE",
     "static_map_title": "MAPA SATELITAL ESTÁTICO",
-    "static_map_no_interaction": "SIN INTERACCIÓN"
+    "static_map_no_interaction": "SIN INTERACCIÓN",
+    "static_satellite_label": "REFERENCIA SATELITAL CAS",
+    "refresh_static_map": "Actualizar imagen satelital",
+    "loading_static_map": "Cargando imagen satelital",
+    "static_satellite_alt": "Referencia satelital estática CAS",
+    "static_map_pending": "[Imagen satelital pendiente]",
+    "static_map_no_coords": "[Sin coordenadas WGS84 declaradas]"
   },
   "twin3d": {
     "title": "GEMELO DIGITAL 3D (.glb)",
@@ -382,7 +406,9 @@
     "source_server_tin": "TIN PARAMÉTRICO (southamerica-west1)",
     "source_local_tin": "TIN LOCAL DETERMINISTA",
     "webgl_fallback_notice": "Contexto WebGL no disponible; mostrando ficha métrica tabular.",
-    "no_mesh_declared": "[Información técnica no declarada en ficha]"
+    "no_mesh_declared": "[Información técnica no declarada en ficha]",
+    "no_model_3d": "SIN MODELO 3D",
+    "retry_load": "REINTENTAR"
   },
   "rosin_rammler": {
     "title": "GRANULOMETRÍA ROSIN-RAMMLER (RRSB)",
@@ -593,7 +619,8 @@
     "tab_spec": "FICHA TÉCNICA",
     "tab_summary": "RESUMEN",
     "tonnage_label": "TONELAJE",
-    "volume_label": "VOLUMEN"
+    "volume_label": "VOLUMEN",
+    "measure_again_btn": "MEDIR DE NUEVO"
   },
   "faenas": {
     "all": "TODAS LAS FAENAS",
@@ -617,12 +644,14 @@
     "mode_photo": "FOTO",
     "mode_3d": "3D",
     "mode_dual": "FOTO + 3D",
+    "mode_map": "MAPA",
     "reconstruct_3d": "RECONSTRUIR 3D",
     "wireframe": "WIREFRAME",
     "reset_camera": "CENTRAR CÁMARA",
     "latest_short": "ÚLTIMA",
     "initial_short": "INICIAL",
-    "mode_aria": "Modo visual"
+    "mode_aria": "Modo visual",
+    "no_photo": "SIN FOTO"
   },
   "visual3d": {
     "uncertainty_label": "INCERTIDUMBRE",
@@ -704,7 +733,58 @@
     "tier_needs_update": "ACTUALIZAR ARCORE",
     "tier_incompatible": "INCOMPATIBLE",
     "mobile_incompatible_banner": "DISPOSITIVO INCOMPATIBLE ARCORE",
+    "mobile_no_depth_sensor": "ESTE TELÉFONO NO TIENE SENSOR DE PROFUNDIDAD",
     "mobile_update_arcore": "ACTUALIZAR SERVICIOS AR",
-    "mobile_optimal_badge": "ARCORE · DEPTH"
+    "mobile_optimal_badge": "ARCORE · DEPTH",
+    "ondemand_title": "MOTOR ON-DEMAND COMPATIBILIDAD MÓVIL",
+    "registered_count": "REGISTRADOS",
+    "query_placeholder": "INGRESE MARCA Y MODELO (EJ. SAMSUNG GALAXY A17 5G)",
+    "check_btn": "COMPROBAR",
+    "checking_btn": "EVALUANDO IA...",
+    "loading_aria": "Verificando hardware móvil",
+    "check_error": "No se pudo verificar compatibilidad con evidencia web.",
+    "source_cache": "CACHÉ BD (0 TOKENS)",
+    "source_live_ai": "EVALUACIÓN IA GROUNDED",
+    "copy_key": "Copiar clave",
+    "sources_label": "FUENTES VERIFICADAS",
+    "db_table_title": "BASE DE DATOS DE EQUIPOS CONSULTADOS",
+    "filter_registered_placeholder": "FILTRAR HISTORIAL CONSULTADO",
+    "empty_registry": "[Sin equipos consultados aún]",
+    "recheck_action": "Re-evaluar"
+  },
+  "hub": {
+    "module_title": "ACOPIOS",
+    "measure_action": "MEDIR",
+    "calibrate_action": "CALIBRAR",
+    "cal_factor_prefix": "CAL",
+    "cal_pending": "SIN CALIBRAR",
+    "sites_unit": "FAENAS",
+    "assets_unit": "ACOPIOS"
+  },
+  "calibration": {
+    "mobile_header": "CALIBRACIÓN",
+    "desktop_title": "AUDITORÍA DE CALIBRACIONES DE CAMPO",
+    "active_factor_label": "FACTOR ESCALA AR",
+    "status_valid": "CALIBRADO",
+    "status_pending": "SIN CALIBRAR",
+    "synced": "CLOUD",
+    "queued_offline": "COLA",
+    "calibrating_aria": "CALIBRANDO",
+    "running": "CALIBRANDO...",
+    "start_action": "CALIBRAR HUINCHA 2.00 m",
+    "native_only": "[SOLO DISPOSITIVO NATIVO ARCORE]",
+    "history_title": "HISTORIAL AUDITABLE",
+    "loading_history_aria": "CARGANDO HISTORIAL",
+    "empty_history": "[Sin calibraciones registradas]",
+    "error_generic": "Error ejecutando calibración AR.",
+    "error_load_audit": "Error cargando registro de calibraciones.",
+    "filter_placeholder": "MODELO / ID CALIBRACIÓN",
+    "col_date": "FECHA UTC",
+    "col_device": "DISPOSITIVO",
+    "col_scale": "ESCALA",
+    "col_distances": "REF / MEDIDO (m)",
+    "col_rms": "RMS PLANO",
+    "col_imu": "PITCH / ROLL",
+    "col_status": "REGIÓN / ESTADO"
   }
 }

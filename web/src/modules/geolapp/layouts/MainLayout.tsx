@@ -3,18 +3,14 @@ import { useTranslation } from 'react-i18next';
 import { usePlatform } from '../core/hooks/usePlatform';
 
 export type ViewState =
+    | 'hub'
+    | 'calibration'
     | 'faenas'
     | 'home'
     | 'monitoring'
-    | 'list'
     | 'quick-capture'
-    | 'capture-select'
-    | 'geometry-select'
-    | 'capture'
     | 'scanner'
     | 'analytics'
-    | 'register'
-    | 'dashboard'
     | 'detail'
     | 'summary';
 
@@ -47,14 +43,18 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     const { t } = useTranslation();
     const { isNative } = usePlatform();
 
+    const isMobileDetailOrScanner =
+        currentView === 'summary' ||
+        currentView === 'detail' ||
+        currentView === 'scanner' ||
+        currentView === 'quick-capture';
+
     const showCenterCamera = Boolean(
-        hasSelectedAsset &&
-            (currentView === 'summary' ||
-                currentView === 'dashboard' ||
-                currentView === 'detail')
+        hasSelectedAsset && (currentView === 'summary' || currentView === 'detail')
     );
 
-    const showMobileBottomNav = (isNative || !isDesktopLayout) && showCenterCamera;
+    const showMobileBottomNav =
+        (isNative || !isDesktopLayout) && showCenterCamera && !isMobileDetailOrScanner;
 
     const handleClosureAction = () => {
         if (onToggleClosure) {

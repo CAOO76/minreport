@@ -49,24 +49,42 @@ function createDocRef(colPath: string, docId: string): any {
 }
 
 function createColRef(colPath: string): any {
+    const filterDocs = (filters: Array<{ field: string; value: any }>) => {
+        const col = getColMap(colPath);
+        return Array.from(col.entries())
+            .filter(([, data]) => filters.every((f) => data?.[f.field] === f.value))
+            .map(([id, data]) => ({
+                id,
+                exists: true,
+                data: () => structuredClone(data),
+            }));
+    };
+
+    const makeQuery = (filters: Array<{ field: string; value: any }> = []): any => ({
+        where(field: string, _op: string, value: any) {
+            return makeQuery([...filters, { field, value }]);
+        },
+        limit() {
+            return {
+                async get() {
+                    const docs = filterDocs(filters);
+                    return { empty: docs.length === 0, size: docs.length, docs };
+                },
+            };
+        },
+        async get() {
+            const docs = filterDocs(filters);
+            return { empty: docs.length === 0, size: docs.length, docs };
+        },
+    });
+
     return {
         doc(id?: string) {
             const docId = id || `auto_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
             return createDocRef(colPath, docId);
         },
-        where() {
-            return {
-                limit() {
-                    return {
-                        async get() {
-                            return { empty: true, size: 0, docs: [] };
-                        },
-                    };
-                },
-                async get() {
-                    return { empty: true, size: 0, docs: [] };
-                },
-            };
+        where(field: string, op: string, value: any) {
+            return makeQuery().where(field, op, value);
         },
     };
 }
@@ -117,6 +135,8 @@ require.cache[require.resolve('../../config/firebase')] = {
 
 const { AuditLedger } =
     require('../../core/audit-ledger') as typeof import('../../core/audit-ledger');
+const { ResilientAIClient } =
+    require('../../core/resilient-ai-client') as typeof import('../../core/resilient-ai-client');
 const {
     computeSpatialStockpileVolume,
     fitInclinedGroundPlane,
@@ -494,5 +514,364 @@ test('Endpoints POST /spatial-analyze y POST /stockpiles/:id/spatial-analyze val
         assert.equal(auditCalls[1].module, 'stockpile');
     } finally {
         (AuditLedger as any).record = origAuditRecord;
+    }
+});
+
+function generateBoxCloud(params: {
+    centerX: number;
+    centerZ: number;
+    sizeX: number;
+    sizeZ: number;
+    heightM: number;
+    step?: number;
+}): Array<[number, number, number]> {
+    const { centerX, centerZ, sizeX, sizeZ, heightM, step = 0.03 } = params;
+    const pts: Array<[number, number, number]> = [];
+    const halfX = sizeX / 2;
+    const halfZ = sizeZ / 2;
+    for (let dx = -halfX; dx <= halfX + 1e-6; dx += step) {
+        for (let dz = -halfZ; dz <= halfZ + 1e-6; dz += step) {
+            pts.push([
+                Number((centerX + dx).toFixed(4)),
+                Number(heightM.toFixed(4)),
+                Number((centerZ + dz).toFixed(4)),
+            ]);
+        }
+    }
+    return pts;
+}
+
+function generateFloorRing(radiusM: number, step = 0.08): Array<[number, number, number]> {
+    const pts: Array<[number, number, number]> = [];
+    for (let x = -radiusM; x <= radiusM + 1e-6; x += step) {
+        for (let z = -radiusM; z <= radiusM + 1e-6; z += step) {
+            if (Math.hypot(x, z) <= radiusM) {
+                pts.push([Number(x.toFixed(4)), 0, Number(z.toFixed(4))]);
+            }
+        }
+    }
+    return pts;
+}
+
+test('(a) Objeto 3cm con clutter 18cm desconectado detras recorta clutter y rechaza OBJECT_TOO_SMALL (HTTP 422)', async () => {
+    dbCollections.clear();
+    storedBlobs.clear();
+
+    getColMap('accounts').set('tenant-alpha', {
+        id: 'tenant-alpha',
+        ownerId: 'uid-alpha',
+        status: 'ACTIVE',
+    });
+
+    const box3cm = generateBoxCloud({
+        centerX: 0,
+        centerZ: 0,
+        sizeX: 0.09,
+        sizeZ: 0.18,
+        heightM: 0.03,
+        step: 0.02,
+    });
+    const suitcase18cmBehind = generateBoxCloud({
+        centerX: 0,
+        centerZ: 0.55,
+        sizeX: 0.45,
+        sizeZ: 0.3,
+        heightM: 0.18,
+        step: 0.03,
+    });
+    const floor = generateFloorRing(0.8, 0.08);
+    const pointsM = [...box3cm, ...suitcase18cmBehind, ...floor];
+
+    assert.throws(
+        () =>
+            computeSpatialStockpileVolume({
+                pointsM,
+                groundSamplesM: floor,
+                anchorCenter: { x: 0, y: 0, z: 0 },
+                coveragePct: 90,
+                sectorsCovered: 8,
+                sectorsTotal: 8,
+                loopClosed: true,
+                depthMode: 'RAW_DEPTH_ONLY',
+            }),
+        (err: unknown) =>
+            err instanceof SpatialVolumeValidationError && err.code === 'OBJECT_TOO_SMALL'
+    );
+
+    const routerStack = (geolappController.default as any).stack as Array<any>;
+    const previewLayer = routerStack.find(
+        (l) => l.route?.path === '/spatial-analyze' && l.route.methods.post
+    );
+    const previewHandler = previewLayer!.route.stack[previewLayer!.route.stack.length - 1].handle;
+
+    const res422Small = createMockResponse();
+    await previewHandler(
+        {
+            user: { uid: 'uid-alpha', email: 'op@alpha.cl', email_verified: true },
+            headers: { 'x-active-account-id': 'tenant-alpha' },
+            body: {
+                depthMode: 'RAW_DEPTH_ONLY',
+                coveragePct: 90,
+                sectorsCovered: 8,
+                sectorsTotal: 8,
+                keyframeCount: 4,
+                loopClosed: true,
+                anchorCenter: { x: 0, y: 0, z: 0 },
+                pointsM,
+                groundSamplesM: floor,
+                locale: 'es',
+            },
+        },
+        res422Small,
+        () => {}
+    );
+    assert.equal(res422Small.statusCode, 422);
+    assert.equal(res422Small.bodyPayload?.error, 'OBJECT_TOO_SMALL');
+    assert.equal(res422Small.bodyPayload?.rejectionCode, 'OBJECT_TOO_SMALL');
+
+    const coneValid = generateSyntheticConeCloud({ radiusM: 3, heightM: 2 });
+    const res422Cov = createMockResponse();
+    await previewHandler(
+        {
+            user: { uid: 'uid-alpha', email: 'op@alpha.cl', email_verified: true },
+            headers: { 'x-active-account-id': 'tenant-alpha' },
+            body: {
+                depthMode: 'RAW_DEPTH_ONLY',
+                coveragePct: 25,
+                sectorsCovered: 2,
+                sectorsTotal: 8,
+                keyframeCount: 2,
+                loopClosed: false,
+                pointsM: coneValid.pointsM,
+                groundSamplesM: coneValid.groundSamplesM,
+                locale: 'es',
+            },
+        },
+        res422Cov,
+        () => {}
+    );
+    assert.equal(res422Cov.statusCode, 422);
+    assert.equal(res422Cov.bodyPayload?.error, 'INSUFFICIENT_COVERAGE');
+    assert.equal(res422Cov.bodyPayload?.rejectionCode, 'INSUFFICIENT_COVERAGE');
+});
+
+test('(b) Bloque 45x45x45 cm con roiRadiusM=0.6 y objeto externo a 1.2m filtra externo, volumen acotado y slopeAngleAvgDeg=null', () => {
+    const block45cm = generateBoxCloud({
+        centerX: 0,
+        centerZ: 0,
+        sizeX: 0.45,
+        sizeZ: 0.45,
+        heightM: 0.45,
+        step: 0.03,
+    });
+    const externalObject = generateBoxCloud({
+        centerX: 1.2,
+        centerZ: 0,
+        sizeX: 0.6,
+        sizeZ: 0.6,
+        heightM: 1.8,
+        step: 0.04,
+    });
+    const floor = generateFloorRing(0.65, 0.06);
+
+    const res = computeSpatialStockpileVolume({
+        pointsM: [...block45cm, ...externalObject, ...floor],
+        groundSamplesM: floor,
+        anchorCenter: { x: 0, y: 0, z: 0 },
+        roiRadiusM: 0.6,
+        coveragePct: 90,
+        sectorsCovered: 7,
+        sectorsTotal: 8,
+        loopClosed: true,
+        depthMode: 'RAW_DEPTH_ONLY',
+    });
+
+    assert.equal(res.surfaceGrid.cellSizeM, 0.04, 'Grilla fina obligatoria 0.04m para ROI <= 2.5m');
+    assert.ok(res.heightM >= 0.42 && res.heightM <= 0.48, `Altura esperada ~0.45m, obtenida ${res.heightM}`);
+    assert.ok(
+        res.volumeM3 >= 0.06 && res.volumeM3 <= 0.13,
+        `Volumen esperado ~0.091 m3 (objeto externo a 1.2m filtrado), obtenido ${res.volumeM3}`
+    );
+    assert.equal(res.slopeAngleAvgDeg, null);
+    assert.equal(res.slopeAngleLeftDeg, null);
+    assert.equal(res.slopeAngleRightDeg, null);
+    assert.equal(res.slopeWarning, null);
+});
+
+test('(c) Cono R=3m, H=2m con calibrationScaleFactor=1.05, POST /device-calibration y clasificacion INDETERMINADO/NO_ES_ACOPIO', async () => {
+    dbCollections.clear();
+    storedBlobs.clear();
+
+    const { pointsM, groundSamplesM } = generateSyntheticConeCloud({
+        radiusM: 3,
+        heightM: 2,
+    });
+    const uncalibratedExact = (1 / 3) * Math.PI * 3 * 3 * 2; // 18.8496 m3
+    const calibratedExact = uncalibratedExact * Math.pow(1.05, 3); // 21.821 m3
+
+    const uncalibrated = computeSpatialStockpileVolume({
+        pointsM,
+        groundSamplesM,
+        calibrationScaleFactor: 1.0,
+        coveragePct: 95,
+        sectorsCovered: 8,
+        sectorsTotal: 8,
+        loopClosed: true,
+        depthMode: 'RAW_DEPTH_ONLY',
+    });
+
+    const calibrated = computeSpatialStockpileVolume({
+        pointsM,
+        groundSamplesM,
+        calibrationScaleFactor: 1.05,
+        coveragePct: 95,
+        sectorsCovered: 8,
+        sectorsTotal: 8,
+        loopClosed: true,
+        depthMode: 'RAW_DEPTH_ONLY',
+    });
+
+    assert.ok(calibrated.volumeM3 > uncalibrated.volumeM3 * 1.1);
+    const relErr = (Math.abs(calibrated.volumeM3 - calibratedExact) / calibratedExact) * 100;
+    assert.ok(
+        relErr < 5,
+        `Error de volumen calibrado (${relErr.toFixed(2)}%) debe ser < 5% (obtenido=${calibrated.volumeM3}, esperado=${calibratedExact.toFixed(2)})`
+    );
+
+    getColMap('accounts').set('tenant-alpha', {
+        id: 'tenant-alpha',
+        ownerId: 'uid-alpha',
+        status: 'ACTIVE',
+    });
+
+    const routerStack = (geolappController.default as any).stack as Array<any>;
+    const calLayer = routerStack.find(
+        (l) => l.route?.path === '/device-calibration' && l.route.methods.post
+    );
+    const calListLayer = routerStack.find(
+        (l) => l.route?.path === '/device-calibrations' && l.route.methods.get
+    );
+    const previewLayer = routerStack.find(
+        (l) => l.route?.path === '/spatial-analyze' && l.route.methods.post
+    );
+    assert.ok(calLayer?.route, 'Debe existir POST /device-calibration');
+    assert.ok(calListLayer?.route, 'Debe existir GET /device-calibrations');
+    const calHandler = calLayer!.route.stack[calLayer!.route.stack.length - 1].handle;
+    const calListHandler =
+        calListLayer!.route.stack[calListLayer!.route.stack.length - 1].handle;
+    const previewHandler = previewLayer!.route.stack[previewLayer!.route.stack.length - 1].handle;
+
+    const auditCalls: any[] = [];
+    const origAuditRecord = AuditLedger.record;
+    const origAiGenerate = ResilientAIClient.generate;
+    const origAiDecide = ResilientAIClient.decide;
+    (AuditLedger as any).record = async (entry: any) => {
+        auditCalls.push(entry);
+        return 'audit-cal-1';
+    };
+
+    try {
+        // 1. Scale factor fuera de rango [0.85, 1.15] -> 400
+        const cal400 = createMockResponse();
+        await calHandler(
+            {
+                user: { uid: 'uid-alpha', email: 'op@alpha.cl', email_verified: true },
+                headers: { 'x-active-account-id': 'tenant-alpha' },
+                body: {
+                    scaleFactor: 1.5,
+                    referenceDistanceM: 2.0,
+                    measuredDistanceM: 1.33,
+                    planeNoiseRmsM: 0.01,
+                    imuPitchOffsetDeg: 0.4,
+                    imuRollOffsetDeg: -0.2,
+                    calibratedAt: Date.now(),
+                },
+            },
+            cal400,
+            () => {}
+        );
+        assert.equal(cal400.statusCode, 400);
+
+        // 2. Calibración válida -> 200 + persistencia sin PII en device_calibrations + AuditLedger
+        const cal200 = createMockResponse();
+        await calHandler(
+            {
+                user: { uid: 'uid-alpha', email: 'op@alpha.cl', email_verified: true },
+                headers: { 'x-active-account-id': 'tenant-alpha' },
+                body: {
+                    scaleFactor: 1.05,
+                    referenceDistanceM: 2.0,
+                    measuredDistanceM: 1.9048,
+                    planeNoiseRmsM: 0.012,
+                    imuPitchOffsetDeg: 0.8,
+                    imuRollOffsetDeg: -0.3,
+                    calibratedAt: 1732150000000,
+                    deviceModel: 'Galaxy XCover 7',
+                },
+            },
+            cal200,
+            () => {}
+        );
+        assert.equal(cal200.statusCode, 200);
+        assert.equal(cal200.bodyPayload?.calibrated, true);
+        assert.equal(cal200.bodyPayload?.scaleFactor, 1.05);
+        assert.ok(typeof cal200.bodyPayload?.calibrationId === 'string');
+
+        const calDoc = getColMap('device_calibrations').get(cal200.bodyPayload.calibrationId);
+        assert.ok(calDoc, 'Debe persistir calibracion en device_calibrations');
+        assert.equal(calDoc?.region, 'southamerica-west1');
+        assert.equal(calDoc?.actorEmail, undefined, 'No debe guardar PII en device_calibrations');
+        assert.equal(calDoc?.ipAddress, undefined, 'No debe guardar IP en device_calibrations');
+
+        // 3. Gemini indicando NO_ES_ACOPIO / INDETERMINADO -> weightT=0, copperDomain=null, isNonStockpile=true
+        (ResilientAIClient as any).generate = async () => ({
+            text: JSON.stringify({
+                suggested_density_t_m3: 2.1,
+                reasoning: 'Caja de cartón en oficina.',
+            }),
+            model: 'gemini-test',
+        });
+        (ResilientAIClient as any).decide = async () => ({
+            engineUsed: 'TEST',
+            answers: {
+                geometry_type: { type: 'choice', choice: 'INDETERMINADO', confidence: 0.94 },
+                wall_confinement: { type: 'choice', choice: 'NONE', confidence: 0.9 },
+                copper_domain: { type: 'choice', choice: 'NO_ES_ACOPIO', confidence: 0.96 },
+                tipo_granulometria: { type: 'choice', choice: 'MIXTO', confidence: 0.5 },
+            },
+        });
+
+        const nonStockpileRes = createMockResponse();
+        await previewHandler(
+            {
+                user: { uid: 'uid-alpha', email: 'op@alpha.cl', email_verified: true },
+                headers: { 'x-active-account-id': 'tenant-alpha' },
+                body: {
+                    depthMode: 'RAW_DEPTH_ONLY',
+                    coveragePct: 92,
+                    sectorsCovered: 8,
+                    sectorsTotal: 8,
+                    keyframeCount: 4,
+                    loopClosed: true,
+                    pointsM,
+                    groundSamplesM,
+                    imageBase64: Buffer.from('synthetic-webp-bytes').toString('base64'),
+                    locale: 'es',
+                },
+            },
+            nonStockpileRes,
+            () => {}
+        );
+        assert.equal(nonStockpileRes.statusCode, 200);
+        assert.equal(nonStockpileRes.bodyPayload?.isNonStockpile, true);
+        assert.equal(nonStockpileRes.bodyPayload?.geometryType, 'INDETERMINADO');
+        assert.equal(nonStockpileRes.bodyPayload?.copperDomain, null);
+        assert.equal(nonStockpileRes.bodyPayload?.suggestedDensityTm3, null);
+        assert.equal(nonStockpileRes.bodyPayload?.weightT, 0);
+        assert.ok(auditCalls.some((a) => a.action === 'DEVICE_SPATIAL_CALIBRATION_RECORDED'));
+    } finally {
+        (AuditLedger as any).record = origAuditRecord;
+        (ResilientAIClient as any).generate = origAiGenerate;
+        (ResilientAIClient as any).decide = origAiDecide;
     }
 });
