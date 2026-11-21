@@ -90,8 +90,7 @@ export interface PendingBufferedTurn {
     mimeType?: string;
     caption?: string;
     filename?: string;
-    inlineMediaBase64?: string;
-    xmlContent?: string;
+    evidenceCasRef?: EvidenceCasRef;
     tedRawXml?: string;
 }
 
@@ -380,6 +379,14 @@ export function parseDeterministicSpanishSupplyClauses(rawText: string): Array<{
 
 export class CampChannel {
     private static readonly activeTimers = new Map<string, NodeJS.Timeout>();
+    /**
+     * Buffers efímeros en RAM (jamás persistidos como Base64 en Firestore)
+     * para medios transitorios de simulador/audio durante el turno activo.
+     */
+    private static readonly transientTurnMedia = new Map<
+        string,
+        { buffer?: Buffer; mimeType?: string; xmlContent?: string }
+    >();
 
     /**
      * Resuelve miembro activo y con consentimiento `whatsappOptInAt` buscando por teléfono E.164
@@ -512,7 +519,12 @@ export class CampChannel {
                         phoneE164: d.phoneE164,
                         whatsappOptInAt: d.whatsappOptInAt,
                         role: supplyRole || b2bRole,
-                        notificationPreferences: d.notificationPreferences || { email: true, whatsapp: false },
+                        notificationPreferences: d.notificationPreferences || {
+                            emailEnabled: true,
+                            whatsappEnabled: false,
+                            email: true,
+                            whatsapp: false,
+                        },
                     });
                 }
             }
@@ -523,20 +535,31 @@ export class CampChannel {
     }
 
     /**
-     * Verifica idempotencia por `wamid` en `supply_whatsapp_wamids`.
+     * Verifica y reserva atómicamente idempotencia por `wamid` en `supply_whatsapp_wamids`.
      */
     private static async tryClaimWamid(wamid: string, tenantId: string): Promise<boolean> {
         const safeId = wamid.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 128);
         const ref = db.collection(SUPPLY_COLLECTIONS.WHATSAPP_WAMIDS).doc(safeId);
+        const payload = {
+            wamid,
+            tenantId,
+            processedAt: new Date().toISOString(),
+        };
+
+        if (typeof db.runTransaction === 'function') {
+            return db.runTransaction(async (tx) => {
+                const snap = await tx.get(ref);
+                if (snap.exists) return false;
+                tx.set(ref, payload);
+                return true;
+            });
+        }
+
         const snap = await ref.get();
         if (snap.exists) {
             return false;
         }
-        await ref.set({
-            wamid,
-            tenantId,
-            processedAt: new Date().toISOString(),
-        });
+        await ref.set(payload);
         return true;
     }
 
@@ -608,6 +631,62 @@ export class CampChannel {
             return { handled: false, duplicate: true, sessionId };
         }
 
+        const effectiveMime = options.inlineMediaMimeType || message.mimeType;
+        let preDigestedCasRef: EvidenceCasRef | undefined;
+
+        // CERO base64 en Firestore: pre-digerir imágenes/PDF/XML hacia CAS (`TENANT_PRIVATE`) antes de persistir sesión
+        if (
+            options.inlineMediaBuffer &&
+            options.inlineMediaBuffer.length > 0 &&
+            message.type !== 'audio'
+        ) {
+            const profile =
+                effectiveMime?.includes('pdf')
+                    ? 'PDF_HYBRID_OEM'
+                    : effectiveMime?.startsWith('image/')
+                      ? 'IMAGE_FIELD_EVIDENCE'
+                      : 'VIDEO_FIELD_COMPACT';
+            const { descriptor } = await CasStorageService.digestAndStore(
+                options.inlineMediaBuffer,
+                effectiveMime || 'image/jpeg',
+                profile,
+                {
+                    scope: 'TENANT_PRIVATE',
+                    tenantId: member.tenantId,
+                    actorUid: member.uid,
+                    originalFilename: message.filename || 'wa_inbound_media',
+                    clientOriginalBytes: options.inlineMediaBuffer.length,
+                }
+            );
+            preDigestedCasRef = {
+                sha256: descriptor.sha256,
+                phashHex: descriptor.phashHex,
+                storagePath: descriptor.storagePath,
+                downloadUrl: descriptor.downloadUrl,
+                mimeType: descriptor.mimeType,
+                extension: descriptor.extension,
+                profile: descriptor.profile,
+                originalBytes: descriptor.originalBytes,
+                optimizedBytes: descriptor.optimizedBytes,
+                savingsRatio: descriptor.savingsRatio,
+                savingsPct:
+                    typeof descriptor.savingsPct === 'number'
+                        ? descriptor.savingsPct
+                        : Number((descriptor.savingsRatio * 100).toFixed(1)),
+                originalFilename: descriptor.originalFilename,
+                createdAt: descriptor.createdAt,
+            };
+        }
+
+        // Buffers efímeros (audio .ogg o xmlContent) se mantienen únicamente en RAM durante el turno
+        if (options.inlineMediaBuffer || options.inlineXmlContent) {
+            this.transientTurnMedia.set(message.wamid, {
+                buffer: options.inlineMediaBuffer,
+                mimeType: effectiveMime,
+                xmlContent: options.inlineXmlContent,
+            });
+        }
+
         const turnEntry: PendingBufferedTurn = {
             wamid: message.wamid,
             receivedAtMs: message.timestampMs || Date.now(),
@@ -615,13 +694,10 @@ export class CampChannel {
             text: message.textBody,
             interactiveReplyId: message.interactiveReplyId,
             mediaId: message.mediaId,
-            mimeType: options.inlineMediaMimeType || message.mimeType,
+            mimeType: effectiveMime,
             caption: message.caption,
             filename: message.filename,
-            inlineMediaBase64: options.inlineMediaBuffer
-                ? options.inlineMediaBuffer.toString('base64')
-                : undefined,
-            xmlContent: options.inlineXmlContent,
+            evidenceCasRef: preDigestedCasRef,
             tedRawXml: options.inlineTedRawXml,
         };
 
@@ -634,7 +710,7 @@ export class CampChannel {
             message.type === 'interactive' ||
             CONFIRM_REGEX.test(rawTextCommand) ||
             CANCEL_REGEX.test(rawTextCommand) ||
-            this.isExecutiveDirectPurchaseTurn(member, turnEntry);
+            this.isExecutiveDirectPurchaseTurn(member, turnEntry, Boolean(options.inlineXmlContent));
 
         if (!isImmediateAction) {
             const debounceMs = clampDebounceMs(options.debounceWindowMs);
@@ -675,7 +751,8 @@ export class CampChannel {
 
     private static isExecutiveDirectPurchaseTurn(
         member: ResolvedWhatsAppMember,
-        turn: PendingBufferedTurn
+        turn: PendingBufferedTurn,
+        hasTransientXml: boolean = false
     ): boolean {
         const canDirect =
             member.supplyProfile.canRecordDirectPurchase ||
@@ -686,7 +763,8 @@ export class CampChannel {
 
         const hasReceiptMedia =
             turn.type === 'document' ||
-            Boolean(turn.xmlContent) ||
+            hasTransientXml ||
+            Boolean(this.transientTurnMedia.get(turn.wamid)?.xmlContent) ||
             Boolean(turn.tedRawXml) ||
             (turn.type === 'image' &&
                 (member.supplyProfile.role === 'OWNER_EXEC' ||
@@ -808,11 +886,14 @@ export class CampChannel {
             if (turn.text) textFragments.push(turn.text);
             if (turn.caption) textFragments.push(turn.caption);
 
-            if (turn.type === 'audio' && (turn.mediaId || turn.inlineMediaBase64)) {
-                const audioBuf = turn.inlineMediaBase64
-                    ? Buffer.from(turn.inlineMediaBase64, 'base64')
+            const transient = this.transientTurnMedia.get(turn.wamid);
+            this.transientTurnMedia.delete(turn.wamid);
+
+            if (turn.type === 'audio' && (turn.mediaId || transient?.buffer)) {
+                const audioBuf = transient?.buffer
+                    ? transient.buffer
                     : (await MetaWhatsAppCloudAdapter.downloadMedia(turn.mediaId!)).buffer;
-                const audioMime = turn.mimeType || 'audio/ogg';
+                const audioMime = transient?.mimeType || turn.mimeType || 'audio/ogg';
                 const aiAudio = await this.extractIntentFromMultimodal({
                     tenantId: member.tenantId,
                     textPrompt:
@@ -834,43 +915,60 @@ export class CampChannel {
                 if (aiAudio.transcript && aiAudio.items.length === 0) {
                     textFragments.push(aiAudio.transcript);
                 }
-            } else if (turn.type === 'image' && (turn.mediaId || turn.inlineMediaBase64)) {
-                const imgBuf = turn.inlineMediaBase64
-                    ? Buffer.from(turn.inlineMediaBase64, 'base64')
-                    : (await MetaWhatsAppCloudAdapter.downloadMedia(turn.mediaId!)).buffer;
-                const imgMime = turn.mimeType || 'image/jpeg';
+            } else if (turn.type === 'image' && (turn.evidenceCasRef || turn.mediaId || transient?.buffer)) {
+                let casRef = turn.evidenceCasRef;
+                let ocrBuf: Buffer | undefined;
+                let ocrMime = turn.mimeType || 'image/webp';
 
-                // Digestión CAS obligatoria (`TENANT_PRIVATE`, cero crudos/base64 en Firestore)
-                const { descriptor, digested } = await CasStorageService.digestAndStore(
-                    imgBuf,
-                    imgMime,
-                    'IMAGE_FIELD_EVIDENCE',
-                    {
+                if (casRef) {
+                    const blob = await CasStorageService.readCasBlob(casRef.storagePath || casRef.sha256, {
                         scope: 'TENANT_PRIVATE',
                         tenantId: member.tenantId,
-                        actorUid: member.uid,
-                        originalFilename: turn.filename || 'wa_field_photo.jpg',
-                        clientOriginalBytes: imgBuf.length,
+                    });
+                    if (blob) {
+                        ocrBuf = blob.buffer;
+                        ocrMime = blob.contentType;
                     }
-                );
-                const casRef: EvidenceCasRef = {
-                    sha256: descriptor.sha256,
-                    phashHex: descriptor.phashHex,
-                    storagePath: descriptor.storagePath,
-                    downloadUrl: descriptor.downloadUrl,
-                    mimeType: descriptor.mimeType,
-                    extension: descriptor.extension,
-                    profile: descriptor.profile,
-                    originalBytes: descriptor.originalBytes,
-                    optimizedBytes: descriptor.optimizedBytes,
-                    savingsRatio: descriptor.savingsRatio,
-                    savingsPct:
-                        typeof descriptor.savingsPct === 'number'
-                            ? descriptor.savingsPct
-                            : Number((descriptor.savingsRatio * 100).toFixed(1)),
-                    originalFilename: descriptor.originalFilename,
-                    createdAt: descriptor.createdAt,
-                };
+                } else {
+                    const imgBuf = transient?.buffer
+                        ? transient.buffer
+                        : (await MetaWhatsAppCloudAdapter.downloadMedia(turn.mediaId!)).buffer;
+                    const imgMime = transient?.mimeType || turn.mimeType || 'image/jpeg';
+
+                    // Digestión CAS obligatoria (`TENANT_PRIVATE`, cero crudos/base64 en Firestore)
+                    const { descriptor, digested } = await CasStorageService.digestAndStore(
+                        imgBuf,
+                        imgMime,
+                        'IMAGE_FIELD_EVIDENCE',
+                        {
+                            scope: 'TENANT_PRIVATE',
+                            tenantId: member.tenantId,
+                            actorUid: member.uid,
+                            originalFilename: turn.filename || 'wa_field_photo.jpg',
+                            clientOriginalBytes: imgBuf.length,
+                        }
+                    );
+                    casRef = {
+                        sha256: descriptor.sha256,
+                        phashHex: descriptor.phashHex,
+                        storagePath: descriptor.storagePath,
+                        downloadUrl: descriptor.downloadUrl,
+                        mimeType: descriptor.mimeType,
+                        extension: descriptor.extension,
+                        profile: descriptor.profile,
+                        originalBytes: descriptor.originalBytes,
+                        optimizedBytes: descriptor.optimizedBytes,
+                        savingsRatio: descriptor.savingsRatio,
+                        savingsPct:
+                            typeof descriptor.savingsPct === 'number'
+                                ? descriptor.savingsPct
+                                : Number((descriptor.savingsRatio * 100).toFixed(1)),
+                        originalFilename: descriptor.originalFilename,
+                        createdAt: descriptor.createdAt,
+                    };
+                    ocrBuf = digested.buffer;
+                    ocrMime = digested.mimeType;
+                }
 
                 const captionScrubbed = ConfidentialityAirlockService.scrubDeterministicPii(
                     turn.caption || '',
@@ -879,7 +977,7 @@ export class CampChannel {
                 const aiPhoto = await this.extractIntentFromMultimodal({
                     tenantId: member.tenantId,
                     textPrompt: `Identifica el insumo, repuesto o falla de campamento visible en esta foto de terreno minero. Contexto: ${captionScrubbed}`,
-                    media: [{ mimeType: digested.mimeType, dataBase64: digested.buffer.toString('base64') }],
+                    media: ocrBuf ? [{ mimeType: ocrMime, dataBase64: ocrBuf.toString('base64') }] : undefined,
                 });
                 for (const it of aiPhoto.items) {
                     extractedItems.push({
@@ -1225,12 +1323,13 @@ export class CampChannel {
         turn: PendingBufferedTurn,
         options: { skipOutboundSend?: boolean }
     ): Promise<CampChannelProcessResult> {
-        let rawBuffer: Buffer | undefined;
-        let mimeType = turn.mimeType || 'image/jpeg';
+        const transient = this.transientTurnMedia.get(turn.wamid);
+        this.transientTurnMedia.delete(turn.wamid);
 
-        if (turn.inlineMediaBase64) {
-            rawBuffer = Buffer.from(turn.inlineMediaBase64, 'base64');
-        } else if (turn.mediaId) {
+        let rawBuffer: Buffer | undefined = transient?.buffer;
+        let mimeType = transient?.mimeType || turn.mimeType || 'image/jpeg';
+
+        if (!rawBuffer && !turn.evidenceCasRef && turn.mediaId) {
             const downloaded = await MetaWhatsAppCloudAdapter.downloadMedia(turn.mediaId);
             rawBuffer = downloaded.buffer;
             mimeType = downloaded.mimeType || mimeType;
@@ -1239,11 +1338,12 @@ export class CampChannel {
         const analysis = await ReceiptIntelligencePipeline.analyze({
             tenantId: member.tenantId,
             actorUid: member.uid,
-            rawBuffer,
+            rawBuffer: turn.evidenceCasRef ? undefined : rawBuffer,
             mimeType,
             originalFilename: turn.filename || 'wa_direct_purchase',
             clientOriginalBytes: rawBuffer?.length,
-            xmlContent: turn.xmlContent,
+            existingEvidenceCasRef: turn.evidenceCasRef,
+            xmlContent: transient?.xmlContent,
             tedRawXml: turn.tedRawXml,
             contextCaption: turn.caption || turn.text,
             defaultDestination: 'STOCK_IN_WAREHOUSE',

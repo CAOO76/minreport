@@ -62,6 +62,7 @@ export interface AnalyzeReceiptInput {
     mimeType?: string;
     originalFilename?: string;
     clientOriginalBytes?: number;
+    existingEvidenceCasRef?: EvidenceCasRef;
     xmlContent?: string;
     tedRawXml?: string;
     contextCaption?: string;
@@ -146,9 +147,28 @@ export class ReceiptIntelligencePipeline {
         }
 
         // 1. Digestión obligatoria y almacenamiento CAS (`TENANT_PRIVATE`) preservando trazabilidad de peso
-        let evidenceCasRef: EvidenceCasRef | undefined;
+        let evidenceCasRef: EvidenceCasRef | undefined = input.existingEvidenceCasRef;
         let aiMediaBuffer: Buffer | undefined;
         let aiMediaMimeType: string | undefined;
+
+        if (!rawBuf && evidenceCasRef) {
+            // Reutilizar binario pre-digerido desde MediaDigestorClient (`TENANT_PRIVATE` scoping estricto)
+            const blob = await CasStorageService.readCasBlob(
+                evidenceCasRef.storagePath || evidenceCasRef.sha256,
+                {
+                    scope: 'TENANT_PRIVATE',
+                    tenantId: input.tenantId,
+                }
+            );
+            if (blob) {
+                if (blob.contentType.includes('xml') && !xmlCandidate) {
+                    xmlCandidate = blob.buffer.toString('utf8').trim();
+                } else if (blob.contentType.startsWith('image/') || blob.contentType === 'application/pdf') {
+                    aiMediaBuffer = blob.buffer;
+                    aiMediaMimeType = blob.contentType;
+                }
+            }
+        }
 
         if (rawBuf && rawBuf.length > 0) {
             const trueClientOriginalBytes = Math.max(

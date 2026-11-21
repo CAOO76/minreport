@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { env, isDevPrivateReleaseStage } from '../../../config/env';
 import { auth, db } from '../../../config/firebase';
 import { evaluatePilotExpiration } from '../../../contracts/session.contracts';
+import { AuditLedger } from '../../../core/audit-ledger';
 import { isDecodedDevRootToken, logThrottledAuthFailure } from '../../../middleware/auth';
 import {
     aiRateLimiter,
@@ -20,12 +21,13 @@ import {
 import { CampChannel, type ResolvedWhatsAppMember } from '../channels/camp.channel';
 import { ReceiptIntelligencePipeline } from './ReceiptIntelligencePipeline';
 import {
+    SupplyConflictError,
     SupplyDuplicateSiiDocumentError,
+    SupplyForbiddenError,
     SupplyNotFoundError,
     SupplyRepository,
 } from './SupplyRepository';
 import {
-    type AtypicalFlagCode,
     CanonicalSupplySkuSchema,
     checkGlobalHardDeny,
     evaluateAtypicalFlagsForLine,
@@ -38,6 +40,8 @@ import {
     PurchaseModeSchema,
     RequisitionStatusSchema,
     SiiDteTypeSchema,
+    SiiExpenseReportStatusSchema,
+    SUPPLY_AUDIT_MODULE,
     SupplyCategoryCodeSchema,
     SupplyDemandNatureSchema,
     SupplyDemandOriginSchema,
@@ -45,7 +49,7 @@ import {
     SupplyMemberProfileSchema,
     type SupplyOperationalRole,
     SupplyOperationalRoleSchema,
-    SupplyPurchaseLineSchema,
+    type SupplyPurchaseLine,
     SupplySiteSchema,
     SupplyUrgencySchema,
 } from './supply.types';
@@ -363,11 +367,14 @@ export async function requireSupplyTenantScope(
 
 const CreateSiteBodySchema = SupplySiteSchema.omit({ tenantId: true, createdAt: true, updatedAt: true }).extend({
     siteId: z.string().trim().min(1).max(128).optional(),
-});
-
-const PatchSiteBodySchema = CreateSiteBodySchema.partial().extend({
     confirmationKeyword: HitlConfirmationKeywordSchema,
 });
+
+const PatchSiteBodySchema = SupplySiteSchema.omit({ tenantId: true, createdAt: true, updatedAt: true })
+    .partial()
+    .extend({
+        confirmationKeyword: HitlConfirmationKeywordSchema,
+    });
 
 const UpsertCatalogBodySchema = CanonicalSupplySkuSchema.extend({
     confirmationKeyword: HitlConfirmationKeywordSchema,
@@ -384,28 +391,35 @@ const CreateRequisitionBodySchema = z.object({
     notes: z.string().trim().max(1000).optional(),
     lines: z
         .array(
-            z.object({
-                canonicalSkuId: z.string().trim().min(1).max(128).optional(),
-                itemName: z.string().trim().min(1).max(200),
-                categoryCode: SupplyCategoryCodeSchema.optional(),
-                procurementBucket: z
-                    .enum([
-                        'VERDULERIA',
-                        'SUPERMERCADO',
-                        'FERRETERIA',
-                        'REPUESTOS_OPERMAQ',
-                        'EPP_SEGURIDAD',
-                        'GAS_AGUA_COMBUSTIBLE',
-                        'MANTENCION_EQUIPAMIENTO',
-                    ])
-                    .optional(),
-                unitSi: z.enum(['kg', 'L', 'un', 'par', 'm', 'm3', 'caja', 'bolsa']).optional(),
-                qtyRequested: z.number().positive(),
-                urgency: SupplyUrgencySchema.default('STANDARD'),
-                estimatedUnitClp: z.number().nonnegative().optional(),
-                attributes: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
-                evidenceCasRef: EvidenceCasRefSchema.optional(),
-            })
+            z
+                .object({
+                    canonicalSkuId: z.string().trim().min(1).max(128).optional(),
+                    rawDescription: z.string().trim().min(1).max(240).optional(),
+                    normalizedName: z.string().trim().min(1).max(200).optional(),
+                    itemName: z.string().trim().min(1).max(200).optional(),
+                    categoryCode: SupplyCategoryCodeSchema.optional(),
+                    procurementBucket: z
+                        .enum([
+                            'VERDULERIA',
+                            'SUPERMERCADO',
+                            'FERRETERIA',
+                            'REPUESTOS_OPERMAQ',
+                            'EPP_SEGURIDAD',
+                            'GAS_AGUA_COMBUSTIBLE',
+                            'MANTENCION_EQUIPAMIENTO',
+                        ])
+                        .optional(),
+                    unitSi: z.enum(['kg', 'L', 'un', 'par', 'm', 'm3', 'caja', 'bolsa']).optional(),
+                    qtyRequested: z.number().positive(),
+                    urgency: SupplyUrgencySchema.default('STANDARD'),
+                    estimatedUnitClp: z.number().nonnegative().optional(),
+                    attributes: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
+                    evidenceCasRef: EvidenceCasRefSchema.optional(),
+                })
+                .refine(
+                    (l) => Boolean(l.rawDescription || l.normalizedName || l.itemName),
+                    'Cada línea requiere rawDescription, normalizedName o itemName.'
+                )
         )
         .min(1)
         .max(100),
@@ -417,6 +431,58 @@ const PatchRequisitionBodySchema = z.object({
     notes: z.string().trim().max(1000).optional(),
 });
 
+const TopLevelAllocationInputSchema = z.object({
+    purchaseLineId: z.string().trim().min(1).max(128),
+    requisitionId: z.string().trim().min(1).max(128).nullable().optional(),
+    requisitionLineId: z.string().trim().min(1).max(128).nullable().optional(),
+    allocationKind: z.enum(['REQUISITION_MATCH', 'UNSOLICITED_PURCHASE']).optional(),
+    qtyAllocated: z.number().positive(),
+    unitSi: z.enum(['kg', 'L', 'un', 'par', 'm', 'm3', 'caja', 'bolsa']).optional(),
+    resultingRequisitionLineStatus: RequisitionStatusSchema.nullable().optional(),
+});
+
+const FlexiblePurchaseLineInputSchema = z.object({
+    purchaseLineId: z.string().trim().min(1).max(128),
+    canonicalSkuId: z.string().trim().min(1).max(128).optional(),
+    description: z.string().trim().min(1).max(240).optional(),
+    rawDescription: z.string().trim().min(1).max(240).optional(),
+    normalizedName: z.string().trim().min(1).max(240).optional(),
+    categoryCode: SupplyCategoryCodeSchema.optional(),
+    procurementBucket: z
+        .enum([
+            'VERDULERIA',
+            'SUPERMERCADO',
+            'FERRETERIA',
+            'REPUESTOS_OPERMAQ',
+            'EPP_SEGURIDAD',
+            'GAS_AGUA_COMBUSTIBLE',
+            'MANTENCION_EQUIPAMIENTO',
+        ])
+        .optional(),
+    unitSi: z.enum(['kg', 'L', 'un', 'par', 'm', 'm3', 'caja', 'bolsa']).optional(),
+    qtyPurchased: z.number().positive(),
+    unitPriceClp: z.number().nonnegative().optional(),
+    unitPriceNetClp: z.number().nonnegative().optional(),
+    unitPriceGrossClp: z.number().nonnegative().optional(),
+    subtotalClp: z.number().nonnegative().optional(),
+    lineNetClp: z.number().nonnegative().optional(),
+    lineVatClp: z.number().nonnegative().optional(),
+    lineTotalClp: z.number().nonnegative().optional(),
+    destination: PurchaseLineDestinationSchema.default('STOCK_IN_TRANSIT'),
+    costCenter: z.string().trim().max(64).default('CC-CAMPAMENTO'),
+    isCapexAsset: z.boolean().optional(),
+    serialOrTag: z.string().trim().max(120).optional(),
+    explicitAllocations: z
+        .array(
+            z.object({
+                reqId: z.string().trim().min(1).max(128),
+                reqLineId: z.string().trim().min(1).max(128),
+                qtyAllocated: z.number().positive(),
+            })
+        )
+        .optional(),
+});
+
 const CreatePurchaseBodySchema = z.object({
     confirmationKeyword: HitlConfirmationKeywordSchema,
     siteId: z.string().trim().min(1).max(128),
@@ -424,7 +490,18 @@ const CreatePurchaseBodySchema = z.object({
     supplierTaxId: z.string().trim().min(3).max(32),
     supplierName: z.string().trim().min(1).max(200),
     documentType: SiiDteTypeSchema,
-    folio: z.number().int().nonnegative(),
+    folio: z.union([
+        z.number().int().nonnegative(),
+        z
+            .string()
+            .trim()
+            .min(1)
+            .max(64)
+            .transform((val) => {
+                const digits = val.replace(/\D/g, '');
+                return digits ? Number(digits) : 0;
+            }),
+    ]),
     issueDate: z.string().trim().min(8).max(32),
     netAmountClp: z.number().nonnegative(),
     vatAmountClp: z.number().nonnegative(),
@@ -432,26 +509,39 @@ const CreatePurchaseBodySchema = z.object({
     paymentMethod: PaymentMethodSchema,
     evidenceCasRef: EvidenceCasRefSchema.optional(),
     tedRawXml: z.string().max(12000).optional(),
-    lines: z.array(SupplyPurchaseLineSchema).min(1).max(200),
+    allocations: z.array(TopLevelAllocationInputSchema).max(500).optional(),
+    lines: z.array(FlexiblePurchaseLineInputSchema).min(1).max(200),
 });
 
 const ConfirmReceptionBodySchema = z.object({
     confirmationKeyword: HitlConfirmationKeywordSchema,
     receivedLines: z
         .array(
-            z.object({
-                purchaseLineId: z.string().trim().min(1).max(128),
-                qtyReceived: z.number().nonnegative(),
-            })
+            z
+                .object({
+                    purchaseLineId: z.string().trim().min(1).max(128),
+                    qtyReceived: z.number().nonnegative().optional(),
+                    qtyReceivedNow: z.number().nonnegative().optional(),
+                })
+                .refine(
+                    (l) => l.qtyReceived !== undefined || l.qtyReceivedNow !== undefined,
+                    'Cada línea recibida requiere qtyReceivedNow o qtyReceived.'
+                )
         )
         .optional(),
     notes: z.string().trim().max(500).optional(),
 });
 
-const LinkOpermaqBodySchema = z.object({
-    confirmationKeyword: HitlConfirmationKeywordSchema,
-    opermaqAssetId: z.string().trim().min(1).max(128),
-});
+const LinkOpermaqBodySchema = z
+    .object({
+        confirmationKeyword: HitlConfirmationKeywordSchema,
+        opermaqAssetId: z.string().trim().min(1).max(128).optional(),
+        createOpermaqFleetUnit: z.boolean().optional(),
+    })
+    .refine(
+        (d) => Boolean(d.opermaqAssetId) || d.createOpermaqFleetUnit === true,
+        'Debe especificar opermaqAssetId o createOpermaqFleetUnit=true.'
+    );
 
 const CreateCashLedgerBodySchema = z.object({
     confirmationKeyword: HitlConfirmationKeywordSchema,
@@ -472,27 +562,37 @@ const CreateExpenseReportBodySchema = z.object({
     siteId: z.string().trim().min(1).max(128),
     paymentMethod: PaymentMethodSchema,
     title: z.string().trim().min(2).max(200),
+    periodLabel: z.string().trim().min(2).max(80).optional(),
+    costCenter: z.string().trim().min(1).max(64).default('CC-CAMPAMENTO'),
     fundAdvanceClp: z.number().nonnegative(),
     siiDocumentIds: z.array(z.string().trim().min(1).max(160)).max(200).default([]),
 });
 
 const PatchExpenseReportBodySchema = z.object({
     confirmationKeyword: HitlConfirmationKeywordSchema,
-    status: z.enum(['DRAFT', 'SUBMITTED', 'APPROVED', 'SETTLED', 'REJECTED']),
+    status: SiiExpenseReportStatusSchema,
+});
+
+const RefreshMarketplaceSignalsBodySchema = z.object({
+    confirmationKeyword: HitlConfirmationKeywordSchema,
 });
 
 const SimulateWhatsAppBodySchema = z.object({
-    fromPhoneE164: z.string().trim().min(8).max(24).default('+56911112222'),
+    phoneE164: z.string().trim().min(8).max(24).optional(),
+    fromPhoneE164: z.string().trim().min(8).max(24).optional(),
     wamid: z.string().trim().min(4).max(128).optional(),
     type: z.enum(['text', 'audio', 'image', 'document', 'interactive']).default('text'),
+    text: z.string().max(4000).optional(),
     textBody: z.string().max(4000).optional(),
     interactiveReplyId: z.string().max(128).optional(),
     caption: z.string().max(1000).optional(),
     filename: z.string().max(200).optional(),
     mimeType: z.string().max(100).optional(),
     mediaBase64: z.string().max(15_000_000).optional(),
+    xmlDteContent: z.string().max(500_000).optional(),
     xmlContent: z.string().max(500_000).optional(),
     tedRawXml: z.string().max(12_000).optional(),
+    simulateSenderRole: SupplyOperationalRoleSchema.optional(),
     simulatedRole: SupplyOperationalRoleSchema.optional(),
     siteId: z.string().trim().min(1).max(128).optional(),
     flushImmediately: z.boolean().default(true),
@@ -617,15 +717,22 @@ router.post('/sites', mutationRateLimiter, async (req: SupplyRequest, res: Respo
         const ctx = req.supplyContext!;
         const parsed = CreateSiteBodySchema.safeParse(req.body);
         if (!parsed.success) {
-            return res.status(400).json({ error: 'Payload de sitio inválido.', details: parsed.error.flatten() });
+            return res.status(400).json({
+                error: 'Alta de sitio requiere confirmationKeyword="ACTUALIZAR" y payload válido.',
+                details: parsed.error.flatten(),
+            });
         }
-        const site = await SupplyRepository.upsertSite(ctx.tenantId, parsed.data, {
+        const { confirmationKeyword: _kw, ...sitePayload } = parsed.data;
+        const site = await SupplyRepository.upsertSite(ctx.tenantId, sitePayload, {
             actorUid: ctx.actorUid,
             actorEmail: ctx.actorEmail,
             ipAddress: extractClientIp(req),
         });
         return res.status(201).json({ success: true, site });
-    } catch (err) {
+    } catch (err: any) {
+        if (err instanceof SupplyForbiddenError) {
+            return res.status(403).json({ error: err.message, code: err.code });
+        }
         console.error('[SUPPLY] Error creando sitio:', err);
         return res.status(500).json({ error: 'Error creando sitio de abastecimiento.' });
     }
@@ -657,7 +764,10 @@ router.patch('/sites/:siteId', mutationRateLimiter, async (req: SupplyRequest, r
             }
         );
         return res.status(200).json({ success: true, site });
-    } catch (err) {
+    } catch (err: any) {
+        if (err instanceof SupplyForbiddenError) {
+            return res.status(403).json({ error: err.message, code: err.code });
+        }
         console.error('[SUPPLY] Error actualizando sitio:', err);
         return res.status(500).json({ error: 'Error actualizando sitio de abastecimiento.' });
     }
@@ -714,7 +824,10 @@ router.post('/catalog', mutationRateLimiter, async (req: SupplyRequest, res: Res
             scope === 'GLOBAL' ? 'global' : ctx.tenantId
         );
         return res.status(201).json({ success: true, sku: saved });
-    } catch (err) {
+    } catch (err: any) {
+        if (err instanceof SupplyForbiddenError) {
+            return res.status(403).json({ error: err.message, code: err.code });
+        }
         console.error('[SUPPLY] Error guardando SKU:', err);
         return res.status(500).json({ error: 'Error guardando SKU de abastecimiento.' });
     }
@@ -762,16 +875,23 @@ router.post('/requisitions', mutationRateLimiter, async (req: SupplyRequest, res
 
         for (let idx = 0; idx < parsed.data.lines.length; idx++) {
             const rawLine = parsed.data.lines[idx];
-            const hardDeny = checkGlobalHardDeny(rawLine.itemName);
+            const resolvedItemName = (
+                rawLine.normalizedName ||
+                rawLine.itemName ||
+                rawLine.rawDescription ||
+                ''
+            ).trim();
+            const rawTextForPolicy = `${rawLine.rawDescription || ''} ${resolvedItemName}`.trim();
+            const hardDeny = checkGlobalHardDeny(rawTextForPolicy);
             if (hardDeny.denied) {
                 deniedItems.push({
-                    itemName: rawLine.itemName,
+                    itemName: resolvedItemName,
                     reason: hardDeny.reason || 'Bloqueado por política DS 132.',
                 });
                 continue;
             }
 
-            const norm = normalizeSupplyItemFromText(rawLine.itemName, rawLine.qtyRequested, rawLine.unitSi);
+            const norm = normalizeSupplyItemFromText(resolvedItemName, rawLine.qtyRequested, rawLine.unitSi);
             const categoryCode = rawLine.categoryCode || norm.categoryCode;
             const flags = evaluateAtypicalFlagsForLine({
                 role: ctx.supplyProfile.role,
@@ -785,7 +905,7 @@ router.post('/requisitions', mutationRateLimiter, async (req: SupplyRequest, res
 
             if (roleMismatchMode === 'STRICT_BLOCK' && flags.includes('ATYPICAL_ROLE_MISMATCH')) {
                 deniedItems.push({
-                    itemName: rawLine.itemName,
+                    itemName: resolvedItemName,
                     reason: `Categoría ${categoryCode} restringida para rol ${ctx.supplyProfile.role}.`,
                 });
                 continue;
@@ -794,7 +914,8 @@ router.post('/requisitions', mutationRateLimiter, async (req: SupplyRequest, res
             acceptedLines.push({
                 lineId: `rline_${idx + 1}_${crypto.randomBytes(2).toString('hex')}`,
                 canonicalSkuId: rawLine.canonicalSkuId || norm.canonicalSkuId,
-                itemName: rawLine.itemName,
+                itemName: resolvedItemName,
+                rawRequestedText: rawLine.rawDescription || resolvedItemName,
                 categoryCode,
                 procurementBucket: rawLine.procurementBucket || norm.procurementBucket,
                 unitSi: rawLine.unitSi || norm.unitSi,
@@ -932,12 +1053,25 @@ router.post(
                 rawBuffer = Buffer.from(stripped, 'base64');
             }
 
-            const xmlContent = typeof body.xmlContent === 'string' ? body.xmlContent : undefined;
-            const tedRawXml = typeof body.tedRawXml === 'string' ? body.tedRawXml : undefined;
+            const xmlContent =
+                typeof body.xmlDteContent === 'string' && body.xmlDteContent.trim()
+                    ? body.xmlDteContent
+                    : typeof body.xmlContent === 'string' && body.xmlContent.trim()
+                      ? body.xmlContent
+                      : undefined;
+            const tedRawXml =
+                typeof body.tedRawXml === 'string' && body.tedRawXml.trim()
+                    ? body.tedRawXml
+                    : undefined;
 
-            if (!rawBuffer && !xmlContent && !tedRawXml) {
+            const parsedCasRef = body.evidenceCasRef
+                ? EvidenceCasRefSchema.safeParse(body.evidenceCasRef)
+                : null;
+            const existingEvidenceCasRef = parsedCasRef?.success ? parsedCasRef.data : undefined;
+
+            if (!rawBuffer && !xmlContent && !tedRawXml && !existingEvidenceCasRef) {
                 return res.status(400).json({
-                    error: 'Debe adjuntar un archivo (imagen/PDF/XML), xmlContent o tedRawXml para analizar.',
+                    error: 'Debe adjuntar un archivo (imagen/PDF/XML), evidenceCasRef pre-digerido, xmlDteContent o tedRawXml.',
                 });
             }
 
@@ -955,6 +1089,7 @@ router.post(
                     typeof clientOriginalBytes === 'number' && Number.isFinite(clientOriginalBytes)
                         ? clientOriginalBytes
                         : undefined,
+                existingEvidenceCasRef,
                 xmlContent,
                 tedRawXml,
                 contextCaption: typeof body.contextCaption === 'string' ? body.contextCaption : undefined,
@@ -1031,6 +1166,64 @@ router.post('/purchases', mutationRateLimiter, async (req: SupplyRequest, res: R
             ctx.supplyProfile.role === 'OWNER_EXEC' ||
             ctx.supplyProfile.autoApproveDirectPurchase;
 
+        const topLevelAllocsByLine = new Map<
+            string,
+            Array<{ reqId: string; reqLineId: string; qtyAllocated: number }>
+        >();
+        for (const alloc of data.allocations || []) {
+            if (
+                alloc.allocationKind !== 'UNSOLICITED_PURCHASE' &&
+                alloc.requisitionId &&
+                alloc.requisitionLineId
+            ) {
+                const list = topLevelAllocsByLine.get(alloc.purchaseLineId) || [];
+                list.push({
+                    reqId: alloc.requisitionId,
+                    reqLineId: alloc.requisitionLineId,
+                    qtyAllocated: alloc.qtyAllocated,
+                });
+                topLevelAllocsByLine.set(alloc.purchaseLineId, list);
+            }
+        }
+
+        const normalizedLines: SupplyPurchaseLine[] = data.lines.map((l) => {
+            const desc = (l.normalizedName || l.description || l.rawDescription || 'Ítem Compra').trim();
+            const norm = normalizeSupplyItemFromText(desc, l.qtyPurchased, l.unitSi);
+            const subtotalClp = Math.round(
+                l.lineTotalClp ??
+                    l.subtotalClp ??
+                    ((l.lineNetClp ?? 0) + (l.lineVatClp ?? 0) ||
+                        l.qtyPurchased * (l.unitPriceGrossClp ?? l.unitPriceClp ?? l.unitPriceNetClp ?? 0))
+            );
+            const unitPriceClp = Math.round(
+                l.unitPriceGrossClp ??
+                    l.unitPriceClp ??
+                    l.unitPriceNetClp ??
+                    (l.qtyPurchased > 0 ? subtotalClp / l.qtyPurchased : 0)
+            );
+            const mergedExplicit = [
+                ...(l.explicitAllocations || []),
+                ...(topLevelAllocsByLine.get(l.purchaseLineId) || []),
+            ];
+
+            return {
+                purchaseLineId: l.purchaseLineId,
+                canonicalSkuId: l.canonicalSkuId || norm.canonicalSkuId,
+                description: desc,
+                categoryCode: l.categoryCode || norm.categoryCode,
+                procurementBucket: l.procurementBucket || norm.procurementBucket,
+                unitSi: l.unitSi || norm.unitSi,
+                qtyPurchased: l.qtyPurchased,
+                unitPriceClp,
+                subtotalClp,
+                destination: l.destination,
+                costCenter: l.costCenter || 'CC-CAMPAMENTO',
+                isCapexAsset: Boolean(l.isCapexAsset || l.destination === 'CAPEX_ASSET' || norm.isCapexAsset),
+                serialOrTag: l.serialOrTag,
+                explicitAllocations: mergedExplicit.length > 0 ? mergedExplicit : undefined,
+            };
+        });
+
         const result = await SupplyRepository.createPurchaseWithReconciliation(
             {
                 tenantId: ctx.tenantId,
@@ -1050,7 +1243,7 @@ router.post('/purchases', mutationRateLimiter, async (req: SupplyRequest, res: R
                 paymentMethod: data.paymentMethod,
                 evidenceCasRef: data.evidenceCasRef,
                 tedRawXml: data.tedRawXml,
-                lines: data.lines,
+                lines: normalizedLines,
             },
             {
                 actorUid: ctx.actorUid,
@@ -1091,11 +1284,16 @@ router.post(
                 });
             }
 
+            const normalizedReceivedLines = parsed.data.receivedLines?.map((l) => ({
+                purchaseLineId: l.purchaseLineId,
+                qtyReceived: Number(l.qtyReceivedNow ?? l.qtyReceived ?? 0),
+            }));
+
             const result = await SupplyRepository.confirmPurchaseReception(
                 {
                     tenantId: ctx.tenantId,
                     purchaseId,
-                    receivedLines: parsed.data.receivedLines,
+                    receivedLines: normalizedReceivedLines,
                     notes: parsed.data.notes,
                 },
                 {
@@ -1129,6 +1327,9 @@ router.post(
         } catch (err: any) {
             if (err instanceof SupplyNotFoundError) {
                 return res.status(404).json({ error: err.message });
+            }
+            if (err instanceof SupplyConflictError) {
+                return res.status(409).json({ error: err.message, code: err.code });
             }
             console.error('[SUPPLY] Error confirmando recepción:', err);
             return res.status(500).json({ error: 'Error confirmando recepción de compra.' });
@@ -1172,17 +1373,25 @@ router.post(
                 });
             }
 
+            const resolvedOpermaqAssetId =
+                parsed.data.opermaqAssetId?.trim() ||
+                `opermaq_unit_${assetId.replace(/[^A-Za-z0-9._-]/g, '_')}`;
+
             const asset = await SupplyRepository.linkAssetToOpermaq(
                 ctx.tenantId,
                 assetId,
-                parsed.data.opermaqAssetId,
+                resolvedOpermaqAssetId,
                 {
                     actorUid: ctx.actorUid,
                     actorEmail: ctx.actorEmail,
                     ipAddress: extractClientIp(req),
                 }
             );
-            return res.status(200).json({ success: true, asset });
+            return res.status(200).json({
+                success: true,
+                createdFleetUnitRef: Boolean(parsed.data.createOpermaqFleetUnit && !parsed.data.opermaqAssetId),
+                asset,
+            });
         } catch (err: any) {
             if (err instanceof SupplyNotFoundError) {
                 return res.status(404).json({ error: err.message });
@@ -1304,10 +1513,14 @@ router.get('/sii/documents', async (req: SupplyRequest, res: Response) => {
     try {
         const ctx = req.supplyContext!;
         const siteId = typeof req.query.siteId === 'string' ? req.query.siteId : undefined;
+        const rawDocType =
+            typeof req.query.documentType === 'string'
+                ? req.query.documentType
+                : typeof req.query.dteType === 'string'
+                  ? req.query.dteType
+                  : undefined;
         const documentType =
-            typeof req.query.documentType === 'string' && /^\d+$/.test(req.query.documentType)
-                ? Number(req.query.documentType)
-                : undefined;
+            rawDocType && /^\d+$/.test(rawDocType) ? Number(rawDocType) : undefined;
         const missingInvoiceOnly = req.query.missingInvoiceOnly === 'true';
         const expiringSoonOnly = req.query.expiringSoon === 'true';
 
@@ -1369,6 +1582,8 @@ router.post('/sii/expense-reports', mutationRateLimiter, async (req: SupplyReque
                 custodianName: ctx.actorName,
                 paymentMethod: parsed.data.paymentMethod,
                 title: parsed.data.title,
+                periodLabel: parsed.data.periodLabel,
+                costCenter: parsed.data.costCenter,
                 fundAdvanceClp: parsed.data.fundAdvanceClp,
                 siiDocumentIds: parsed.data.siiDocumentIds,
             },
@@ -1460,7 +1675,36 @@ router.get('/marketplace-signals', async (req: SupplyRequest, res: Response) => 
 
 router.post('/marketplace-signals/refresh', mutationRateLimiter, async (req: SupplyRequest, res: Response) => {
     try {
+        const ctx = req.supplyContext!;
+        if (ctx.accountTier > 2) {
+            return res.status(403).json({
+                error: 'PRIVILEGED_ROLE_REQUIRED: Solo 1º DEV o 2º ADMIN pueden recalcular señales globales Marketplace.',
+            });
+        }
+        const parsed = RefreshMarketplaceSignalsBodySchema.safeParse(req.body);
+        if (!parsed.success) {
+            return res.status(400).json({
+                error: 'Recálculo global Marketplace exige confirmationKeyword="ACTUALIZAR".',
+                details: parsed.error.flatten(),
+            });
+        }
+
         const signals = await SupplyRepository.refreshAnonymousDemandSignals();
+        await AuditLedger.record({
+            tenantId: 'global',
+            actorUid: ctx.actorUid,
+            actorEmail: ctx.actorEmail,
+            action: 'SUPPLY_MARKETPLACE_SIGNALS_REFRESHED',
+            module: SUPPLY_AUDIT_MODULE,
+            targetEntity: 'market_demand_signals',
+            details: {
+                hitlConfirmed: true,
+                emittedSignalCount: signals.length,
+                kAnonymityMinimum: 3,
+            },
+            ipAddress: extractClientIp(req),
+        }).catch(() => {});
+
         return res.status(200).json({
             success: true,
             kAnonymityMinimum: 3,
@@ -1474,7 +1718,7 @@ router.post('/marketplace-signals/refresh', mutationRateLimiter, async (req: Sup
 });
 
 // ---------------------------------------------------------------------------
-// WhatsApp Campamento Simulator (`/whatsapp/simulate` — DEV / ADMIN / TEST-PILOT / test)
+// WhatsApp Campamento Simulator (`/whatsapp/simulate` — DEV / ADMIN / TEST-PILOT)
 // ---------------------------------------------------------------------------
 
 router.post('/whatsapp/simulate', aiRateLimiter, async (req: SupplyRequest, res: Response) => {
@@ -1496,10 +1740,11 @@ router.post('/whatsapp/simulate', aiRateLimiter, async (req: SupplyRequest, res:
         }
 
         const d = parsed.data;
-        const phoneE164 = normalizeE164Phone(d.fromPhoneE164);
+        const phoneE164 = normalizeE164Phone(d.phoneE164 || d.fromPhoneE164 || '+56911112222');
         const wamid = d.wamid || `wamid.sim_${Date.now().toString(36)}_${crypto.randomBytes(3).toString('hex')}`;
 
-        const simRole: SupplyOperationalRole = d.simulatedRole || ctx.supplyProfile.role;
+        const simRole: SupplyOperationalRole =
+            d.simulateSenderRole || d.simulatedRole || ctx.supplyProfile.role;
         const simProfile = SupplyMemberProfileSchema.parse({
             ...ctx.supplyProfile,
             role: simRole,
@@ -1527,12 +1772,13 @@ router.post('/whatsapp/simulate', aiRateLimiter, async (req: SupplyRequest, res:
             supplyProfile: simProfile,
         };
 
+        const resolvedText = d.text ?? d.textBody;
         const inbound: InboundWhatsAppMessage = {
             wamid,
             fromE164: phoneE164,
             timestampMs: Date.now(),
             type: d.type,
-            textBody: d.textBody,
+            textBody: resolvedText,
             interactiveReplyId: d.interactiveReplyId,
             caption: d.caption,
             filename: d.filename,
@@ -1548,7 +1794,7 @@ router.post('/whatsapp/simulate', aiRateLimiter, async (req: SupplyRequest, res:
             debounceWindowMs: d.debounceWindowMs,
             inlineMediaBuffer,
             inlineMediaMimeType: d.mimeType,
-            inlineXmlContent: d.xmlContent,
+            inlineXmlContent: d.xmlDteContent || d.xmlContent,
             inlineTedRawXml: d.tedRawXml,
             overrideMember,
             skipOutboundSend: true,
@@ -1558,6 +1804,11 @@ router.post('/whatsapp/simulate', aiRateLimiter, async (req: SupplyRequest, res:
             success: true,
             wamid,
             simulatedRole: simRole,
+            fsmState: outcome.fsmState,
+            replyText: outcome.replyText,
+            replyButtons: outcome.replyButtons,
+            deniedItems: outcome.deniedItems,
+            atypicalFlags: outcome.atypicalFlags,
             outcome,
         });
     } catch (err: any) {

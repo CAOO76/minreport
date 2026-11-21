@@ -174,7 +174,8 @@ export class EmailAndWhatsAppNotifier {
                 continue;
             }
 
-            const emailAllowed = prefs.email !== false && Boolean(buyer.email);
+            const emailPref = prefs.emailEnabled ?? prefs.email;
+            const emailAllowed = emailPref !== false && Boolean(buyer.email);
             if (emailAllowed && buyer.email) {
                 try {
                     await EmailService.sendEmail({
@@ -189,8 +190,9 @@ export class EmailAndWhatsAppNotifier {
                 }
             }
 
+            const whatsappPref = prefs.whatsappEnabled ?? prefs.whatsapp;
             const whatsappAllowed =
-                prefs.whatsapp === true &&
+                whatsappPref === true &&
                 Boolean(buyer.phoneE164) &&
                 Boolean(buyer.whatsappOptInAt);
             if (whatsappAllowed && buyer.phoneE164) {
@@ -234,7 +236,8 @@ export class EmailAndWhatsAppNotifier {
 
         for (const recipient of params.recipients) {
             const prefs = recipient.notificationPreferences || {};
-            if (prefs.email !== false && recipient.email) {
+            const emailPref = prefs.emailEnabled ?? prefs.email;
+            if (emailPref !== false && recipient.email) {
                 try {
                     await EmailService.sendEmail({
                         from: 'MINREPORT <no-reply@minreport.com>',
@@ -248,7 +251,8 @@ export class EmailAndWhatsAppNotifier {
                 }
             }
 
-            if (prefs.whatsapp === true && recipient.phoneE164 && recipient.whatsappOptInAt) {
+            const whatsappPref = prefs.whatsappEnabled ?? prefs.whatsapp;
+            if (whatsappPref === true && recipient.phoneE164 && recipient.whatsappOptInAt) {
                 const res = await MetaWhatsAppCloudAdapter.sendTemplateMessage(
                     recipient.phoneE164,
                     'minreport_direct_purchase_alert',

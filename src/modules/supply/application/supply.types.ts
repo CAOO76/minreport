@@ -131,7 +131,7 @@ export const PurchaseLineDestinationSchema = z.enum([
 ]);
 export type PurchaseLineDestination = z.infer<typeof PurchaseLineDestinationSchema>;
 
-export const SupplyUrgencySchema = z.enum(['CRITICAL', 'HIGH', 'STANDARD', 'LOW']);
+export const SupplyUrgencySchema = z.enum(['CRITICAL', 'HIGH', 'STANDARD', 'PLANNED', 'LOW']);
 export type SupplyUrgency = z.infer<typeof SupplyUrgencySchema>;
 
 export const PaymentMethodSchema = z.enum([
@@ -141,10 +141,11 @@ export const PaymentMethodSchema = z.enum([
     'TRANSFERENCIA',
     'CREDITO_PROVEEDOR',
     'TARJETA_CORPORATIVA',
+    'EFECTIVO',
 ]);
 export type PaymentMethod = z.infer<typeof PaymentMethodSchema>;
 
-export const RequisitionStatusSchema = z.enum(['OPEN', 'PARTIAL', 'FULFILLED', 'CANCELLED']);
+export const RequisitionStatusSchema = z.enum(['DRAFT', 'OPEN', 'PARTIAL', 'FULFILLED', 'CLOSED', 'CANCELLED']);
 export type RequisitionStatus = z.infer<typeof RequisitionStatusSchema>;
 
 export const HitlConfirmationKeywordSchema = z.literal('ACTUALIZAR');
@@ -178,10 +179,14 @@ export const EvidenceCasRefSchema = z.object({
 export type EvidenceCasRef = z.infer<typeof EvidenceCasRefSchema>;
 
 export const NotificationPreferencesSchema = z.object({
-    email: z.boolean().default(true),
-    whatsapp: z.boolean().default(false),
+    emailEnabled: z.boolean().optional(),
+    whatsappEnabled: z.boolean().optional(),
+    email: z.boolean().optional(),
+    whatsapp: z.boolean().optional(),
     digestMode: z.enum(['IMMEDIATE', 'DAILY_DIGEST']).default('IMMEDIATE'),
     urgentOnly: z.boolean().default(false),
+    quietHoursStart: z.string().max(8).optional(),
+    quietHoursEnd: z.string().max(8).optional(),
 });
 export type NotificationPreferences = z.infer<typeof NotificationPreferencesSchema>;
 
@@ -413,6 +418,18 @@ export interface SiiDocumentRecord {
     updatedAt: string;
 }
 
+export const SiiExpenseReportStatusSchema = z.enum([
+    'OPEN',
+    'DRAFT',
+    'SUBMITTED',
+    'APPROVED',
+    'REIMBURSED',
+    'SETTLED',
+    'REJECTED',
+    'CLOSED',
+]);
+export type SiiExpenseReportStatus = z.infer<typeof SiiExpenseReportStatusSchema>;
+
 export interface SiiExpenseReport {
     reportId: string;
     tenantId: string;
@@ -421,11 +438,13 @@ export interface SiiExpenseReport {
     custodianName: string;
     paymentMethod: PaymentMethod;
     title: string;
+    periodLabel?: string;
+    costCenter: string;
     fundAdvanceClp: number;
     renderedTotalClp: number;
     balanceClp: number;
     siiDocumentIds: string[];
-    status: 'DRAFT' | 'SUBMITTED' | 'APPROVED' | 'SETTLED' | 'REJECTED';
+    status: SiiExpenseReportStatus;
     createdAt: string;
     updatedAt: string;
 }
@@ -553,17 +572,18 @@ export interface DemandForecast {
 export interface DemandPoolSignal {
     signalId: string;
     districtCode: string;
-    categoryCode: SupplyCategoryCode;
+    periodWindow: string;
     canonicalSkuId: string;
-    itemName: string;
+    skuName: string;
+    categoryCode: SupplyCategoryCode;
+    procurementBucket: ProcurementBucket;
     unitSi: SupplyUnitSi;
     aggregatedQty: number;
-    distinctSiteCount: number;
-    kAnonymityVerified: boolean;
-    optInVerified: boolean;
-    windowStartIso: string;
-    windowEndIso: string;
+    participatingEntitiesCount: number;
+    optInVerified: true;
+    medianReferenceUnitClp?: number;
     generatedAt: string;
+    expiresAt: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -1129,9 +1149,10 @@ export function consolidateOpenRequisitions(
     );
 
     const urgencyWeight: Record<SupplyUrgency, number> = {
-        CRITICAL: 3,
-        HIGH: 2,
-        STANDARD: 1,
+        CRITICAL: 4,
+        HIGH: 3,
+        STANDARD: 2,
+        PLANNED: 1,
         LOW: 0,
     };
 

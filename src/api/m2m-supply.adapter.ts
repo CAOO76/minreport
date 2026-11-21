@@ -168,9 +168,10 @@ export function registerM2mSupplyAdapterRoutes(app: express.Application): void {
                     });
                 }
                 const signalData = signalSnap.data() || {};
-                if (Number(signalData.distinctSiteCount || 0) < 3) {
+                const entityCount = Number(signalData.participatingEntitiesCount ?? 0);
+                if (entityCount < 3 || signalData.optInVerified !== true) {
                     return res.status(403).json({
-                        error: 'Señal bloqueada por política de anonimato k >= 3 (Ley N° 21.719).',
+                        error: 'Señal bloqueada por política de anonimato k >= 3 entidades distintas (Ley N° 21.719).',
                     });
                 }
 

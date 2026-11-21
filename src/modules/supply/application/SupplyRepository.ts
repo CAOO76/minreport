@@ -83,6 +83,27 @@ export class SupplyNotFoundError extends Error {
     }
 }
 
+export class SupplyForbiddenError extends Error {
+    public readonly statusCode = 403;
+    public readonly code = 'TENANT_ACCESS_DENIED';
+
+    constructor(message: string) {
+        super(message);
+        this.name = 'SupplyForbiddenError';
+    }
+}
+
+export class SupplyConflictError extends Error {
+    public readonly statusCode = 409;
+    public readonly code: string;
+
+    constructor(code: string, message: string) {
+        super(message);
+        this.name = 'SupplyConflictError';
+        this.code = code;
+    }
+}
+
 export interface AuditActorContext {
     actorUid: string;
     actorEmail: string;
@@ -165,7 +186,19 @@ export class SupplyRepository {
     ): Promise<SupplySite> {
         const now = new Date().toISOString();
         const siteId = site.siteId?.trim() || `site_${crypto.randomBytes(6).toString('hex')}`;
-        const existing = await this.getSite(tenantId, siteId);
+        const siteRef = db.collection(SUPPLY_COLLECTIONS.SITES).doc(siteId);
+        const directSnap = await siteRef.get();
+        let existing: SupplySite | null = null;
+
+        if (directSnap.exists) {
+            const raw = directSnap.data() as SupplySite;
+            if (raw.tenantId && raw.tenantId !== tenantId) {
+                throw new SupplyForbiddenError(
+                    'TENANT_ACCESS_DENIED: El identificador de sitio pertenece a otra cuenta organizacional.'
+                );
+            }
+            existing = raw;
+        }
 
         const record: SupplySite = {
             ...site,
@@ -175,7 +208,7 @@ export class SupplyRepository {
             updatedAt: now,
         };
 
-        await db.collection(SUPPLY_COLLECTIONS.SITES).doc(siteId).set(record, { merge: true });
+        await siteRef.set(record, { merge: true });
         await this.recordAudit(tenantId, actor, existing ? 'SUPPLY_SITE_UPDATED' : 'SUPPLY_SITE_CREATED', siteId, {
             name: record.name,
             districtCode: record.districtCode,
@@ -240,12 +273,30 @@ export class SupplyRepository {
         auditTenantId: string = 'global'
     ): Promise<CanonicalSupplySku> {
         const now = new Date().toISOString();
+        const isTenantScoped = Boolean(sku.tenantId && sku.tenantId.trim());
+        const docId = isTenantScoped
+            ? `tenant_${safeDocIdPart(sku.tenantId!)}__${safeDocIdPart(sku.canonicalSkuId)}`
+            : safeDocIdPart(sku.canonicalSkuId);
+
+        const docRef = db.collection(SUPPLY_COLLECTIONS.GLOBAL_CATALOG).doc(docId);
+        const existingSnap = await docRef.get();
+        if (existingSnap.exists) {
+            const existing = existingSnap.data() as CanonicalSupplySku;
+            if (isTenantScoped && (!existing.tenantId || existing.tenantId !== sku.tenantId)) {
+                throw new SupplyForbiddenError(
+                    'TENANT_ACCESS_DENIED: No está permitido sobrescribir un SKU global o de otra cuenta.'
+                );
+            }
+        }
+
         const record: CanonicalSupplySku = {
             ...sku,
             updatedAt: now,
         };
-        await db.collection(SUPPLY_COLLECTIONS.GLOBAL_CATALOG).doc(sku.canonicalSkuId).set(record, { merge: true });
-        await this.recordAudit(auditTenantId, actor, 'SUPPLY_CATALOG_SKU_UPSERTED', sku.canonicalSkuId, {
+        await docRef.set(record, { merge: true });
+        await this.recordAudit(auditTenantId, actor, 'SUPPLY_CATALOG_SKU_UPSERTED', docId, {
+            canonicalSkuId: sku.canonicalSkuId,
+            scope: isTenantScoped ? 'TENANT' : 'GLOBAL',
             categoryCode: sku.categoryCode,
             procurementBucket: sku.procurementBucket,
             isCapexAsset: sku.isCapexAsset,
@@ -532,16 +583,16 @@ export class SupplyRepository {
             updatedAt: now,
         };
 
-        // 2. Registrar documento SII (`supply_sii_documents`)
+        // 2. Reserva atómica anti-duplicación SII (`supply_sii_documents`) dentro de transacción Firestore
         const { rcvDeadlineDate, rcvDaysRemaining } = computeRcvDeadline(
             params.issueDate,
             params.documentType
         );
         const vatCreditRecoverableClp = params.documentType === 33 ? Math.round(params.vatAmountClp) : 0;
-        const siiDocId =
-            params.documentType !== 0 && params.folio > 0
-                ? buildSiiDocId(params.tenantId, dedupeKey)
-                : `${safeDocIdPart(params.tenantId)}__rural_${purchaseId}`;
+        const enforceUniqueSii = params.documentType !== 0 && params.folio > 0;
+        const siiDocId = enforceUniqueSii
+            ? buildSiiDocId(params.tenantId, dedupeKey)
+            : `${safeDocIdPart(params.tenantId)}__rural_${purchaseId}`;
 
         const siiDocument: SiiDocumentRecord = {
             docId: siiDocId,
@@ -567,8 +618,27 @@ export class SupplyRepository {
             updatedAt: now,
         };
 
-        await db.collection(SUPPLY_COLLECTIONS.SII_DOCUMENTS).doc(siiDocId).set(siiDocument);
-        await db.collection(SUPPLY_COLLECTIONS.PURCHASES).doc(purchaseId).set(purchase);
+        const siiRef = db.collection(SUPPLY_COLLECTIONS.SII_DOCUMENTS).doc(siiDocId);
+        const purchaseRef = db.collection(SUPPLY_COLLECTIONS.PURCHASES).doc(purchaseId);
+
+        if (typeof db.runTransaction === 'function') {
+            await db.runTransaction(async (tx) => {
+                if (enforceUniqueSii) {
+                    const existingSii = await tx.get(siiRef);
+                    if (existingSii.exists) {
+                        throw new SupplyDuplicateSiiDocumentError(dedupeKey);
+                    }
+                }
+                tx.set(siiRef, siiDocument);
+                tx.set(purchaseRef, purchase);
+            });
+        } else {
+            if (enforceUniqueSii && (await siiRef.get()).exists) {
+                throw new SupplyDuplicateSiiDocumentError(dedupeKey);
+            }
+            await siiRef.set(siiDocument);
+            await purchaseRef.set(purchase);
+        }
 
         // 3. Conciliación N:M FIFO contra backlog de requisiciones (si aplica)
         const allocations: FulfillmentAllocation[] = [];
@@ -832,21 +902,69 @@ export class SupplyRepository {
         affectedRequisitions: SupplyRequisition[];
     }> {
         const ref = db.collection(SUPPLY_COLLECTIONS.PURCHASES).doc(params.purchaseId);
-        const snap = await ref.get();
-        if (!snap.exists) {
-            throw new SupplyNotFoundError('Compra no encontrada.');
-        }
-        const purchase = snap.data() as SupplyPurchase;
-        if (purchase.tenantId !== params.tenantId) {
-            throw new SupplyNotFoundError('Compra no pertenece a la cuenta activa.');
-        }
-
         const now = new Date().toISOString();
         const receivedMap = new Map(
             (params.receivedLines || []).map((r) => [r.purchaseLineId, r.qtyReceived])
         );
 
+        let purchase!: SupplyPurchase;
         let hasDiscrepancy = false;
+
+        // Bloqueo atómico anti doble-recepción (evita duplicar qtyInWarehouse y qtyReceived)
+        const claimReception = async (tx?: any): Promise<void> => {
+            const snap = tx ? await tx.get(ref) : await ref.get();
+            if (!snap.exists) {
+                throw new SupplyNotFoundError('Compra no encontrada.');
+            }
+            const loaded = snap.data() as SupplyPurchase;
+            if (loaded.tenantId !== params.tenantId) {
+                throw new SupplyNotFoundError('Compra no pertenece a la cuenta activa.');
+            }
+            if (loaded.receptionStatus === 'RECEIVED') {
+                throw new SupplyConflictError(
+                    'PURCHASE_ALREADY_RECEIVED',
+                    'La recepción en bodega de esta compra ya fue confirmada previamente.'
+                );
+            }
+            if (loaded.receptionStatus === 'NOT_APPLICABLE') {
+                throw new SupplyConflictError(
+                    'PURCHASE_RECEPTION_NOT_APPLICABLE',
+                    'Esta compra no contiene ítems en tránsito pendientes de recepción en bodega.'
+                );
+            }
+
+            purchase = loaded;
+            for (const line of loaded.lines) {
+                if (line.destination !== 'STOCK_IN_TRANSIT') continue;
+                const qtyToReceive = receivedMap.has(line.purchaseLineId)
+                    ? Math.max(0, Number(receivedMap.get(line.purchaseLineId)))
+                    : line.qtyPurchased;
+                if (qtyToReceive < line.qtyPurchased) {
+                    hasDiscrepancy = true;
+                }
+            }
+
+            const claimedPatch: Partial<SupplyPurchase> = {
+                receptionStatus: hasDiscrepancy ? 'PARTIAL_DISCREPANCY' : 'RECEIVED',
+                receivedAt: now,
+                receivedByUid: actor.actorUid,
+                updatedAt: now,
+            };
+            if (tx) {
+                tx.set(ref, claimedPatch, { merge: true });
+            } else {
+                await ref.set(claimedPatch, { merge: true });
+            }
+        };
+
+        if (typeof db.runTransaction === 'function') {
+            await db.runTransaction(async (tx) => {
+                await claimReception(tx);
+            });
+        } else {
+            await claimReception();
+        }
+
         let receivedItemCount = 0;
 
         for (const line of purchase.lines) {
@@ -855,10 +973,6 @@ export class SupplyRepository {
                 receivedMap.has(line.purchaseLineId)
                     ? Math.max(0, Number(receivedMap.get(line.purchaseLineId)))
                     : line.qtyPurchased;
-
-            if (qtyToReceive < line.qtyPurchased) {
-                hasDiscrepancy = true;
-            }
 
             if (qtyToReceive > 0) {
                 receivedItemCount += 1;
@@ -1160,6 +1274,8 @@ export class SupplyRepository {
             custodianName: string;
             paymentMethod: PaymentMethod;
             title: string;
+            periodLabel?: string;
+            costCenter?: string;
             fundAdvanceClp: number;
             siiDocumentIds: string[];
         },
@@ -1181,6 +1297,8 @@ export class SupplyRepository {
             custodianName: input.custodianName,
             paymentMethod: input.paymentMethod,
             title: input.title,
+            periodLabel: input.periodLabel,
+            costCenter: (input.costCenter || 'CC-CAMPAMENTO').trim() || 'CC-CAMPAMENTO',
             fundAdvanceClp: Math.round(input.fundAdvanceClp),
             renderedTotalClp: Math.round(renderedTotalClp),
             balanceClp,
@@ -1379,7 +1497,8 @@ export class SupplyRepository {
     /**
      * Proyecta señales anónimas de demanda agregada por distrito minero (Ley N° 21.719):
      * - Exige opt-in explícito del sitio (`marketplaceOptIn === true`).
-     * - Impone anonimato k >= 3 (`distinctSiteCount >= 3` sitios/tenants distintos por distrito+SKU).
+     * - Impone anonimato k >= 3 estricto: mínimo 3 TENANTS distintos Y 3 SITIOS distintos
+     *   por distrito+SKU (un solo tenant con 3 faenas JAMÁS puede emitir una señal).
      * - CERO `tenantId`, CERO `siteId`, CERO coordenadas GPS exactas.
      */
     public static async refreshAnonymousDemandSignals(): Promise<DemandPoolSignal[]> {
@@ -1388,12 +1507,16 @@ export class SupplyRepository {
             .where('marketplaceOptIn', '==', true)
             .get();
 
-        const optedSitesByKey = new Map<string, { districtCode: string; siteKey: string }>();
+        const optedSitesByKey = new Map<
+            string,
+            { districtCode: string; tenantKey: string; siteKey: string }
+        >();
         for (const doc of sitesSnap.docs) {
             const s = doc.data() as SupplySite;
             if (!s.marketplaceOptIn || !s.districtCode || !s.tenantId || !s.siteId) continue;
             optedSitesByKey.set(`${s.tenantId}::${s.siteId}`, {
                 districtCode: s.districtCode.trim().toUpperCase(),
+                tenantKey: s.tenantId.trim(),
                 siteKey: `${s.tenantId}::${s.siteId}`,
             });
         }
@@ -1404,10 +1527,12 @@ export class SupplyRepository {
             {
                 districtCode: string;
                 categoryCode: DemandPoolSignal['categoryCode'];
+                procurementBucket: DemandPoolSignal['procurementBucket'];
                 canonicalSkuId: string;
-                itemName: string;
+                skuName: string;
                 unitSi: DemandPoolSignal['unitSi'];
                 aggregatedQty: number;
+                distinctTenants: Set<string>;
                 distinctSites: Set<string>;
             }
         >();
@@ -1428,14 +1553,17 @@ export class SupplyRepository {
                     buckets.set(key, {
                         districtCode: siteMeta.districtCode,
                         categoryCode: line.categoryCode,
+                        procurementBucket: line.procurementBucket,
                         canonicalSkuId: line.canonicalSkuId,
-                        itemName: line.itemName,
+                        skuName: line.itemName,
                         unitSi: line.unitSi,
                         aggregatedQty: line.qtyPending,
+                        distinctTenants: new Set([siteMeta.tenantKey]),
                         distinctSites: new Set([siteMeta.siteKey]),
                     });
                 } else {
                     existing.aggregatedQty = Number((existing.aggregatedQty + line.qtyPending).toFixed(3));
+                    existing.distinctTenants.add(siteMeta.tenantKey);
                     existing.distinctSites.add(siteMeta.siteKey);
                 }
             }
@@ -1444,28 +1572,29 @@ export class SupplyRepository {
         const now = new Date();
         const windowStartIso = now.toISOString();
         const windowEndIso = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
+        const periodWindow = `${windowStartIso.slice(0, 10)}/${windowEndIso.slice(0, 10)}`;
         const emitted: DemandPoolSignal[] = [];
 
         for (const entry of buckets.values()) {
-            // Compuerta estricta k-anonymity (Ley N° 21.719): mínimo 3 sitios distintos
-            if (entry.distinctSites.size < 3) {
+            // Compuerta estricta Ley N° 21.719: >= 3 tenants distintos Y >= 3 sitios distintos
+            if (entry.distinctTenants.size < 3 || entry.distinctSites.size < 3) {
                 continue;
             }
             const signalId = `sig_${safeDocIdPart(entry.districtCode)}_${safeDocIdPart(entry.canonicalSkuId)}`;
             const signal: DemandPoolSignal = {
                 signalId,
                 districtCode: entry.districtCode,
-                categoryCode: entry.categoryCode,
+                periodWindow,
                 canonicalSkuId: entry.canonicalSkuId,
-                itemName: entry.itemName,
+                skuName: entry.skuName,
+                categoryCode: entry.categoryCode,
+                procurementBucket: entry.procurementBucket,
                 unitSi: entry.unitSi,
                 aggregatedQty: entry.aggregatedQty,
-                distinctSiteCount: entry.distinctSites.size,
-                kAnonymityVerified: true,
+                participatingEntitiesCount: entry.distinctTenants.size,
                 optInVerified: true,
-                windowStartIso,
-                windowEndIso,
                 generatedAt: windowStartIso,
+                expiresAt: windowEndIso,
             };
             await db.collection(SUPPLY_COLLECTIONS.MARKET_DEMAND_SIGNALS).doc(signalId).set(signal);
             emitted.push(signal);
@@ -1480,25 +1609,39 @@ export class SupplyRepository {
     }): Promise<DemandPoolSignal[]> {
         const snap = await db.collection(SUPPLY_COLLECTIONS.MARKET_DEMAND_SIGNALS).limit(500).get();
         let list = snap.docs
-            .map((d) => d.data() as DemandPoolSignal)
+            .map((d) => d.data() as Record<string, any>)
             // Defensa en profundidad: jamás exponer registros con k < 3 o sin opt-in
-            .filter((s) => Number(s.distinctSiteCount) >= 3 && s.kAnonymityVerified === true && s.optInVerified === true)
-            // Strip defensivo de cualquier campo privado
-            .map((s) => ({
-                signalId: s.signalId,
-                districtCode: s.districtCode,
-                categoryCode: s.categoryCode,
-                canonicalSkuId: s.canonicalSkuId,
-                itemName: s.itemName,
-                unitSi: s.unitSi,
-                aggregatedQty: s.aggregatedQty,
-                distinctSiteCount: s.distinctSiteCount,
-                kAnonymityVerified: true,
-                optInVerified: true,
-                windowStartIso: s.windowStartIso,
-                windowEndIso: s.windowEndIso,
-                generatedAt: s.generatedAt,
-            }));
+            .filter((s) => {
+                const entities = Number(s.participatingEntitiesCount ?? 0);
+                return entities >= 3 && s.optInVerified === true;
+            })
+            // Strip estricto 1:1 con #9 DemandPoolSignalSchema.strict() (cero tenantId/GPS)
+            .map((s): DemandPoolSignal => {
+                const skuName = String(s.skuName || s.itemName || 'Insumo');
+                const entities = Number(s.participatingEntitiesCount ?? 3);
+                const generatedAt = String(s.generatedAt || new Date().toISOString());
+                const expiresAt = String(s.expiresAt || generatedAt);
+                return {
+                    signalId: String(s.signalId),
+                    districtCode: String(s.districtCode),
+                    periodWindow: String(
+                        s.periodWindow || `${generatedAt.slice(0, 10)}/${expiresAt.slice(0, 10)}`
+                    ),
+                    canonicalSkuId: String(s.canonicalSkuId),
+                    skuName,
+                    categoryCode: s.categoryCode,
+                    procurementBucket: s.procurementBucket || 'SUPERMERCADO',
+                    unitSi: s.unitSi,
+                    aggregatedQty: Number(s.aggregatedQty || 0),
+                    participatingEntitiesCount: entities,
+                    optInVerified: true,
+                    ...(typeof s.medianReferenceUnitClp === 'number'
+                        ? { medianReferenceUnitClp: s.medianReferenceUnitClp }
+                        : {}),
+                    generatedAt,
+                    expiresAt,
+                };
+            });
 
         if (filters?.districtCode) {
             const target = filters.districtCode.trim().toUpperCase();

@@ -375,7 +375,7 @@ async function seedBaseFixtures(): Promise<void> {
         },
     });
 
-    // 3) Gerente General / Owner (OWNER_EXEC + whatsappOptInAt)
+    // 3) Gerente General / Owner (OWNER_EXEC + whatsappOptInAt + #9 emailEnabled/whatsappEnabled prefs)
     await membersCol.doc('uid-owner').set({
         uid: 'uid-owner',
         displayName: 'Roberto Gerente General',
@@ -384,7 +384,7 @@ async function seedBaseFixtures(): Promise<void> {
         status: 'ACTIVE',
         phoneE164: '+56988883333',
         whatsappOptInAt: '2026-01-10T10:00:00Z',
-        notificationPreferences: { email: true, whatsapp: true },
+        notificationPreferences: { emailEnabled: true, whatsappEnabled: true },
         supplyProfile: {
             role: 'OWNER_EXEC',
             canRecordDirectPurchase: true,
@@ -1389,12 +1389,15 @@ async function runTests(): Promise<void> {
             assert.equal(fcJson.forecasts[0].requiredWaterReserveL, Math.round(40 * 120 * 1.15 * 7));
             assert.equal(fcJson.forecasts[0].waterAlertLevel, 'WARNING'); // 25000L < 38640L required for 7d
 
-            // Seed 2 more opted-in sites in CL-ATACAMA (total 3 -> passes k>=3) and 2 in CL-COQUIMBO (fails k<3)
+            // Also seed a SINGLE tenant with 3 sites in CL-TARAPACA (must be blocked: distinctTenants=1 < 3!)
             for (const extra of [
                 { tenantId: 'tenant-b', siteId: 'site-b', districtCode: 'CL-ATACAMA' },
                 { tenantId: 'tenant-c', siteId: 'site-c', districtCode: 'CL-ATACAMA' },
                 { tenantId: 'tenant-d', siteId: 'site-d', districtCode: 'CL-COQUIMBO' },
                 { tenantId: 'tenant-e', siteId: 'site-e', districtCode: 'CL-COQUIMBO' },
+                { tenantId: 'tenant-single', siteId: 'site-single-1', districtCode: 'CL-TARAPACA' },
+                { tenantId: 'tenant-single', siteId: 'site-single-2', districtCode: 'CL-TARAPACA' },
+                { tenantId: 'tenant-single', siteId: 'site-single-3', districtCode: 'CL-TARAPACA' },
             ]) {
                 await mockDb.collection(SUPPLY_COLLECTIONS.SITES).doc(extra.siteId).set({
                     siteId: extra.siteId,
@@ -1444,17 +1447,70 @@ async function runTests(): Promise<void> {
                 );
             }
 
+            // Unprivileged B2B OWNER cannot refresh global marketplace signals -> HTTP 403
+            const refreshForbidden = await apiFetch(`${baseUrl}/api/supply/marketplace-signals/refresh`, {
+                method: 'POST',
+                headers: {
+                    Authorization: 'Bearer tok-owner',
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ confirmationKeyword: 'ACTUALIZAR' }),
+            });
+            assert.equal(refreshForbidden.status, 403);
+
+            // DEV_ROOT without HITL keyword -> HTTP 400
+            const refreshNoHitl = await apiFetch(`${baseUrl}/api/supply/marketplace-signals/refresh`, {
+                method: 'POST',
+                headers: {
+                    Authorization: 'Bearer tok-dev',
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({}),
+            });
+            assert.equal(refreshNoHitl.status, 400);
+
+            // DEV_ROOT with HITL "ACTUALIZAR" -> HTTP 200
             const refreshResp = await apiFetch(`${baseUrl}/api/supply/marketplace-signals/refresh`, {
                 method: 'POST',
-                headers: { Authorization: 'Bearer tok-owner' },
+                headers: {
+                    Authorization: 'Bearer tok-dev',
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ confirmationKeyword: 'ACTUALIZAR' }),
             });
             assert.equal(refreshResp.status, 200);
             const refreshJson: any = await refreshResp.json();
-            assert.equal(refreshJson.count, 1); // ONLY CL-ATACAMA (k=3); CL-COQUIMBO (k=2) suppressed!
+            // ONLY CL-ATACAMA (3 distinct tenants + 3 distinct sites)! CL-COQUIMBO (k=2) & CL-TARAPACA (1 tenant, 3 sites) suppressed!
+            assert.equal(refreshJson.count, 1);
             assert.equal(refreshJson.signals[0].districtCode, 'CL-ATACAMA');
-            assert.equal(refreshJson.signals[0].distinctSiteCount, 3);
+            assert.equal(refreshJson.signals[0].participatingEntitiesCount, 3);
+            assert.equal(refreshJson.signals[0].optInVerified, true);
+            assert.equal(refreshJson.signals[0].skuName, 'Papas');
+            assert.equal(refreshJson.signals[0].procurementBucket, 'VERDULERIA');
+            assert.ok(refreshJson.signals[0].periodWindow);
+            assert.ok(refreshJson.signals[0].expiresAt);
             assert.equal('tenantId' in refreshJson.signals[0], false);
             assert.equal('geoFix' in refreshJson.signals[0], false);
+            // Exact .strict() keyset parity with #9 DemandPoolSignalSchema
+            const allowedStrictKeys = new Set([
+                'signalId',
+                'districtCode',
+                'periodWindow',
+                'canonicalSkuId',
+                'skuName',
+                'categoryCode',
+                'procurementBucket',
+                'unitSi',
+                'aggregatedQty',
+                'participatingEntitiesCount',
+                'optInVerified',
+                'medianReferenceUnitClp',
+                'generatedAt',
+                'expiresAt',
+            ]);
+            for (const k of Object.keys(refreshJson.signals[0])) {
+                assert.ok(allowedStrictKeys.has(k), `Unexpected non-strict signal key: ${k}`);
+            }
 
             // M2M x402 Gatekeeper: unauthenticated -> HTTP 402 Payment Required
             const m2m402 = await apiFetch(`${baseUrl}/api/m2m/supply/demand-signals`);
@@ -1638,6 +1694,383 @@ async function runTests(): Promise<void> {
                 /lista blanca CDN/i
             );
             MetaWhatsAppCloudAdapter.setCustomFetchForTests(null);
+        }
+
+        console.log('9) Testing Security Guards (Site/Catalog IDOR, Zero Base64 in Firestore, Double-Reception 409, #9/#11 Contract Alignment)...');
+        {
+            // Seed second tenant account + owner token to test cross-tenant IDOR attacks
+            await mockDb.collection('accounts').doc('tenant-b').set({
+                id: 'tenant-b',
+                name: 'Minera Rival SpA',
+                status: 'ACTIVE',
+                ownerId: 'uid-owner-b',
+                countryCode: 'CL',
+                contract: { status: 'ACTIVE', activeModules: { supply: true } },
+            });
+            mockTokens.set('tok-owner-b', {
+                uid: 'uid-owner-b',
+                email: 'owner@rival.cl',
+                email_verified: true,
+                activeAccountId: 'tenant-b',
+            });
+
+            // 9.1 POST /sites requires HITL "ACTUALIZAR" -> HTTP 400 without it
+            const siteNoHitl = await apiFetch(`${baseUrl}/api/supply/sites`, {
+                method: 'POST',
+                headers: {
+                    Authorization: 'Bearer tok-owner-b',
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    name: 'Nuevo Sitio',
+                    districtCode: 'CL-ATACAMA',
+                }),
+            });
+            assert.equal(siteNoHitl.status, 400);
+
+            // 9.2 Site IDOR guard: tenant-b trying to overwrite TENANT_A's siteId -> HTTP 403!
+            const siteIdor = await apiFetch(`${baseUrl}/api/supply/sites`, {
+                method: 'POST',
+                headers: {
+                    Authorization: 'Bearer tok-owner-b',
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    confirmationKeyword: 'ACTUALIZAR',
+                    siteId: SITE_A,
+                    name: 'HACKED SITE',
+                    districtCode: 'CL-ATACAMA',
+                }),
+            });
+            assert.equal(siteIdor.status, 403);
+            const intactSiteA = await SupplyRepository.getSite(TENANT_A, SITE_A);
+            assert.equal(intactSiteA?.name, 'Campamento Faena Norte');
+
+            // 9.3 Catalog SKU IDOR guard: tenant-b SKU is namespaced and NEVER overwrites global master SKU
+            const devGlobalSku = await apiFetch(`${baseUrl}/api/supply/catalog`, {
+                method: 'POST',
+                headers: {
+                    Authorization: 'Bearer tok-dev',
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    confirmationKeyword: 'ACTUALIZAR',
+                    scope: 'GLOBAL',
+                    canonicalSkuId: 'sku-master-global-1',
+                    name: 'SKU Maestro Oficial',
+                    categoryCode: 'FERRETERIA_CONSTRUCCION',
+                    procurementBucket: 'FERRETERIA',
+                    baseUnitSi: 'un',
+                }),
+            });
+            assert.equal(devGlobalSku.status, 201);
+
+            const tenantSku = await apiFetch(`${baseUrl}/api/supply/catalog`, {
+                method: 'POST',
+                headers: {
+                    Authorization: 'Bearer tok-owner-b',
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    confirmationKeyword: 'ACTUALIZAR',
+                    scope: 'TENANT',
+                    canonicalSkuId: 'sku-master-global-1',
+                    name: 'Override Privado Tenant B',
+                    categoryCode: 'FERRETERIA_CONSTRUCCION',
+                    procurementBucket: 'FERRETERIA',
+                    baseUnitSi: 'un',
+                }),
+            });
+            assert.equal(tenantSku.status, 201);
+            const globalMasterDoc = getCollectionMap(SUPPLY_COLLECTIONS.GLOBAL_CATALOG).get('sku-master-global-1');
+            assert.equal(globalMasterDoc?.name, 'SKU Maestro Oficial');
+            const namespacedTenantDoc = getCollectionMap(SUPPLY_COLLECTIONS.GLOBAL_CATALOG).get(
+                'tenant_tenant-b__sku-master-global-1'
+            );
+            assert.equal(namespacedTenantDoc?.tenantId, 'tenant-b');
+
+            // 9.4 ZERO Base64 persisted in Firestore `supply_whatsapp_sessions` when buffering image
+            const samplePng = await sharp({
+                create: { width: 120, height: 90, channels: 3, background: { r: 220, g: 220, b: 220 } },
+            })
+                .png()
+                .toBuffer();
+
+            const bufImgOutcome = await CampChannel.handleInboundMessage(
+                {
+                    wamid: 'wamid.cas_no_b64_1',
+                    fromE164: '+56988881111',
+                    timestampMs: Date.now(),
+                    type: 'image',
+                    mimeType: 'image/png',
+                    caption: 'llave rota',
+                },
+                {
+                    debounceWindowMs: 10000,
+                    inlineMediaBuffer: samplePng,
+                    inlineMediaMimeType: 'image/png',
+                    skipOutboundSend: true,
+                }
+            );
+            assert.equal(bufImgOutcome.buffered, true);
+            const persistedSession = getCollectionMap(SUPPLY_COLLECTIONS.WHATSAPP_SESSIONS).get(
+                bufImgOutcome.sessionId!
+            );
+            const serializedSession = JSON.stringify(persistedSession);
+            assert.ok(!serializedSession.includes('inlineMediaBase64'));
+            assert.ok(!serializedSession.includes('data:image'));
+            assert.ok(persistedSession?.pendingBuffer?.some((t: any) => t.evidenceCasRef?.sha256));
+
+            // 9.5 Contract alignment (#9 & #11): rawDescription, evidenceCasRef analyze, string folio + EFECTIVO + allocations[], qtyReceivedNow, double-reception 409, createOpermaqFleetUnit, dteType, REIMBURSED, #9 simulate
+            const req9 = await apiFetch(`${baseUrl}/api/supply/requisitions`, {
+                method: 'POST',
+                headers: {
+                    Authorization: 'Bearer tok-owner',
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    siteId: SITE_A,
+                    lines: [
+                        {
+                            rawDescription: '5 bolsas de cemento portland',
+                            normalizedName: 'Cemento Portland',
+                            qtyRequested: 125,
+                            unitSi: 'kg',
+                            urgency: 'PLANNED',
+                        },
+                    ],
+                }),
+            });
+            assert.equal(req9.status, 201);
+            const req9Json: any = await req9.json();
+
+            const preDigestedCas = persistedSession!.pendingBuffer.find((t: any) => t.evidenceCasRef).evidenceCasRef;
+            nextMockAiResponse = {
+                supplierName: 'Ferretería Copiapó',
+                supplierTaxId: '76192083-9',
+                documentType: 33,
+                folio: 8844,
+                issueDate: '2026-11-21',
+                totalAmountClp: 119000,
+                lines: [
+                    {
+                        description: 'Cemento Portland',
+                        quantity: 125,
+                        unitRaw: 'kg',
+                        unitPriceClp: 800,
+                        subtotalClp: 100000,
+                    },
+                ],
+            };
+            const analyzeCas = await apiFetch(`${baseUrl}/api/supply/receipts/analyze`, {
+                method: 'POST',
+                headers: {
+                    Authorization: 'Bearer tok-owner',
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    evidenceCasRef: preDigestedCas,
+                }),
+            });
+            assert.equal(analyzeCas.status, 200);
+            const analyzeCasJson: any = await analyzeCas.json();
+            assert.equal(analyzeCasJson.analysis.evidenceCasRef.sha256, preDigestedCas.sha256);
+
+            const pur9 = await apiFetch(`${baseUrl}/api/supply/purchases`, {
+                method: 'POST',
+                headers: {
+                    Authorization: 'Bearer tok-owner',
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    confirmationKeyword: 'ACTUALIZAR',
+                    siteId: SITE_A,
+                    purchaseMode: 'MIXED_FULFILLMENT_AND_DIRECT',
+                    supplierTaxId: '76192083-9',
+                    supplierName: 'Ferretería Copiapó',
+                    documentType: 33,
+                    folio: '8844',
+                    issueDate: '2026-11-21',
+                    netAmountClp: 100000,
+                    vatAmountClp: 19000,
+                    totalAmountClp: 119000,
+                    paymentMethod: 'EFECTIVO',
+                    evidenceCasRef: preDigestedCas,
+                    lines: [
+                        {
+                            purchaseLineId: 'pl_cem_9',
+                            canonicalSkuId: 'sku-cemento',
+                            rawDescription: 'Cemento Portland 25kg',
+                            normalizedName: 'Cemento Portland',
+                            qtyPurchased: 125,
+                            unitSi: 'kg',
+                            unitPriceNetClp: 800,
+                            unitPriceGrossClp: 952,
+                            lineNetClp: 100000,
+                            lineVatClp: 19000,
+                            lineTotalClp: 119000,
+                            destination: 'STOCK_IN_TRANSIT',
+                            costCenter: 'CC-OPERACIONES',
+                        },
+                        {
+                            purchaseLineId: 'pl_gen_9',
+                            canonicalSkuId: 'sku-generador',
+                            rawDescription: 'Generador 5kVA',
+                            normalizedName: 'Generador 5kVA',
+                            qtyPurchased: 1,
+                            unitSi: 'un',
+                            lineNetClp: 500000,
+                            lineVatClp: 95000,
+                            lineTotalClp: 595000,
+                            destination: 'CAPEX_ASSET',
+                            isCapexAsset: true,
+                            costCenter: 'CC-CAPEX',
+                        },
+                    ],
+                    allocations: [
+                        {
+                            purchaseLineId: 'pl_cem_9',
+                            requisitionId: req9Json.requisition.reqId,
+                            requisitionLineId: req9Json.requisition.lines[0].lineId,
+                            allocationKind: 'REQUISITION_MATCH',
+                            qtyAllocated: 125,
+                            unitSi: 'kg',
+                            resultingRequisitionLineStatus: 'FULFILLED',
+                        },
+                    ],
+                }),
+            });
+            assert.equal(pur9.status, 201);
+            const pur9Json: any = await pur9.json();
+
+            // Reception with #9 `qtyReceivedNow` -> 200
+            const recFirst = await apiFetch(
+                `${baseUrl}/api/supply/purchases/${pur9Json.purchase.purchaseId}/confirm-reception`,
+                {
+                    method: 'POST',
+                    headers: {
+                        Authorization: 'Bearer tok-owner',
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        confirmationKeyword: 'ACTUALIZAR',
+                        receivedLines: [{ purchaseLineId: 'pl_cem_9', qtyReceivedNow: 125 }],
+                    }),
+                }
+            );
+            assert.equal(recFirst.status, 200);
+
+            // Second reception call on SAME purchase -> HTTP 409 PURCHASE_ALREADY_RECEIVED (no double-count!)
+            const recSecond = await apiFetch(
+                `${baseUrl}/api/supply/purchases/${pur9Json.purchase.purchaseId}/confirm-reception`,
+                {
+                    method: 'POST',
+                    headers: {
+                        Authorization: 'Bearer tok-owner',
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        confirmationKeyword: 'ACTUALIZAR',
+                        receivedLines: [{ purchaseLineId: 'pl_cem_9', qtyReceivedNow: 125 }],
+                    }),
+                }
+            );
+            assert.equal(recSecond.status, 409);
+            const recSecondJson: any = await recSecond.json();
+            assert.equal(recSecondJson.code, 'PURCHASE_ALREADY_RECEIVED');
+
+            const invCemResp = await apiFetch(`${baseUrl}/api/supply/inventory?siteId=${SITE_A}`, {
+                headers: { Authorization: 'Bearer tok-owner' },
+            });
+            const invCemJson: any = await invCemResp.json();
+            const cemInv = invCemJson.items.find((i: any) => i.canonicalSkuId === 'sku-cemento');
+            assert.equal(cemInv.qtyInWarehouse, 125); // NOT 250!
+
+            // Link asset with #9 `createOpermaqFleetUnit: true` (omitting opermaqAssetId)
+            const linkAuto = await apiFetch(
+                `${baseUrl}/api/supply/assets/${pur9Json.createdAssets[0].assetId}/link-opermaq`,
+                {
+                    method: 'POST',
+                    headers: {
+                        Authorization: 'Bearer tok-owner',
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        confirmationKeyword: 'ACTUALIZAR',
+                        createOpermaqFleetUnit: true,
+                    }),
+                }
+            );
+            assert.equal(linkAuto.status, 200);
+            const linkAutoJson: any = await linkAuto.json();
+            assert.equal(linkAutoJson.createdFleetUnitRef, true);
+            assert.ok(linkAutoJson.asset.opermaqAssetId.startsWith('opermaq_unit_'));
+
+            // GET /sii/documents?dteType=33 alias + expense report periodLabel/costCenter/REIMBURSED
+            const dteAliasResp = await apiFetch(`${baseUrl}/api/supply/sii/documents?dteType=33`, {
+                headers: { Authorization: 'Bearer tok-owner' },
+            });
+            assert.equal(dteAliasResp.status, 200);
+            const dteAliasJson: any = await dteAliasResp.json();
+            assert.ok(dteAliasJson.documents.every((d: any) => d.documentType === 33));
+
+            const exp9 = await apiFetch(`${baseUrl}/api/supply/sii/expense-reports`, {
+                method: 'POST',
+                headers: {
+                    Authorization: 'Bearer tok-owner',
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    confirmationKeyword: 'ACTUALIZAR',
+                    siteId: SITE_A,
+                    paymentMethod: 'EFECTIVO',
+                    title: 'Rendición Mensual',
+                    periodLabel: '2026-11',
+                    costCenter: 'CC-OPERACIONES',
+                    fundAdvanceClp: 200000,
+                    siiDocumentIds: [dteAliasJson.documents[0].docId],
+                }),
+            });
+            assert.equal(exp9.status, 201);
+            const exp9Json: any = await exp9.json();
+            assert.equal(exp9Json.report.periodLabel, '2026-11');
+            assert.equal(exp9Json.report.costCenter, 'CC-OPERACIONES');
+
+            const expPatch = await apiFetch(
+                `${baseUrl}/api/supply/sii/expense-reports/${exp9Json.report.reportId}`,
+                {
+                    method: 'PATCH',
+                    headers: {
+                        Authorization: 'Bearer tok-owner',
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        confirmationKeyword: 'ACTUALIZAR',
+                        status: 'REIMBURSED',
+                    }),
+                }
+            );
+            assert.equal(expPatch.status, 200);
+
+            // Simulate WhatsApp with #9 field names (`phoneE164`, `text`, `simulateSenderRole`)
+            const sim9 = await apiFetch(`${baseUrl}/api/supply/whatsapp/simulate`, {
+                method: 'POST',
+                headers: {
+                    Authorization: 'Bearer tok-dev',
+                    'Content-Type': 'application/json',
+                    'x-tenant-id': TENANT_A,
+                },
+                body: JSON.stringify({
+                    phoneE164: '+56966665555',
+                    text: '2 kilos de papas',
+                    simulateSenderRole: 'CAMP_MANAGER',
+                    siteId: SITE_A,
+                }),
+            });
+            assert.equal(sim9.status, 200);
+            const sim9Json: any = await sim9.json();
+            assert.equal(sim9Json.fsmState, 'REVIEW_GATE');
+            assert.ok(typeof sim9Json.replyText === 'string' && sim9Json.replyText.includes('Papas'));
         }
 
         console.log('\n✅ ALL SUPPLY API + WHATSAPP + RECEIPT + SII + M2M x402 TESTS PASSED!');
