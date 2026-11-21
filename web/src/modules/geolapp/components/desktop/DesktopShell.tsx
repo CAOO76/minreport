@@ -7,6 +7,7 @@ import type {
     StockpileMeasurement,
 } from '../../core/types/GeolappTypes';
 import { DesktopClosureModal, type ClosureModalMode } from './DesktopClosureModal';
+import { DesktopDeviceCompatibilityView } from './DesktopDeviceCompatibilityView';
 import { DesktopDossierPanel } from './DesktopDossierPanel';
 import { DesktopFaenaDirectory } from './DesktopFaenaDirectory';
 import { DesktopFaenaMonitoring } from './DesktopFaenaMonitoring';
@@ -27,7 +28,12 @@ export interface DesktopShellProps {
     embedded?: boolean;
 }
 
-type DesktopNavLevel = 'FAENAS' | 'FAENA_STOCKPILES' | 'STOCKPILE_STAGE' | 'MONITORING';
+type DesktopNavLevel =
+    | 'FAENAS'
+    | 'FAENA_STOCKPILES'
+    | 'STOCKPILE_STAGE'
+    | 'MONITORING'
+    | 'COMPATIBILITY';
 
 export const DesktopShell: React.FC<DesktopShellProps> = ({
     assets,
@@ -129,7 +135,7 @@ export const DesktopShell: React.FC<DesktopShellProps> = ({
     };
 
     const handleBackStep = () => {
-        if (navLevel === 'MONITORING') {
+        if (navLevel === 'MONITORING' || navLevel === 'COMPATIBILITY') {
             setNavLevel(activeFaenaId !== 'ALL' ? 'FAENA_STOCKPILES' : 'FAENAS');
             return;
         }
@@ -144,7 +150,7 @@ export const DesktopShell: React.FC<DesktopShellProps> = ({
         }
     };
 
-    const isDirectoryFlow = navLevel !== 'MONITORING';
+    const isDirectoryFlow = navLevel !== 'MONITORING' && navLevel !== 'COMPATIBILITY';
 
     return (
         <div className="h-full w-full flex-1 flex flex-col bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] font-atkinson overflow-hidden rounded-none shadow-none select-none">
@@ -177,7 +183,7 @@ export const DesktopShell: React.FC<DesktopShellProps> = ({
                         {t('desktop.breadcrumb_faenas', 'FAENAS')}
                     </button>
 
-                    {activeFaenaLabel && (
+                    {activeFaenaLabel && navLevel !== 'COMPATIBILITY' && (
                         <>
                             <span className="text-[#94A3B8] dark:text-[#5A6072] shrink-0">/</span>
                             <button
@@ -237,13 +243,22 @@ export const DesktopShell: React.FC<DesktopShellProps> = ({
                             <span className="font-bold text-[#C68346] shrink-0">MONITORING</span>
                         </>
                     )}
+
+                    {navLevel === 'COMPATIBILITY' && (
+                        <>
+                            <span className="text-[#94A3B8] dark:text-[#5A6072] shrink-0">/</span>
+                            <span className="font-bold text-[#C68346] shrink-0">
+                                {t('compatibility.breadcrumb_hardware', 'HARDWARE')}
+                            </span>
+                        </>
+                    )}
                 </nav>
 
                 <div className="flex items-center gap-fib-13 shrink-0">
                     <button
                         type="button"
                         onClick={() => {
-                            if (navLevel === 'MONITORING') {
+                            if (navLevel === 'MONITORING' || navLevel === 'COMPATIBILITY') {
                                 setNavLevel(
                                     activeFaenaId !== 'ALL' ? 'FAENA_STOCKPILES' : 'FAENAS'
                                 );
@@ -274,6 +289,21 @@ export const DesktopShell: React.FC<DesktopShellProps> = ({
                         }`}
                     >
                         <span className="material-symbols-outlined text-[24px]">monitoring</span>
+                    </button>
+
+                    <button
+                        type="button"
+                        onClick={() => setNavLevel('COMPATIBILITY')}
+                        title={t('compatibility.nav_tooltip', 'COMPATIBILIDAD HARDWARE')}
+                        aria-label={t('compatibility.nav_tooltip', 'COMPATIBILIDAD HARDWARE')}
+                        aria-pressed={navLevel === 'COMPATIBILITY'}
+                        className={`relative h-[52px] px-2 bg-transparent border-0 border-b-2 outline-none cursor-pointer flex items-center justify-center rounded-none transition-colors ${
+                            navLevel === 'COMPATIBILITY'
+                                ? 'border-[#C68346] text-[#C68346]'
+                                : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
+                        }`}
+                    >
+                        <span className="material-symbols-outlined text-[24px]">devices</span>
                     </button>
                 </div>
             </header>
@@ -310,6 +340,8 @@ export const DesktopShell: React.FC<DesktopShellProps> = ({
                         onSelectAsset={handleOpenStockpile}
                     />
                 )}
+
+                {navLevel === 'COMPATIBILITY' && <DesktopDeviceCompatibilityView />}
 
                 {navLevel === 'STOCKPILE_STAGE' && activeAsset && (
                     <div className="flex-1 min-w-0 min-h-0 grid grid-cols-1 lg:grid-cols-[minmax(0,1.618fr)_minmax(0,1fr)] overflow-hidden">

@@ -25,7 +25,8 @@ export type SyncTaskType =
     | 'OPERMAQ_API_MUTATION'
     | 'CAS_MEDIA_UPLOAD'
     | 'GEO_REPORT_STAMP'
-    | 'GEOLAPP_DIGITAL_AI_ANALYZE';
+    | 'GEOLAPP_DIGITAL_AI_ANALYZE'
+    | 'GEOLAPP_SPATIAL_ANALYZE';
 
 export interface CasMediaSyncPayload {
     sha256: string;
@@ -58,6 +59,17 @@ export interface GeolappDigitalAiSyncPayload {
     locale?: 'es' | 'en' | 'pt';
 }
 
+export interface GeolappSpatialSyncPayload {
+    assetId: string;
+    measurementId?: string;
+    tenantId?: string;
+    sha256?: string;
+    extraSha256s?: string[];
+    photoUrl?: string;
+    spatialPayloadSha256: string;
+    locale?: 'es' | 'en' | 'pt';
+}
+
 export interface SyncTask<T = any> {
     id: string;
     type: SyncTaskType;
@@ -84,6 +96,7 @@ const TASK_PRIORITY: Record<SyncTaskType, number> = {
     STOCKPILE_SURVEY: 2,
     STOCKPILE_MEASUREMENT: 3,
     GEOLAPP_DIGITAL_AI_ANALYZE: 4,
+    GEOLAPP_SPATIAL_ANALYZE: 4,
     TENANT_ASSET: 5,
     FLEET_INSPECTION: 5,
     OPERMAQ_API_MUTATION: 5,
@@ -502,7 +515,8 @@ class SyncQueueEngine {
             if (
                 task.type !== 'STOCKPILE_SURVEY' &&
                 task.type !== 'STOCKPILE_MEASUREMENT' &&
-                task.type !== 'GEOLAPP_DIGITAL_AI_ANALYZE'
+                task.type !== 'GEOLAPP_DIGITAL_AI_ANALYZE' &&
+                task.type !== 'GEOLAPP_SPATIAL_ANALYZE'
             ) {
                 continue;
             }
@@ -528,6 +542,54 @@ class SyncQueueEngine {
                 void this.drainQueue();
             }
         }, baseDelayMs + jitterMs);
+    }
+
+    private async hydrateAnalyzeMediaFromCas(
+        sha256?: string,
+        extraSha256s?: string[],
+        photoUrl?: string
+    ): Promise<{
+        imageBase64?: string;
+        imageMimeType?: string;
+        extraImagesBase64: string[];
+        resolvedPhotoUrl?: string;
+    }> {
+        let imageBase64: string | undefined;
+        let imageMimeType: string | undefined;
+        if (sha256) {
+            const casBlob = await offlineStorage.getCasBlob(sha256).catch(() => null);
+            if (casBlob?.blob) {
+                imageBase64 = await blobToBase64(casBlob.blob);
+                imageMimeType = casBlob.mimeType;
+            }
+        }
+
+        const casCache = new Map<string, string | null>();
+        const resolvedPhotoUrl = photoUrl
+            ? String(await this.replaceOfflineCasStrings(photoUrl, casCache))
+            : undefined;
+
+        const extraImagesBase64: string[] = [];
+        if (Array.isArray(extraSha256s)) {
+            for (const extraSha of extraSha256s.slice(0, 3)) {
+                const extraBlob = await offlineStorage.getCasBlob(extraSha).catch(() => null);
+                if (extraBlob?.blob) {
+                    extraImagesBase64.push(await blobToBase64(extraBlob.blob));
+                }
+            }
+        }
+
+        return { imageBase64, imageMimeType, extraImagesBase64, resolvedPhotoUrl };
+    }
+
+    private async hasPendingStockpileSurvey(assetId: string): Promise<boolean> {
+        const queuedTasks: SyncTask[] = await offlineStorage.getAllSyncTasks().catch(() => []);
+        return queuedTasks.some(
+            (t) =>
+                t.type === 'STOCKPILE_SURVEY' &&
+                (t.status === 'PENDING' || t.status === 'FAILED' || t.status === 'SYNCING') &&
+                (t.payload as any)?.id === assetId
+        );
     }
 
     public async drainQueue(): Promise<void> {
@@ -858,30 +920,12 @@ class SyncQueueEngine {
                     throw new Error('assetId y tenantId obligatorios en GEOLAPP_DIGITAL_AI_ANALYZE');
                 }
 
-                let imageBase64: string | undefined;
-                let imageMimeType: string | undefined;
-                if (payload.sha256) {
-                    const casBlob = await offlineStorage.getCasBlob(payload.sha256).catch(() => null);
-                    if (casBlob?.blob) {
-                        imageBase64 = await blobToBase64(casBlob.blob);
-                        imageMimeType = casBlob.mimeType;
-                    }
-                }
-
-                const casCache = new Map<string, string | null>();
-                const resolvedPhotoUrl = payload.photoUrl
-                    ? String(await this.replaceOfflineCasStrings(payload.photoUrl, casCache))
-                    : undefined;
-
-                const extraImagesBase64: string[] = [];
-                if (Array.isArray(payload.extraSha256s)) {
-                    for (const extraSha of payload.extraSha256s.slice(0, 3)) {
-                        const extraBlob = await offlineStorage.getCasBlob(extraSha).catch(() => null);
-                        if (extraBlob?.blob) {
-                            extraImagesBase64.push(await blobToBase64(extraBlob.blob));
-                        }
-                    }
-                }
+                const { imageBase64, imageMimeType, extraImagesBase64, resolvedPhotoUrl } =
+                    await this.hydrateAnalyzeMediaFromCas(
+                        payload.sha256,
+                        payload.extraSha256s,
+                        payload.photoUrl
+                    );
 
                 const res = await coreAuthFetch(
                     `/api/geolapp/stockpiles/${encodeURIComponent(payload.assetId)}/digital-analyze`,
@@ -910,16 +954,7 @@ class SyncQueueEngine {
                 );
 
                 if (res.status === 404) {
-                    const queuedTasks: SyncTask[] = await offlineStorage
-                        .getAllSyncTasks()
-                        .catch(() => []);
-                    const hasPendingSurvey = queuedTasks.some(
-                        (t) =>
-                            t.type === 'STOCKPILE_SURVEY' &&
-                            (t.status === 'PENDING' || t.status === 'FAILED' || t.status === 'SYNCING') &&
-                            (t.payload as any)?.id === payload.assetId
-                    );
-                    if (hasPendingSurvey) {
+                    if (await this.hasPendingStockpileSurvey(payload.assetId)) {
                         throw new Error('WAIT_STOCKPILE_SURVEY_SYNC');
                     }
                     break;
@@ -929,6 +964,74 @@ class SyncQueueEngine {
                     throw new Error(
                         (errJson as any)?.error ||
                             `HTTP ${res.status} al ejecutar GEOLAPP_DIGITAL_AI_ANALYZE`
+                    );
+                }
+                break;
+            }
+            case 'GEOLAPP_SPATIAL_ANALYZE': {
+                const payload = task.payload as GeolappSpatialSyncPayload;
+                const activeTenantId = resolveActiveTenantId(payload.tenantId);
+                if (!payload.assetId || !activeTenantId || !payload.spatialPayloadSha256) {
+                    throw new Error(
+                        'assetId, tenantId y spatialPayloadSha256 obligatorios en GEOLAPP_SPATIAL_ANALYZE'
+                    );
+                }
+
+                const spatialRecord = await offlineStorage
+                    .getCasBlob(payload.spatialPayloadSha256)
+                    .catch(() => null);
+                if (!spatialRecord?.blob) {
+                    throw new Error(
+                        `Payload espacial CAS ${payload.spatialPayloadSha256} no encontrado`
+                    );
+                }
+                const spatialJson = JSON.parse(await spatialRecord.blob.text()) as Record<
+                    string,
+                    unknown
+                >;
+
+                const { imageBase64, imageMimeType, extraImagesBase64, resolvedPhotoUrl } =
+                    await this.hydrateAnalyzeMediaFromCas(
+                        payload.sha256,
+                        payload.extraSha256s,
+                        payload.photoUrl
+                    );
+
+                const res = await coreAuthFetch(
+                    `/api/geolapp/stockpiles/${encodeURIComponent(payload.assetId)}/spatial-analyze`,
+                    {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-Active-Account-Id': activeTenantId,
+                        },
+                        body: JSON.stringify({
+                            ...spatialJson,
+                            measurementId: payload.measurementId,
+                            tenantId: activeTenantId,
+                            imageBase64,
+                            imageMimeType,
+                            extraImagesBase64:
+                                extraImagesBase64.length > 0 ? extraImagesBase64 : undefined,
+                            photoUrl: isRemoteMediaUrl(resolvedPhotoUrl)
+                                ? resolvedPhotoUrl
+                                : undefined,
+                            locale: payload.locale || 'es',
+                        }),
+                    }
+                );
+
+                if (res.status === 404) {
+                    if (await this.hasPendingStockpileSurvey(payload.assetId)) {
+                        throw new Error('WAIT_STOCKPILE_SURVEY_SYNC');
+                    }
+                    break;
+                }
+                if (!res.ok) {
+                    const errJson = await res.json().catch(() => ({}));
+                    throw new Error(
+                        (errJson as any)?.error ||
+                            `HTTP ${res.status} al ejecutar GEOLAPP_SPATIAL_ANALYZE`
                     );
                 }
                 break;

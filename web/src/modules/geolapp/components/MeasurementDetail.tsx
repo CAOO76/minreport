@@ -39,6 +39,24 @@ interface MeasurementDetailProps {
     onToggleIgnore?: () => void;
 }
 
+interface SpatialMetrologyFields {
+    uncertainty_pct?: number | null;
+    toe_score?: number | null;
+    coverage_pct?: number | null;
+    depth_mode?: string | null;
+    ground_slope_deg?: number | null;
+}
+
+function formatSpatialDepthMode(depthMode?: string | null): string | null {
+    if (typeof depthMode !== 'string') return null;
+    const normalized = depthMode.trim().toUpperCase();
+    if (!normalized) return null;
+    if (normalized === 'RAW_DEPTH_ONLY') return 'ARCORE RAW DEPTH';
+    if (normalized === 'AUTOMATIC') return 'ARCORE DEPTH';
+    if (normalized === 'VIO_POINTCLOUD') return 'ARCORE VIO';
+    return depthMode.trim();
+}
+
 const formatKilobytes = (bytes?: number): string | null => {
     if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes < 0) return null;
     if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
@@ -608,6 +626,15 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
             )
     );
 
+    const mSpatial = measurement as StockpileMeasurement & SpatialMetrologyFields;
+    const aSpatial = asset as (StockpileAsset & SpatialMetrologyFields) | null;
+    const effUncertaintyPct = mSpatial.uncertainty_pct ?? aSpatial?.uncertainty_pct ?? null;
+    const effToeScore = mSpatial.toe_score ?? aSpatial?.toe_score ?? null;
+    const effCoveragePct = mSpatial.coverage_pct ?? aSpatial?.coverage_pct ?? null;
+    const effDepthMode = mSpatial.depth_mode ?? aSpatial?.depth_mode ?? null;
+    const effGroundSlopeDeg = mSpatial.ground_slope_deg ?? aSpatial?.ground_slope_deg ?? null;
+    const effDepthModeDisplay = formatSpatialDepthMode(effDepthMode);
+
     return (
         <main className="h-full w-full flex-1 flex flex-col bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] font-atkinson overflow-hidden rounded-none shadow-none">
             <header
@@ -755,6 +782,10 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
                             tinVolumeM3={effTinVolumeM3}
                             casMetrics={effMeshCas}
                             meshSource={effMeshSource}
+                            uncertaintyPct={effUncertaintyPct}
+                            toeScore={effToeScore}
+                            coveragePct={effCoveragePct}
+                            depthMode={effDepthMode}
                             altLabel={asset?.name || measurement.assetId}
                             isMobile={isMobile}
                             heightPx={isMobile ? 236 : 340}
@@ -883,9 +914,26 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
                             <span className="block text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6]">
                                 {t('manual_capture.estimated_volume', 'VOLUMEN')}
                             </span>
-                            <span className="text-kpi-display font-mono font-bold tabular-nums text-[#0F172A] dark:text-[#F3F4F6]">
-                                {measurement.volumen_m3.toFixed(2)} m³
-                            </span>
+                            <div className="flex items-baseline gap-fib-8 flex-wrap">
+                                <span className="text-kpi-display font-mono font-bold tabular-nums text-[#0F172A] dark:text-[#F3F4F6]">
+                                    {measurement.volumen_m3.toFixed(2)} m³
+                                </span>
+                                {typeof effUncertaintyPct === 'number' &&
+                                    Number.isFinite(effUncertaintyPct) &&
+                                    effUncertaintyPct > 0 && (
+                                        <span
+                                            className={`text-microcopy font-mono font-bold tabular-nums ${
+                                                effUncertaintyPct <= 5
+                                                    ? 'text-[#00AEEF]'
+                                                    : effUncertaintyPct > 8
+                                                      ? 'text-[#C68346]'
+                                                      : 'text-[#475569] dark:text-[#8A93A6]'
+                                            }`}
+                                        >
+                                            ± {effUncertaintyPct.toFixed(1)}%
+                                        </span>
+                                    )}
+                            </div>
                         </div>
                         <div
                             className={
@@ -1043,6 +1091,45 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
                             <ReportFieldRow
                                 label={t('digital_v2.slope_alert_label', 'ALERTA DE TALUD')}
                                 value={measurement.slope_warning}
+                            />
+                        )}
+                        {typeof effGroundSlopeDeg === 'number' &&
+                            Number.isFinite(effGroundSlopeDeg) && (
+                                <ReportFieldRow
+                                    label={t('visual3d.ground_slope_label', 'PENDIENTE PISO')}
+                                    value={`${effGroundSlopeDeg.toFixed(1)}°`}
+                                    mono
+                                />
+                            )}
+                        {typeof effUncertaintyPct === 'number' &&
+                            Number.isFinite(effUncertaintyPct) && (
+                                <ReportFieldRow
+                                    label={t('visual3d.uncertainty_label', 'INCERTIDUMBRE')}
+                                    value={`± ${effUncertaintyPct.toFixed(1)}%`}
+                                    mono
+                                />
+                            )}
+                        {typeof effCoveragePct === 'number' &&
+                            Number.isFinite(effCoveragePct) && (
+                                <ReportFieldRow
+                                    label={t('visual3d.coverage_label', 'COBERTURA PERIMETRAL')}
+                                    value={`${Math.round(effCoveragePct)}%`}
+                                    mono
+                                />
+                            )}
+                        {typeof effToeScore === 'number' &&
+                            Number.isFinite(effToeScore) && (
+                                <ReportFieldRow
+                                    label={t('visual3d.toe_score_label', 'CONFIANZA PIE (TOE)')}
+                                    value={`${Math.round(effToeScore)}%`}
+                                    mono
+                                />
+                            )}
+                        {effDepthModeDisplay && (
+                            <ReportFieldRow
+                                label={t('visual3d.depth_mode_label', 'SENSOR ESPACIAL')}
+                                value={effDepthModeDisplay}
+                                mono
                             />
                         )}
                     </section>

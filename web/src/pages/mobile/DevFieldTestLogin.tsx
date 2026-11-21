@@ -328,9 +328,8 @@ export const DevFieldTestLogin: React.FC = () => {
         <div className="min-h-[100dvh] bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] flex flex-col font-atkinson select-none antialiased pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
             <main className="flex-1 flex items-center justify-center px-fib-21 py-fib-34">
                 <div className="w-full max-w-sm bg-transparent rounded-none shadow-none space-y-fib-34">
-                    <div className="flex flex-col items-center justify-center gap-fib-13">
-                        <BrandLogo variant="isotype" className="h-10 w-10 object-contain pointer-events-none" />
-                        <BrandLogo variant="imagotype" className="h-5 w-auto object-contain pointer-events-none" />
+                    <div className="flex items-center justify-center">
+                        <BrandLogo variant="isotype" className="h-12 w-12 object-contain pointer-events-none" />
                     </div>
 
                     {loading && (

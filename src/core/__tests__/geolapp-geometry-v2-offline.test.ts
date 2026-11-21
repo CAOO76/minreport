@@ -231,8 +231,22 @@ function testMobileDigitalOnlyAndOfflineSyncContracts(): void {
     assert.equal(manualCaptureSrc.includes('ExternalSensorsPanel'), false);
     assert.equal(mobileScannerSrc.includes('animate-spin'), false);
 
-    // Capacidades digitales Opción B en MobileScanner
-    assert.ok(mobileScannerSrc.includes('<FieldNumPad'), 'Debe usar FieldNumPad integrado');
+    // Capacidades digitales limpias en MobileScanner (cámara + galería + guardar un toque + ARCore + XCover + CAS)
+    assert.equal(mobileScannerSrc.includes('<FieldNumPad'), false, 'MobileScanner limpio no debe incluir FieldNumPad manual');
+    assert.ok(
+        /handleCaptureSource\(\s*'CAMERA'/.test(mobileScannerSrc) &&
+            /handleCaptureSource\(\s*'PHOTOS'/.test(mobileScannerSrc) &&
+            mobileScannerSrc.includes('handleSaveCapture'),
+        'MobileScanner debe integrar captura directa por cámara, galería y guardado en un toque'
+    );
+    assert.ok(
+        mobileScannerSrc.includes('useSpatialDeviceCapability') &&
+            mobileScannerSrc.includes('OPTIMAL_SPATIAL') &&
+            mobileScannerSrc.includes('NEEDS_UPDATE'),
+        'MobileScanner debe integrar useSpatialDeviceCapability y compatibilidad ARCore'
+    );
+    assert.ok(mobileScannerSrc.includes('useXCoverHardwareKey'), 'MobileScanner debe soportar botón físico XCover Key');
+    assert.ok(mobileScannerSrc.includes('mediaDigestorClient.digestFile'), 'MobileScanner debe procesar evidencia vía CAS');
     assert.ok(mobileScannerSrc.includes('GEOLAPP_DIGITAL_AI_ANALYZE'), 'Debe encolar análisis IA offline');
     assert.ok(mobileScannerSrc.includes('PENDING_AI_SYNC'), 'Debe marcar estado PENDING_AI_SYNC offline');
 

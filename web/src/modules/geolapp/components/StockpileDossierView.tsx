@@ -59,6 +59,24 @@ export interface StockpileDossierViewProps {
 type DossierTab = 'RESUMEN' | 'FICHA' | 'HISTORIAL';
 type EditingBlock = 'identity' | 'material' | 'metallurgy' | null;
 
+interface SpatialMetrologyFields {
+    uncertainty_pct?: number | null;
+    toe_score?: number | null;
+    coverage_pct?: number | null;
+    depth_mode?: string | null;
+    ground_slope_deg?: number | null;
+}
+
+function formatSpatialDepthMode(depthMode?: string | null): string | null {
+    if (typeof depthMode !== 'string') return null;
+    const normalized = depthMode.trim().toUpperCase();
+    if (!normalized) return null;
+    if (normalized === 'RAW_DEPTH_ONLY') return 'ARCORE RAW DEPTH';
+    if (normalized === 'AUTOMATIC') return 'ARCORE DEPTH';
+    if (normalized === 'VIO_POINTCLOUD') return 'ARCORE VIO';
+    return depthMode.trim();
+}
+
 type PendingHitlAction =
     | { kind: 'PATCH'; patch: Partial<StockpileAsset>; diffs: HitlComparisonDiffItem[] }
     | {
@@ -497,6 +515,18 @@ export const StockpileDossierView: React.FC<StockpileDossierViewProps> = ({
               }
             : undefined;
     const canReconstruct3D = Boolean(!latestMeshUrl && latestFallbackGeometry);
+
+    const latestMeasSpatial = latestMeas as (StockpileMeasurement & SpatialMetrologyFields) | null;
+    const assetSpatial = asset as StockpileAsset & SpatialMetrologyFields;
+    const latestUncertaintyPct =
+        latestMeasSpatial?.uncertainty_pct ?? assetSpatial.uncertainty_pct ?? null;
+    const latestToeScore = latestMeasSpatial?.toe_score ?? assetSpatial.toe_score ?? null;
+    const latestCoveragePct =
+        latestMeasSpatial?.coverage_pct ?? assetSpatial.coverage_pct ?? null;
+    const latestDepthMode = latestMeasSpatial?.depth_mode ?? assetSpatial.depth_mode ?? null;
+    const latestGroundSlopeDeg =
+        latestMeasSpatial?.ground_slope_deg ?? assetSpatial.ground_slope_deg ?? null;
+    const latestDepthModeDisplay = formatSpatialDepthMode(latestDepthMode);
 
     const canonicalFix = useMemo(() => resolveCanonicalFix(asset), [asset]);
     const summary = useMemo(() => computeAssetMetallurgySummary(asset), [asset]);
@@ -1030,6 +1060,10 @@ export const StockpileDossierView: React.FC<StockpileDossierViewProps> = ({
                             tinVolumeM3={latestTinVolumeM3}
                             casMetrics={latestCasMetrics}
                             meshSource={latestMeshSource}
+                            uncertaintyPct={latestUncertaintyPct}
+                            toeScore={latestToeScore}
+                            coveragePct={latestCoveragePct}
+                            depthMode={latestDepthMode}
                             altLabel={asset.name}
                             canReconstruct3D={canReconstruct3D}
                             isReconstructing3D={isReconstructing3D}
@@ -1044,11 +1078,28 @@ export const StockpileDossierView: React.FC<StockpileDossierViewProps> = ({
                             <span className="block text-microcopy uppercase text-[#475569] dark:text-[#8A93A6] truncate">
                                 VOL m³
                             </span>
-                            <span className="block text-data-dense font-bold text-[#C68346] truncate">
-                                {summary.volumeM3.toLocaleString(undefined, {
-                                    maximumFractionDigits: 1,
-                                })}
-                            </span>
+                            <div className="flex items-baseline gap-1 min-w-0 flex-wrap">
+                                <span className="text-data-dense font-bold text-[#C68346] truncate">
+                                    {summary.volumeM3.toLocaleString(undefined, {
+                                        maximumFractionDigits: 1,
+                                    })}
+                                </span>
+                                {typeof latestUncertaintyPct === 'number' &&
+                                    Number.isFinite(latestUncertaintyPct) &&
+                                    latestUncertaintyPct > 0 && (
+                                        <span
+                                            className={`text-microcopy font-bold shrink-0 ${
+                                                latestUncertaintyPct <= 5
+                                                    ? 'text-[#00AEEF]'
+                                                    : latestUncertaintyPct > 8
+                                                      ? 'text-[#C68346]'
+                                                      : 'text-[#475569] dark:text-[#8A93A6]'
+                                            }`}
+                                        >
+                                            ± {latestUncertaintyPct.toFixed(1)}%
+                                        </span>
+                                    )}
+                            </div>
                         </div>
                         <div className="px-fib-8 py-fib-13 min-w-0">
                             <span className="block text-microcopy uppercase text-[#475569] dark:text-[#8A93A6] truncate">
@@ -1146,6 +1197,18 @@ export const StockpileDossierView: React.FC<StockpileDossierViewProps> = ({
                                 {casTrace || '--'}
                             </span>
                         </div>
+
+                        {typeof latestGroundSlopeDeg === 'number' &&
+                            Number.isFinite(latestGroundSlopeDeg) && (
+                                <div className="px-fib-13 py-fib-13 flex items-center justify-between gap-fib-8">
+                                    <span className="text-microcopy uppercase text-[#475569] dark:text-[#8A93A6] shrink-0">
+                                        {t('visual3d.ground_slope_label', 'PENDIENTE PISO')}
+                                    </span>
+                                    <span className="text-data-dense text-[#0F172A] dark:text-[#F3F4F6] truncate">
+                                        {latestGroundSlopeDeg.toFixed(1)}°
+                                    </span>
+                                </div>
+                            )}
                     </section>
 
                     {/* 5. Historial inmediato de mediciones */}
@@ -1392,12 +1455,29 @@ export const StockpileDossierView: React.FC<StockpileDossierViewProps> = ({
                                 <span className="text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6] block">
                                     {t('dossier.volume_label', 'VOLUMEN')}
                                 </span>
-                                <span className="text-h1-header font-mono font-bold tabular-nums text-[#C68346]">
-                                    {summary.volumeM3.toLocaleString(undefined, {
-                                        maximumFractionDigits: 2,
-                                    })}{' '}
-                                    m³
-                                </span>
+                                <div className="flex items-baseline gap-fib-8 flex-wrap">
+                                    <span className="text-h1-header font-mono font-bold tabular-nums text-[#C68346]">
+                                        {summary.volumeM3.toLocaleString(undefined, {
+                                            maximumFractionDigits: 2,
+                                        })}{' '}
+                                        m³
+                                    </span>
+                                    {typeof latestUncertaintyPct === 'number' &&
+                                        Number.isFinite(latestUncertaintyPct) &&
+                                        latestUncertaintyPct > 0 && (
+                                            <span
+                                                className={`text-microcopy font-mono font-bold tabular-nums ${
+                                                    latestUncertaintyPct <= 5
+                                                        ? 'text-[#00AEEF]'
+                                                        : latestUncertaintyPct > 8
+                                                          ? 'text-[#C68346]'
+                                                          : 'text-[#475569] dark:text-[#8A93A6]'
+                                                }`}
+                                            >
+                                                ± {latestUncertaintyPct.toFixed(1)}%
+                                            </span>
+                                        )}
+                                </div>
                             </div>
                             <div className="p-fib-13 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] rounded-none">
                                 <span className="text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6] block">
@@ -1440,6 +1520,10 @@ export const StockpileDossierView: React.FC<StockpileDossierViewProps> = ({
                                 tinVolumeM3={latestTinVolumeM3}
                                 casMetrics={latestCasMetrics}
                                 meshSource={latestMeshSource}
+                                uncertaintyPct={latestUncertaintyPct}
+                                toeScore={latestToeScore}
+                                coveragePct={latestCoveragePct}
+                                depthMode={latestDepthMode}
                                 altLabel={asset.name}
                                 canReconstruct3D={canReconstruct3D}
                                 isReconstructing3D={isReconstructing3D}
@@ -1642,6 +1726,55 @@ export const StockpileDossierView: React.FC<StockpileDossierViewProps> = ({
                                                 : null
                                         }
                                     />
+                                    {typeof latestGroundSlopeDeg === 'number' &&
+                                        Number.isFinite(latestGroundSlopeDeg) && (
+                                            <ReportFieldRow
+                                                label={t(
+                                                    'visual3d.ground_slope_label',
+                                                    'PENDIENTE PISO'
+                                                )}
+                                                value={`${latestGroundSlopeDeg.toFixed(1)}°`}
+                                            />
+                                        )}
+                                    {typeof latestUncertaintyPct === 'number' &&
+                                        Number.isFinite(latestUncertaintyPct) && (
+                                            <ReportFieldRow
+                                                label={t(
+                                                    'visual3d.uncertainty_label',
+                                                    'INCERTIDUMBRE'
+                                                )}
+                                                value={`± ${latestUncertaintyPct.toFixed(1)}%`}
+                                            />
+                                        )}
+                                    {typeof latestCoveragePct === 'number' &&
+                                        Number.isFinite(latestCoveragePct) && (
+                                            <ReportFieldRow
+                                                label={t(
+                                                    'visual3d.coverage_label',
+                                                    'COBERTURA PERIMETRAL'
+                                                )}
+                                                value={`${Math.round(latestCoveragePct)}%`}
+                                            />
+                                        )}
+                                    {typeof latestToeScore === 'number' &&
+                                        Number.isFinite(latestToeScore) && (
+                                            <ReportFieldRow
+                                                label={t(
+                                                    'visual3d.toe_score_label',
+                                                    'CONFIANZA PIE (TOE)'
+                                                )}
+                                                value={`${Math.round(latestToeScore)}%`}
+                                            />
+                                        )}
+                                    {latestDepthModeDisplay && (
+                                        <ReportFieldRow
+                                            label={t(
+                                                'visual3d.depth_mode_label',
+                                                'SENSOR ESPACIAL'
+                                            )}
+                                            value={latestDepthModeDisplay}
+                                        />
+                                    )}
                                 </div>
                             )}
                         </ReportBlockEditable>

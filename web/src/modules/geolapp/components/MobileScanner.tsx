@@ -3,19 +3,22 @@ import { useTranslation } from 'react-i18next';
 import { Capacitor } from '@capacitor/core';
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
 import { mediaDigestorClient } from '../../../core/media/MediaDigestorClient';
-import { syncQueueEngine } from '../../../core/offline/SyncQueueEngine';
+import { syncQueueEngine, type GeolappSpatialSyncPayload } from '../../../core/offline/SyncQueueEngine';
 import { useNetworkStatus } from '../../../hooks/useNetworkStatus';
 import M3CircularProgress from '../../../components/common/M3CircularProgress';
 import M3LinearProgress from '../../../components/common/M3LinearProgress';
-import { SovereignVoiceInput } from '../../../components/common/SovereignVoiceInput';
 import SecureImage from '../../../components/common/SecureImage';
 import { dataService } from '../core/services/DataService';
-import { storageService } from '../core/services/StorageService';
+import { storageService, type UploadResult } from '../core/services/StorageService';
+import { geolappDigitalAiService } from '../core/services/GeolappDigitalAiService';
+import { useSpatialDeviceCapability } from '../core/services/spatialDeviceCapability';
 import {
-    geolappDigitalAiService,
-    type DigitalAnalyzeResult,
-} from '../core/services/GeolappDigitalAiService';
-import type { Granulometry } from '../core/services/vision-ia';
+    analyzeSpatialScan,
+    saveOfflineSpatialPayload,
+    startNativeSpatialScan,
+    type SpatialAnalyzeResult,
+    type SpatialScanNativeResult,
+} from '../core/services/spatialScannerService';
 import { useImuClinometer } from '../core/hooks/useImuClinometer';
 import {
     useXCoverHardwareKey,
@@ -23,26 +26,14 @@ import {
 } from '../core/hooks/useXCoverHardwareKey';
 import { triggerFieldImpact, triggerFieldNotification } from '../core/utils/fieldHaptics';
 import {
-    parseSpokenStockpileSpecs,
-    type SpokenStockpileSpecs,
-} from '../core/utils/spokenStockpileParser';
-import {
     type CasTelemetryMetrics,
     InlineStatusBanner,
     type InlineStatusMessage,
     computeCasMetrics,
     dataUrlToBlob,
     formatCasSize,
-    parseOptionalNonNegative,
 } from '../core/utils/captureHelpers';
-import type {
-    GeolappAnalysisStatus,
-    GeolappDigitalScaleAnchorType,
-    StockpileAsset,
-} from '../core/types/GeolappTypes';
-import { FieldNumPad } from './FieldNumPad';
-
-export { parseSpokenStockpileSpecs, type SpokenStockpileSpecs, type Granulometry };
+import type { GeolappAnalysisStatus, StockpileAsset } from '../core/types/GeolappTypes';
 
 export interface MobileScannerProps {
     assetId?: string;
@@ -66,85 +57,7 @@ const XCOVER_ALLOWED_CODES = [
     XCOVER_HARDWARE_KEY_CODES.CAMERA,
 ] as const;
 
-const ANCHOR_OPTIONS: Array<{
-    id: GeolappDigitalScaleAnchorType;
-    meters?: number;
-    icon: string;
-    labelKey: string;
-    fallbackLabel: string;
-    shortTag: string;
-}> = [
-    {
-        id: 'CONO_070',
-        meters: 0.7,
-        icon: 'traffic',
-        labelKey: 'digital_v2.anchor_cone',
-        fallbackLabel: 'CONO',
-        shortTag: '0.7',
-    },
-    {
-        id: 'MIRA_100',
-        meters: 1.0,
-        icon: 'straighten',
-        labelKey: 'digital_v2.anchor_rod',
-        fallbackLabel: 'MIRA',
-        shortTag: '1.0',
-    },
-    {
-        id: 'BALDE_280',
-        meters: 2.8,
-        icon: 'front_loader',
-        labelKey: 'digital_v2.anchor_bucket',
-        fallbackLabel: 'BALDE',
-        shortTag: '2.8',
-    },
-    {
-        id: 'MANUAL_BASE_M',
-        icon: 'edit',
-        labelKey: 'digital_v2.anchor_manual',
-        fallbackLabel: 'BASE',
-        shortTag: 'm',
-    },
-    {
-        id: 'NONE',
-        icon: 'auto_awesome',
-        labelKey: 'digital_v2.anchor_none',
-        fallbackLabel: 'AUTO',
-        shortTag: '',
-    },
-];
-
-function playImuLevelCue880Hz(): void {
-    if (typeof window === 'undefined') return;
-    try {
-        const AudioCtx =
-            window.AudioContext ||
-            (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-        if (AudioCtx) {
-            const ctx = new AudioCtx();
-            const osc = ctx.createOscillator();
-            const gain = ctx.createGain();
-            osc.type = 'sine';
-            osc.frequency.setValueAtTime(880, ctx.currentTime);
-            gain.gain.setValueAtTime(0.06, ctx.currentTime);
-            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.11);
-            osc.connect(gain);
-            gain.connect(ctx.destination);
-            osc.start();
-            osc.stop(ctx.currentTime + 0.12);
-            setTimeout(() => {
-                void ctx.close().catch(() => {});
-            }, 250);
-        }
-    } catch {
-        // Audio bloqueado por política de navegador
-    }
-
-    if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
-        navigator.vibrate(40);
-    }
-    void triggerFieldImpact('LIGHT');
-}
+const MAX_EXTRA_PHOTOS = 3;
 
 export const MobileScanner: React.FC<MobileScannerProps> = ({
     assetId,
@@ -156,27 +69,33 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
     const { t, i18n } = useTranslation();
     const { isOnline } = useNetworkStatus();
     const imu = useImuClinometer();
+    const { capability, requestInstall } = useSpatialDeviceCapability();
 
     const isNewAssetMode = Boolean(!assetId && draftAsset);
+    const isNativeRuntime = Capacitor.isNativePlatform();
+    const isSpatialCapable = Boolean(
+        isNativeRuntime &&
+            (capability?.tier === 'OPTIMAL_SPATIAL' || capability?.tier === 'COMPATIBLE_VIO')
+    );
+
     const cameraInputRef = useRef<HTMLInputElement>(null);
     const galleryInputRef = useRef<HTMLInputElement>(null);
     const extraInputRef = useRef<HTMLInputElement>(null);
-    const lastLevelCueAtRef = useRef<number>(0);
-    const wasLeveledRef = useRef<boolean>(false);
+    const galleryTargetRef = useRef<'PRIMARY' | 'EXTRA'>('PRIMARY');
+    const latestUrlsRef = useRef<{ primary: string | null; extras: string[] }>({
+        primary: null,
+        extras: [],
+    });
 
     const [photoBlob, setPhotoBlob] = useState<Blob | null>(null);
     const [photoPreview, setPhotoPreview] = useState<string | null>(null);
     const [extraPhotos, setExtraPhotos] = useState<Array<{ blob: Blob; previewUrl: string }>>([]);
+    const [spatialScan, setSpatialScan] = useState<SpatialScanNativeResult | null>(null);
     const [casMetrics, setCasMetrics] = useState<CasTelemetryMetrics | null>(null);
 
-    const [scaleAnchorType, setScaleAnchorType] =
-        useState<GeolappDigitalScaleAnchorType>('CONO_070');
-    const [referenceBaseText, setReferenceBaseText] = useState<string>('');
-    const [showNumPad, setShowNumPad] = useState<boolean>(false);
-
-    const [digitalResult, setDigitalResult] = useState<DigitalAnalyzeResult | null>(null);
-    const [isAnalyzing, setIsAnalyzing] = useState<boolean>(false);
+    const [isScanningSpatial, setIsScanningSpatial] = useState<boolean>(false);
     const [isSaving, setIsSaving] = useState<boolean>(false);
+    const [isRequestingArCore, setIsRequestingArCore] = useState<boolean>(false);
     const [uploadProgress, setUploadProgress] = useState<number>(0);
     const [statusMessage, setStatusMessage] = useState<InlineStatusMessage | null>(null);
 
@@ -184,21 +103,6 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
         const raw = (i18n.resolvedLanguage || i18n.language || 'es').slice(0, 2);
         return raw === 'en' || raw === 'pt' ? raw : 'es';
     }, [i18n.language, i18n.resolvedLanguage]);
-
-    const parsedReferenceBase = useMemo(
-        () => parseOptionalNonNegative(referenceBaseText, 5000),
-        [referenceBaseText]
-    );
-
-    const selectedAnchorMeters = useMemo(() => {
-        const opt = ANCHOR_OPTIONS.find((item) => item.id === scaleAnchorType);
-        return opt?.meters;
-    }, [scaleAnchorType]);
-
-    const isImuLevelOptimal = useMemo(() => {
-        if (imu.pitchDeg === null || imu.rollDeg === null) return false;
-        return Math.abs(imu.rollDeg) <= 3 && Math.abs(imu.pitchDeg) <= 12;
-    }, [imu.pitchDeg, imu.rollDeg]);
 
     useEffect(() => {
         if (imu.isSupported) {
@@ -209,17 +113,6 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
         };
     }, []);
 
-    useEffect(() => {
-        if (!photoPreview && isImuLevelOptimal && !wasLeveledRef.current) {
-            const now = Date.now();
-            if (now - lastLevelCueAtRef.current >= 2500) {
-                lastLevelCueAtRef.current = now;
-                playImuLevelCue880Hz();
-            }
-        }
-        wasLeveledRef.current = isImuLevelOptimal;
-    }, [isImuLevelOptimal, photoPreview]);
-
     const processPrimaryBlob = useCallback(async (rawBlob: Blob) => {
         const previewUrl = URL.createObjectURL(rawBlob);
         setPhotoBlob(rawBlob);
@@ -227,7 +120,6 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
             if (prev && prev.startsWith('blob:')) URL.revokeObjectURL(prev);
             return previewUrl;
         });
-        setDigitalResult(null);
         setStatusMessage(null);
         void triggerFieldImpact('MEDIUM');
 
@@ -248,25 +140,90 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
 
     const processExtraBlob = useCallback(async (rawBlob: Blob) => {
         const previewUrl = URL.createObjectURL(rawBlob);
-        setExtraPhotos((prev) => [...prev.slice(0, 2), { blob: rawBlob, previewUrl }]);
-        setDigitalResult(null);
+        setExtraPhotos((prev) => [...prev.slice(0, MAX_EXTRA_PHOTOS - 1), { blob: rawBlob, previewUrl }]);
         void triggerFieldImpact('LIGHT');
     }, []);
 
     useEffect(() => {
-        return () => {
-            if (photoPreview && photoPreview.startsWith('blob:')) {
-                URL.revokeObjectURL(photoPreview);
-            }
-            extraPhotos.forEach((p) => {
-                if (p.previewUrl.startsWith('blob:')) URL.revokeObjectURL(p.previewUrl);
-            });
+        latestUrlsRef.current = {
+            primary: photoPreview,
+            extras: extraPhotos.map((item) => item.previewUrl),
         };
     }, [extraPhotos, photoPreview]);
 
+    useEffect(() => {
+        return () => {
+            const { primary, extras } = latestUrlsRef.current;
+            if (primary && primary.startsWith('blob:')) {
+                URL.revokeObjectURL(primary);
+            }
+            extras.forEach((url) => {
+                if (url.startsWith('blob:')) URL.revokeObjectURL(url);
+            });
+        };
+    }, []);
+
+    const handleStartSpatialScan = useCallback(async () => {
+        if (isSaving || isScanningSpatial || !isSpatialCapable) return;
+        setIsScanningSpatial(true);
+        setStatusMessage(null);
+        void triggerFieldImpact('MEDIUM');
+
+        try {
+            const { scan, photoBlobs } = await startNativeSpatialScan();
+            if (scan.cancelled) {
+                return;
+            }
+            setSpatialScan(scan);
+
+            if (photoBlobs.length > 0) {
+                await processPrimaryBlob(photoBlobs[0]);
+                const nextExtras = photoBlobs
+                    .slice(1, 1 + MAX_EXTRA_PHOTOS)
+                    .map((blob) => ({
+                        blob,
+                        previewUrl: URL.createObjectURL(blob),
+                    }));
+                setExtraPhotos((prev) => {
+                    prev.forEach((p) => {
+                        if (p.previewUrl.startsWith('blob:')) URL.revokeObjectURL(p.previewUrl);
+                    });
+                    return nextExtras;
+                });
+            } else {
+                setPhotoBlob(null);
+                setCasMetrics(null);
+                setPhotoPreview((prev) => {
+                    if (prev && prev.startsWith('blob:')) URL.revokeObjectURL(prev);
+                    return null;
+                });
+                setExtraPhotos((prev) => {
+                    prev.forEach((p) => {
+                        if (p.previewUrl.startsWith('blob:')) URL.revokeObjectURL(p.previewUrl);
+                    });
+                    return [];
+                });
+            }
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err || '');
+            setStatusMessage({
+                severity: 'error',
+                text: msg || t('digital_v2.save_error', 'ERROR'),
+            });
+            void triggerFieldNotification('ERROR');
+        } finally {
+            setIsScanningSpatial(false);
+        }
+    }, [isSaving, isScanningSpatial, isSpatialCapable, processPrimaryBlob, t]);
+
     const handleCaptureSource = useCallback(
         async (source: 'CAMERA' | 'PHOTOS', target: 'PRIMARY' | 'EXTRA') => {
-            if (isSaving || isAnalyzing) return;
+            if (isSaving || isScanningSpatial) return;
+            if (target === 'EXTRA' && extraPhotos.length >= MAX_EXTRA_PHOTOS) return;
+            if (source === 'CAMERA' && target === 'PRIMARY' && isSpatialCapable) {
+                await handleStartSpatialScan();
+                return;
+            }
             void triggerFieldImpact('LIGHT');
 
             if (Capacitor.isNativePlatform()) {
@@ -281,6 +238,7 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                     if (photo.dataUrl) {
                         const rawBlob = dataUrlToBlob(photo.dataUrl);
                         if (target === 'PRIMARY') {
+                            setSpatialScan(null);
                             await processPrimaryBlob(rawBlob);
                         } else {
                             await processExtraBlob(rawBlob);
@@ -293,27 +251,36 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                 }
             }
 
-            if (target === 'EXTRA') {
-                extraInputRef.current?.click();
-            } else if (source === 'CAMERA') {
-                cameraInputRef.current?.click();
-            } else {
+            if (source === 'PHOTOS') {
+                galleryTargetRef.current = target;
                 galleryInputRef.current?.click();
+            } else if (target === 'EXTRA') {
+                extraInputRef.current?.click();
+            } else {
+                cameraInputRef.current?.click();
             }
         },
-        [isAnalyzing, isSaving, processExtraBlob, processPrimaryBlob]
+        [
+            extraPhotos.length,
+            handleStartSpatialScan,
+            isSaving,
+            isScanningSpatial,
+            isSpatialCapable,
+            processExtraBlob,
+            processPrimaryBlob,
+        ]
     );
 
     useXCoverHardwareKey(
         () => {
-            if (!photoBlob) {
+            if (!photoBlob && !(spatialScan && !spatialScan.cancelled && (spatialScan.pointsM?.length ?? 0) >= 20)) {
                 void handleCaptureSource('CAMERA', 'PRIMARY');
-            } else if (extraPhotos.length < 3) {
+            } else if (extraPhotos.length < MAX_EXTRA_PHOTOS) {
                 void handleCaptureSource('CAMERA', 'EXTRA');
             }
         },
         {
-            enabled: !isSaving && !isAnalyzing,
+            enabled: !isSaving && !isScanningSpatial,
             action: 'DOWN',
             keyCodes: XCOVER_ALLOWED_CODES,
         }
@@ -327,73 +294,42 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
         e.target.value = '';
         if (!file) return;
         if (target === 'PRIMARY') {
+            setSpatialScan(null);
             await processPrimaryBlob(file);
         } else {
             await processExtraBlob(file);
         }
     };
 
-    const handleVoiceTranscript = (transcript: string) => {
-        const specs = parseSpokenStockpileSpecs(transcript);
-        const spokenBase = specs.baseMajorAxis || specs.baseMinorAxis || specs.totalHeight;
-        if (spokenBase) {
-            setScaleAnchorType('MANUAL_BASE_M');
-            setReferenceBaseText(spokenBase);
-            setDigitalResult(null);
-            setStatusMessage(null);
-            void triggerFieldImpact('MEDIUM');
+    const handleRequestArCoreInstall = async () => {
+        if (isRequestingArCore) return;
+        setIsRequestingArCore(true);
+        try {
+            const res = await requestInstall();
+            if (res.status === 'ERROR' && res.message) {
+                setStatusMessage({ severity: 'warning', text: res.message });
+            }
+        } finally {
+            setIsRequestingArCore(false);
         }
     };
 
-    const runOnlineAiAnalysis = async (): Promise<DigitalAnalyzeResult | null> => {
-        if (!photoBlob || !isOnline) return null;
-        setIsAnalyzing(true);
-        setStatusMessage(null);
-        try {
-            const res = await geolappDigitalAiService.analyzeCapture({
-                stockpileId: assetId,
-                photoBlob,
-                extraBlobs: extraPhotos.map((p) => p.blob),
-                scaleAnchorType,
-                scaleAnchorMeters: selectedAnchorMeters,
-                referenceBaseMeters: parsedReferenceBase,
-                imuPitchDeg: imu.pitchDeg,
-                imuRollDeg: imu.rollDeg,
-                locale: resolvedLocale,
-            });
-            setDigitalResult(res);
-            void triggerFieldNotification(res.slopeWarning ? 'WARNING' : 'SUCCESS');
-            return res;
-        } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : '';
-            setStatusMessage({
-                severity: 'warning',
-                text: msg || 'IA -> COLA',
-            });
-            void triggerFieldNotification('WARNING');
-            return null;
-        } finally {
-            setIsAnalyzing(false);
-        }
-    };
+    const hasSpatialPoints = Boolean(
+        spatialScan &&
+            !spatialScan.cancelled &&
+            Array.isArray(spatialScan.pointsM) &&
+            spatialScan.pointsM.length >= 20
+    );
+    const hasCaptureReady = Boolean(photoBlob || hasSpatialPoints);
 
     const handleSaveCapture = async () => {
-        if (isSaving || isAnalyzing) return;
-        if (!photoBlob) {
+        if (isSaving || isScanningSpatial) return;
+        if (!hasCaptureReady) {
             setStatusMessage({
                 severity: 'error',
                 text: t('digital_v2.photo_required', 'FOTO REQUERIDA'),
             });
             void triggerFieldNotification('ERROR');
-            return;
-        }
-        if (scaleAnchorType === 'MANUAL_BASE_M' && !parsedReferenceBase) {
-            setShowNumPad(true);
-            setStatusMessage({
-                severity: 'warning',
-                text: t('digital_v2.base_dim_label', 'BASE m'),
-            });
-            void triggerFieldNotification('WARNING');
             return;
         }
 
@@ -404,61 +340,89 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
         try {
             const now = Date.now();
             const targetAssetId = isNewAssetMode ? `asset_${now}` : assetId!;
+            const activeTenantId =
+                typeof window !== 'undefined'
+                    ? window.localStorage.getItem('minreport_active_account_id')?.trim() || undefined
+                    : undefined;
 
-            let resolvedAi = digitalResult;
-            if (isOnline && !resolvedAi) {
-                resolvedAi = await geolappDigitalAiService
-                    .analyzeCapture({
-                        stockpileId: isNewAssetMode ? undefined : assetId,
-                        photoBlob,
-                        extraBlobs: extraPhotos.map((p) => p.blob),
-                        scaleAnchorType,
-                        scaleAnchorMeters: selectedAnchorMeters,
-                        referenceBaseMeters: parsedReferenceBase,
-                        imuPitchDeg: imu.pitchDeg,
-                        imuRollDeg: imu.rollDeg,
-                        locale: resolvedLocale,
-                    })
-                    .catch(() => null);
-                if (resolvedAi) {
-                    setDigitalResult(resolvedAi);
-                }
+            let primaryUpload: UploadResult | null = null;
+            if (photoBlob) {
+                primaryUpload = await storageService.uploadStockpileImage(
+                    photoBlob,
+                    targetAssetId,
+                    { filename: `capture_${now}.webp`, tenantId: activeTenantId },
+                    (pct) => setUploadProgress(15 + Math.round(pct * 0.25))
+                );
             }
-
-            setUploadProgress(40);
-            const primaryUpload = await storageService.uploadStockpileImage(
-                photoBlob,
-                targetAssetId,
-                { filename: `capture_${now}.webp` },
-                (pct) => setUploadProgress(40 + Math.round(pct * 0.35))
-            );
 
             const extraUploads: Array<{ url: string; sha256?: string }> = [];
             for (let i = 0; i < extraPhotos.length; i++) {
                 const extraRes = await storageService.uploadStockpileImage(
                     extraPhotos[i].blob,
                     targetAssetId,
-                    { filename: `angle_${i + 1}_${now}.webp` }
+                    { filename: `angle_${i + 1}_${now}.webp`, tenantId: activeTenantId }
                 );
                 extraUploads.push({ url: extraRes.url, sha256: extraRes.sha256 });
             }
 
-            setUploadProgress(80);
-            const hasAiResult = Boolean(resolvedAi);
-            const analysisStatus: GeolappAnalysisStatus = !hasAiResult
-                ? 'PENDING_AI_SYNC'
-                : resolvedAi!.scaleVerified
-                  ? 'AI_VERIFIED'
-                  : 'PENDING_SCALE';
+            setUploadProgress(45);
 
-            const finalVolumeM3 =
-                resolvedAi && resolvedAi.scaleVerified && resolvedAi.volumeM3 > 0
-                    ? resolvedAi.volumeM3
-                    : 0;
-            const finalWeightT =
-                resolvedAi && resolvedAi.scaleVerified && resolvedAi.weightT > 0
-                    ? resolvedAi.weightT
-                    : 0;
+            let resolvedSpatial: SpatialAnalyzeResult | null = null;
+            let resolvedAi = null;
+
+            if (hasSpatialPoints && spatialScan) {
+                if (isOnline) {
+                    resolvedSpatial = await analyzeSpatialScan({
+                        stockpileId: isNewAssetMode ? undefined : assetId,
+                        tenantId: activeTenantId,
+                        scan: spatialScan,
+                        primaryBlob: photoBlob ?? undefined,
+                        extraBlobs: extraPhotos.map((p) => p.blob),
+                        photoUrl: primaryUpload?.url,
+                        locale: resolvedLocale,
+                    }).catch(() => null);
+                }
+            } else if (isOnline && photoBlob) {
+                resolvedAi = await geolappDigitalAiService
+                    .analyzeCapture({
+                        stockpileId: isNewAssetMode ? undefined : assetId,
+                        tenantId: activeTenantId,
+                        photoBlob,
+                        extraBlobs: extraPhotos.map((p) => p.blob),
+                        scaleAnchorType: 'NONE',
+                        imuPitchDeg: imu.pitchDeg,
+                        imuRollDeg: imu.rollDeg,
+                        locale: resolvedLocale,
+                    })
+                    .catch(() => null);
+            }
+
+            setUploadProgress(80);
+            const isSpatialFlow = Boolean(hasSpatialPoints && spatialScan);
+            const hasSpatialVerified = Boolean(
+                isSpatialFlow && resolvedSpatial?.verified && resolvedSpatial.volumeM3 > 0
+            );
+            const hasAiResult = Boolean(resolvedAi);
+            const analysisStatus: GeolappAnalysisStatus = isSpatialFlow
+                ? hasSpatialVerified
+                    ? 'AI_VERIFIED'
+                    : 'PENDING_AI_SYNC'
+                : !hasAiResult
+                  ? 'PENDING_AI_SYNC'
+                  : resolvedAi!.scaleVerified
+                    ? 'AI_VERIFIED'
+                    : 'PENDING_SCALE';
+
+            const finalVolumeM3 = hasSpatialVerified
+                ? resolvedSpatial!.volumeM3
+                : resolvedAi && resolvedAi.scaleVerified && resolvedAi.volumeM3 > 0
+                  ? resolvedAi.volumeM3
+                  : 0;
+            const finalWeightT = hasSpatialVerified
+                ? resolvedSpatial!.weightT
+                : resolvedAi && resolvedAi.scaleVerified && resolvedAi.weightT > 0
+                  ? resolvedAi.weightT
+                  : 0;
 
             const safeGeo =
                 draftAsset?.geoPoint &&
@@ -468,35 +432,72 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                     ? draftAsset.geoPoint
                     : undefined;
 
+            const scaleAnchorType = isSpatialFlow
+                ? ('ARCORE_VIO_DEPTH' as const)
+                : ('NONE' as const);
+
+            const resolvedGeometry = resolvedSpatial?.dimensionsM
+                ? {
+                      type: resolvedSpatial.geometryType,
+                      dimensions: resolvedSpatial.dimensionsM,
+                  }
+                : resolvedAi?.dimensionsM
+                  ? {
+                        type: resolvedAi.geometryType,
+                        dimensions: resolvedAi.dimensionsM,
+                    }
+                  : undefined;
+
             const measurementBasePayload = {
                 timestamp: now,
                 captured_at: now,
                 volumen_m3: finalVolumeM3,
                 peso_t: finalWeightT,
-                density_factor: resolvedAi?.suggestedDensityTm3 ?? undefined,
-                photo_url: primaryUpload.url,
+                density_factor:
+                    resolvedSpatial?.suggestedDensityTm3 ??
+                    resolvedAi?.suggestedDensityTm3 ??
+                    undefined,
+                photo_url: primaryUpload?.url || '',
                 perimeter_photo_urls: extraUploads.map((item) => item.url),
                 method: 'digital' as const,
-                cas_original_bytes: primaryUpload.originalBytes ?? casMetrics?.originalBytes,
-                cas_optimized_bytes: primaryUpload.optimizedBytes ?? casMetrics?.optimizedBytes,
-                cas_savings_pct: primaryUpload.savingsPct ?? casMetrics?.savingsPct,
-                copper_domain: resolvedAi?.copperDomain ?? undefined,
-                geometry:
-                    resolvedAi?.dimensionsM
-                        ? {
-                              type: resolvedAi.geometryType,
-                              dimensions: resolvedAi.dimensionsM,
-                          }
-                        : undefined,
+                cas_original_bytes: primaryUpload?.originalBytes ?? casMetrics?.originalBytes,
+                cas_optimized_bytes: primaryUpload?.optimizedBytes ?? casMetrics?.optimizedBytes,
+                cas_savings_pct: primaryUpload?.savingsPct ?? casMetrics?.savingsPct,
+                copper_domain: resolvedSpatial?.copperDomain ?? resolvedAi?.copperDomain ?? undefined,
+                geometry: resolvedGeometry,
                 analysis_status: analysisStatus,
                 scale_anchor_type: scaleAnchorType,
-                scale_anchor_meters: selectedAnchorMeters,
-                reference_base_meters: parsedReferenceBase,
-                detected_slope_angle_deg: resolvedAi?.slopeAngleAvgDeg ?? undefined,
-                slope_left_deg: resolvedAi?.slopeAngleLeftDeg ?? undefined,
-                slope_right_deg: resolvedAi?.slopeAngleRightDeg ?? undefined,
-                slope_warning: resolvedAi?.slopeWarning ?? null,
-                wall_confinement: resolvedAi?.wallConfinement,
+                uncertainty_pct: isSpatialFlow
+                    ? (resolvedSpatial?.uncertaintyPct ?? null)
+                    : undefined,
+                toe_score: isSpatialFlow ? (resolvedSpatial?.toeScore ?? null) : undefined,
+                coverage_pct: isSpatialFlow
+                    ? (resolvedSpatial?.coveragePct ?? spatialScan?.coveragePct ?? null)
+                    : undefined,
+                depth_mode: isSpatialFlow
+                    ? (resolvedSpatial?.depthMode ?? spatialScan?.depthMode ?? null)
+                    : undefined,
+                ground_slope_deg: isSpatialFlow
+                    ? (resolvedSpatial?.groundSlopeDeg ?? null)
+                    : undefined,
+                mesh_url: resolvedSpatial?.meshUrl ?? undefined,
+                mesh_sha256: resolvedSpatial?.meshSha256 ?? undefined,
+                mesh_source: resolvedSpatial?.meshSource ?? undefined,
+                detected_slope_angle_deg:
+                    resolvedSpatial?.slopeAngleAvgDeg ??
+                    resolvedAi?.slopeAngleAvgDeg ??
+                    undefined,
+                slope_left_deg:
+                    resolvedSpatial?.slopeAngleLeftDeg ??
+                    resolvedAi?.slopeAngleLeftDeg ??
+                    undefined,
+                slope_right_deg:
+                    resolvedSpatial?.slopeAngleRightDeg ??
+                    resolvedAi?.slopeAngleRightDeg ??
+                    undefined,
+                slope_warning: resolvedSpatial?.slopeWarning ?? resolvedAi?.slopeWarning ?? null,
+                wall_confinement:
+                    resolvedSpatial?.wallConfinement ?? resolvedAi?.wallConfinement,
                 imu_pitch_deg: typeof imu.pitchDeg === 'number' ? imu.pitchDeg : undefined,
                 gnss_status: draftAsset?.gnssStatus,
                 underground_sector: draftAsset?.undergroundSector,
@@ -519,7 +520,7 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                 const created = await dataService.createAssetWithInitialMeasurement({
                     asset: {
                         id: targetAssetId,
-                        name: draftAsset?.name?.trim() || `STK-${String(now).slice(-6)}`,
+                        name: draftAsset?.name?.trim() || `AC-${String(now).slice(-4)}`,
                         ...(draftAsset?.projectId ? { project_id: draftAsset.projectId } : {}),
                         ...(draftAsset?.projectName ? { project_name: draftAsset.projectName } : {}),
                         clase: 'mineral',
@@ -529,14 +530,40 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                         gnss_status: draftAsset?.gnssStatus,
                         underground_sector: draftAsset?.undergroundSector,
                         captured_at: now,
-                        copper_domain: resolvedAi?.copperDomain ?? undefined,
-                        tipo_granulometria: resolvedAi?.granulometry ?? undefined,
-                        density_factor: resolvedAi?.suggestedDensityTm3 ?? undefined,
+                        copper_domain:
+                            resolvedSpatial?.copperDomain ?? resolvedAi?.copperDomain ?? undefined,
+                        tipo_granulometria:
+                            resolvedSpatial?.granulometry ?? resolvedAi?.granulometry ?? undefined,
+                        density_factor:
+                            resolvedSpatial?.suggestedDensityTm3 ??
+                            resolvedAi?.suggestedDensityTm3 ??
+                            undefined,
                         analysis_status: analysisStatus,
                         scale_anchor_type: scaleAnchorType,
-                        detected_slope_angle_deg: resolvedAi?.slopeAngleAvgDeg ?? undefined,
-                        slope_warning: resolvedAi?.slopeWarning ?? null,
-                        wall_confinement: resolvedAi?.wallConfinement,
+                        uncertainty_pct: isSpatialFlow
+                            ? (resolvedSpatial?.uncertaintyPct ?? null)
+                            : undefined,
+                        toe_score: isSpatialFlow ? (resolvedSpatial?.toeScore ?? null) : undefined,
+                        coverage_pct: isSpatialFlow
+                            ? (resolvedSpatial?.coveragePct ?? spatialScan?.coveragePct ?? null)
+                            : undefined,
+                        depth_mode: isSpatialFlow
+                            ? (resolvedSpatial?.depthMode ?? spatialScan?.depthMode ?? null)
+                            : undefined,
+                        ground_slope_deg: isSpatialFlow
+                            ? (resolvedSpatial?.groundSlopeDeg ?? null)
+                            : undefined,
+                        mesh_url: resolvedSpatial?.meshUrl ?? undefined,
+                        mesh_sha256: resolvedSpatial?.meshSha256 ?? undefined,
+                        mesh_source: resolvedSpatial?.meshSource ?? undefined,
+                        detected_slope_angle_deg:
+                            resolvedSpatial?.slopeAngleAvgDeg ??
+                            resolvedAi?.slopeAngleAvgDeg ??
+                            undefined,
+                        slope_warning:
+                            resolvedSpatial?.slopeWarning ?? resolvedAi?.slopeWarning ?? null,
+                        wall_confinement:
+                            resolvedSpatial?.wallConfinement ?? resolvedAi?.wallConfinement,
                     },
                     measurement: measurementBasePayload,
                 });
@@ -550,18 +577,37 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                 });
             }
 
-            if (analysisStatus === 'PENDING_AI_SYNC') {
+            if (isSpatialFlow && !hasSpatialVerified && spatialScan) {
+                const spatialPayloadSha256 = await saveOfflineSpatialPayload(
+                    spatialScan,
+                    activeTenantId
+                );
+                await syncQueueEngine.enqueueTask<GeolappSpatialSyncPayload>(
+                    'GEOLAPP_SPATIAL_ANALYZE',
+                    {
+                        assetId: finalAssetId,
+                        measurementId: finalMeasurementId,
+                        tenantId: activeTenantId,
+                        sha256: primaryUpload?.sha256,
+                        extraSha256s: extraUploads
+                            .map((item) => item.sha256)
+                            .filter((s): s is string => Boolean(s)),
+                        photoUrl: primaryUpload?.url,
+                        spatialPayloadSha256,
+                        locale: resolvedLocale,
+                    }
+                );
+            } else if (!isSpatialFlow && analysisStatus === 'PENDING_AI_SYNC' && primaryUpload) {
                 await syncQueueEngine.enqueueTask('GEOLAPP_DIGITAL_AI_ANALYZE', {
                     assetId: finalAssetId,
                     measurementId: finalMeasurementId,
+                    tenantId: activeTenantId,
                     sha256: primaryUpload.sha256,
                     extraSha256s: extraUploads
                         .map((item) => item.sha256)
                         .filter((s): s is string => Boolean(s)),
                     photoUrl: primaryUpload.url,
-                    scaleAnchorType,
-                    scaleAnchorMeters: selectedAnchorMeters,
-                    referenceBaseMeters: parsedReferenceBase,
+                    scaleAnchorType: 'NONE',
                     imuPitchDeg: typeof imu.pitchDeg === 'number' ? imu.pitchDeg : undefined,
                     imuRollDeg: typeof imu.rollDeg === 'number' ? imu.rollDeg : undefined,
                     locale: resolvedLocale,
@@ -592,6 +638,9 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
         }
         return null;
     }, [casMetrics, photoBlob]);
+
+    const totalPhotosCount = (photoPreview ? 1 : 0) + extraPhotos.length;
+    const maxPhotosTotal = 1 + MAX_EXTRA_PHOTOS;
 
     return (
         <div className="h-full w-full flex-1 flex flex-col bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] font-atkinson overflow-hidden rounded-none shadow-none select-none">
@@ -630,7 +679,7 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                 accept="image/*"
                 autoComplete="off"
                 spellCheck={false}
-                onChange={(e) => void handleFileChange(e, 'PRIMARY')}
+                onChange={(e) => void handleFileChange(e, galleryTargetRef.current)}
                 className="hidden"
             />
             <input
@@ -644,63 +693,116 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                 className="hidden"
             />
 
-            {/* HUD IMU + Red (1 franja hairline) */}
-            <div className="shrink-0 px-fib-13 h-10 border-b border-[#E2E8F0] dark:border-[#12151C] bg-transparent flex items-center justify-between gap-fib-8 font-mono text-microcopy font-bold uppercase tabular-nums">
-                <div className="flex items-center gap-fib-8 min-w-0">
-                    <span
-                        className={`material-symbols-outlined text-[18px] ${
-                            isImuLevelOptimal ? 'text-[#00AEEF]' : 'text-[#C68346]'
-                        }`}
-                    >
-                        screen_rotation
+            {/* Compatibilidad Hardware Espacial ARCore VIO / Depth (solo nativo Android) */}
+            {isNativeRuntime && capability?.tier === 'INCOMPATIBLE' && (
+                <div
+                    role="alert"
+                    className="shrink-0 px-fib-13 py-fib-8 border-b border-[#E2E8F0] dark:border-[#12151C] border-l-[3px] border-l-[#C68346] flex items-start gap-fib-8 bg-transparent"
+                >
+                    <span className="material-symbols-outlined text-[18px] text-[#C68346] shrink-0">
+                        warning
                     </span>
-                    <span className="text-[#0F172A] dark:text-[#F3F4F6] truncate">
-                        {imu.pitchDeg !== null && imu.rollDeg !== null
-                            ? `${imu.pitchDeg.toFixed(1)}° · ${imu.rollDeg.toFixed(1)}°`
-                            : '--° · --°'}
-                    </span>
-                    <span className={isImuLevelOptimal ? 'text-[#00AEEF]' : 'text-[#C68346]'}>
-                        {isImuLevelOptimal
-                            ? t('digital_v2.imu_level_ok', 'NIVELADO')
-                            : t('digital_v2.imu_level_aim', 'ENCUADRAR')}
-                    </span>
+                    <div className="min-w-0 flex-1 font-mono text-microcopy">
+                        <span className="block font-bold uppercase text-[#C68346] truncate">
+                            {t('compatibility.mobile_incompatible_banner', 'DISPOSITIVO INCOMPATIBLE ARCORE')}
+                        </span>
+                        <span className="block text-[#475569] dark:text-[#8A93A6] truncate">
+                            {[
+                                `${capability.manufacturer} ${capability.model}`.trim(),
+                                capability.reasons.join(' · '),
+                            ]
+                                .filter(Boolean)
+                                .join(' · ')}
+                        </span>
+                    </div>
                 </div>
+            )}
 
-                {!isOnline && (
-                    <div className="flex items-center gap-1 text-[#C68346] shrink-0">
-                        <span className="material-symbols-outlined text-[16px]">cloud_off</span>
-                        <span>COLA</span>
+            {isNativeRuntime && capability?.tier === 'NEEDS_UPDATE' && (
+                <div
+                    role="status"
+                    className="shrink-0 px-fib-13 py-fib-8 border-b border-[#E2E8F0] dark:border-[#12151C] border-l-[3px] border-l-[#C68346] flex items-center justify-between gap-fib-8 bg-transparent"
+                >
+                    <div className="flex items-center gap-fib-8 min-w-0">
+                        <span className="material-symbols-outlined text-[18px] text-[#C68346] shrink-0">
+                            system_update
+                        </span>
+                        <span className="font-mono text-microcopy font-bold uppercase text-[#C68346] truncate">
+                            {t('compatibility.mobile_update_arcore', 'ACTUALIZAR SERVICIOS AR')}
+                        </span>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => void handleRequestArCoreInstall()}
+                        disabled={isRequestingArCore}
+                        className="min-h-[48px] px-fib-13 bg-transparent border border-[#C68346] text-[#C68346] font-mono text-microcopy font-bold uppercase cursor-pointer disabled:opacity-40 rounded-none shrink-0"
+                    >
+                        ARCore
+                    </button>
+                </div>
+            )}
+
+            {isNativeRuntime &&
+                (capability?.tier === 'OPTIMAL_SPATIAL' || capability?.tier === 'COMPATIBLE_VIO') && (
+                    <div className="shrink-0 px-fib-13 py-fib-8 border-b border-[#E2E8F0] dark:border-[#12151C] border-l-[3px] border-l-[#00AEEF] flex items-center justify-between gap-fib-8 bg-transparent font-mono text-microcopy tabular-nums">
+                        <span className="font-bold uppercase text-[#00AEEF] truncate">
+                            {capability.tier === 'OPTIMAL_SPATIAL'
+                                ? t('compatibility.mobile_optimal_badge', 'ARCORE · DEPTH')
+                                : 'ARCORE VIO'}
+                        </span>
+                        <span className="text-[#475569] dark:text-[#8A93A6] truncate">
+                            {`${capability.manufacturer} ${capability.model}`.trim()}
+                        </span>
                     </div>
                 )}
-            </div>
 
-            {(isAnalyzing || isSaving) && (
+            {hasSpatialPoints && spatialScan && (
+                <div
+                    className={`shrink-0 px-fib-13 py-fib-8 border-b border-[#E2E8F0] dark:border-[#12151C] border-l-[3px] ${
+                        (spatialScan.coveragePct ?? 0) >= 75
+                            ? 'border-l-[#00AEEF]'
+                            : 'border-l-[#C68346]'
+                    } flex items-center justify-between gap-fib-8 bg-transparent font-mono text-microcopy tabular-nums`}
+                >
+                    <div className="flex items-center gap-fib-8 min-w-0">
+                        <span className="material-symbols-outlined text-[18px] text-[#00AEEF] shrink-0">
+                            view_in_ar
+                        </span>
+                        <span className="font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6] truncate">
+                            {t('scanner.spatial_coverage_label', 'COBERTURA')}{' '}
+                            {Math.round(spatialScan.coveragePct ?? 0)}%
+                        </span>
+                    </div>
+                    <span className="text-[#475569] dark:text-[#8A93A6] uppercase shrink-0">
+                        {spatialScan.sectorsCovered ?? 0}/16 ·{' '}
+                        {spatialScan.depthMode === 'RAW_DEPTH_ONLY'
+                            ? 'RAW_DEPTH'
+                            : spatialScan.depthMode === 'AUTOMATIC'
+                              ? 'DEPTH'
+                              : 'VIO'}
+                    </span>
+                </div>
+            )}
+
+            {isSaving && (
                 <div className="shrink-0 px-fib-13 py-fib-8 border-b border-[#00AEEF] bg-transparent space-y-fib-8">
                     <div className="flex items-center justify-between gap-fib-8">
                         <div className="flex items-center gap-fib-8">
                             <M3CircularProgress
                                 size={18}
-                                indeterminate={!isSaving}
-                                value={isSaving ? uploadProgress : undefined}
-                                ariaLabel={
-                                    isSaving
-                                        ? t('digital_v2.saving_progress', 'Guardando captura')
-                                        : t('digital_v2.analyzing_progress', 'Analizando con IA')
-                                }
+                                value={uploadProgress}
+                                ariaLabel={t('digital_v2.saving_progress', 'Guardando captura')}
                             />
                             <span className="text-microcopy font-mono font-bold uppercase text-[#00AEEF]">
-                                {isSaving ? 'CAS' : 'IA'}
+                                CAS
                             </span>
                         </div>
-                        {isSaving && (
-                            <span className="text-microcopy font-mono font-bold tabular-nums text-[#00AEEF]">
-                                {uploadProgress}%
-                            </span>
-                        )}
+                        <span className="text-microcopy font-mono font-bold tabular-nums text-[#00AEEF]">
+                            {uploadProgress}%
+                        </span>
                     </div>
                     <M3LinearProgress
-                        indeterminate={!isSaving}
-                        value={isSaving ? uploadProgress : undefined}
+                        value={uploadProgress}
                         ariaLabel={t('digital_v2.progress_aria', 'Progreso de captura')}
                     />
                 </div>
@@ -715,33 +817,39 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                 </div>
             )}
 
-            {/* Visor Fotogramétrico HUD + Controles */}
+            {/* Lienzo Central Limpio */}
             <div className="flex-1 min-h-0 overflow-y-auto flex flex-col">
-                {!photoPreview ? (
-                    <div className="flex-1 min-h-[180px] relative flex flex-col items-center justify-center p-fib-21 bg-transparent">
-                        <div
-                            aria-hidden="true"
-                            className={`relative w-44 h-36 flex flex-col items-center justify-center gap-fib-8 ${
-                                isImuLevelOptimal ? 'text-[#00AEEF]' : 'text-[#C68346]'
-                            }`}
+                {!photoPreview && !hasSpatialPoints ? (
+                    <div className="flex-1 flex items-center justify-center p-fib-34 bg-[#FFFFFF] dark:bg-[#000000]">
+                        <button
+                            type="button"
+                            onClick={() => void handleCaptureSource('CAMERA', 'PRIMARY')}
+                            disabled={isSaving || isScanningSpatial}
+                            aria-label={
+                                isSpatialCapable
+                                    ? t('scanner.spatial_scan_btn', 'ESCANEAR 3D')
+                                    : t('digital_v2.capture_primary_btn', 'TOMAR FOTO ACOPIO')
+                            }
+                            className="min-w-[80px] min-h-[80px] bg-transparent border-0 outline-none text-[#C68346] hover:opacity-75 flex items-center justify-center cursor-pointer disabled:opacity-40 rounded-none"
                         >
-                            <span className="absolute top-0 left-0 w-4 h-4 border-t-2 border-l-2 border-current" />
-                            <span className="absolute top-0 right-0 w-4 h-4 border-t-2 border-r-2 border-current" />
-                            <span className="absolute bottom-0 left-0 w-4 h-4 border-b-2 border-l-2 border-current" />
-                            <span className="absolute bottom-0 right-0 w-4 h-4 border-b-2 border-r-2 border-current" />
-                            <span className="material-symbols-outlined text-[40px] leading-none">
-                                center_focus_weak
+                            <span className="material-symbols-outlined text-[48px] leading-none">
+                                {isSpatialCapable ? 'view_in_ar' : 'photo_camera'}
                             </span>
-                            <span className="font-mono text-microcopy font-bold tabular-nums">
-                                {imu.pitchDeg !== null && imu.rollDeg !== null
-                                    ? `${imu.pitchDeg.toFixed(1)}° · ${imu.rollDeg.toFixed(1)}°`
-                                    : 'HUD'}
-                            </span>
-                        </div>
+                        </button>
                     </div>
-                ) : (
+                ) : !photoPreview && hasSpatialPoints && spatialScan ? (
+                    <div className="flex-1 flex flex-col items-center justify-center gap-fib-13 p-fib-34 bg-[#FFFFFF] dark:bg-[#000000] font-mono tabular-nums">
+                        <span className="material-symbols-outlined text-[48px] text-[#00AEEF] leading-none">
+                            view_in_ar
+                        </span>
+                        <span className="text-h2-section font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                            {spatialScan.pointsM?.length ?? 0} PTS ·{' '}
+                            {Math.round(spatialScan.coveragePct ?? 0)}%
+                        </span>
+                    </div>
+                ) : photoPreview ? (
                     <>
-                        <div className="relative w-full h-56 shrink-0 bg-[#000000] overflow-hidden border-b border-[#E2E8F0] dark:border-[#12151C]">
+                        <div className="relative w-full h-64 shrink-0 bg-[#000000] overflow-hidden border-b border-[#E2E8F0] dark:border-[#12151C]">
                             <SecureImage
                                 src={photoPreview}
                                 alt={t('digital_v2.photo_alt', 'Captura acopio')}
@@ -750,8 +858,9 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                             <button
                                 type="button"
                                 onClick={() => void handleCaptureSource('CAMERA', 'PRIMARY')}
+                                disabled={isSaving || isScanningSpatial}
                                 aria-label={t('digital_v2.retake_btn', 'RECAPTURAR')}
-                                className="min-w-[48px] min-h-[48px] absolute top-2 right-2 bg-[#000000]/70 border-0 text-white hover:text-[#C68346] flex items-center justify-center cursor-pointer rounded-none"
+                                className="min-w-[48px] min-h-[48px] absolute top-2 right-2 bg-[#000000]/75 border-0 text-white hover:text-[#C68346] flex items-center justify-center cursor-pointer disabled:opacity-40 rounded-none"
                             >
                                 <span className="material-symbols-outlined text-[22px]">refresh</span>
                             </button>
@@ -766,201 +875,77 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                             </div>
                         )}
 
-                        {extraPhotos.length > 0 && (
-                            <div className="shrink-0 px-fib-13 py-fib-8 border-b border-[#E2E8F0] dark:border-[#12151C] flex items-center gap-fib-8 overflow-x-auto">
-                                {extraPhotos.map((extra, idx) => (
-                                    <div
-                                        key={`${extra.previewUrl}_${idx}`}
-                                        className="relative w-12 h-12 shrink-0 border border-[#E2E8F0] dark:border-[#12151C] bg-[#000000] rounded-none"
-                                    >
-                                        <SecureImage
-                                            src={extra.previewUrl}
-                                            alt={`ANG-${idx + 1}`}
-                                            className="w-full h-full object-cover"
-                                        />
-                                        <button
-                                            type="button"
-                                            onClick={() =>
-                                                setExtraPhotos((prev) =>
-                                                    prev.filter((_, i) => i !== idx)
-                                                )
-                                            }
-                                            aria-label={t('common.delete_button', 'ELIMINAR')}
-                                            className="w-6 h-6 absolute top-0 right-0 bg-[#000000]/85 text-white border-0 flex items-center justify-center cursor-pointer rounded-none"
-                                        >
-                                            <span className="material-symbols-outlined text-[14px]">
-                                                close
-                                            </span>
-                                        </button>
-                                    </div>
-                                ))}
+                        <div className="shrink-0 px-fib-13 py-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C] flex items-center gap-fib-8 overflow-x-auto">
+                            <div className="relative w-14 h-14 shrink-0 border-2 border-[#C68346] bg-[#000000] rounded-none">
+                                <SecureImage
+                                    src={photoPreview}
+                                    alt={`1/${maxPhotosTotal}`}
+                                    className="w-full h-full object-cover"
+                                />
+                                <span className="absolute bottom-0 left-0 px-1 bg-[#000000]/80 font-mono text-microcopy font-bold tabular-nums text-white leading-tight">
+                                    1/{maxPhotosTotal}
+                                </span>
                             </div>
-                        )}
-                    </>
-                )}
 
-                {/* Tira horizontal 5 anclas de escala */}
-                <div className="shrink-0 border-y border-[#E2E8F0] dark:border-[#12151C] bg-transparent overflow-x-auto">
-                    <div className="grid grid-cols-5 min-w-[320px] divide-x divide-[#E2E8F0] dark:divide-[#12151C]">
-                        {ANCHOR_OPTIONS.map((opt) => {
-                            const active = scaleAnchorType === opt.id;
-                            const labelText =
-                                opt.id === 'MANUAL_BASE_M' && parsedReferenceBase
-                                    ? `${parsedReferenceBase}m`
-                                    : `${opt.fallbackLabel}${opt.shortTag ? ` ${opt.shortTag}` : ''}`;
-                            return (
-                                <button
-                                    key={opt.id}
-                                    type="button"
-                                    onClick={() => {
-                                        void triggerFieldImpact('LIGHT');
-                                        setScaleAnchorType(opt.id);
-                                        setDigitalResult(null);
-                                        setShowNumPad(opt.id === 'MANUAL_BASE_M');
-                                    }}
-                                    aria-label={t(opt.labelKey, opt.fallbackLabel)}
-                                    className={`min-h-[52px] px-1 bg-transparent border-0 border-b-2 flex flex-col items-center justify-center gap-0.5 cursor-pointer rounded-none transition-colors ${
-                                        active
-                                            ? 'border-[#C68346] text-[#C68346]'
-                                            : 'border-transparent text-[#475569] dark:text-[#8A93A6]'
-                                    }`}
+                            {extraPhotos.map((extra, idx) => (
+                                <div
+                                    key={`${extra.previewUrl}_${idx}`}
+                                    className="relative w-14 h-14 shrink-0 border border-[#E2E8F0] dark:border-[#12151C] bg-[#000000] rounded-none"
                                 >
-                                    <span className="material-symbols-outlined text-[18px]">
-                                        {opt.icon}
+                                    <SecureImage
+                                        src={extra.previewUrl}
+                                        alt={`${idx + 2}/${maxPhotosTotal}`}
+                                        className="w-full h-full object-cover"
+                                    />
+                                    <span className="absolute bottom-0 left-0 px-1 bg-[#000000]/80 font-mono text-microcopy font-bold tabular-nums text-white leading-tight">
+                                        {idx + 2}/{maxPhotosTotal}
                                     </span>
-                                    <span className="text-microcopy font-mono font-bold uppercase tabular-nums leading-none whitespace-nowrap">
-                                        {labelText}
-                                    </span>
-                                </button>
-                            );
-                        })}
-                    </div>
-                </div>
-
-                {/* Cota Base Manual + Voz (cuando MANUAL_BASE_M activo) */}
-                {scaleAnchorType === 'MANUAL_BASE_M' && (
-                    <div className="shrink-0 border-b border-[#E2E8F0] dark:border-[#12151C] px-fib-13 py-fib-8 space-y-fib-8">
-                        <div className="flex items-center justify-between gap-fib-8">
-                            <button
-                                type="button"
-                                onClick={() => setShowNumPad((prev) => !prev)}
-                                className="flex-1 min-h-[48px] bg-transparent border-0 border-b border-[#00AEEF] text-[#0F172A] dark:text-[#F3F4F6] font-mono text-data-dense font-bold uppercase flex items-center justify-between cursor-pointer rounded-none px-1"
-                            >
-                                <span>{t('digital_v2.base_dim_label', 'BASE m')}</span>
-                                <span className="tabular-nums text-[#00AEEF]">
-                                    {parsedReferenceBase ? `${parsedReferenceBase} m` : '-- m'}
-                                </span>
-                            </button>
-                            <SovereignVoiceInput
-                                module="stockpile"
-                                compact
-                                onTranscript={handleVoiceTranscript}
-                            />
-                        </div>
-                        {showNumPad && (
-                            <FieldNumPad
-                                value={referenceBaseText}
-                                unit="m"
-                                onChange={(nextVal) => {
-                                    setReferenceBaseText(nextVal);
-                                    setDigitalResult(null);
-                                }}
-                                onConfirm={() => setShowNumPad(false)}
-                                onClear={() => {
-                                    setReferenceBaseText('');
-                                    setDigitalResult(null);
-                                }}
-                            />
-                        )}
-                    </div>
-                )}
-
-                {/* Evaluación IA en línea (opcional pre-guardado) */}
-                {photoPreview && isOnline && (
-                    <div className="shrink-0 border-b border-[#E2E8F0] dark:border-[#12151C] px-fib-13 py-fib-8 space-y-fib-8">
-                        <div className="flex items-center justify-between gap-fib-8">
-                            <button
-                                type="button"
-                                onClick={() => void runOnlineAiAnalysis()}
-                                disabled={isAnalyzing || isSaving}
-                                className="min-h-[44px] bg-transparent border-0 text-[#00AEEF] hover:opacity-75 font-mono text-microcopy font-bold uppercase flex items-center gap-1 cursor-pointer disabled:opacity-40 rounded-none p-0"
-                            >
-                                <span className="material-symbols-outlined text-[18px]">
-                                    auto_awesome
-                                </span>
-                                <span>
-                                    {digitalResult
-                                        ? t('digital_v2.reanalyze_ai', 'REANALIZAR IA')
-                                        : t('digital_v2.analyze_ai', 'ANALIZAR IA')}
-                                </span>
-                            </button>
-
-                            {digitalResult && (
-                                <span className="text-h2-section font-mono font-bold tabular-nums text-[#C68346]">
-                                    {digitalResult.scaleVerified
-                                        ? `${digitalResult.volumeM3.toFixed(1)} m³`
-                                        : '-- m³'}
-                                </span>
-                            )}
-                        </div>
-
-                        {digitalResult && (
-                            <div className="grid grid-cols-2 divide-x divide-[#E2E8F0] dark:divide-[#12151C] border-t border-[#E2E8F0] dark:border-[#12151C] pt-fib-8 text-microcopy font-mono uppercase tabular-nums">
-                                <div className="pr-fib-8">
-                                    <span className="text-[#475569] dark:text-[#8A93A6] mr-1">
-                                        α
-                                    </span>
-                                    <span
-                                        className={`font-bold ${
-                                            typeof digitalResult.slopeAngleAvgDeg === 'number' &&
-                                            digitalResult.slopeAngleAvgDeg > 38
-                                                ? 'text-[#C68346]'
-                                                : 'text-[#00AEEF]'
-                                        }`}
+                                    <button
+                                        type="button"
+                                        onClick={() =>
+                                            setExtraPhotos((prev) => {
+                                                const removed = prev[idx];
+                                                if (
+                                                    removed &&
+                                                    removed.previewUrl.startsWith('blob:')
+                                                ) {
+                                                    URL.revokeObjectURL(removed.previewUrl);
+                                                }
+                                                return prev.filter((_, i) => i !== idx);
+                                            })
+                                        }
+                                        aria-label={t('common.delete_button', 'ELIMINAR')}
+                                        className="w-6 h-6 absolute top-0 right-0 bg-[#000000]/85 text-white border-0 flex items-center justify-center cursor-pointer rounded-none"
                                     >
-                                        {typeof digitalResult.slopeAngleAvgDeg === 'number'
-                                            ? `${digitalResult.slopeAngleAvgDeg.toFixed(1)}°`
-                                            : '--'}
-                                    </span>
+                                        <span className="material-symbols-outlined text-[14px]">
+                                            close
+                                        </span>
+                                    </button>
                                 </div>
-                                <div className="pl-fib-8 truncate font-bold text-[#0F172A] dark:text-[#F3F4F6]">
-                                    {digitalResult.copperDomain ||
-                                        digitalResult.granulometry ||
-                                        '--'}
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                )}
+                            ))}
+                        </div>
+                    </>
+                ) : null}
             </div>
 
-            {/* Acción guardar cuando hay foto + Barra inferior pegada al pulgar */}
+            {/* Barra inferior fija: 3 controles estrictos */}
             <footer className="shrink-0 border-t border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] pb-[env(safe-area-inset-bottom)]">
-                {photoPreview && (
+                <div className="min-h-[80px] px-fib-13 grid grid-cols-3 items-center gap-fib-8">
                     <button
                         type="button"
-                        onClick={() => void handleSaveCapture()}
-                        disabled={isSaving || isAnalyzing}
-                        className="w-full min-h-[52px] bg-[#C68346] hover:bg-[#b5753b] active:bg-[#9c6330] text-white border-0 border-b border-[#E2E8F0] dark:border-[#12151C] font-mono text-h2-section font-bold uppercase tracking-wider flex items-center justify-center gap-fib-8 cursor-pointer disabled:opacity-40 rounded-none shadow-none"
-                    >
-                        <span className="material-symbols-outlined text-[22px]">
-                            {isOnline ? 'cloud_done' : 'save'}
-                        </span>
-                        <span>
-                            {isNewAssetMode
-                                ? t('capture_v2.save_new_stockpile', 'GUARDAR ACOPIO')
-                                : t('digital_v2.save_capture', 'GUARDAR CAPTURA')}
-                        </span>
-                    </button>
-                )}
-
-                <div className="min-h-[80px] px-fib-21 grid grid-cols-3 items-center">
-                    <button
-                        type="button"
-                        onClick={() => void handleCaptureSource('PHOTOS', 'PRIMARY')}
-                        disabled={isSaving || isAnalyzing}
+                        onClick={() =>
+                            void handleCaptureSource(
+                                'PHOTOS',
+                                photoBlob ? 'EXTRA' : 'PRIMARY'
+                            )
+                        }
+                        disabled={
+                            isSaving ||
+                            isScanningSpatial ||
+                            (Boolean(photoBlob) && extraPhotos.length >= MAX_EXTRA_PHOTOS)
+                        }
                         aria-label={t('digital_v2.gallery_btn', 'GALERÍA')}
-                        className="min-w-[56px] min-h-[56px] bg-transparent border-0 text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] flex flex-col items-center justify-center gap-0.5 cursor-pointer disabled:opacity-35 rounded-none"
+                        className="min-w-[56px] min-h-[56px] bg-transparent border-0 text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] flex items-center justify-center cursor-pointer disabled:opacity-35 rounded-none"
                     >
                         <span className="material-symbols-outlined text-[24px]">
                             photo_library
@@ -969,25 +954,45 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
 
                     <button
                         type="button"
-                        onClick={() => void handleCaptureSource('CAMERA', 'PRIMARY')}
-                        disabled={isSaving || isAnalyzing}
-                        aria-label={t('digital_v2.capture_primary_btn', 'DISPARAR')}
-                        className="w-16 h-16 mx-auto bg-[#C68346] hover:bg-[#b5753b] active:bg-[#9c6330] text-white border-0 flex items-center justify-center cursor-pointer disabled:opacity-40 rounded-none shadow-none"
+                        onClick={() =>
+                            void handleCaptureSource(
+                                'CAMERA',
+                                photoBlob ? 'EXTRA' : 'PRIMARY'
+                            )
+                        }
+                        disabled={
+                            isSaving ||
+                            isScanningSpatial ||
+                            (Boolean(photoBlob) && extraPhotos.length >= MAX_EXTRA_PHOTOS)
+                        }
+                        aria-label={
+                            isSpatialCapable && !photoBlob
+                                ? t('scanner.spatial_scan_btn', 'ESCANEAR 3D')
+                                : t('digital_v2.capture_primary_btn', 'DISPARAR')
+                        }
+                        className="relative w-16 h-16 mx-auto bg-[#C68346] hover:bg-[#b5753b] active:bg-[#9c6330] text-white border-0 flex flex-col items-center justify-center cursor-pointer disabled:opacity-35 rounded-none shadow-none"
                     >
-                        <span className="material-symbols-outlined text-[28px]">photo_camera</span>
+                        <span className="material-symbols-outlined text-[28px] leading-none">
+                            {isSpatialCapable && !photoBlob ? 'view_in_ar' : 'photo_camera'}
+                        </span>
+                        {totalPhotosCount >= 1 && (
+                            <span className="text-microcopy font-mono font-bold tabular-nums leading-none mt-0.5">
+                                {totalPhotosCount}/{maxPhotosTotal}
+                            </span>
+                        )}
                     </button>
 
                     <button
                         type="button"
-                        onClick={() => void handleCaptureSource('CAMERA', 'EXTRA')}
-                        disabled={!photoBlob || extraPhotos.length >= 3 || isSaving || isAnalyzing}
-                        aria-label={t('capture_v2.extra_angle', 'ÁNGULO')}
-                        className="min-w-[56px] min-h-[56px] bg-transparent border-0 text-[#0F172A] dark:text-[#F3F4F6] hover:text-[#C68346] flex flex-col items-center justify-center gap-0.5 cursor-pointer disabled:opacity-35 rounded-none"
+                        onClick={() => void handleSaveCapture()}
+                        disabled={!hasCaptureReady || isSaving || isScanningSpatial}
+                        aria-label={t('common.save_button', 'GUARDAR')}
+                        className={`min-w-[56px] min-h-[56px] bg-transparent border-0 flex flex-col items-center justify-center gap-0.5 cursor-pointer disabled:opacity-35 rounded-none font-mono text-microcopy font-bold uppercase tabular-nums ${
+                            hasCaptureReady ? 'text-[#00AEEF]' : 'text-[#475569] dark:text-[#8A93A6]'
+                        }`}
                     >
-                        <span className="material-symbols-outlined text-[22px]">add_a_photo</span>
-                        <span className="text-microcopy font-mono font-bold tabular-nums">
-                            {extraPhotos.length}/3
-                        </span>
+                        <span className="material-symbols-outlined text-[24px]">check</span>
+                        <span>{t('common.save_button', 'GUARDAR')}</span>
                     </button>
                 </div>
             </footer>

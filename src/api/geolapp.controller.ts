@@ -1,4 +1,5 @@
-import { Router, type Response } from 'express';
+import { Router, type Request, type Response } from 'express';
+import { OAuth2Client } from 'google-auth-library';
 import { z } from 'zod';
 import { env } from '../config/env';
 import { db } from '../config/firebase';
@@ -19,9 +20,20 @@ import {
 import type { ScopedRequest } from '../middleware/sessionScope';
 import {
     buildServerStockpileGlbMesh,
+    buildSpatialPointCloudGlbMesh,
     inspectGlbBinaryMetrics,
     type GlbSurfaceBuildResult,
 } from '../modules/geolapp/glb-surface.builder';
+import {
+    computeSpatialStockpileVolume,
+    SpatialVolumeValidationError,
+} from '../modules/geolapp/spatial-volume.engine';
+import {
+    getSpatialDeviceCatalog,
+    importGooglePlayDeviceCatalogCsv,
+    SpatialCatalogValidationError,
+    syncSpatialDeviceCatalogFromOfficialSources,
+} from '../modules/geolapp/device-compatibility.service';
 import {
     computeStockpileVolumeV2,
     evaluateStockpileSlopePhysics,
@@ -202,13 +214,53 @@ interface TenantDocAuthResult {
     isSystemPrivileged: boolean;
 }
 
+interface CallerPrivilegeInfo {
+    uid: string;
+    emailLower: string;
+    emailVerifiedOk: boolean;
+    tokenRole: string;
+    isDevRoot: boolean;
+    isSuperAdmin: boolean;
+}
+
+function resolveCallerPrivilege(caller: Record<string, any> | undefined): CallerPrivilegeInfo {
+    const safeCaller = caller || {};
+    const uid = String(safeCaller.uid || '').trim();
+    const emailLower = String(safeCaller.email || '').trim().toLowerCase();
+    const emailVerifiedOk = safeCaller.email_verified !== false;
+    const tokenRole = String(safeCaller.role || '').toUpperCase();
+
+    const isDevRoot =
+        safeCaller.isMasterDev === true ||
+        tokenRole === 'DEV_ROOT' ||
+        uid === 'dev-master-root-uid' ||
+        (emailVerifiedOk && emailLower === 'dev@minreport.com');
+
+    const isSuperAdmin =
+        !isDevRoot &&
+        (safeCaller.admin === true ||
+            tokenRole === 'SUPER_ADMIN' ||
+            uid === 'super-admin-uid' ||
+            (emailVerifiedOk &&
+                (emailLower === env.SUPER_ADMIN_EMAIL.toLowerCase() ||
+                    emailLower === 'admin@minreport.com')));
+
+    return {
+        uid,
+        emailLower,
+        emailVerifiedOk,
+        tokenRole,
+        isDevRoot,
+        isSuperAdmin,
+    };
+}
+
 async function authorizeStockpileTenantMutation(
     req: AuthRequest,
     docTenantId: string
 ): Promise<TenantDocAuthResult> {
     const caller = req.user || {};
-    const uid = String(caller.uid || '').trim();
-    const emailLower = String(caller.email || '').toLowerCase();
+    const { uid, emailLower, tokenRole, isDevRoot, isSuperAdmin } = resolveCallerPrivilege(caller);
 
     if (!uid) {
         return {
@@ -232,8 +284,6 @@ async function authorizeStockpileTenantMutation(
         };
     }
 
-    const emailVerifiedOk = caller.email_verified !== false;
-
     let profileData: Record<string, any> | null = null;
     try {
         const userSnap = await db.collection('users').doc(uid).get();
@@ -244,23 +294,7 @@ async function authorizeStockpileTenantMutation(
         profileData = null;
     }
 
-    const tokenRole = String(caller.role || '').toUpperCase();
     const serverUserRole = String(profileData?.role || '').toUpperCase();
-
-    const isDevRoot =
-        caller.isMasterDev === true ||
-        tokenRole === 'DEV_ROOT' ||
-        uid === 'dev-master-root-uid' ||
-        (emailVerifiedOk && emailLower === 'dev@minreport.com');
-
-    const isSuperAdmin =
-        !isDevRoot &&
-        (caller.admin === true ||
-            tokenRole === 'SUPER_ADMIN' ||
-            uid === 'super-admin-uid' ||
-            (emailVerifiedOk &&
-                (emailLower === env.SUPER_ADMIN_EMAIL.toLowerCase() ||
-                    emailLower === 'admin@minreport.com')));
 
     const userAccountDisabled =
         String(profileData?.status || '').toUpperCase() === 'SUSPENDED' ||
@@ -644,21 +678,35 @@ function extractDeclaredDimensions(
     return merged;
 }
 
-function validateSovereignMast3rGpuUrl(rawUrl: string): URL {
+export function validateSovereignMast3rGpuUrl(rawUrl: string): URL {
     const parsed = new URL(rawUrl.trim());
     const host = parsed.hostname.toLowerCase();
 
     if (parsed.protocol !== 'https:' || parsed.username || parsed.password) {
         throw new Error('GEOLAPP_MAST3R_GPU_URL debe usar HTTPS sin credenciales.');
     }
-    if (/(drive|colab|notebooklm|ngrok|localhost|127\.0\.0\.1)/i.test(host)) {
+    if (/(drive|colab|notebooklm|ngrok|localhost|127\.0\.0\.1|0\.0\.0\.0|\[?::1\]?|metadata\.google)/i.test(host)) {
         throw new Error('GEOLAPP_MAST3R_GPU_URL bloqueada: servicio externo no soberano.');
     }
-    if (!host.endsWith('.run.app')) {
-        throw new Error('GEOLAPP_MAST3R_GPU_URL debe residir en Cloud Run (.run.app).');
-    }
-    if (!host.includes('southamerica-west1') && !host.endsWith('-tl.a.run.app')) {
-        throw new Error('GEOLAPP_MAST3R_GPU_URL debe residir exclusivamente en southamerica-west1.');
+
+    const isSovereignCloudRunSantiago =
+        host.endsWith('.run.app') &&
+        (host.includes('southamerica-west1') || host.endsWith('-tl.a.run.app'));
+
+    const isSovereignComputeOrVpcSantiago =
+        host.includes('southamerica-west1') &&
+        (host.endsWith('.internal') ||
+            host.endsWith('.googleapis.com') ||
+            host.endsWith('.cloudfunctions.net') ||
+            host.endsWith('.googleusercontent.com') ||
+            host.endsWith('.minreport.com') ||
+            host.endsWith('.minreport.cl') ||
+            host.endsWith('.minreport.app'));
+
+    if (!isSovereignCloudRunSantiago && !isSovereignComputeOrVpcSantiago) {
+        throw new Error(
+            'GEOLAPP_MAST3R_GPU_URL debe residir exclusivamente en southamerica-west1 (Cloud Run, Compute Engine o VPC interno).'
+        );
     }
     return parsed;
 }
@@ -1079,7 +1127,7 @@ function parseJsonObjectFromAiText(rawText: string): Record<string, unknown> | n
 
 /**
  * POST /api/geolapp/stockpiles/:id/ai-enrich
- * Enriquecimiento progresivo post-registro (Fase 2 GEOLAPP®):
+ * Enriquecimiento progresivo post-registro (Fase 2 MINREPORT · ACOPIOS):
  * Propone metadatos geo-metalúrgicos desde fotografía, nota de voz o certificado de laboratorio,
  * combinando ResilientAIClient.generate + ResilientAIClient.decide (HITL sin escritura automática).
  */
@@ -1425,21 +1473,71 @@ const DigitalAiExtractedSchema = z.object({
     reasoning: z.string().trim().max(600).nullable().optional(),
 });
 
-async function runDigitalStockpileAnalyze(params: {
-    tenantId: string;
-    body: z.infer<typeof DigitalAnalyzeBodySchema>;
-}) {
-    const { body, tenantId } = params;
+const STOCKPILE_CLASSIFICATION_QUESTIONS = {
+    geometry_type: {
+        type: 'choice' as const,
+        instructions: 'Identifica la forma geométrica dominante del acopio fotografiado.',
+        criteria: {
+            CONO_ELIPTICO: 'Pila cónica con vértice agudo y huella circular o elíptica libre',
+            CONO_ELIPTICO_TRUNCADO: 'Pila cónica o botadero con plataforma superior plana horizontal',
+            PILA_LONGITUDINAL_WINDROW: 'Cordón o camellón alargado lineal con cabeceras redondeadas',
+            ACOPIO_CONTRA_MURO: 'Acopio descargado contra muro de contención o pared trasera/bunker',
+        },
+    },
+    wall_confinement: {
+        type: 'choice' as const,
+        instructions: 'Si apoya contra muro, indica si es abierto en los extremos (1 muro) o bunker cerrado (3 muros).',
+        criteria: {
+            NONE: 'Acopio exento sin muros de contención',
+            SINGLE_WALL: 'Apoyado contra 1 muro trasero con extremos laterales libres',
+            BUNKER_3_WALLS: 'Confinado lateralmente dentro de bunker/cajón de 3 muros',
+        },
+    },
+    copper_domain: {
+        type: 'choice' as const,
+        instructions: 'Clasifica el material / dominio mineral visual más probable.',
+        criteria: {
+            OXIDO_CU: 'Tonalidades verdosas/azuladas o mineral oxidado de cobre',
+            MIXTO_CU: 'Transición mixta óxido-sulfuro de cobre',
+            SULFURO_SECUNDARIO_CU: 'Calcocita/covelina o sulfuro secundario oscuro/azulado',
+            SULFURO_PRIMARIO_CU: 'Calcopirita/pirita o mena sulfurada primaria grisácea metálica',
+            CONCENTRADO_CU: 'Concentrado fino de flotación oscuro/brillante',
+            BAJA_LEY_CU: 'Mineral marginal o ripio mineralizado de baja ley',
+            ESTERIL_RIPIOS: 'Roca estéril, lastre o árido sin mineralización relevante',
+        },
+    },
+    tipo_granulometria: {
+        type: 'choice' as const,
+        instructions: 'Clasifica la granulometría visual dominante del material.',
+        criteria: {
+            COLPAS: 'Bloques y fragmentos gruesos predominantes (> 150 mm)',
+            GRANSA: 'Material chancado intermedio uniforme',
+            MIXTO: 'Mezcla heterogénea de colpas, gransa y finos',
+            FINOS: 'Material fino arenoso o concentrado (< 12 mm)',
+        },
+    },
+};
+
+async function collectVisualMediaParts(params: {
+    imageBase64?: string;
+    imageMimeType?: string;
+    extraImagesBase64?: string[];
+    photoUrl?: string;
+    maxExtra?: number;
+}): Promise<Array<{ mimeType: string; dataBase64: string }>> {
     const mediaParts: Array<{ mimeType: string; dataBase64: string }> = [];
 
-    if (body.imageBase64) {
+    if (params.imageBase64) {
         mediaParts.push({
-            mimeType: body.imageMimeType || 'image/webp',
-            dataBase64: body.imageBase64,
+            mimeType: params.imageMimeType || 'image/webp',
+            dataBase64: params.imageBase64,
         });
-    } else if (body.photoUrl && /^https:\/\/(storage\.googleapis\.com|firebasestorage\.googleapis\.com)\//i.test(body.photoUrl)) {
+    } else if (
+        params.photoUrl &&
+        /^https:\/\/(storage\.googleapis\.com|firebasestorage\.googleapis\.com)\//i.test(params.photoUrl)
+    ) {
         try {
-            const imgRes = await safeFetchExternal(body.photoUrl, {
+            const imgRes = await safeFetchExternal(params.photoUrl, {
                 method: 'GET',
                 maxBytes: 4 * 1024 * 1024,
             });
@@ -1455,125 +1553,16 @@ async function runDigitalStockpileAnalyze(params: {
         }
     }
 
-    if (Array.isArray(body.extraImagesBase64)) {
-        for (const extra of body.extraImagesBase64.slice(0, 3)) {
+    if (Array.isArray(params.extraImagesBase64)) {
+        for (const extra of params.extraImagesBase64.slice(0, params.maxExtra ?? 3)) {
             mediaParts.push({ mimeType: 'image/webp', dataBase64: extra });
         }
     }
 
-    if (mediaParts.length === 0) {
-        throw new Error('No se dispuso de imagen decodificable para análisis visual IA.');
-    }
+    return mediaParts;
+}
 
-    const anchorMeters =
-        body.scaleAnchorMeters ?? DEFAULT_ANCHOR_METERS[body.scaleAnchorType] ?? undefined;
-    const hasExplicitReferenceBase =
-        typeof body.referenceBaseMeters === 'number' && Number.isFinite(body.referenceBaseMeters) && body.referenceBaseMeters > 0;
-
-    const contextLines = [
-        `Ancla de escala declarada: ${body.scaleAnchorType}${anchorMeters ? ` (${anchorMeters} m)` : ''}`,
-        hasExplicitReferenceBase
-            ? `Cota base de referencia medida por operador: ${body.referenceBaseMeters} m`
-            : 'Sin cota manual ingresada; usar ancla visual solo si es claramente visible.',
-        typeof body.imuPitchDeg === 'number'
-            ? `Inclinacion IMU dispositivo (pitch): ${body.imuPitchDeg} grados (compensar perspectiva)`
-            : '',
-        typeof body.imuRollDeg === 'number'
-            ? `Alabeo IMU dispositivo (roll): ${body.imuRollDeg} grados`
-            : '',
-    ]
-        .filter(Boolean)
-        .join('\n');
-
-    const extractionPrompt = [
-        `Eres ingeniero geotécnico/geomensor de MINREPORT GEOLAPP®. Analiza las fotografías del acopio de mineral o árido.`,
-        `Idioma de reasoning: ${body.locale}.`,
-        `1. Determina los ángulos aparentes de talud izquierdo, derecho y promedio compensando la inclinación IMU si existe.`,
-        `2. Verifica si el objeto ancla declarado (${body.scaleAnchorType}${anchorMeters ? ` = ${anchorMeters} m` : ''}) es claramente visible junto al acopio.`,
-        `3. REGLA CERO ALUCINACIONES: Si anchor_detected es false Y no se proveyó cota base de referencia (${hasExplicitReferenceBase ? body.referenceBaseMeters : 'ninguna'}), DEBES devolver estimated_dimensions_m: null. Jamás inventes metros sin referencia métrica real.`,
-        `4. Estima suggested_density_t_m3 solo acorde al tipo visual de mineral/árido (1.40 - 2.60 t/m3), o null si es indistinguible.`,
-        contextLines,
-        `Responde ÚNICAMENTE JSON válido exacto: {"anchor_detected": boolean, "slope_angle_left_deg": number|null, "slope_angle_right_deg": number|null, "slope_angle_avg_deg": number|null, "suggested_density_t_m3": number|null, "estimated_dimensions_m": {"a": number, "b": number, "h": number, "ap": number, "bp": number}|null, "confidence": number, "reasoning": string|null}.`,
-    ].join('\n');
-
-    const [genRes, decisionRes] = await Promise.all([
-        ResilientAIClient.generate({
-            prompt: extractionPrompt,
-            module: 'stockpile',
-            tenantId,
-            thinkingLevel: 'medium',
-            requireHITL: false,
-            responseMimeType: 'application/json',
-            media: mediaParts,
-        }),
-        ResilientAIClient.decide({
-            module: 'stockpile',
-            tenantId,
-            dataClassification: 'TENANT_PRIVATE',
-            inputText: contextLines,
-            media: mediaParts,
-            questions: {
-                geometry_type: {
-                    type: 'choice',
-                    instructions: 'Identifica la forma geométrica dominante del acopio fotografiado.',
-                    criteria: {
-                        CONO_ELIPTICO: 'Pila cónica con vértice agudo y huella circular o elíptica libre',
-                        CONO_ELIPTICO_TRUNCADO: 'Pila cónica o botadero con plataforma superior plana horizontal',
-                        PILA_LONGITUDINAL_WINDROW: 'Cordón o camellón alargado lineal con cabeceras redondeadas',
-                        ACOPIO_CONTRA_MURO: 'Acopio descargado contra muro de contención o pared trasera/bunker',
-                    },
-                },
-                wall_confinement: {
-                    type: 'choice',
-                    instructions: 'Si apoya contra muro, indica si es abierto en los extremos (1 muro) o bunker cerrado (3 muros).',
-                    criteria: {
-                        NONE: 'Acopio exento sin muros de contención',
-                        SINGLE_WALL: 'Apoyado contra 1 muro trasero con extremos laterales libres',
-                        BUNKER_3_WALLS: 'Confinado lateralmente dentro de bunker/cajón de 3 muros',
-                    },
-                },
-                copper_domain: {
-                    type: 'choice',
-                    instructions: 'Clasifica el material / dominio mineral visual más probable.',
-                    criteria: {
-                        OXIDO_CU: 'Tonalidades verdosas/azuladas o mineral oxidado de cobre',
-                        MIXTO_CU: 'Transición mixta óxido-sulfuro de cobre',
-                        SULFURO_SECUNDARIO_CU: 'Calcocita/covelina o sulfuro secundario oscuro/azulado',
-                        SULFURO_PRIMARIO_CU: 'Calcopirita/pirita o mena sulfurada primaria grisácea metálica',
-                        CONCENTRADO_CU: 'Concentrado fino de flotación oscuro/brillante',
-                        BAJA_LEY_CU: 'Mineral marginal o ripio mineralizado de baja ley',
-                        ESTERIL_RIPIOS: 'Roca estéril, lastre o árido sin mineralización relevante',
-                    },
-                },
-                tipo_granulometria: {
-                    type: 'choice',
-                    instructions: 'Clasifica la granulometría visual dominante del material.',
-                    criteria: {
-                        COLPAS: 'Bloques y fragmentos gruesos predominantes (> 150 mm)',
-                        GRANSA: 'Material chancado intermedio uniforme',
-                        MIXTO: 'Mezcla heterogénea de colpas, gransa y finos',
-                        FINOS: 'Material fino arenoso o concentrado (< 12 mm)',
-                    },
-                },
-            },
-        }).catch(() => null),
-    ]);
-
-    const parsedRaw = parseJsonObjectFromAiText(genRes.text);
-    const extractedRes = DigitalAiExtractedSchema.safeParse(parsedRaw || {});
-    const extracted = extractedRes.success
-        ? extractedRes.data
-        : {
-              anchor_detected: false,
-              slope_angle_left_deg: null,
-              slope_angle_right_deg: null,
-              slope_angle_avg_deg: null,
-              suggested_density_t_m3: null,
-              estimated_dimensions_m: null,
-              confidence: 0.5,
-              reasoning: 'Respuesta parcial del analizador visual.',
-          };
-
+function parseStockpileDecisionChoices(decisionRes: any) {
     const rawGeomChoice =
         decisionRes?.answers?.geometry_type?.type === 'choice'
             ? decisionRes.answers.geometry_type.choice
@@ -1612,6 +1601,95 @@ async function runDigitalStockpileAnalyze(params: {
         decisionRes.answers.tipo_granulometria.confidence >= 0.45
             ? decisionRes.answers.tipo_granulometria.choice
             : null;
+
+    return { geometryType, wallConfinement, copperDomain, granulometry };
+}
+
+async function runDigitalStockpileAnalyze(params: {
+    tenantId: string;
+    body: z.infer<typeof DigitalAnalyzeBodySchema>;
+}) {
+    const { body, tenantId } = params;
+    const mediaParts = await collectVisualMediaParts({
+        imageBase64: body.imageBase64,
+        imageMimeType: body.imageMimeType,
+        extraImagesBase64: body.extraImagesBase64,
+        photoUrl: body.photoUrl,
+        maxExtra: 3,
+    });
+
+    if (mediaParts.length === 0) {
+        throw new Error('No se dispuso de imagen decodificable para análisis visual IA.');
+    }
+
+    const anchorMeters =
+        body.scaleAnchorMeters ?? DEFAULT_ANCHOR_METERS[body.scaleAnchorType] ?? undefined;
+    const hasExplicitReferenceBase =
+        typeof body.referenceBaseMeters === 'number' && Number.isFinite(body.referenceBaseMeters) && body.referenceBaseMeters > 0;
+
+    const contextLines = [
+        `Ancla de escala declarada: ${body.scaleAnchorType}${anchorMeters ? ` (${anchorMeters} m)` : ''}`,
+        hasExplicitReferenceBase
+            ? `Cota base de referencia medida por operador: ${body.referenceBaseMeters} m`
+            : 'Sin cota manual ingresada; usar ancla visual solo si es claramente visible.',
+        typeof body.imuPitchDeg === 'number'
+            ? `Inclinacion IMU dispositivo (pitch): ${body.imuPitchDeg} grados (compensar perspectiva)`
+            : '',
+        typeof body.imuRollDeg === 'number'
+            ? `Alabeo IMU dispositivo (roll): ${body.imuRollDeg} grados`
+            : '',
+    ]
+        .filter(Boolean)
+        .join('\n');
+
+    const extractionPrompt = [
+        `Eres ingeniero geotécnico/geomensor de MINREPORT · ACOPIOS. Analiza las fotografías del acopio de mineral o árido.`,
+        `Idioma de reasoning: ${body.locale}.`,
+        `1. Determina los ángulos aparentes de talud izquierdo, derecho y promedio compensando la inclinación IMU si existe.`,
+        `2. Verifica si el objeto ancla declarado (${body.scaleAnchorType}${anchorMeters ? ` = ${anchorMeters} m` : ''}) es claramente visible junto al acopio.`,
+        `3. REGLA CERO ALUCINACIONES: Si anchor_detected es false Y no se proveyó cota base de referencia (${hasExplicitReferenceBase ? body.referenceBaseMeters : 'ninguna'}), DEBES devolver estimated_dimensions_m: null. Jamás inventes metros sin referencia métrica real.`,
+        `4. Estima suggested_density_t_m3 solo acorde al tipo visual de mineral/árido (1.40 - 2.60 t/m3), o null si es indistinguible.`,
+        contextLines,
+        `Responde ÚNICAMENTE JSON válido exacto: {"anchor_detected": boolean, "slope_angle_left_deg": number|null, "slope_angle_right_deg": number|null, "slope_angle_avg_deg": number|null, "suggested_density_t_m3": number|null, "estimated_dimensions_m": {"a": number, "b": number, "h": number, "ap": number, "bp": number}|null, "confidence": number, "reasoning": string|null}.`,
+    ].join('\n');
+
+    const [genRes, decisionRes] = await Promise.all([
+        ResilientAIClient.generate({
+            prompt: extractionPrompt,
+            module: 'stockpile',
+            tenantId,
+            thinkingLevel: 'medium',
+            requireHITL: false,
+            responseMimeType: 'application/json',
+            media: mediaParts,
+        }),
+        ResilientAIClient.decide({
+            module: 'stockpile',
+            tenantId,
+            dataClassification: 'TENANT_PRIVATE',
+            inputText: contextLines,
+            media: mediaParts,
+            questions: STOCKPILE_CLASSIFICATION_QUESTIONS,
+        }).catch(() => null),
+    ]);
+
+    const parsedRaw = parseJsonObjectFromAiText(genRes.text);
+    const extractedRes = DigitalAiExtractedSchema.safeParse(parsedRaw || {});
+    const extracted = extractedRes.success
+        ? extractedRes.data
+        : {
+              anchor_detected: false,
+              slope_angle_left_deg: null,
+              slope_angle_right_deg: null,
+              slope_angle_avg_deg: null,
+              suggested_density_t_m3: null,
+              estimated_dimensions_m: null,
+              confidence: 0.5,
+              reasoning: 'Respuesta parcial del analizador visual.',
+          };
+
+    const { geometryType, wallConfinement, copperDomain, granulometry } =
+        parseStockpileDecisionChoices(decisionRes);
 
     const anchorDetected = Boolean(extracted.anchor_detected && body.scaleAnchorType !== 'NONE');
     const scaleVerified = Boolean(
@@ -1718,11 +1796,7 @@ router.post(
                 });
             }
 
-            const caller = req.user || {};
-            const isDevCaller =
-                caller.isMasterDev === true ||
-                String(caller.role || '').toUpperCase() === 'DEV_ROOT' ||
-                String(caller.email || '').toLowerCase() === 'dev@minreport.com';
+            const isDevCaller = resolveCallerPrivilege(req.user).isDevRoot;
             const headerTenant = String(
                 parsedBody.data.tenantId ||
                     req.headers['x-active-account-id'] ||
@@ -1917,6 +1991,670 @@ router.post(
             }
             console.error('[GEOLAPP-CONTROLLER] Error en stockpiles/:id/digital-analyze:', error);
             return res.status(500).json({ error: 'Error ejecutando análisis digital en acopio.' });
+        }
+    }
+);
+
+const ImportDeviceCatalogCsvBodySchema = z.object({
+    csvText: z.string().min(20).max(5_000_000),
+    confirmationKeyword: z.literal('ACTUALIZAR'),
+});
+
+/**
+ * GET /api/geolapp/device-catalog
+ * Retorna el catálogo vivo de compatibilidad hardware (Android/iOS) en `southamerica-west1`.
+ */
+router.get('/device-catalog', requireAuth, async (_req: AuthRequest, res: Response) => {
+    try {
+        const catalog = await getSpatialDeviceCatalog();
+        return res.status(200).json({
+            success: true,
+            catalog,
+        });
+    } catch (error) {
+        console.error('[MINREPORT-ACOPIOS] Error consultando device-catalog:', error);
+        return res.status(500).json({ error: 'Error consultando catalogo de compatibilidad.' });
+    }
+});
+
+/**
+ * POST /api/geolapp/device-catalog/sync
+ * Sincroniza el catálogo vivo desde fuentes oficiales ARCore (`DEV_ROOT` o `SUPER_ADMIN`).
+ */
+router.post(
+    '/device-catalog/sync',
+    requireAuth,
+    mutationRateLimiter,
+    async (req: AuthRequest, res: Response) => {
+        try {
+            const privilege = resolveCallerPrivilege(req.user);
+            if (!privilege.uid) {
+                return res.status(401).json({ error: 'No autorizado: token de sesion ausente.' });
+            }
+            if (!privilege.isDevRoot && !privilege.isSuperAdmin) {
+                return res.status(403).json({
+                    error: 'FORBIDDEN: Solo DEV_ROOT o SUPER_ADMIN pueden sincronizar el catalogo de dispositivos.',
+                });
+            }
+
+            const syncResult = await syncSpatialDeviceCatalogFromOfficialSources({
+                uid: privilege.uid,
+                email: privilege.emailLower || privilege.uid,
+                tenantId: 'global',
+                ipAddress: extractClientIp(req),
+            });
+
+            return res.status(200).json({
+                success: true,
+                catalog: syncResult.catalog,
+                syncedFromRemote: syncResult.syncedFromRemote,
+                fallbackUsed: syncResult.fallbackUsed,
+                warning: syncResult.warning,
+            });
+        } catch (error) {
+            console.error('[MINREPORT-ACOPIOS] Error sincronizando device-catalog:', error);
+            return res.status(500).json({ error: 'Error sincronizando catalogo oficial de dispositivos.' });
+        }
+    }
+);
+
+export const schedulerOidcClient = new OAuth2Client();
+
+const DEFAULT_SCHEDULER_CLOUD_RUN_AUDIENCE = 'https://minreport-api-d7uuryuo4a-tl.a.run.app';
+const DEFAULT_SCHEDULER_SA = '493995072778-compute@developer.gserviceaccount.com';
+
+/**
+ * POST /api/geolapp/internal/device-catalog/scheduled-sync
+ * Cron semanal ejecutado por Cloud Scheduler mediante verificación estricta Google OIDC (Fail-Closed).
+ */
+router.post(
+    '/internal/device-catalog/scheduled-sync',
+    mutationRateLimiter,
+    async (req: Request, res: Response) => {
+        try {
+            const authHeader = String(req.headers.authorization || '').trim();
+            if (!authHeader.startsWith('Bearer ')) {
+                return res.status(401).json({ error: 'UNAUTHORIZED: Token OIDC ausente.' });
+            }
+            const idToken = authHeader.slice(7).trim();
+            if (!idToken) {
+                return res.status(401).json({ error: 'UNAUTHORIZED: Token OIDC ausente.' });
+            }
+
+            const allowedAudiences = Array.from(
+                new Set(
+                    [process.env.CLOUD_RUN_SERVICE_URL, DEFAULT_SCHEDULER_CLOUD_RUN_AUDIENCE]
+                        .filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
+                        .map((v) => v.trim().replace(/\/+$/, ''))
+                )
+            );
+
+            let payload: Record<string, any> | undefined;
+            try {
+                const ticket = await schedulerOidcClient.verifyIdToken({
+                    idToken,
+                    audience: allowedAudiences,
+                });
+                payload = ticket.getPayload() as Record<string, any> | undefined;
+            } catch {
+                return res.status(401).json({ error: 'UNAUTHORIZED: Token OIDC invalido.' });
+            }
+
+            const configuredSAs = String(process.env.SPATIAL_CATALOG_SCHEDULER_SA || '')
+                .split(',')
+                .map((s) => s.trim().toLowerCase())
+                .filter(Boolean);
+            const allowedServiceAccounts = new Set<string>([
+                DEFAULT_SCHEDULER_SA,
+                ...configuredSAs,
+            ]);
+
+            const tokenEmail = String(payload?.email || '').trim().toLowerCase();
+            if (
+                payload?.email_verified !== true ||
+                !tokenEmail ||
+                !allowedServiceAccounts.has(tokenEmail)
+            ) {
+                return res.status(403).json({
+                    error: 'FORBIDDEN: Service Account no autorizada para cron de catalogo.',
+                });
+            }
+
+            const syncResult = await syncSpatialDeviceCatalogFromOfficialSources({
+                uid: 'cloud-scheduler',
+                email: tokenEmail,
+                tenantId: 'global',
+                ipAddress: extractClientIp(req),
+            });
+
+            return res.status(200).json({
+                success: true,
+                syncedFromRemote: syncResult.syncedFromRemote,
+                fallbackUsed: syncResult.fallbackUsed,
+                warning: syncResult.warning,
+                totalCount: syncResult.catalog.totalCount,
+                optimalCount: syncResult.catalog.optimalCount,
+                vioCount: syncResult.catalog.vioCount,
+                ruggedCount: syncResult.catalog.ruggedCount,
+                sourceHash: syncResult.catalog.sourceHash,
+                updatedAtIso: syncResult.catalog.updatedAtIso,
+            });
+        } catch (error) {
+            console.error('[MINREPORT-ACOPIOS] Error en scheduled-sync device-catalog:', error);
+            return res.status(500).json({ error: 'Error ejecutando sincronizacion programada.' });
+        }
+    }
+);
+
+/**
+ * POST /api/geolapp/device-catalog/import-csv
+ * Importa CSV oficial de Google Play Console Device Catalog bajo compuerta HITL (`ACTUALIZAR`).
+ */
+router.post(
+    '/device-catalog/import-csv',
+    requireAuth,
+    mutationRateLimiter,
+    async (req: AuthRequest, res: Response) => {
+        try {
+            const privilege = resolveCallerPrivilege(req.user);
+            if (!privilege.uid) {
+                return res.status(401).json({ error: 'No autorizado: token de sesion ausente.' });
+            }
+            if (!privilege.isDevRoot && !privilege.isSuperAdmin) {
+                return res.status(403).json({
+                    error: 'FORBIDDEN: Solo DEV_ROOT o SUPER_ADMIN pueden importar catalogo CSV.',
+                });
+            }
+
+            const parsedBody = ImportDeviceCatalogCsvBodySchema.safeParse(req.body || {});
+            if (!parsedBody.success) {
+                return res.status(400).json({
+                    error: 'Payload CSV invalido: requiere csvText y confirmationKeyword="ACTUALIZAR".',
+                    details: parsedBody.error.flatten(),
+                });
+            }
+
+            const result = await importGooglePlayDeviceCatalogCsv({
+                csvText: parsedBody.data.csvText,
+                actor: {
+                    uid: privilege.uid,
+                    email: privilege.emailLower || privilege.uid,
+                    tenantId: 'global',
+                    ipAddress: extractClientIp(req),
+                },
+            });
+
+            return res.status(200).json({
+                success: true,
+                catalog: result.catalog,
+                importedCount: result.importedCount,
+            });
+        } catch (error: any) {
+            if (error instanceof SpatialCatalogValidationError) {
+                return res.status(400).json({ error: error.message });
+            }
+            console.error('[MINREPORT-ACOPIOS] Error importando device-catalog CSV:', error);
+            return res.status(500).json({ error: 'Error importando CSV de Google Play Console.' });
+        }
+    }
+);
+
+const SpatialPointTupleSchema = z.tuple([
+    z.number().finite(),
+    z.number().finite(),
+    z.number().finite(),
+]);
+
+const SpatialAnalyzeBodySchema = z.object({
+    measurementId: z
+        .string()
+        .trim()
+        .regex(/^[A-Za-z0-9._-]{1,128}$/)
+        .optional(),
+    tenantId: z.string().trim().max(128).optional(),
+    scanId: z.string().trim().max(128).optional(),
+    depthMode: z.enum(['RAW_DEPTH_ONLY', 'AUTOMATIC', 'VIO_POINTCLOUD']),
+    coveragePct: z.number().finite().min(0).max(100),
+    sectorsCovered: z.number().int().min(0).max(16),
+    keyframeCount: z.number().int().min(1).max(512),
+    loopClosed: z.boolean(),
+    anchorCenter: z
+        .object({
+            x: z.number().finite(),
+            y: z.number().finite(),
+            z: z.number().finite(),
+        })
+        .nullable()
+        .optional(),
+    pointsM: z.array(SpatialPointTupleSchema).min(20).max(12000),
+    groundSamplesM: z.array(SpatialPointTupleSchema).max(4000).optional(),
+    imageBase64: z.string().min(8).max(4_000_000).optional(),
+    imageMimeType: z.enum(['image/webp', 'image/jpeg', 'image/png']).optional(),
+    extraImagesBase64: z.array(z.string().min(8).max(4_000_000)).max(5).optional(),
+    photoUrl: z.string().trim().max(2048).optional(),
+    locale: z.enum(['es', 'en', 'pt']).optional().default('es'),
+});
+
+const SpatialDensityExtractSchema = z.object({
+    suggested_density_t_m3: z.number().finite().min(0.5).max(8).nullable().optional(),
+    reasoning: z.string().trim().max(600).nullable().optional(),
+});
+
+async function runSpatialStockpileAnalyze(params: {
+    tenantId: string;
+    actorUid: string;
+    stockpileId?: string;
+    body: z.infer<typeof SpatialAnalyzeBodySchema>;
+}) {
+    const { tenantId, actorUid, stockpileId, body } = params;
+
+    const spatial = computeSpatialStockpileVolume({
+        pointsM: body.pointsM,
+        groundSamplesM: body.groundSamplesM,
+        anchorCenter: body.anchorCenter,
+        coveragePct: body.coveragePct,
+        sectorsCovered: body.sectorsCovered,
+        loopClosed: body.loopClosed,
+        depthMode: body.depthMode,
+    });
+
+    if (!(spatial.volumeM3 > 0)) {
+        throw new SpatialVolumeValidationError(
+            'El volumen cubicado desde la nube 3D debe ser > 0 m3.'
+        );
+    }
+
+    const meshResult = buildSpatialPointCloudGlbMesh(spatial.surfaceGrid);
+    const meshSource = 'ARCORE_VIO_DEPTH_SOUTH_AMERICA_WEST1' as const;
+
+    const persistMeshPromise = (async () => {
+        const digested = await MediaDigestorServer.digestAny(
+            meshResult.glbBuffer,
+            'model/gltf-binary',
+            'MESH_3D_GLB'
+        );
+        return CasStorageService.persistDigestedBinary(digested, {
+            scope: 'TENANT_PRIVATE',
+            tenantId,
+            actorUid,
+            originalFilename: `${stockpileId || body.scanId || 'spatial'}_${body.measurementId || 'latest'}.glb`,
+            clientOriginalBytes: meshResult.rawUnindexedBytes,
+        });
+    })();
+
+    const visualClassifyPromise = (async () => {
+        const mediaParts = await collectVisualMediaParts({
+            imageBase64: body.imageBase64,
+            imageMimeType: body.imageMimeType,
+            extraImagesBase64: body.extraImagesBase64,
+            photoUrl: body.photoUrl,
+            maxExtra: 5,
+        });
+
+        if (mediaParts.length === 0) {
+            return {
+                geometryType: 'CONO_ELIPTICO' as const,
+                wallConfinement: 'NONE' as const,
+                copperDomain: null,
+                granulometry: null,
+                suggestedDensityTm3: null,
+                reasoning: `Cubicación métrica 3D (${body.depthMode}, cobertura ${body.coveragePct}%, pie ${spatial.toeScore}/100).`,
+            };
+        }
+
+        const contextLines = [
+            `Dimensiones métricas reales de nube 3D: a=${spatial.dimensionsM.a}m, b=${spatial.dimensionsM.b}m, h=${spatial.dimensionsM.h}m`,
+            `Volumen 3D ya calculado (NO modificar): ${spatial.volumeM3} m3`,
+            `Talud medio medido: ${spatial.slopeAngleAvgDeg ?? 'N/A'}°`,
+        ].join('\n');
+
+        const densityPrompt = [
+            `Eres ingeniero geo-metalúrgico de MINREPORT · ACOPIOS.`,
+            `El volumen métrico 3D ya fue medido por fotogrametría/Depth (${spatial.volumeM3} m3); NO estimes dimensiones ni volumen.`,
+            `Idioma de reasoning: ${body.locale}.`,
+            `Estima únicamente suggested_density_t_m3 (1.40 - 2.60 t/m3) acorde al material visible en la fotografía, o null si no es determinable con certeza.`,
+            contextLines,
+            `Responde ÚNICAMENTE JSON válido: {"suggested_density_t_m3": number|null, "reasoning": string|null}.`,
+        ].join('\n');
+
+        const [genRes, decisionRes] = await Promise.all([
+            ResilientAIClient.generate({
+                prompt: densityPrompt,
+                module: 'stockpile',
+                tenantId,
+                thinkingLevel: 'low',
+                requireHITL: false,
+                responseMimeType: 'application/json',
+                media: mediaParts,
+            }).catch(() => null),
+            ResilientAIClient.decide({
+                module: 'stockpile',
+                tenantId,
+                dataClassification: 'TENANT_PRIVATE',
+                inputText: contextLines,
+                media: mediaParts,
+                questions: STOCKPILE_CLASSIFICATION_QUESTIONS,
+            }).catch(() => null),
+        ]);
+
+        const choices = parseStockpileDecisionChoices(decisionRes);
+        const parsedDensityRaw = genRes ? parseJsonObjectFromAiText(genRes.text) : null;
+        const densityParsed = SpatialDensityExtractSchema.safeParse(parsedDensityRaw || {});
+
+        const suggestedDensityTm3 =
+            densityParsed.success && typeof densityParsed.data.suggested_density_t_m3 === 'number'
+                ? Math.round(densityParsed.data.suggested_density_t_m3 * 100) / 100
+                : null;
+        const reasoning =
+            (densityParsed.success && densityParsed.data.reasoning) ||
+            `Cubicación métrica 3D (${body.depthMode}, cobertura ${body.coveragePct}%, pie ${spatial.toeScore}/100).`;
+
+        return {
+            geometryType: choices.geometryType,
+            wallConfinement: choices.wallConfinement,
+            copperDomain: choices.copperDomain,
+            granulometry: choices.granulometry,
+            suggestedDensityTm3,
+            reasoning,
+        };
+    })();
+
+    const [descriptor, visual] = await Promise.all([persistMeshPromise, visualClassifyPromise]);
+
+    const weightT =
+        visual.suggestedDensityTm3 !== null
+            ? Math.round(spatial.volumeM3 * visual.suggestedDensityTm3 * 100) / 100
+            : 0;
+    const savingsPct =
+        typeof descriptor.savingsPct === 'number'
+            ? descriptor.savingsPct
+            : Number((descriptor.savingsRatio * 100).toFixed(1));
+
+    return {
+        result: {
+            verified: true,
+            scaleVerified: true,
+            volumeM3: spatial.volumeM3,
+            weightT,
+            uncertaintyPct: spatial.uncertaintyPct,
+            toeScore: spatial.toeScore,
+            coveragePct: body.coveragePct,
+            depthMode: body.depthMode,
+            groundSlopeDeg: spatial.groundSlopeDeg,
+            geometryType: visual.geometryType,
+            wallConfinement: visual.wallConfinement,
+            copperDomain: visual.copperDomain,
+            granulometry: visual.granulometry,
+            suggestedDensityTm3: visual.suggestedDensityTm3,
+            slopeAngleLeftDeg: spatial.slopeAngleLeftDeg,
+            slopeAngleRightDeg: spatial.slopeAngleRightDeg,
+            slopeAngleAvgDeg: spatial.slopeAngleAvgDeg,
+            slopeWarning: spatial.slopeWarning,
+            dimensionsM: spatial.dimensionsM,
+            meshUrl: descriptor.downloadUrl,
+            meshSha256: descriptor.sha256,
+            meshSource,
+            tinVolumeM3: meshResult.tinVolumeM3,
+            reasoning: visual.reasoning,
+        },
+        persistence: {
+            descriptor,
+            meshResult,
+            savingsPct,
+            spatial,
+        },
+    };
+}
+
+/**
+ * POST /api/geolapp/spatial-analyze
+ * Cubicación espacial métrica real desde ARCore VIO/Depth (preview o captura nueva).
+ */
+router.post(
+    '/spatial-analyze',
+    requireAuth,
+    aiRateLimiter,
+    async (req: AuthRequest, res: Response) => {
+        try {
+            const parsedBody = SpatialAnalyzeBodySchema.safeParse(req.body || {});
+            if (!parsedBody.success) {
+                return res.status(400).json({
+                    error: 'Payload de análisis espacial 3D inválido.',
+                    details: parsedBody.error.flatten(),
+                });
+            }
+
+            const isDevCaller = resolveCallerPrivilege(req.user).isDevRoot;
+            const headerTenant = String(
+                parsedBody.data.tenantId ||
+                    req.headers['x-active-account-id'] ||
+                    req.headers['x-tenant-id'] ||
+                    (isDevCaller ? 'dev-master-sandbox' : '')
+            ).trim();
+
+            const authz = await authorizeStockpileTenantMutation(req, headerTenant);
+            if (!authz.authorized) {
+                return res.status(authz.status).json({ error: authz.error || 'TENANT_ACCESS_DENIED' });
+            }
+
+            const { result } = await runSpatialStockpileAnalyze({
+                tenantId: headerTenant,
+                actorUid: authz.uid,
+                body: parsedBody.data,
+            });
+
+            await AuditLedger.record({
+                tenantId: headerTenant,
+                actorUid: authz.uid,
+                actorEmail: authz.emailLower || authz.uid,
+                action: 'SPATIAL_STOCKPILE_3D_ANALYZE',
+                module: 'stockpile',
+                targetEntity: parsedBody.data.scanId || parsedBody.data.depthMode,
+                details: {
+                    volumeM3: result.volumeM3,
+                    uncertaintyPct: result.uncertaintyPct,
+                    toeScore: result.toeScore,
+                    coveragePct: result.coveragePct,
+                    depthMode: result.depthMode,
+                    groundSlopeDeg: result.groundSlopeDeg,
+                    meshSha256: result.meshSha256,
+                    meshSource: result.meshSource,
+                },
+                ipAddress: extractClientIp(req),
+            }).catch(() => {});
+
+            return res.status(200).json(result);
+        } catch (error: any) {
+            if (error instanceof SpatialVolumeValidationError) {
+                return res.status(400).json({ error: error.message });
+            }
+            console.error('[MINREPORT-ACOPIOS] Error en spatial-analyze:', error);
+            return res.status(500).json({ error: 'Error ejecutando análisis espacial 3D.' });
+        }
+    }
+);
+
+/**
+ * POST /api/geolapp/stockpiles/:id/spatial-analyze
+ * Procesa nube métrica 3D ARCore VIO/Depth para un acopio existente y consolida `.glb` + métricas en Firestore.
+ */
+router.post(
+    '/stockpiles/:id/spatial-analyze',
+    requireAuth,
+    aiRateLimiter,
+    async (req: AuthRequest, res: Response) => {
+        try {
+            const stockpileId = String(req.params.id || '').trim();
+            if (!stockpileId || !STOCKPILE_ID_REGEX.test(stockpileId)) {
+                return res.status(400).json({ error: 'Identificador de acopio inválido.' });
+            }
+
+            const parsedBody = SpatialAnalyzeBodySchema.safeParse(req.body || {});
+            if (!parsedBody.success) {
+                return res.status(400).json({
+                    error: 'Payload de análisis espacial 3D inválido.',
+                    details: parsedBody.error.flatten(),
+                });
+            }
+
+            const docRef = db.collection('stockpiles').doc(stockpileId);
+            const docSnap = await docRef.get();
+            if (!docSnap.exists) {
+                return res.status(404).json({ error: 'Acopio no encontrado.' });
+            }
+
+            const existingData = (docSnap.data() || {}) as Record<string, any>;
+            const docTenantId = String(
+                existingData.tenantId || existingData.accountId || ''
+            ).trim();
+            const authz = await authorizeStockpileTenantMutation(req, docTenantId);
+            if (!authz.authorized) {
+                return res.status(authz.status).json({ error: authz.error || 'TENANT_ACCESS_DENIED' });
+            }
+
+            const effectiveBody = {
+                ...parsedBody.data,
+                photoUrl:
+                    parsedBody.data.photoUrl ||
+                    (typeof existingData.last_photo_url === 'string'
+                        ? existingData.last_photo_url
+                        : existingData.initial_photo_url),
+            };
+
+            const { result, persistence } = await runSpatialStockpileAnalyze({
+                tenantId: docTenantId,
+                actorUid: authz.uid,
+                stockpileId,
+                body: effectiveBody,
+            });
+
+            const now = Date.now();
+            const resolvedWeightT =
+                result.weightT > 0
+                    ? result.weightT
+                    : typeof existingData.density_factor === 'number' && existingData.density_factor > 0
+                      ? Math.round(result.volumeM3 * existingData.density_factor * 100) / 100
+                      : 0;
+
+            const assetPatch: Record<string, unknown> = {
+                analysis_status: 'AI_VERIFIED',
+                scale_anchor_type: 'ARCORE_VIO_DEPTH',
+                volumen_m3: result.volumeM3,
+                last_volume_m3: result.volumeM3,
+                volumen: result.volumeM3,
+                volume_m3: result.volumeM3,
+                peso_t: resolvedWeightT,
+                ...(resolvedWeightT > 0
+                    ? {
+                          last_weight_t: resolvedWeightT,
+                          weight_t: resolvedWeightT,
+                          peso_final_toneladas: resolvedWeightT,
+                      }
+                    : {}),
+                mesh_url: result.meshUrl,
+                mesh_sha256: result.meshSha256,
+                mesh_source: result.meshSource,
+                tin_volume_m3: persistence.meshResult.tinVolumeM3,
+                mesh_original_bytes: persistence.descriptor.originalBytes,
+                mesh_optimized_bytes: persistence.descriptor.optimizedBytes,
+                mesh_savings_pct: persistence.savingsPct,
+                mesh_vertex_count: persistence.meshResult.vertexCount,
+                mesh_triangle_count: persistence.meshResult.triangleCount,
+                mesh_surface_area_m2: persistence.meshResult.surfaceAreaM2,
+                mesh_bounding_box_m: persistence.meshResult.boundingBoxM,
+                mesh_reconstructed_at: now,
+                uncertainty_pct: result.uncertaintyPct,
+                toe_score: result.toeScore,
+                coverage_pct: result.coveragePct,
+                depth_mode: result.depthMode,
+                ground_slope_deg: result.groundSlopeDeg,
+                detected_slope_angle_deg: result.slopeAngleAvgDeg,
+                slope_warning: result.slopeWarning,
+                last_geometry_type: result.geometryType,
+                geometria: result.geometryType,
+                wall_confinement: result.wallConfinement,
+                ...(result.copperDomain && !existingData.copper_domain
+                    ? { copper_domain: result.copperDomain }
+                    : {}),
+                ...(result.granulometry && !existingData.tipo_granulometria
+                    ? { tipo_granulometria: result.granulometry }
+                    : {}),
+                ...(result.suggestedDensityTm3 && !existingData.density_factor
+                    ? { density_factor: result.suggestedDensityTm3 }
+                    : {}),
+                updatedAt: now,
+            };
+
+            await docRef.set(assetPatch, { merge: true });
+
+            if (effectiveBody.measurementId) {
+                const measRef = docRef.collection('measurements').doc(effectiveBody.measurementId);
+                await measRef.set(
+                    {
+                        analysis_status: 'AI_VERIFIED',
+                        scale_anchor_type: 'ARCORE_VIO_DEPTH',
+                        volumen_m3: result.volumeM3,
+                        peso_t: resolvedWeightT,
+                        mesh_url: result.meshUrl,
+                        mesh_sha256: result.meshSha256,
+                        mesh_source: result.meshSource,
+                        tin_volume_m3: persistence.meshResult.tinVolumeM3,
+                        uncertainty_pct: result.uncertaintyPct,
+                        toe_score: result.toeScore,
+                        coverage_pct: result.coveragePct,
+                        depth_mode: result.depthMode,
+                        ground_slope_deg: result.groundSlopeDeg,
+                        detected_slope_angle_deg: result.slopeAngleAvgDeg,
+                        slope_left_deg: result.slopeAngleLeftDeg,
+                        slope_right_deg: result.slopeAngleRightDeg,
+                        slope_warning: result.slopeWarning,
+                        wall_confinement: result.wallConfinement,
+                        geometry: {
+                            type: result.geometryType,
+                            dimensions: result.dimensionsM,
+                        },
+                        ...(result.suggestedDensityTm3
+                            ? { density_factor: result.suggestedDensityTm3 }
+                            : {}),
+                        updatedAt: now,
+                    },
+                    { merge: true }
+                );
+            }
+
+            await AuditLedger.record({
+                tenantId: docTenantId,
+                actorUid: authz.uid,
+                actorEmail: authz.emailLower || authz.uid,
+                action: 'SPATIAL_STOCKPILE_3D_ANALYZE',
+                module: 'stockpile',
+                targetEntity: stockpileId,
+                details: {
+                    measurementId: effectiveBody.measurementId || null,
+                    volumeM3: result.volumeM3,
+                    weightT: resolvedWeightT,
+                    uncertaintyPct: result.uncertaintyPct,
+                    toeScore: result.toeScore,
+                    coveragePct: result.coveragePct,
+                    depthMode: result.depthMode,
+                    groundSlopeDeg: result.groundSlopeDeg,
+                    meshSha256: result.meshSha256,
+                    meshSource: result.meshSource,
+                    tinVolumeM3: persistence.meshResult.tinVolumeM3,
+                },
+                ipAddress: extractClientIp(req),
+            }).catch(() => {});
+
+            return res.status(200).json({
+                ...result,
+                weightT: resolvedWeightT,
+            });
+        } catch (error: any) {
+            if (error instanceof SpatialVolumeValidationError) {
+                return res.status(400).json({ error: error.message });
+            }
+            console.error('[MINREPORT-ACOPIOS] Error en stockpiles/:id/spatial-analyze:', error);
+            return res.status(500).json({ error: 'Error ejecutando análisis espacial 3D en acopio.' });
         }
     }
 );

@@ -97,6 +97,7 @@ Inspirado en la ingeniería aeronáutica, aeroespacial y topográfica de alta ga
 ### 3.3 Paleta Cromática y Acentos Oficiales MINREPORT (ANSI/ISA-101 Color por Excepción)
 - **Regla F-35 PCD & ANSI/ISA-101 (`>= 85%` Monocromático Neutro):** Al menos el `85%` del lienzo permanece en escala monocromática neutra (`#000000` / `#F3F4F6` en Cabina Oscura; `#FFFFFF` / `#0F172A` en Sol Atacama). El estado nominal es visualmente silencioso (*Dark Cockpit*).
 - **Acento Primario Oficial:** **`#C68346` (Cobre Industrial MINREPORT)**. Exclusivo de la identidad minera y reservado únicamente a dato protagonista, foco activo o excepción/alerta (ej. talud `> 38°`, cola offline o escala pendiente). Prohibido el amarillo `#FFCD00`.
+- **Isotipo MINREPORT Monocromático Estricto:** El isotipo MINREPORT es estrictamente monocromático blanco (`#FFFFFF`) sobre fondo negro (`#000000`) o negro (`#000000`/`#1D1D1B`) sobre fondo blanco (`#FFFFFF`); queda terminantemente prohibido aplicar color cobre (`#C68346`) o azul pizarra al isotipo.
 - **Acento Secundario Técnico:** **`#00AEEF` (Cian Tecnológico)** reservado exclusivamente a verificación IA, nivel IMU óptimo, enlaces de ingeniería, interactividad técnica y sellos verificados.
 - **Fondos Modo Oscuro:** Base `#000000` / Superficie y Paneles `#07090D` / Bordes `#12151C`.
 - **Fondos Modo Claro (*Sol Atacama*):** Base `#FFFFFF` / Superficie y Paneles `#F8FAFC` / Bordes `#E2E8F0`.
@@ -166,7 +167,7 @@ Inspirado en la ingeniería aeronáutica, aeroespacial y topográfica de alta ga
 Antes de generar o modificar cualquier componente, interfaz o estilo en MINREPORT, el modelo DEBE validar internamente los siguientes 15 puntos de corte. **Si falla uno solo, el código debe corregirse antes de emitirlo**:
 
 1. [ ] **Tipografía:** ¿Usa únicamente `Atkinson Hyperlegible Next` y `Atkinson Hyperlegible Mono`? (Cero Google Sans, Roboto o Inter).
-2. [ ] **Color & ISA-101:** ¿Al menos `>= 85%` del lienzo es monocromático neutro (`#000000`/`#F3F4F6` oscuro y `#FFFFFF`/`#0F172A` claro *Sol Atacama*), reservando `#C68346` a dato protagonista/foco/excepción y `#00AEEF` a verificación IA/IMU óptimo/interactividad? (Cero amarillo `#FFCD00`).
+2. [ ] **Color & ISA-101:** ¿Al menos `>= 85%` del lienzo es monocromático neutro (`#000000`/`#F3F4F6` oscuro y `#FFFFFF`/`#0F172A` claro *Sol Atacama*), reservando `#C68346` a dato protagonista/foco/excepción y `#00AEEF` a verificación IA/IMU óptimo/interactividad? (Cero amarillo `#FFCD00`). ¿El isotipo MINREPORT se mantiene estrictamente monocromático blanco/negro (cero cobre `#C68346` o azul pizarra en el isotipo)?
 3. [ ] **Soporte Dual:** ¿Cada clase de fondo, texto y borde tiene su contraparte `dark:` completa con contraste WCAG 2.2 AAA?
 4. [ ] **Geometría:** ¿Todos los contenedores, botones e inputs son `rounded-none` / `0px`? (Cero `rounded-lg`, `rounded-md`, `rounded-full`).
 5. [ ] **Sombras:** ¿Está libre de sombras decorativas difusas o neomorfismo (`shadow-none`)?

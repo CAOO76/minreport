@@ -1,5 +1,5 @@
 /**
- * GEOLAPP Core Types (MINREPORT)
+ * MINREPORT · ACOPIOS Core Types
  * Contratos de dominio para cubicación industrial, gobernanza geo-metalúrgica de Cobre (Cu),
  * trazabilidad CAS y soporte a geometrías cono, windrow y acopio contra muro.
  */
@@ -29,6 +29,7 @@ export type GeolappGeometryType =
     | 'ACOPIO_CONTRA_MURO';
 
 export type GeolappDigitalScaleAnchorType =
+    | 'ARCORE_VIO_DEPTH'
     | 'CONO_070'
     | 'MIRA_100'
     | 'CASCO_030'
@@ -239,6 +240,11 @@ export interface StockpileAsset {
     // Estado Digital Offline-First & Talud IA
     analysis_status?: GeolappAnalysisStatus;
     scale_anchor_type?: GeolappDigitalScaleAnchorType;
+    uncertainty_pct?: number | null;
+    toe_score?: number | null;
+    coverage_pct?: number | null;
+    depth_mode?: string | null;
+    ground_slope_deg?: number | null;
     detected_slope_angle_deg?: number;
     slope_warning?: string | null;
     wall_confinement?: 'NONE' | 'SINGLE_WALL' | 'BUNKER_3_WALLS';
@@ -351,6 +357,11 @@ export interface StockpileMeasurement {
     scale_anchor_type?: GeolappDigitalScaleAnchorType;
     scale_anchor_meters?: number;
     reference_base_meters?: number;
+    uncertainty_pct?: number | null;
+    toe_score?: number | null;
+    coverage_pct?: number | null;
+    depth_mode?: string | null;
+    ground_slope_deg?: number | null;
     detected_slope_angle_deg?: number;
     slope_left_deg?: number;
     slope_right_deg?: number;

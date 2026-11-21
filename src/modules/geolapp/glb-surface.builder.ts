@@ -1,3 +1,5 @@
+import type { SpatialSurfaceGrid } from './spatial-volume.engine';
+
 export type StockpileGlbGeometryKind =
     | 'CONO_ELIPTICO'
     | 'TRONCO_CONO_ELIPTICO'
@@ -622,7 +624,7 @@ function packGlbBuffer(
     const gltfJson = {
         asset: {
             version: '2.0',
-            generator: 'MINREPORT-GEOLAPP-TIN-BUILDER-southamerica-west1',
+            generator: 'MINREPORT-ACOPIOS-TIN-BUILDER-southamerica-west1',
         },
         scene: 0,
         scenes: [{ nodes: [0] }],
@@ -732,7 +734,7 @@ function packGlbBuffer(
 
 /**
  * Construye de manera determinista en Node.js (sin WebGL/navegador) un binario glTF 2.0 `.glb`
- * watertight para cualquiera de las 5 geometrias oficiales de GEOLAPP®.
+ * watertight para cualquiera de las 5 geometrias oficiales de MINREPORT · ACOPIOS.
  * Falla de forma cerrada si faltan cotas declaradas o son <= 0.
  */
 export function buildServerStockpileGlbMesh(input: GlbSurfaceBuilderInput): GlbSurfaceBuildResult {
@@ -989,6 +991,177 @@ export function inspectGlbBinaryMetrics(glbBuffer: Buffer): GlbSurfaceBuildResul
         tinVolumeM3: physics.tinVolumeM3,
         surfaceAreaM2: physics.surfaceAreaM2,
         vertexCount: vCount,
+        triangleCount,
+        boundingBoxM: physics.boundingBoxM,
+        rawUnindexedBytes,
+        optimizedGlbBytes: glbBuffer.length,
+    };
+}
+
+/**
+ * Construye de manera determinista un binario glTF 2.0 `.glb` watertight
+ * desde la grilla espacial real (`SpatialSurfaceGrid`) calculada por `spatial-volume.engine.ts`:
+ * superficie superior observada/interpolada, tapa inferior siguiendo el plano inclinado real
+ * `y_ground = a*x + b*z + d` y faldón perimetral cerrado con normales CCW consistentes.
+ */
+export function buildSpatialPointCloudGlbMesh(
+    surfaceGrid: SpatialSurfaceGrid
+): GlbSurfaceBuildResult {
+    const { originX, originZ, cellSizeM, nx, nz, heightsM, groundPlane } = surfaceGrid;
+    if (
+        !Number.isFinite(cellSizeM) ||
+        cellSizeM <= 0 ||
+        !Number.isInteger(nx) ||
+        !Number.isInteger(nz) ||
+        nx < 2 ||
+        nz < 2 ||
+        !Array.isArray(heightsM) ||
+        heightsM.length !== nx * nz
+    ) {
+        throw new Error('Grilla espacial invalida para construir malla .glb watertight.');
+    }
+
+    const quadRows = nz - 1;
+    const quadCols = nx - 1;
+    const activeQuad = new Uint8Array(quadRows * quadCols);
+    let activeQuadCount = 0;
+
+    for (let iz = 0; iz < quadRows; iz++) {
+        for (let ix = 0; ix < quadCols; ix++) {
+            const hTL = heightsM[iz * nx + ix] || 0;
+            const hTR = heightsM[iz * nx + (ix + 1)] || 0;
+            const hBL = heightsM[(iz + 1) * nx + ix] || 0;
+            const hBR = heightsM[(iz + 1) * nx + (ix + 1)] || 0;
+            if (hTL > 0.02 || hTR > 0.02 || hBL > 0.02 || hBR > 0.02) {
+                activeQuad[iz * quadCols + ix] = 1;
+                activeQuadCount += 1;
+            }
+        }
+    }
+
+    if (activeQuadCount === 0) {
+        throw new Error('No hay volumen espacial suficiente sobre el plano base para malla .glb.');
+    }
+
+    const centerX = originX + ((nx - 1) * cellSizeM) * 0.5;
+    const centerZ = originZ + ((nz - 1) * cellSizeM) * 0.5;
+    const { a, b, d } = groundPlane;
+
+    const vertexUsed = new Uint8Array(nx * nz);
+    let minGroundY = Infinity;
+
+    for (let iz = 0; iz < quadRows; iz++) {
+        for (let ix = 0; ix < quadCols; ix++) {
+            if (!activeQuad[iz * quadCols + ix]) continue;
+            const corners = [
+                [ix, iz],
+                [ix + 1, iz],
+                [ix, iz + 1],
+                [ix + 1, iz + 1],
+            ];
+            for (const [vx, vz] of corners) {
+                const vIdx = vz * nx + vx;
+                if (vertexUsed[vIdx]) continue;
+                vertexUsed[vIdx] = 1;
+                const wx = originX + vx * cellSizeM;
+                const wz = originZ + vz * cellSizeM;
+                const yg = a * wx + b * wz + d;
+                if (yg < minGroundY) minGroundY = yg;
+            }
+        }
+    }
+    if (!Number.isFinite(minGroundY)) minGroundY = d;
+
+    const positions: number[] = [];
+    const indices: number[] = [];
+    const topIndex = new Int32Array(nx * nz).fill(-1);
+    const botIndex = new Int32Array(nx * nz).fill(-1);
+
+    const ensureTopVertex = (vx: number, vz: number): number => {
+        const vIdx = vz * nx + vx;
+        if (topIndex[vIdx] >= 0) return topIndex[vIdx];
+        const wx = originX + vx * cellSizeM;
+        const wz = originZ + vz * cellSizeM;
+        const yg = a * wx + b * wz + d - minGroundY;
+        const h = Math.max(0, heightsM[vIdx] || 0);
+        const idx = positions.length / 3;
+        positions.push(wx - centerX, yg + h, wz - centerZ);
+        topIndex[vIdx] = idx;
+        return idx;
+    };
+
+    const ensureBotVertex = (vx: number, vz: number): number => {
+        const vIdx = vz * nx + vx;
+        if (botIndex[vIdx] >= 0) return botIndex[vIdx];
+        const wx = originX + vx * cellSizeM;
+        const wz = originZ + vz * cellSizeM;
+        const yg = a * wx + b * wz + d - minGroundY;
+        const idx = positions.length / 3;
+        positions.push(wx - centerX, yg, wz - centerZ);
+        botIndex[vIdx] = idx;
+        return idx;
+    };
+
+    const isQuadActive = (ix: number, iz: number): boolean => {
+        if (ix < 0 || ix >= quadCols || iz < 0 || iz >= quadRows) return false;
+        return activeQuad[iz * quadCols + ix] === 1;
+    };
+
+    const emitSkirtEdge = (px: number, pz: number, qx: number, qz: number) => {
+        const pBot = ensureBotVertex(px, pz);
+        const qBot = ensureBotVertex(qx, qz);
+        const pTop = ensureTopVertex(px, pz);
+        const qTop = ensureTopVertex(qx, qz);
+        // Arista CCW vista desde +Y: P -> Q => cara exterior (qBot, pBot, pTop, qTop)
+        pushTriangle(indices, qBot, pBot, pTop);
+        pushTriangle(indices, qBot, pTop, qTop);
+    };
+
+    for (let iz = 0; iz < quadRows; iz++) {
+        for (let ix = 0; ix < quadCols; ix++) {
+            if (!isQuadActive(ix, iz)) continue;
+
+            // Superficie superior (+Y normal)
+            const tTL = ensureTopVertex(ix, iz);
+            const tBL = ensureTopVertex(ix, iz + 1);
+            const tBR = ensureTopVertex(ix + 1, iz + 1);
+            const tTR = ensureTopVertex(ix + 1, iz);
+            pushTriangle(indices, tTL, tBL, tBR);
+            pushTriangle(indices, tTL, tBR, tTR);
+
+            // Tapa inferior siguiendo plano inclinado real (-Y normal)
+            const bTL = ensureBotVertex(ix, iz);
+            const bBL = ensureBotVertex(ix, iz + 1);
+            const bBR = ensureBotVertex(ix + 1, iz + 1);
+            const bTR = ensureBotVertex(ix + 1, iz);
+            pushTriangle(indices, bTL, bBR, bBL);
+            pushTriangle(indices, bTL, bTR, bBR);
+
+            // Faldón perimetral cerrado en bordes sin vecino activo
+            if (!isQuadActive(ix - 1, iz)) emitSkirtEdge(ix, iz, ix, iz + 1);
+            if (!isQuadActive(ix, iz + 1)) emitSkirtEdge(ix, iz + 1, ix + 1, iz + 1);
+            if (!isQuadActive(ix + 1, iz)) emitSkirtEdge(ix + 1, iz + 1, ix + 1, iz);
+            if (!isQuadActive(ix, iz - 1)) emitSkirtEdge(ix + 1, iz, ix, iz);
+        }
+    }
+
+    const physics = computeMeshPhysicsAndNormals({ positions, indices });
+    const glbBuffer = packGlbBuffer(
+        positions,
+        physics.normals,
+        physics.indices,
+        physics.boundingBoxM
+    );
+
+    const vertexCount = positions.length / 3;
+    const triangleCount = physics.indices.length / 3;
+    const rawUnindexedBytes = triangleCount * 3 * 24;
+
+    return {
+        glbBuffer,
+        tinVolumeM3: physics.tinVolumeM3,
+        surfaceAreaM2: physics.surfaceAreaM2,
+        vertexCount,
         triangleCount,
         boundingBoxM: physics.boundingBoxM,
         rawUnindexedBytes,

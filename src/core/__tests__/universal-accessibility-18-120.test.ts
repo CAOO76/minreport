@@ -573,11 +573,29 @@ async function testPillar5MobileScannerAndSpokenSpecs(): Promise<void> {
         'utf8'
     );
     assert.equal(mobileScannerSrc.includes('animate-spin'), false, 'MobileScanner no debe usar animate-spin');
+    assert.equal(mobileScannerSrc.includes('<SovereignVoiceInput'), false, 'MobileScanner limpio no debe incluir dictado por voz');
     assert.ok(mobileScannerSrc.includes('<M3CircularProgress'), 'MobileScanner debe usar M3CircularProgress');
     assert.ok(mobileScannerSrc.includes('<M3LinearProgress'), 'MobileScanner debe usar M3LinearProgress');
-    assert.ok(mobileScannerSrc.includes('<SovereignVoiceInput'), 'MobileScanner debe integrar dictado por voz');
-    assert.ok(mobileScannerSrc.includes('880') && mobileScannerSrc.includes('vibrate'),
-        'MobileScanner debe incluir guía acústica 880Hz y vibración háptica IMU');
+    assert.ok(
+        mobileScannerSrc.includes('useImuClinometer') &&
+            mobileScannerSrc.includes('triggerFieldImpact') &&
+            mobileScannerSrc.includes('triggerFieldNotification'),
+        'MobileScanner debe conservar telemetría IMU silenciosa y feedback háptico industrial'
+    );
+    assert.ok(
+        mobileScannerSrc.includes('useSpatialDeviceCapability') &&
+            mobileScannerSrc.includes('useXCoverHardwareKey') &&
+            mobileScannerSrc.includes('mediaDigestorClient.digestFile'),
+        'MobileScanner debe integrar compatibilidad ARCore, XCover Key y digestión CAS'
+    );
+    assert.ok(
+        mobileScannerSrc.includes('autoComplete="off"') &&
+            mobileScannerSrc.includes('spellCheck={false}') &&
+            mobileScannerSrc.includes('aria-label=') &&
+            mobileScannerSrc.includes('min-h-[48px]') &&
+            mobileScannerSrc.includes('w-16 h-16'),
+        'MobileScanner debe mantener targets táctiles >=48px, aria-label y formularios/inputs blindados'
+    );
 
     // Pruebas unitarias deterministas parseSpokenStockpileSpecs (ES / EN / PT + cero invención)
     const esParsed = parseSpokenStockpileSpecs(

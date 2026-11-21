@@ -29,6 +29,10 @@ export interface StockpileVisualStageProps {
         sha256?: string;
     };
     meshSource?: string;
+    uncertaintyPct?: number | null;
+    toeScore?: number | null;
+    coveragePct?: number | null;
+    depthMode?: string | null;
     altLabel?: string;
     isMobile?: boolean;
     heightPx?: number;
@@ -49,6 +53,23 @@ type ActivePhotoSource =
 const PENDING_RECORD = '[Pendiente de registro]';
 const FLAT_ICON_BTN_CLASS =
     'bg-transparent border-0 outline-none p-1.5 text-[#475569] dark:text-[#8A93A6] hover:text-[#00AEEF] disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer rounded-none shadow-none inline-flex items-center justify-center';
+
+function formatDepthModeLabel(depthMode?: string | null): string | null {
+    if (typeof depthMode !== 'string') return null;
+    const normalized = depthMode.trim().toUpperCase();
+    if (!normalized) return null;
+    if (normalized === 'RAW_DEPTH_ONLY') return 'ARCORE RAW DEPTH';
+    if (normalized === 'AUTOMATIC') return 'ARCORE DEPTH';
+    if (normalized === 'VIO_POINTCLOUD') return 'ARCORE VIO';
+    return depthMode.trim();
+}
+
+function formatCasBytesCompact(bytes?: number): string | null {
+    if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes < 0) return null;
+    if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+    if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${Math.round(bytes)} B`;
+}
 
 const StagePhotoThumb: React.FC<{
     url: string;
@@ -92,6 +113,10 @@ export const StockpileVisualStage: React.FC<StockpileVisualStageProps> = ({
     tinVolumeM3,
     casMetrics,
     meshSource,
+    uncertaintyPct,
+    toeScore,
+    coveragePct,
+    depthMode,
     altLabel,
     isMobile = false,
     heightPx,
@@ -229,6 +254,57 @@ export const StockpileVisualStage: React.FC<StockpileVisualStageProps> = ({
 
     const showPhotoPanel = effectiveMode === 'PHOTO' || effectiveMode === 'DUAL';
     const show3DPanel = effectiveMode === '3D' || effectiveMode === 'DUAL';
+
+    const hasTinVolume = typeof tinVolumeM3 === 'number' && Number.isFinite(tinVolumeM3);
+    const hasUncertainty = typeof uncertaintyPct === 'number' && Number.isFinite(uncertaintyPct);
+    const hasCoverage = typeof coveragePct === 'number' && Number.isFinite(coveragePct);
+    const hasToeScore = typeof toeScore === 'number' && Number.isFinite(toeScore);
+    const depthModeLabel = formatDepthModeLabel(depthMode);
+    const cleanMeshSource = typeof meshSource === 'string' ? meshSource.trim() : '';
+
+    const casOrigText = formatCasBytesCompact(casMetrics?.originalBytes);
+    const casOptText = formatCasBytesCompact(casMetrics?.optimizedBytes);
+    const casPctText =
+        typeof casMetrics?.savingsPct === 'number' && Number.isFinite(casMetrics.savingsPct)
+            ? `(-${casMetrics.savingsPct.toFixed(0)}%)`
+            : null;
+    const casSummaryLabel =
+        casOrigText && casOptText
+            ? `${casOrigText} -> ${casOptText}${casPctText ? ` ${casPctText}` : ''}`
+            : casOptText
+              ? `${casOptText}${casPctText ? ` ${casPctText}` : ''}`
+              : casPctText;
+
+    const showMetrologyFooter = Boolean(
+        hasTinVolume ||
+            hasUncertainty ||
+            hasCoverage ||
+            hasToeScore ||
+            depthModeLabel ||
+            casSummaryLabel ||
+            cleanMeshSource
+    );
+
+    const uncertaintyColorClass =
+        hasUncertainty && (uncertaintyPct as number) <= 5
+            ? 'text-[#00AEEF]'
+            : hasUncertainty && (uncertaintyPct as number) > 8
+              ? 'text-[#C68346]'
+              : 'text-[#0F172A] dark:text-[#F3F4F6]';
+
+    const coverageColorClass =
+        hasCoverage && (coveragePct as number) >= 75
+            ? 'text-[#00AEEF]'
+            : hasCoverage && (coveragePct as number) < 60
+              ? 'text-[#C68346]'
+              : 'text-[#0F172A] dark:text-[#F3F4F6]';
+
+    const toeColorClass =
+        hasToeScore && (toeScore as number) >= 75
+            ? 'text-[#00AEEF]'
+            : hasToeScore && (toeScore as number) < 60
+              ? 'text-[#C68346]'
+              : 'text-[#0F172A] dark:text-[#F3F4F6]';
 
     const photoPanel = (
         <div className="min-w-0 flex flex-col gap-fib-8">
@@ -491,6 +567,68 @@ export const StockpileVisualStage: React.FC<StockpileVisualStageProps> = ({
                     {showPhotoPanel && photoPanel}
                     {show3DPanel && twinPanel}
                 </>
+            )}
+
+            {showMetrologyFooter && (
+                <div className="flex flex-wrap items-center justify-between gap-fib-8 px-fib-13 py-fib-8 border-t border-[#E2E8F0] dark:border-[#12151C] bg-transparent font-mono tabular-nums text-microcopy text-[#475569] dark:text-[#8A93A6] rounded-none shadow-none">
+                    <div className="flex flex-wrap items-center gap-fib-13 min-w-0">
+                        {hasTinVolume && (
+                            <span className="font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                                V_TIN {(tinVolumeM3 as number).toFixed(2)} m³
+                            </span>
+                        )}
+                        {hasUncertainty && (
+                            <span
+                                title={t('visual3d.uncertainty_label', 'INCERTIDUMBRE')}
+                                aria-label={`${t('visual3d.uncertainty_label', 'INCERTIDUMBRE')}: ± ${(uncertaintyPct as number).toFixed(1)}%`}
+                                className={`font-bold ${uncertaintyColorClass}`}
+                            >
+                                ± {(uncertaintyPct as number).toFixed(1)}%
+                            </span>
+                        )}
+                        {hasCoverage && (
+                            <span
+                                title={t('visual3d.coverage_label', 'COBERTURA PERIMETRAL')}
+                                aria-label={`${t('visual3d.coverage_label', 'COBERTURA PERIMETRAL')}: ${Math.round(coveragePct as number)}%`}
+                                className={`font-bold ${coverageColorClass}`}
+                            >
+                                COB {Math.round(coveragePct as number)}%
+                            </span>
+                        )}
+                        {hasToeScore && (
+                            <span
+                                title={t('visual3d.toe_score_label', 'CONFIANZA PIE (TOE)')}
+                                aria-label={`${t('visual3d.toe_score_label', 'CONFIANZA PIE (TOE)')}: ${Math.round(toeScore as number)}%`}
+                                className={`font-bold ${toeColorClass}`}
+                            >
+                                TOE {Math.round(toeScore as number)}%
+                            </span>
+                        )}
+                        {depthModeLabel && (
+                            <span
+                                title={t('visual3d.depth_mode_label', 'SENSOR ESPACIAL')}
+                                className="uppercase text-[#475569] dark:text-[#8A93A6]"
+                            >
+                                {depthModeLabel}
+                            </span>
+                        )}
+                    </div>
+
+                    {(casSummaryLabel || cleanMeshSource) && (
+                        <div className="flex flex-wrap items-center gap-fib-8 min-w-0">
+                            {casSummaryLabel && (
+                                <span className="text-[#00AEEF] truncate">
+                                    CAS {casSummaryLabel}
+                                </span>
+                            )}
+                            {cleanMeshSource && (
+                                <span className="uppercase text-[#475569] dark:text-[#8A93A6] truncate max-w-[220px]">
+                                    {cleanMeshSource}
+                                </span>
+                            )}
+                        </div>
+                    )}
+                </div>
             )}
         </div>
     );
