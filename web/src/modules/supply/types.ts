@@ -1,6 +1,6 @@
 /**
  * MINREPORT · ABASTECIMIENTO — Canonical Frontend Types & Pure Formatting Helpers
- * 1:1 parity with `supply.contracts.ts` (Zod schemas in contracts-core) and `/api/supply/*`.
+ * 1:1 parity with `web/src/contracts/supply.contracts.ts` (#9) and `/api/supply/*`.
  */
 
 export type SupplyDomainMode =
@@ -102,25 +102,47 @@ export type PaymentMethod =
     | 'FONDO_POR_RENDIR'
     | 'REEMBOLSO_GERENCIA'
     | 'TRANSFERENCIA'
+    | 'TARJETA_CORPORATIVA'
     | 'CREDITO_PROVEEDOR'
-    | 'TARJETA_CORP';
+    | 'EFECTIVO';
 
-export type RequisitionUrgency = 'CRITICAL' | 'HIGH' | 'STANDARD';
+export type RequisitionUrgency = 'CRITICAL' | 'HIGH' | 'STANDARD' | 'PLANNED';
 
 export type RequisitionLineStatus = 'OPEN' | 'PARTIAL' | 'FULFILLED' | 'CANCELLED';
 
-export type RequisitionStatus = 'OPEN' | 'PARTIAL' | 'FULFILLED' | 'CLOSED' | 'CANCELLED';
+export type RequisitionStatus = 'DRAFT' | 'OPEN' | 'PARTIAL' | 'FULFILLED' | 'CLOSED' | 'CANCELLED';
+
+export type SiiDocumentRcvStatus =
+    | 'PENDING_REVIEW'
+    | 'PENDING_ACCEPTANCE'
+    | 'ACCEPTED'
+    | 'CLAIMED'
+    | 'AUTO_ACCEPTED_8D'
+    | 'NOT_APPLICABLE';
+
+export type SiiExpenseReportStatus =
+    | 'OPEN'
+    | 'SUBMITTED'
+    | 'APPROVED'
+    | 'REIMBURSED'
+    | 'REJECTED'
+    | 'CLOSED'
+    | 'SETTLED';
 
 export interface CasEvidenceRef {
     sha256: string;
+    phashHex?: string;
     downloadUrl: string;
-    mimeType?: string;
+    storagePath?: string;
+    mimeType: string;
+    extension: string;
     originalFilename?: string;
     originalBytes: number;
     optimizedBytes: number;
     savingsRatio?: number;
     savingsPct: number;
     deduplicatedHit?: boolean;
+    capturedAt?: string;
 }
 
 export interface SupplySite {
@@ -133,8 +155,9 @@ export interface SupplySite {
     waterStorageCapacityL: number;
     ds594DailyWaterTargetLPerPax: number;
     leadTimeDays: number;
+    altitudeM?: number;
     altitudeMeters?: number;
-    monthlyBudgetClp?: number;
+    monthlyBudgetClp?: number | null;
 }
 
 export interface CanonicalSupplySku {
@@ -153,6 +176,8 @@ export interface CanonicalSupplySku {
 export interface SupplyRequisitionLine {
     lineId: string;
     canonicalSkuId: string;
+    rawDescription?: string;
+    normalizedName?: string;
     name: string;
     categoryCode: SupplyCategoryCode;
     procurementBucket: ProcurementBucket;
@@ -179,8 +204,8 @@ export interface SupplyRequisition {
     demandOrigin: SupplyDemandOrigin;
     demandNature: SupplyDemandNature;
     costCenter: string;
-    linkedAssetId?: string;
-    linkedPlanRef?: string;
+    linkedAssetId?: string | null;
+    linkedPlanRef?: string | null;
     status: RequisitionStatus;
     lines: SupplyRequisitionLine[];
     createdAt: string;
@@ -201,11 +226,14 @@ export interface ConsolidatedSourceRef {
 export interface ConsolidatedShoppingItem {
     canonicalSkuId: string;
     name: string;
+    normalizedName?: string;
     categoryCode: SupplyCategoryCode;
     procurementBucket: ProcurementBucket;
     unitSi: SupplyUnitSi;
     totalQtyPending: number;
     priority: 'CRITICAL' | 'PARTIAL_PENDING' | 'STANDARD';
+    highestUrgency?: RequisitionUrgency;
+    hasPartialPending?: boolean;
     atypicalCount: number;
     atypicalFlags: AtypicalFlagCode[];
     estimatedClp?: number;
@@ -216,22 +244,35 @@ export interface ConsolidatedShoppingBucketGroup {
     procurementBucket: ProcurementBucket;
     items: ConsolidatedShoppingItem[];
     totalLines: number;
+    itemCount?: number;
     atypicalCount: number;
     estimatedClp: number;
+    estimatedBucketClp?: number;
 }
 
 export interface SupplyPurchaseLineDraft {
     lineId: string;
-    canonicalSkuId?: string;
+    purchaseLineId?: string;
+    canonicalSkuId?: string | null;
     rawDescription: string;
+    normalizedName?: string;
     categoryCode: SupplyCategoryCode;
     procurementBucket?: ProcurementBucket;
     qty: number;
+    qtyPurchased?: number;
+    qtyReceived?: number;
     unitSi: SupplyUnitSi;
     unitPriceClp: number;
+    unitPriceNetClp?: number;
+    unitPriceGrossClp?: number;
     subtotalClp: number;
+    lineNetClp?: number;
+    lineVatClp?: number;
+    lineTotalClp?: number;
     destination: PurchaseLineDestination;
     costCenter?: string;
+    isCapexAsset?: boolean;
+    atypicalFlags?: AtypicalFlagCode[];
     matchedReqLineId?: string;
     matchedReqId?: string;
 }
@@ -250,7 +291,7 @@ export interface SupplyPurchaseDraft {
     totalAmountClp: number;
     paymentMethod: PaymentMethod;
     evidenceCasRef?: CasEvidenceRef;
-    tedRawXml?: string;
+    tedRawXml?: string | null;
     arithmeticMismatch?: boolean;
     arithmeticDeltaClp?: number;
     duplicateDetected?: boolean;
@@ -263,19 +304,26 @@ export interface SupplyPurchaseRecord extends SupplyPurchaseDraft {
     tenantId: string;
     buyerUid: string;
     buyerRole: SupplyOperationalRole;
-    authorizedByAuthority?: string;
-    receptionStatus?: 'IN_TRANSIT' | 'RECEIVED' | 'PARTIAL';
+    authorizedByAuthority?: boolean | string;
+    receptionStatus?:
+        | 'IN_TRANSIT'
+        | 'PARTIALLY_RECEIVED'
+        | 'RECEIVED_AT_SITE'
+        | 'DIRECT_CONSUMED'
+        | 'RECEIVED'
+        | 'PARTIAL';
     createdAt: string;
 }
 
 export interface FulfillmentAllocationDraft {
     purchaseLineId: string;
+    allocationKind: 'REQUISITION_MATCH' | 'UNSOLICITED_PURCHASE';
     requisitionId: string | null;
     requisitionLineId: string | null;
-    allocationType: 'REQUISITION_MATCH' | 'UNSOLICITED_PURCHASE';
-    allocatedQty: number;
+    qtyAllocated: number;
+    unitSi: SupplyUnitSi;
     destination: PurchaseLineDestination;
-    resultingStatus: 'FULFILLED' | 'PARTIAL' | 'OPEN' | 'CAPEX_ASSET' | 'STOCK';
+    resultingRequisitionLineStatus: RequisitionLineStatus | null;
 }
 
 export interface SupplyInventoryItem {
@@ -300,7 +348,7 @@ export interface SupplyAssetRecord {
     tenantId: string;
     siteId: string;
     name: string;
-    serialOrTag?: string;
+    serialOrTag?: string | null;
     categoryCode?: SupplyCategoryCode;
     acquisitionNetClp: number;
     vatCreditClp: number;
@@ -311,8 +359,8 @@ export interface SupplyAssetRecord {
     issueDate?: string;
     evidenceCasRef?: CasEvidenceRef;
     missingInvoiceAlert: boolean;
-    warrantyUntil?: string;
-    opermaqAssetId?: string;
+    warrantyUntil?: string | null;
+    opermaqAssetId?: string | null;
     createdAt: string;
 }
 
@@ -320,7 +368,7 @@ export interface SiiDocumentRecord {
     docId: string;
     tenantId: string;
     siteId?: string;
-    purchaseId?: string;
+    purchaseId?: string | null;
     dedupeKey: string;
     supplierTaxId: string;
     supplierName: string;
@@ -331,11 +379,11 @@ export interface SiiDocumentRecord {
     vatAmountClp: number;
     totalAmountClp: number;
     paymentMethod: PaymentMethod;
-    rcvDeadlineDate?: string;
-    rcvDaysRemaining?: number;
-    rcvStatus: 'PENDING_ACCEPTANCE' | 'ACCEPTED' | 'CLAIMED' | 'NOT_APPLICABLE';
+    rcvDeadlineDate?: string | null;
+    rcvDaysRemaining?: number | null;
+    rcvStatus: SiiDocumentRcvStatus;
     isDuplicate?: boolean;
-    expenseReportId?: string;
+    expenseReportId?: string | null;
     evidenceCasRef?: CasEvidenceRef;
     createdAt: string;
 }
@@ -345,6 +393,8 @@ export interface SiiExpenseReport {
     tenantId: string;
     siteId?: string;
     code: string;
+    title: string;
+    costCenter: string;
     holderName: string;
     holderUid?: string;
     periodLabel: string;
@@ -354,7 +404,7 @@ export interface SiiExpenseReport {
     balanceClp: number;
     documentCount: number;
     documentIds: string[];
-    status: 'OPEN' | 'SUBMITTED' | 'APPROVED' | 'SETTLED';
+    status: SiiExpenseReportStatus;
     createdAt: string;
 }
 
@@ -375,7 +425,7 @@ export interface WhatsAppSimMessage {
     id: string;
     direction: 'INBOUND' | 'OUTBOUND';
     text: string;
-    fsmState?: 'COLLECTING' | 'POLICY_CHECK' | 'SLOT_FILLING' | 'REVIEW_GATE' | 'COMMITTED';
+    fsmState?: 'COLLECTING' | 'POLICY_CHECK' | 'SLOT_FILLING' | 'REVIEW_GATE' | 'COMMITTED' | 'CANCELLED';
     hardDeniedItems?: string[];
     atypicalFlags?: AtypicalFlagCode[];
     missingSlots?: string[];
@@ -421,8 +471,9 @@ export const PAYMENT_METHODS: PaymentMethod[] = [
     'FONDO_POR_RENDIR',
     'REEMBOLSO_GERENCIA',
     'TRANSFERENCIA',
+    'TARJETA_CORPORATIVA',
     'CREDITO_PROVEEDOR',
-    'TARJETA_CORP',
+    'EFECTIVO',
 ];
 
 export function formatClp(amount: number | undefined | null): string {
@@ -447,7 +498,9 @@ export function computeSavingsPct(originalBytes: number, optimizedBytes: number)
     return Math.max(0, Math.round(raw * 10) / 10);
 }
 
-export function formatCasTelemetry(ref?: Pick<CasEvidenceRef, 'originalBytes' | 'optimizedBytes' | 'savingsPct'> | null): string | null {
+export function formatCasTelemetry(
+    ref?: Pick<CasEvidenceRef, 'originalBytes' | 'optimizedBytes' | 'savingsPct'> | null
+): string | null {
     if (!ref || ref.originalBytes <= 0) return null;
     const pct =
         typeof ref.savingsPct === 'number' && Number.isFinite(ref.savingsPct)

@@ -95,8 +95,27 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
         setActionLoading(true);
         setNotice(null);
         try {
+            const receivedLines =
+                (pendingReceptionPurchase.lines || []).length > 0
+                    ? pendingReceptionPurchase.lines.map((line) => {
+                          const purchased = Number(line.qtyPurchased ?? line.qty) || 0;
+                          const received = Number(line.qtyReceived ?? 0) || 0;
+                          const remaining = Math.max(0, purchased - received);
+                          return {
+                              purchaseLineId: line.purchaseLineId || line.lineId,
+                              qtyReceivedNow: remaining > 0 ? remaining : purchased,
+                          };
+                      })
+                    : [
+                          {
+                              purchaseLineId: `${pendingReceptionPurchase.purchaseId}_line_1`,
+                              qtyReceivedNow: 1,
+                          },
+                      ];
+
             await supplyApi.confirmPurchaseReception(
                 pendingReceptionPurchase.purchaseId,
+                receivedLines,
                 'ACTUALIZAR',
                 tenantId
             );

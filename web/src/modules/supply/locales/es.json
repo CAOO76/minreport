@@ -122,10 +122,12 @@
       "FONDO_POR_RENDIR": "Fondo por Rendir",
       "REEMBOLSO_GERENCIA": "Reembolso Gerencia",
       "TRANSFERENCIA": "Transferencia",
+      "TARJETA_CORPORATIVA": "Tarjeta Corporativa",
       "CREDITO_PROVEEDOR": "Crédito Proveedor",
-      "TARJETA_CORP": "Tarjeta Corporativa"
+      "EFECTIVO": "Efectivo"
     },
     "status": {
+      "DRAFT": "BORRADOR",
       "OPEN": "PENDIENTE",
       "PARTIAL": "PARCIAL",
       "FULFILLED": "CUBIERTO",
@@ -133,10 +135,17 @@
       "CANCELLED": "ANULADO",
       "CAPEX_ASSET": "CAPEX",
       "STOCK": "STOCK",
+      "PENDING_REVIEW": "RCV PENDIENTE",
       "PENDING_ACCEPTANCE": "RCV PENDIENTE",
       "ACCEPTED": "RCV ACEPTADO",
+      "AUTO_ACCEPTED_8D": "RCV AUTO-ACEPTADO 8D",
       "CLAIMED": "RCV RECLAMADO",
-      "NOT_APPLICABLE": "N/A"
+      "NOT_APPLICABLE": "N/A",
+      "SUBMITTED": "ENVIADO",
+      "APPROVED": "APROBADO",
+      "REIMBURSED": "REEMBOLSADO",
+      "REJECTED": "RECHAZADO",
+      "SETTLED": "LIQUIDADO"
     },
     "lists": {
       "title": "RUTA DE COMPRA CONSOLIDADA",
@@ -269,9 +278,13 @@
       "balance": "SALDO",
       "preview_evidence": "Ver evidencia CAS",
       "new_envelope": "Crear sobre de rendición",
+      "envelope_title": "Título del sobre",
+      "envelope_cost_center": "Centro de costo",
       "envelope_holder": "Responsable",
       "envelope_period": "Período",
-      "envelope_advance": "Fondo entregado CLP"
+      "envelope_advance": "Fondo entregado CLP",
+      "hitl_envelope_title": "CREAR SOBRE DE RENDICIÓN SII",
+      "hitl_envelope_desc": "Registra un nuevo sobre de rendición SII con trazabilidad en AuditLedger."
     }
   }
 }

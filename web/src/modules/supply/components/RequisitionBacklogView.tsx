@@ -135,7 +135,8 @@ export const RequisitionBacklogView: React.FC<RequisitionBacklogViewProps> = ({
                     demandOrigin: 'DESKTOP_MANUAL',
                     demandNature: 'REACTIVE_FIELD',
                     lines: validLines.map((l) => ({
-                        name: l.name.trim(),
+                        rawDescription: l.name.trim(),
+                        normalizedName: l.name.trim(),
                         categoryCode: l.categoryCode,
                         unitSi: l.unitSi,
                         qtyRequested: l.qtyRequested,
@@ -189,8 +190,8 @@ export const RequisitionBacklogView: React.FC<RequisitionBacklogViewProps> = ({
                 {
                     siteId: defaultSiteId || sites[0]?.siteId || 'site-main',
                     phoneE164: simPhone.trim(),
-                    role: simRole,
-                    messageText: resetSession ? '/reset' : messageText,
+                    simulateSenderRole: simRole,
+                    text: resetSession ? '/reset' : messageText,
                     resetSession,
                 },
                 tenantId

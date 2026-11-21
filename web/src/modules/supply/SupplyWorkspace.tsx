@@ -217,6 +217,7 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                 (p) =>
                     p.receptionStatus === 'IN_TRANSIT' ||
                     p.receptionStatus === 'PARTIAL' ||
+                    p.receptionStatus === 'PARTIALLY_RECEIVED' ||
                     (!p.receptionStatus &&
                         (p.lines || []).some((l) => l.destination === 'STOCK_IN_TRANSIT'))
             ),
@@ -237,7 +238,13 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
         );
         const rcvUrgent = siiDocuments.filter((d) => {
             if (d.documentType !== 33 && d.documentType !== 34) return false;
-            if (d.rcvStatus === 'ACCEPTED' || d.rcvStatus === 'NOT_APPLICABLE') return false;
+            if (
+                d.rcvStatus === 'ACCEPTED' ||
+                d.rcvStatus === 'AUTO_ACCEPTED_8D' ||
+                d.rcvStatus === 'NOT_APPLICABLE'
+            ) {
+                return false;
+            }
             const days = d.rcvDaysRemaining ?? computeRcvDaysRemaining(d.issueDate);
             return days !== null && days <= 2;
         }).length;

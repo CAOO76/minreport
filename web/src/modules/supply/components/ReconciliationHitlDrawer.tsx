@@ -12,6 +12,7 @@ import {
     type SupplyPurchaseDraft,
     type SupplyRequisition,
     type SupplyRequisitionLine,
+    type SupplyUnitSi,
 } from '../types';
 
 export interface ReconciliationHitlDrawerProps {
@@ -35,7 +36,7 @@ interface EditableAllocationRow {
     purchaseLineId: string;
     rawDescription: string;
     qtyPurchased: number;
-    unitSi: string;
+    unitSi: SupplyUnitSi;
     subtotalClp: number;
     selectedReqKey: string; // `${reqId}::${lineId}` or 'UNSOLICITED'
     allocatedQty: number;
@@ -176,27 +177,30 @@ export const ReconciliationHitlDrawer: React.FC<ReconciliationHitlDrawerProps> =
             if (row.selectedReqKey === 'UNSOLICITED') {
                 return {
                     purchaseLineId: row.purchaseLineId,
+                    allocationKind: 'UNSOLICITED_PURCHASE',
                     requisitionId: null,
                     requisitionLineId: null,
-                    allocationType: 'UNSOLICITED_PURCHASE',
-                    allocatedQty: row.qtyPurchased,
+                    qtyAllocated: Math.max(0.0001, Number(row.qtyPurchased) || 1),
+                    unitSi: row.unitSi,
                     destination: row.destination,
-                    resultingStatus: row.destination === 'CAPEX_ASSET' ? 'CAPEX_ASSET' : 'STOCK',
+                    resultingRequisitionLineStatus: null,
                 };
             }
             const [reqId, reqLineId] = row.selectedReqKey.split('::');
             const target = reqMap.get(row.selectedReqKey);
             const totalAlloc = allocatedTotalsByReqKey.get(row.selectedReqKey) || row.allocatedQty;
             const pending = target?.line.qtyPending || 0;
-            const resultingStatus = totalAlloc >= pending ? 'FULFILLED' : totalAlloc > 0 ? 'PARTIAL' : 'OPEN';
+            const resultingRequisitionLineStatus =
+                totalAlloc >= pending ? 'FULFILLED' : totalAlloc > 0 ? 'PARTIAL' : 'OPEN';
             return {
                 purchaseLineId: row.purchaseLineId,
+                allocationKind: 'REQUISITION_MATCH',
                 requisitionId: reqId || null,
                 requisitionLineId: reqLineId || null,
-                allocationType: 'REQUISITION_MATCH',
-                allocatedQty: row.allocatedQty,
+                qtyAllocated: Math.max(0.0001, Number(row.allocatedQty) || 1),
+                unitSi: row.unitSi,
                 destination: row.destination,
-                resultingStatus,
+                resultingRequisitionLineStatus,
             };
         });
 

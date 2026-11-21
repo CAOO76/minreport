@@ -108,7 +108,7 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
     onSendToReconciler,
     onCommitted,
 }) => {
-    const { t } = useTranslation();
+    const { t, i18n } = useTranslation();
     const fileInputRef = useRef<HTMLInputElement | null>(null);
     const cameraInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -133,7 +133,7 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
     const [vatAmountClp, setVatAmountClp] = useState<number>(0);
     const [totalAmountClp, setTotalAmountClp] = useState<number>(0);
     const [tedRawXml, setTedRawXml] = useState('');
-    const [xmlDteRaw, setXmlDteRaw] = useState('');
+    const [xmlDteContent, setXmlDteContent] = useState('');
 
     const [evidenceCasRef, setEvidenceCasRef] = useState<CasEvidenceRef | undefined>(undefined);
     const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -277,7 +277,7 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
 
             if (isXml) {
                 const xmlText = await file.text();
-                setXmlDteRaw(xmlText);
+                setXmlDteContent(xmlText);
                 setTedRawXml(xmlText);
                 setShowTedInput(true);
                 applyParsedTedHeader(xmlText);
@@ -356,14 +356,19 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
         setAnalyzing(true);
         setStatusNotice(null);
         try {
+            const rawLang = String(i18n.language || 'es').slice(0, 2).toLowerCase();
+            const locale: 'es' | 'en' | 'pt' =
+                rawLang === 'en' || rawLang === 'pt' ? rawLang : 'es';
             const draft = await supplyApi.analyzeReceipt(
                 {
                     siteId,
                     purchaseMode,
+                    defaultDestination,
                     evidenceCasRef,
                     clientOriginalBytes: evidenceCasRef?.originalBytes,
                     tedRawXml: tedRawXml.trim() || undefined,
-                    xmlDteRaw: xmlDteRaw.trim() || undefined,
+                    xmlDteContent: xmlDteContent.trim() || undefined,
+                    locale,
                 },
                 tenantId
             );
@@ -424,13 +429,14 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
     const handleDirectHitlCommit = async () => {
         const draft = buildCurrentDraft();
         const allocations: FulfillmentAllocationDraft[] = draft.lines.map((l) => ({
-            purchaseLineId: l.lineId,
+            purchaseLineId: l.purchaseLineId || l.lineId,
+            allocationKind: l.matchedReqLineId ? 'REQUISITION_MATCH' : 'UNSOLICITED_PURCHASE',
             requisitionId: l.matchedReqId || null,
             requisitionLineId: l.matchedReqLineId || null,
-            allocationType: l.matchedReqLineId ? 'REQUISITION_MATCH' : 'UNSOLICITED_PURCHASE',
-            allocatedQty: l.qty,
+            qtyAllocated: Math.max(0.0001, Number(l.qtyPurchased ?? l.qty) || 1),
+            unitSi: l.unitSi,
             destination: l.destination,
-            resultingStatus: l.destination === 'CAPEX_ASSET' ? 'CAPEX_ASSET' : 'STOCK',
+            resultingRequisitionLineStatus: l.matchedReqLineId ? 'FULFILLED' : null,
         }));
 
         setCommitting(true);

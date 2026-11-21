@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import M3LinearProgress from '../../../components/common/M3LinearProgress';
 import SecureImage from '../../../components/common/SecureImage';
 import CopyButton from '../../../components/common/CopyButton';
+import HitlConfirmModal, { type HitlComparisonDiffItem } from '../../../components/common/HitlConfirmModal';
 import { cn } from '../../../utils/cn';
 import { supplyApi } from '../services/supplyApi';
 import {
@@ -40,10 +41,13 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
     const [previewDoc, setPreviewDoc] = useState<SiiDocumentRecord | null>(null);
     const [exporting, setExporting] = useState(false);
     const [showNewEnvelope, setShowNewEnvelope] = useState(false);
+    const [envelopeTitle, setEnvelopeTitle] = useState('');
+    const [envelopeCostCenter, setEnvelopeCostCenter] = useState('CC-CAMPAMENTO');
     const [holderName, setHolderName] = useState('');
     const [periodLabel, setPeriodLabel] = useState(new Date().toISOString().slice(0, 7));
     const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('FONDO_POR_RENDIR');
     const [fundAdvanceClp, setFundAdvanceClp] = useState<number>(0);
+    const [hitlEnvelopeOpen, setHitlEnvelopeOpen] = useState(false);
     const [creatingEnvelope, setCreatingEnvelope] = useState(false);
     const [notice, setNotice] = useState<{ tone: 'copper' | 'cyan'; text: string } | null>(null);
 
@@ -70,7 +74,13 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
     const rcvUrgentCount = useMemo(
         () =>
             facturas.filter((d) => {
-                if (d.rcvStatus === 'ACCEPTED' || d.rcvStatus === 'NOT_APPLICABLE') return false;
+                if (
+                    d.rcvStatus === 'ACCEPTED' ||
+                    d.rcvStatus === 'AUTO_ACCEPTED_8D' ||
+                    d.rcvStatus === 'NOT_APPLICABLE'
+                ) {
+                    return false;
+                }
                 const days = d.rcvDaysRemaining ?? computeRcvDaysRemaining(d.issueDate);
                 return days !== null && days <= 2;
             }).length,
@@ -103,27 +113,42 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
         }
     };
 
-    const handleCreateEnvelope = async (e: React.FormEvent) => {
+    const handleRequestCreateEnvelope = (e: React.FormEvent) => {
         e.preventDefault();
-        if (!holderName.trim()) return;
+        if (!holderName.trim() || !envelopeTitle.trim()) return;
+        setHitlEnvelopeOpen(true);
+    };
+
+    const handleConfirmCreateEnvelope = async () => {
+        if (!holderName.trim() || !envelopeTitle.trim()) return;
         setCreatingEnvelope(true);
         setNotice(null);
         try {
+            const unassignedDocIds = documents
+                .filter((d) => !d.expenseReportId)
+                .map((d) => d.docId);
             await supplyApi.createSiiExpenseReport(
                 {
-                    siteId: activeSiteId,
+                    siteId: activeSiteId || 'site-main',
+                    title: envelopeTitle.trim(),
+                    costCenter: envelopeCostCenter.trim() || 'CC-CAMPAMENTO',
                     holderName: holderName.trim(),
                     periodLabel: periodLabel.trim(),
                     paymentMethod,
                     fundAdvanceClp,
+                    siiDocumentIds: unassignedDocIds,
+                    confirmationKeyword: 'ACTUALIZAR',
                 },
                 tenantId
             );
+            setEnvelopeTitle('');
             setHolderName('');
             setFundAdvanceClp(0);
+            setHitlEnvelopeOpen(false);
             setShowNewEnvelope(false);
             onMutated();
         } catch (err) {
+            setHitlEnvelopeOpen(false);
             setNotice({
                 tone: 'copper',
                 text: err instanceof Error ? err.message : 'ENVELOPE_ERROR',
@@ -132,6 +157,22 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
             setCreatingEnvelope(false);
         }
     };
+
+    const envelopeDiff = useMemo<HitlComparisonDiffItem[]>(
+        () => [
+            {
+                field: t('supply.sii.envelope_title'),
+                current: 'DRAFT',
+                suggested: `${envelopeTitle.trim() || '—'} · ${envelopeCostCenter.trim() || 'CC-CAMPAMENTO'}`,
+            },
+            {
+                field: t('supply.sii.envelope_advance'),
+                current: formatClp(0),
+                suggested: `${formatClp(fundAdvanceClp)} · ${periodLabel}`,
+            },
+        ],
+        [envelopeTitle, envelopeCostCenter, fundAdvanceClp, periodLabel, t]
+    );
 
     return (
         <section className="w-full flex flex-col bg-[#FFFFFF] dark:bg-[#000000] select-none">
@@ -309,9 +350,15 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                             const rcvDays =
                                 doc.rcvDaysRemaining ?? computeRcvDaysRemaining(doc.issueDate);
                             const isFactura = doc.documentType === 33 || doc.documentType === 34;
+                            const isRcvPending =
+                                doc.rcvStatus === 'PENDING_REVIEW' ||
+                                doc.rcvStatus === 'PENDING_ACCEPTANCE';
+                            const isRcvAccepted =
+                                doc.rcvStatus === 'ACCEPTED' ||
+                                doc.rcvStatus === 'AUTO_ACCEPTED_8D';
                             const rcvUrgent =
                                 isFactura &&
-                                doc.rcvStatus === 'PENDING_ACCEPTANCE' &&
+                                isRcvPending &&
                                 rcvDays !== null &&
                                 rcvDays <= 2;
                             const casLine = formatCasTelemetry(doc.evidenceCasRef);
@@ -319,7 +366,7 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                             const barClass =
                                 doc.isDuplicate || rcvUrgent
                                     ? 'border-l-[#C68346]'
-                                    : doc.rcvStatus === 'ACCEPTED' || !doc.isDuplicate
+                                    : isRcvAccepted || !doc.isDuplicate
                                       ? 'border-l-[#00AEEF]'
                                       : 'border-l-transparent';
 
@@ -386,13 +433,13 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                                                         'font-bold',
                                                         rcvUrgent
                                                             ? 'text-[#C68346]'
-                                                            : doc.rcvStatus === 'ACCEPTED'
+                                                            : isRcvAccepted
                                                               ? 'text-[#00AEEF]'
                                                               : 'text-[#475569] dark:text-[#8A93A6]'
                                                     )}
                                                 >
                                                     {t(`supply.status.${doc.rcvStatus}`)}
-                                                    {doc.rcvStatus === 'PENDING_ACCEPTANCE' &&
+                                                    {isRcvPending &&
                                                     rcvDays !== null
                                                         ? rcvDays < 0
                                                             ? ` · ${t('supply.sii.rcv_expired')}`
@@ -448,11 +495,37 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                 <div>
                     {showNewEnvelope && (
                         <form
-                            onSubmit={handleCreateEnvelope}
+                            onSubmit={handleRequestCreateEnvelope}
                             autoComplete="off"
                             spellCheck={false}
-                            className="px-fib-21 py-fib-21 bg-[#F8FAFC] dark:bg-[#07090D] border-b border-[#E2E8F0] dark:border-[#12151C] grid grid-cols-1 md:grid-cols-5 gap-fib-13 items-end"
+                            className="px-fib-21 py-fib-21 bg-[#F8FAFC] dark:bg-[#07090D] border-b border-[#E2E8F0] dark:border-[#12151C] grid grid-cols-1 md:grid-cols-7 gap-fib-13 items-end"
                         >
+                            <div className="space-y-fib-8">
+                                <label className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">
+                                    {t('supply.sii.envelope_title')}
+                                </label>
+                                <input
+                                    type="text"
+                                    value={envelopeTitle}
+                                    onChange={(e) => setEnvelopeTitle(e.target.value)}
+                                    autoComplete="off"
+                                    spellCheck={false}
+                                    className="w-full min-h-[44px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
+                                />
+                            </div>
+                            <div className="space-y-fib-8">
+                                <label className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">
+                                    {t('supply.sii.envelope_cost_center')}
+                                </label>
+                                <input
+                                    type="text"
+                                    value={envelopeCostCenter}
+                                    onChange={(e) => setEnvelopeCostCenter(e.target.value)}
+                                    autoComplete="off"
+                                    spellCheck={false}
+                                    className="w-full min-h-[44px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
+                                />
+                            </div>
                             <div className="space-y-fib-8">
                                 <label className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">
                                     {t('supply.sii.envelope_holder')}
@@ -513,7 +586,7 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                             </div>
                             <button
                                 type="submit"
-                                disabled={creatingEnvelope || !holderName.trim()}
+                                disabled={creatingEnvelope || !holderName.trim() || !envelopeTitle.trim()}
                                 className="min-h-[44px] px-fib-21 bg-[#C68346] border border-[#C68346] text-[#FFFFFF] font-mono text-data-dense font-bold uppercase rounded-none shadow-none cursor-pointer disabled:opacity-40"
                             >
                                 {t('supply.common.save')}
@@ -547,6 +620,7 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                                             negativeBalance
                                                 ? 'border-l-[#C68346]'
                                                 : rep.status === 'SETTLED' ||
+                                                    rep.status === 'REIMBURSED' ||
                                                     rep.status === 'APPROVED'
                                                   ? 'border-l-[#00AEEF]'
                                                   : 'border-l-transparent'
@@ -555,7 +629,10 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                                         <div className="flex flex-wrap items-center justify-between gap-fib-8 font-mono tabular-nums">
                                             <div className="flex items-center gap-fib-8">
                                                 <span className="text-data-dense font-bold text-[#0F172A] dark:text-[#F3F4F6] select-text">
-                                                    {rep.code}
+                                                    {rep.title || rep.code}
+                                                </span>
+                                                <span className="text-microcopy text-[#475569] dark:text-[#8A93A6]">
+                                                    {rep.costCenter}
                                                 </span>
                                                 <span className="text-data-dense text-[#0F172A] dark:text-[#F3F4F6]">
                                                     {rep.holderName}
@@ -566,7 +643,7 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                                                 </span>
                                             </div>
                                             <span className="text-microcopy font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6]">
-                                                {rep.status} ({rep.documentCount} DTE)
+                                                {t(`supply.status.${rep.status}`)} ({rep.documentCount} DTE)
                                             </span>
                                         </div>
 
@@ -612,6 +689,17 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                     </div>
                 </div>
             )}
+
+            <HitlConfirmModal
+                open={hitlEnvelopeOpen}
+                title={t('supply.sii.hitl_envelope_title')}
+                description={t('supply.sii.hitl_envelope_desc')}
+                keyword="ACTUALIZAR"
+                comparisonDiff={envelopeDiff}
+                loading={creatingEnvelope}
+                onConfirm={() => void handleConfirmCreateEnvelope()}
+                onCancel={() => setHitlEnvelopeOpen(false)}
+            />
         </section>
     );
 };

@@ -122,10 +122,12 @@
       "FONDO_POR_RENDIR": "Imprest Fund",
       "REEMBOLSO_GERENCIA": "Exec Reimbursement",
       "TRANSFERENCIA": "Bank Transfer",
+      "TARJETA_CORPORATIVA": "Corporate Card",
       "CREDITO_PROVEEDOR": "Supplier Credit",
-      "TARJETA_CORP": "Corporate Card"
+      "EFECTIVO": "Cash"
     },
     "status": {
+      "DRAFT": "DRAFT",
       "OPEN": "PENDING",
       "PARTIAL": "PARTIAL",
       "FULFILLED": "FULFILLED",
@@ -133,10 +135,17 @@
       "CANCELLED": "CANCELLED",
       "CAPEX_ASSET": "CAPEX",
       "STOCK": "STOCK",
+      "PENDING_REVIEW": "RCV PENDING",
       "PENDING_ACCEPTANCE": "RCV PENDING",
       "ACCEPTED": "RCV ACCEPTED",
+      "AUTO_ACCEPTED_8D": "RCV AUTO-ACCEPTED 8D",
       "CLAIMED": "RCV CLAIMED",
-      "NOT_APPLICABLE": "N/A"
+      "NOT_APPLICABLE": "N/A",
+      "SUBMITTED": "SUBMITTED",
+      "APPROVED": "APPROVED",
+      "REIMBURSED": "REIMBURSED",
+      "REJECTED": "REJECTED",
+      "SETTLED": "SETTLED"
     },
     "lists": {
       "title": "CONSOLIDATED SHOPPING ROUTE",
@@ -269,9 +278,13 @@
       "balance": "BALANCE",
       "preview_evidence": "View CAS evidence",
       "new_envelope": "Create expense envelope",
+      "envelope_title": "Envelope title",
+      "envelope_cost_center": "Cost center",
       "envelope_holder": "Holder",
       "envelope_period": "Period",
-      "envelope_advance": "Fund advance CLP"
+      "envelope_advance": "Fund advance CLP",
+      "hitl_envelope_title": "CREATE SII EXPENSE ENVELOPE",
+      "hitl_envelope_desc": "Records a new SII expense rendition envelope in AuditLedger."
     }
   }
 }
