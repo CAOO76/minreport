@@ -157,7 +157,7 @@ export const HitlConfirmationKeywordSchema = z.literal('ACTUALIZAR');
 export const EvidenceCasRefSchema = z.object({
     sha256: z.string().regex(/^[a-f0-9]{64}$/i),
     phashHex: z.string().regex(/^[a-f0-9]{16}$/i).optional(),
-    storagePath: z.string().min(1).max(512),
+    storagePath: z.string().min(1).max(512).optional(),
     downloadUrl: z
         .string()
         .min(1)
@@ -168,12 +168,14 @@ export const EvidenceCasRefSchema = z.object({
         ),
     mimeType: z.string().min(3).max(120),
     extension: z.string().min(1).max(16),
-    profile: z.string().min(1).max(64),
+    profile: z.string().min(1).max(64).optional(),
     originalBytes: z.number().int().nonnegative(),
     optimizedBytes: z.number().int().nonnegative(),
-    savingsRatio: z.number().min(0).max(1),
+    savingsRatio: z.number().min(0).max(1).optional(),
     savingsPct: z.number().min(0).max(100),
     originalFilename: z.string().max(240).optional(),
+    deduplicatedHit: z.boolean().optional(),
+    capturedAt: z.string().optional(),
     createdAt: z.string().optional(),
 });
 export type EvidenceCasRef = z.infer<typeof EvidenceCasRefSchema>;

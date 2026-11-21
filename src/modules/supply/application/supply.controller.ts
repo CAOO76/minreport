@@ -393,7 +393,7 @@ const CreateRequisitionBodySchema = z.object({
         .array(
             z
                 .object({
-                    canonicalSkuId: z.string().trim().min(1).max(128).optional(),
+                    canonicalSkuId: z.string().trim().min(1).max(128).nullable().optional(),
                     rawDescription: z.string().trim().min(1).max(240).optional(),
                     normalizedName: z.string().trim().min(1).max(200).optional(),
                     itemName: z.string().trim().min(1).max(200).optional(),
@@ -414,7 +414,7 @@ const CreateRequisitionBodySchema = z.object({
                     urgency: SupplyUrgencySchema.default('STANDARD'),
                     estimatedUnitClp: z.number().nonnegative().optional(),
                     attributes: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
-                    evidenceCasRef: EvidenceCasRefSchema.optional(),
+                    evidenceCasRef: EvidenceCasRefSchema.nullable().optional(),
                 })
                 .refine(
                     (l) => Boolean(l.rawDescription || l.normalizedName || l.itemName),
@@ -443,7 +443,7 @@ const TopLevelAllocationInputSchema = z.object({
 
 const FlexiblePurchaseLineInputSchema = z.object({
     purchaseLineId: z.string().trim().min(1).max(128),
-    canonicalSkuId: z.string().trim().min(1).max(128).optional(),
+    canonicalSkuId: z.string().trim().min(1).max(128).nullable().optional(),
     description: z.string().trim().min(1).max(240).optional(),
     rawDescription: z.string().trim().min(1).max(240).optional(),
     normalizedName: z.string().trim().min(1).max(240).optional(),
@@ -507,8 +507,8 @@ const CreatePurchaseBodySchema = z.object({
     vatAmountClp: z.number().nonnegative(),
     totalAmountClp: z.number().nonnegative(),
     paymentMethod: PaymentMethodSchema,
-    evidenceCasRef: EvidenceCasRefSchema.optional(),
-    tedRawXml: z.string().max(12000).optional(),
+    evidenceCasRef: EvidenceCasRefSchema.nullable().optional(),
+    tedRawXml: z.string().max(16384).nullable().optional(),
     allocations: z.array(TopLevelAllocationInputSchema).max(500).optional(),
     lines: z.array(FlexiblePurchaseLineInputSchema).min(1).max(200),
 });
@@ -929,7 +929,7 @@ router.post('/requisitions', mutationRateLimiter, async (req: SupplyRequest, res
                 urgency: rawLine.urgency,
                 estimatedUnitClp: rawLine.estimatedUnitClp,
                 attributes: rawLine.attributes,
-                evidenceCasRef: rawLine.evidenceCasRef,
+                evidenceCasRef: rawLine.evidenceCasRef || undefined,
             });
         }
 
@@ -1241,8 +1241,8 @@ router.post('/purchases', mutationRateLimiter, async (req: SupplyRequest, res: R
                 vatAmountClp: data.vatAmountClp,
                 totalAmountClp: data.totalAmountClp,
                 paymentMethod: data.paymentMethod,
-                evidenceCasRef: data.evidenceCasRef,
-                tedRawXml: data.tedRawXml,
+                evidenceCasRef: data.evidenceCasRef || undefined,
+                tedRawXml: data.tedRawXml || undefined,
                 lines: normalizedLines,
             },
             {

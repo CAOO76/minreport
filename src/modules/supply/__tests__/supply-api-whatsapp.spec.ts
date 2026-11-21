@@ -925,7 +925,7 @@ async function runTests(): Promise<void> {
             assert.equal(analyzed.evidenceCasRef!.originalBytes, 512000);
             assert.ok(analyzed.evidenceCasRef!.optimizedBytes > 0);
             assert.ok(analyzed.evidenceCasRef!.savingsPct > 0);
-            assert.ok(analyzed.evidenceCasRef!.storagePath.startsWith(`cas_blobs/tenants/${TENANT_A}/`));
+            assert.ok(analyzed.evidenceCasRef!.storagePath?.startsWith(`cas_blobs/tenants/${TENANT_A}/`));
 
             // Verify PII was scrubbed BEFORE reaching ResilientAIClient
             assert.equal(capturedAiCalls.length, 1);
@@ -1844,7 +1844,17 @@ async function runTests(): Promise<void> {
             assert.equal(req9.status, 201);
             const req9Json: any = await req9.json();
 
+            // Test #11 frontend-hmi exact minimal CasEvidenceRef (no storagePath/profile/savingsRatio) + nullable fields!
             const preDigestedCas = persistedSession!.pendingBuffer.find((t: any) => t.evidenceCasRef).evidenceCasRef;
+            const frontendMinimalCasRef = {
+                sha256: preDigestedCas.sha256,
+                downloadUrl: preDigestedCas.downloadUrl,
+                mimeType: preDigestedCas.mimeType,
+                extension: preDigestedCas.extension,
+                originalBytes: preDigestedCas.originalBytes,
+                optimizedBytes: preDigestedCas.optimizedBytes,
+                savingsPct: preDigestedCas.savingsPct,
+            };
             nextMockAiResponse = {
                 supplierName: 'Ferretería Copiapó',
                 supplierTaxId: '76192083-9',
@@ -1869,7 +1879,7 @@ async function runTests(): Promise<void> {
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
-                    evidenceCasRef: preDigestedCas,
+                    evidenceCasRef: frontendMinimalCasRef,
                 }),
             });
             assert.equal(analyzeCas.status, 200);
@@ -1895,7 +1905,8 @@ async function runTests(): Promise<void> {
                     vatAmountClp: 19000,
                     totalAmountClp: 119000,
                     paymentMethod: 'EFECTIVO',
-                    evidenceCasRef: preDigestedCas,
+                    evidenceCasRef: frontendMinimalCasRef,
+                    tedRawXml: null,
                     lines: [
                         {
                             purchaseLineId: 'pl_cem_9',
@@ -1914,7 +1925,7 @@ async function runTests(): Promise<void> {
                         },
                         {
                             purchaseLineId: 'pl_gen_9',
-                            canonicalSkuId: 'sku-generador',
+                            canonicalSkuId: null,
                             rawDescription: 'Generador 5kVA',
                             normalizedName: 'Generador 5kVA',
                             qtyPurchased: 1,
