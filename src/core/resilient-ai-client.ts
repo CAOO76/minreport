@@ -60,7 +60,7 @@ export {
 
 export type ThinkingLevel = 'none' | 'low' | 'medium' | 'high';
 export type SwarmTier = 'PRIMARY' | 'SECONDARY' | 'ANCHOR_HA';
-export type AIModuleScope = 'opermaq' | 'stockpile' | 'geolapp' | 'core' | 'test-pilot';
+export type AIModuleScope = 'opermaq' | 'stockpile' | 'geolapp' | 'supply' | 'core' | 'test-pilot';
 
 export interface GroundingSource {
     title: string;

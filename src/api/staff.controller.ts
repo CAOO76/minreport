@@ -4,7 +4,11 @@ import { EmailService } from '../services/EmailService';
 import { env, getCanonicalWebUrl } from '../config/env';
 import { generateSetupToken } from '../utils/security';
 import { cleanRut, getRutVariants } from '../utils/rut';
-import { validateTaxId, type TaxIdValidationResult } from '../utils/taxIdValidator';
+import {
+    validateE164Phone,
+    validateTaxId,
+    type TaxIdValidationResult,
+} from '../utils/taxIdValidator';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { extractClientIp } from '../middleware/rateLimiter';
 import { AuditLedger } from '../core/audit-ledger';
@@ -40,16 +44,19 @@ export interface NormalizedSeatPermissions {
     allowedModules: {
         opermaq: boolean;
         stockpile: boolean;
+        supply: boolean;
     };
     canViewBilling: boolean;
 }
 
 /**
  * Normaliza permisos de módulos y facturación según el rol B2B del asiento.
+ * Compatibilidad retroactiva: si `supply` viene indefinido en asientos legacy,
+ * queda en `true` para OWNER/ADMIN y `false` para OPERATOR/VIEWER.
  */
 export function normalizeSeatPermissionsForRole(
     role: B2BSeatRole,
-    allowedModules?: { opermaq?: boolean; stockpile?: boolean },
+    allowedModules?: { opermaq?: boolean; stockpile?: boolean; supply?: boolean },
     canViewBilling?: boolean
 ): NormalizedSeatPermissions {
     if (role === 'OWNER' || role === 'ADMIN') {
@@ -57,6 +64,7 @@ export function normalizeSeatPermissionsForRole(
             allowedModules: {
                 opermaq: true,
                 stockpile: true,
+                supply: true,
             },
             canViewBilling: true,
         };
@@ -65,6 +73,7 @@ export function normalizeSeatPermissionsForRole(
     const normalizedModules = {
         opermaq: allowedModules?.opermaq ?? true,
         stockpile: allowedModules?.stockpile ?? false,
+        supply: allowedModules?.supply ?? false,
     };
 
     if (role === 'OPERATOR') {
@@ -78,6 +87,25 @@ export function normalizeSeatPermissionsForRole(
         allowedModules: normalizedModules,
         canViewBilling: Boolean(canViewBilling),
     };
+}
+
+function parseOptionalMemberPhoneE164(
+    rawPhone: unknown
+): { ok: true; value: string | null | undefined } | { ok: false; error: string } {
+    if (rawPhone === undefined) return { ok: true, value: undefined };
+    if (rawPhone === null) return { ok: true, value: null };
+    const trimmed = String(rawPhone).trim();
+    if (!trimmed) return { ok: true, value: null };
+    const phoneCheck = validateE164Phone(trimmed);
+    if (!phoneCheck.valid) {
+        return {
+            ok: false,
+            error:
+                phoneCheck.reason ||
+                'Teléfono E.164 inválido (se requiere prefijo internacional, ej. +56912345678).',
+        };
+    }
+    return { ok: true, value: phoneCheck.normalized };
 }
 
 /**
@@ -400,6 +428,13 @@ router.get('/members', async (req: AuthRequest, res: Response): Promise<any> => 
                 jobTitle: String(d.jobTitle || ''),
                 allowedModules: perms.allowedModules,
                 canViewBilling: perms.canViewBilling,
+                phoneE164:
+                    typeof d.phoneE164 === 'string' && d.phoneE164.trim()
+                        ? d.phoneE164.trim()
+                        : null,
+                whatsappOptInAt: d.whatsappOptInAt ?? null,
+                supplyProfile: d.supplyProfile ?? null,
+                notificationPreferences: d.notificationPreferences ?? null,
                 status: String(d.status || 'ACTIVE').toUpperCase(),
                 invitedAt: d.invitedAt ?? d.joinedAt ?? null,
                 updatedAt: d.updatedAt ?? d.invitedAt ?? d.joinedAt ?? null,
@@ -418,6 +453,13 @@ router.get('/members', async (req: AuthRequest, res: Response): Promise<any> => 
             }
 
             const perms = normalizeSeatPermissionsForRole('OWNER');
+            const ownerPhone =
+                typeof ownerUserData.phoneE164 === 'string' && ownerUserData.phoneE164.trim()
+                    ? ownerUserData.phoneE164.trim()
+                    : typeof accountData.mandatario?.phoneE164 === 'string' &&
+                        accountData.mandatario.phoneE164.trim()
+                      ? accountData.mandatario.phoneE164.trim()
+                      : null;
             membersByUid.set(ownerId, {
                 uid: ownerId,
                 userId: ownerId,
@@ -434,6 +476,10 @@ router.get('/members', async (req: AuthRequest, res: Response): Promise<any> => 
                 jobTitle: String(accountData.mandatario?.jobTitle || 'Titular de Cuenta'),
                 allowedModules: perms.allowedModules,
                 canViewBilling: perms.canViewBilling,
+                phoneE164: ownerPhone,
+                whatsappOptInAt: ownerUserData.whatsappOptInAt ?? null,
+                supplyProfile: ownerUserData.supplyProfile ?? null,
+                notificationPreferences: ownerUserData.notificationPreferences ?? null,
                 status: String(ownerUserData.status || accountData.status || 'ACTIVE').toUpperCase(),
                 invitedAt: accountData.createdAt ?? null,
                 updatedAt: accountData.updatedAt ?? accountData.createdAt ?? null,
@@ -477,7 +523,16 @@ async function handleUpsertMember(req: AuthRequest, res: Response): Promise<any>
             jobTitle,
             allowedModules,
             canViewBilling,
+            phoneE164,
+            whatsappOptInAt,
+            supplyProfile,
+            notificationPreferences,
         } = validation.data;
+
+        const phoneCheck = parseOptionalMemberPhoneE164(phoneE164);
+        if (!phoneCheck.ok) {
+            return res.status(400).json({ error: phoneCheck.error });
+        }
 
         const authz = await authorizeStaffAccountAccess(req, accountId);
         if (!authz.ok) {
@@ -582,6 +637,22 @@ async function handleUpsertMember(req: AuthRequest, res: Response): Promise<any>
         const normalizedPerms = normalizeSeatPermissionsForRole(role, allowedModules, canViewBilling);
         const nowMs = Date.now();
         const storedTaxId = taxCheck ? taxCheck.formatted : String(existingMemberData.taxId || existingMemberData.run || '');
+        const resolvedPhoneE164 =
+            phoneCheck.value !== undefined
+                ? phoneCheck.value
+                : typeof existingMemberData.phoneE164 === 'string' && existingMemberData.phoneE164.trim()
+                  ? existingMemberData.phoneE164.trim()
+                  : null;
+        const resolvedWhatsappOptInAt =
+            whatsappOptInAt !== undefined
+                ? whatsappOptInAt
+                : (existingMemberData.whatsappOptInAt ?? null);
+        const resolvedSupplyProfile =
+            supplyProfile !== undefined ? supplyProfile : (existingMemberData.supplyProfile ?? null);
+        const resolvedNotificationPreferences =
+            notificationPreferences !== undefined
+                ? notificationPreferences
+                : (existingMemberData.notificationPreferences ?? null);
 
         const existingMemberships = (Array.isArray(existingUserData.memberships) ? existingUserData.memberships : [])
             .filter((m: any) => m?.accountId !== accountId)
@@ -596,6 +667,12 @@ async function handleUpsertMember(req: AuthRequest, res: Response): Promise<any>
             countryCode,
             allowedModules: normalizedPerms.allowedModules,
             canViewBilling: normalizedPerms.canViewBilling,
+            ...(resolvedPhoneE164 !== null ? { phoneE164: resolvedPhoneE164 } : {}),
+            ...(resolvedWhatsappOptInAt !== null ? { whatsappOptInAt: resolvedWhatsappOptInAt } : {}),
+            ...(resolvedSupplyProfile !== null ? { supplyProfile: resolvedSupplyProfile } : {}),
+            ...(resolvedNotificationPreferences !== null
+                ? { notificationPreferences: resolvedNotificationPreferences }
+                : {}),
             type: 'BUSINESS',
             status: memberStatus,
             joinedAt: existingMemberData.invitedAt ?? nowMs,
@@ -615,6 +692,8 @@ async function handleUpsertMember(req: AuthRequest, res: Response): Promise<any>
                 classification: existingUserData.classification || 'b2b',
                 countryCode: existingUserData.countryCode || countryCode,
                 ...(storedTaxId ? { taxId: existingUserData.taxId || storedTaxId } : {}),
+                ...(phoneCheck.value !== undefined ? { phoneE164: resolvedPhoneE164 } : {}),
+                ...(whatsappOptInAt !== undefined ? { whatsappOptInAt: resolvedWhatsappOptInAt } : {}),
                 memberships: existingMemberships,
                 status: existingUserData.status === 'ACTIVE' ? 'ACTIVE' : 'PENDING',
                 updatedAt: nowMs,
@@ -635,6 +714,10 @@ async function handleUpsertMember(req: AuthRequest, res: Response): Promise<any>
                 jobTitle: jobTitle || '',
                 allowedModules: normalizedPerms.allowedModules,
                 canViewBilling: normalizedPerms.canViewBilling,
+                phoneE164: resolvedPhoneE164,
+                whatsappOptInAt: resolvedWhatsappOptInAt,
+                supplyProfile: resolvedSupplyProfile,
+                notificationPreferences: resolvedNotificationPreferences,
                 status: memberStatus,
                 invitedAt: existingMemberData.invitedAt ?? nowMs,
                 updatedAt: nowMs,
@@ -718,6 +801,9 @@ async function handleUpsertMember(req: AuthRequest, res: Response): Promise<any>
                 countryCode,
                 allowedModules: normalizedPerms.allowedModules,
                 canViewBilling: normalizedPerms.canViewBilling,
+                hasPhoneE164: Boolean(resolvedPhoneE164),
+                hasWhatsappOptIn: Boolean(resolvedWhatsappOptInAt),
+                supplyRole: resolvedSupplyProfile?.role ?? null,
                 isNewUser,
                 status: memberStatus,
             },
@@ -761,7 +847,23 @@ router.patch('/members/:memberUid', async (req: AuthRequest, res: Response): Pro
             });
         }
 
-        const { accountId, role, jobTitle, allowedModules, canViewBilling, status } = validation.data;
+        const {
+            accountId,
+            role,
+            jobTitle,
+            allowedModules,
+            canViewBilling,
+            status,
+            phoneE164,
+            whatsappOptInAt,
+            supplyProfile,
+            notificationPreferences,
+        } = validation.data;
+
+        const phoneCheck = parseOptionalMemberPhoneE164(phoneE164);
+        if (!phoneCheck.ok) {
+            return res.status(400).json({ error: phoneCheck.error });
+        }
 
         const authz = await authorizeStaffAccountAccess(req, accountId);
         if (!authz.ok) {
@@ -795,6 +897,22 @@ router.patch('/members/:memberUid', async (req: AuthRequest, res: Response): Pro
         const normalizedPerms = normalizeSeatPermissionsForRole(nextRole, nextModulesInput, nextBillingInput);
         const nextJobTitle = jobTitle !== undefined ? jobTitle : String(memberData.jobTitle || '');
         const nextStatus = status ?? String(memberData.status || 'ACTIVE').toUpperCase();
+        const nextPhoneE164 =
+            phoneCheck.value !== undefined
+                ? phoneCheck.value
+                : typeof memberData.phoneE164 === 'string' && memberData.phoneE164.trim()
+                  ? memberData.phoneE164.trim()
+                  : null;
+        const nextWhatsappOptInAt =
+            whatsappOptInAt !== undefined
+                ? whatsappOptInAt
+                : (memberData.whatsappOptInAt ?? null);
+        const nextSupplyProfile =
+            supplyProfile !== undefined ? supplyProfile : (memberData.supplyProfile ?? null);
+        const nextNotificationPreferences =
+            notificationPreferences !== undefined
+                ? notificationPreferences
+                : (memberData.notificationPreferences ?? null);
         const nowMs = Date.now();
 
         const userRef = db.collection('users').doc(memberUid);
@@ -808,6 +926,10 @@ router.patch('/members/:memberUid', async (req: AuthRequest, res: Response): Pro
                 jobTitle: nextJobTitle,
                 allowedModules: normalizedPerms.allowedModules,
                 canViewBilling: normalizedPerms.canViewBilling,
+                phoneE164: nextPhoneE164,
+                whatsappOptInAt: nextWhatsappOptInAt,
+                supplyProfile: nextSupplyProfile,
+                notificationPreferences: nextNotificationPreferences,
                 status: nextStatus,
                 updatedAt: nowMs,
             },
@@ -829,6 +951,10 @@ router.patch('/members/:memberUid', async (req: AuthRequest, res: Response): Pro
                     jobTitle: nextJobTitle,
                     allowedModules: normalizedPerms.allowedModules,
                     canViewBilling: normalizedPerms.canViewBilling,
+                    phoneE164: nextPhoneE164,
+                    whatsappOptInAt: nextWhatsappOptInAt,
+                    supplyProfile: nextSupplyProfile,
+                    notificationPreferences: nextNotificationPreferences,
                     status: nextStatus,
                     updatedAt: nowMs,
                 };
@@ -842,16 +968,27 @@ router.patch('/members/:memberUid', async (req: AuthRequest, res: Response): Pro
                     jobTitle: nextJobTitle,
                     allowedModules: normalizedPerms.allowedModules,
                     canViewBilling: normalizedPerms.canViewBilling,
+                    phoneE164: nextPhoneE164,
+                    whatsappOptInAt: nextWhatsappOptInAt,
+                    supplyProfile: nextSupplyProfile,
+                    notificationPreferences: nextNotificationPreferences,
                     type: 'BUSINESS',
                     status: nextStatus,
                     joinedAt: memberData.invitedAt ?? nowMs,
                     updatedAt: nowMs,
                 });
             }
-            batch.update(userRef, {
+            const userPatch: Record<string, any> = {
                 memberships: updatedMemberships,
                 updatedAt: nowMs,
-            });
+            };
+            if (phoneCheck.value !== undefined) {
+                userPatch.phoneE164 = nextPhoneE164;
+            }
+            if (whatsappOptInAt !== undefined) {
+                userPatch.whatsappOptInAt = nextWhatsappOptInAt;
+            }
+            batch.update(userRef, userPatch);
         }
 
         await batch.commit();
@@ -868,6 +1005,9 @@ router.patch('/members/:memberUid', async (req: AuthRequest, res: Response): Pro
                 jobTitle: nextJobTitle,
                 allowedModules: normalizedPerms.allowedModules,
                 canViewBilling: normalizedPerms.canViewBilling,
+                hasPhoneE164: Boolean(nextPhoneE164),
+                hasWhatsappOptIn: Boolean(nextWhatsappOptInAt),
+                supplyRole: nextSupplyProfile?.role ?? null,
                 status: nextStatus,
             },
             ipAddress: extractClientIp(req),

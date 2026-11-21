@@ -3,9 +3,13 @@
  * Fuente única de verdad en servidor para validación de módulos, prefijos API y modos de dominio.
  */
 
-export const CORE_MODULE_IDS = ['opermaq', 'stockpile'] as const;
+export const CORE_MODULE_IDS = ['opermaq', 'stockpile', 'supply'] as const;
 
 export type CoreModuleId = (typeof CORE_MODULE_IDS)[number];
+
+export const FUTURE_MODULE_IDS = ['marketplace'] as const;
+
+export type FutureModuleId = (typeof FUTURE_MODULE_IDS)[number];
 
 export interface BackendModuleDescriptor {
     id: CoreModuleId;
@@ -31,6 +35,22 @@ export const CORE_MODULE_REGISTRY: Record<CoreModuleId, BackendModuleDescriptor>
         basePath: '/api/stockpile',
         version: '2.0.0',
         domainModes: ['STOCKPILE'] as const,
+        defaultEnabled: true,
+    },
+    supply: {
+        id: 'supply',
+        name: 'ABASTECIMIENTO',
+        basePath: '/api/supply',
+        version: '1.0.0',
+        domainModes: [
+            'DEMAND',
+            'WAREHOUSE',
+            'PROCUREMENT',
+            'FINANCE_RECON',
+            'SII_EXPENSES',
+            'FORECAST',
+            'WHATSAPP_CHANNELS',
+        ] as const,
         defaultEnabled: true,
     },
 };

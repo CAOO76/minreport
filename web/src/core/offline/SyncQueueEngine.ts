@@ -24,6 +24,8 @@ export type SyncTaskType =
     | 'STOCKPILE_MEASUREMENT'
     | 'DEVICE_CALIBRATION'
     | 'OPERMAQ_API_MUTATION'
+    | 'SUPPLY_PURCHASE_RECEIPT'
+    | 'SUPPLY_API_MUTATION'
     | 'CAS_MEDIA_UPLOAD'
     | 'GEO_REPORT_STAMP'
     | 'GEOLAPP_DIGITAL_AI_ANALYZE'
@@ -42,6 +44,24 @@ export interface OpermaqApiMutationPayload {
     method?: 'POST' | 'PUT' | 'PATCH' | 'DELETE';
     body: unknown;
     tenantId?: string;
+    eventName?: string;
+}
+
+export interface SupplyApiMutationPayload {
+    endpoint: string;
+    method?: 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+    body: unknown;
+    tenantId?: string;
+    eventName?: string;
+}
+
+export interface SupplyPurchaseReceiptSyncPayload {
+    endpoint?: string;
+    method?: 'POST' | 'PUT' | 'PATCH';
+    body: Record<string, unknown>;
+    tenantId?: string;
+    siteId?: string;
+    sha256?: string;
     eventName?: string;
 }
 
@@ -99,9 +119,11 @@ const TASK_PRIORITY: Record<SyncTaskType, number> = {
     STOCKPILE_MEASUREMENT: 3,
     GEOLAPP_DIGITAL_AI_ANALYZE: 4,
     GEOLAPP_SPATIAL_ANALYZE: 4,
+    SUPPLY_PURCHASE_RECEIPT: 4,
     TENANT_ASSET: 5,
     FLEET_INSPECTION: 5,
     OPERMAQ_API_MUTATION: 5,
+    SUPPLY_API_MUTATION: 5,
     GEO_REPORT_STAMP: 5,
 };
 
@@ -318,6 +340,41 @@ class SyncQueueEngine {
         });
     }
 
+    public async enqueueSupplyApiMutation(
+        endpoint: string,
+        body: unknown,
+        eventName?: string,
+        tenantId?: string,
+        method: 'POST' | 'PUT' | 'PATCH' | 'DELETE' = 'POST'
+    ): Promise<string> {
+        const resolvedTenant = resolveActiveTenantId(
+            tenantId || (body as any)?.tenantId || (body as any)?.accountId
+        );
+        return this.enqueueTask<SupplyApiMutationPayload>('SUPPLY_API_MUTATION', {
+            endpoint,
+            method,
+            body,
+            tenantId: resolvedTenant || undefined,
+            eventName,
+        });
+    }
+
+    public async enqueueSupplyPurchaseReceipt(
+        payload: SupplyPurchaseReceiptSyncPayload
+    ): Promise<string> {
+        const resolvedTenant = resolveActiveTenantId(
+            payload.tenantId ||
+                (payload.body as any)?.tenantId ||
+                (payload.body as any)?.accountId
+        );
+        return this.enqueueTask<SupplyPurchaseReceiptSyncPayload>('SUPPLY_PURCHASE_RECEIPT', {
+            ...payload,
+            endpoint: payload.endpoint || '/api/supply/purchases',
+            method: payload.method || 'POST',
+            tenantId: resolvedTenant || undefined,
+        });
+    }
+
     private notifyListeners(): void {
         const state = this.getState();
         this.listeners.forEach((cb) => {
@@ -523,7 +580,9 @@ class SyncQueueEngine {
                 task.type !== 'STOCKPILE_SURVEY' &&
                 task.type !== 'STOCKPILE_MEASUREMENT' &&
                 task.type !== 'GEOLAPP_DIGITAL_AI_ANALYZE' &&
-                task.type !== 'GEOLAPP_SPATIAL_ANALYZE'
+                task.type !== 'GEOLAPP_SPATIAL_ANALYZE' &&
+                task.type !== 'SUPPLY_PURCHASE_RECEIPT' &&
+                task.type !== 'SUPPLY_API_MUTATION'
             ) {
                 continue;
             }
@@ -1098,6 +1157,118 @@ class SyncQueueEngine {
                         'X-Active-Account-Id': activeTenantId,
                     },
                     body: JSON.stringify(mutation.body),
+                });
+
+                if (!res.ok) {
+                    throw new Error(`HTTP ${res.status} al sincronizar ${mutation.endpoint}`);
+                }
+                break;
+            }
+            case 'SUPPLY_PURCHASE_RECEIPT': {
+                const receiptTask = task.payload as SupplyPurchaseReceiptSyncPayload;
+                const casCache = new Map<string, string | null>();
+                const resolvedBody = (await this.replaceOfflineCasStrings(
+                    receiptTask.body,
+                    casCache
+                )) as Record<string, unknown>;
+                if (this.containsPendingOfflineCasRef(resolvedBody)) {
+                    throw new Error(
+                        'Esperando subida CAS de evidencia de compra antes de sincronizar SUPPLY_PURCHASE_RECEIPT.'
+                    );
+                }
+
+                const user = auth.currentUser;
+                const devFallbackToken =
+                    typeof window !== 'undefined'
+                        ? localStorage.getItem('dev_auth_token') ||
+                          localStorage.getItem('dev_vault_token')
+                        : null;
+                const idToken = user ? await user.getIdToken() : devFallbackToken;
+                if (!idToken) {
+                    throw new Error('Sesion requerida para drenar SUPPLY_PURCHASE_RECEIPT offline');
+                }
+
+                const rawEndpoint = receiptTask.endpoint || '/api/supply/purchases';
+                const normalizedEndpoint = rawEndpoint.startsWith('/api/')
+                    ? rawEndpoint
+                    : rawEndpoint.startsWith('/')
+                      ? `/api${rawEndpoint}`
+                      : `/api/${rawEndpoint}`;
+                const resolvedUrl = rawEndpoint.startsWith('http')
+                    ? rawEndpoint
+                    : getApiUrl(normalizedEndpoint);
+
+                const activeTenantId = resolveActiveTenantId(
+                    receiptTask.tenantId ||
+                        (resolvedBody as any)?.tenantId ||
+                        (resolvedBody as any)?.accountId
+                );
+                if (!activeTenantId) {
+                    throw new Error(
+                        'tenantId obligatorio para sincronizar SUPPLY_PURCHASE_RECEIPT'
+                    );
+                }
+
+                const res = await fetch(resolvedUrl, {
+                    method: receiptTask.method || 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${idToken}`,
+                        'X-Active-Account-Id': activeTenantId,
+                    },
+                    body: JSON.stringify(resolvedBody),
+                });
+
+                if (!res.ok) {
+                    throw new Error(
+                        `HTTP ${res.status} al sincronizar SUPPLY_PURCHASE_RECEIPT en ${rawEndpoint}`
+                    );
+                }
+                break;
+            }
+            case 'SUPPLY_API_MUTATION': {
+                const mutation = task.payload as SupplyApiMutationPayload;
+                const casCache = new Map<string, string | null>();
+                const resolvedBody = await this.replaceOfflineCasStrings(mutation.body, casCache);
+                if (this.containsPendingOfflineCasRef(resolvedBody)) {
+                    throw new Error(
+                        'Esperando subida CAS antes de sincronizar SUPPLY_API_MUTATION.'
+                    );
+                }
+
+                const user = auth.currentUser;
+                const devFallbackToken =
+                    typeof window !== 'undefined'
+                        ? localStorage.getItem('dev_auth_token') ||
+                          localStorage.getItem('dev_vault_token')
+                        : null;
+                const idToken = user ? await user.getIdToken() : devFallbackToken;
+                if (!idToken) {
+                    throw new Error('Sesion requerida para drenar mutacion API SUPPLY offline');
+                }
+
+                const normalizedEndpoint = mutation.endpoint.startsWith('/api/')
+                    ? mutation.endpoint
+                    : mutation.endpoint.startsWith('/')
+                      ? `/api${mutation.endpoint}`
+                      : `/api/${mutation.endpoint}`;
+                const resolvedUrl = mutation.endpoint.startsWith('http')
+                    ? mutation.endpoint
+                    : getApiUrl(normalizedEndpoint);
+
+                const activeTenantId = resolveActiveTenantId(mutation.tenantId);
+                if (!activeTenantId) {
+                    throw new Error('tenantId obligatorio para sincronizar mutacion SUPPLY');
+                }
+
+                const res = await fetch(resolvedUrl, {
+                    method: mutation.method || 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${idToken}`,
+                        'X-Active-Account-Id': activeTenantId,
+                    },
+                    body: JSON.stringify(resolvedBody),
                 });
 
                 if (!res.ok) {

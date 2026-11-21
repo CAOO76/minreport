@@ -13,6 +13,7 @@ import {
     type AccountClassification,
     type SystemRole,
 } from '../contracts';
+import type { CoreModuleId } from '../core/modules/module-registry';
 export { resolveSessionHomePath } from '../contracts';
 
 /**
@@ -47,6 +48,7 @@ export interface MinReportSession {
     activeModules: {
         opermaq: boolean;
         stockpile: boolean;
+        supply?: boolean;
     };
     permissions: {
         opermaq: {
@@ -73,7 +75,7 @@ export interface MinReportSession {
 interface MinReportSessionContextType {
     session: MinReportSession | null;
     isLoaded: boolean;
-    hasModuleAccess: (moduleKey: 'opermaq' | 'stockpile') => boolean;
+    hasModuleAccess: (moduleKey: CoreModuleId) => boolean;
 }
 
 const MinReportSessionContext = createContext<MinReportSessionContextType>({
@@ -113,9 +115,14 @@ export const MinReportSessionProvider: React.FC<{ children: React.ReactNode }> =
     const [claimsLoaded, setClaimsLoaded] = useState<boolean>(false);
     const [offlineSnapshot, setOfflineSnapshot] = useState<MinReportSession | null>(null);
     const [snapshotLoaded, setSnapshotLoaded] = useState<boolean>(false);
-    const [globalModuleStatus, setGlobalModuleStatus] = useState<{ opermaq: boolean; stockpile: boolean }>({
+    const [globalModuleStatus, setGlobalModuleStatus] = useState<{
+        opermaq: boolean;
+        stockpile: boolean;
+        supply: boolean;
+    }>({
         opermaq: true,
         stockpile: true,
+        supply: true,
     });
 
     // 0. Hidratación instantánea offline-first desde bóveda local persistente
@@ -172,7 +179,7 @@ export const MinReportSessionProvider: React.FC<{ children: React.ReactNode }> =
         const unsubCol = onSnapshot(
             collection(db, 'modules_status'),
             (snap) => {
-                const next: Partial<{ opermaq: boolean; stockpile: boolean }> = {};
+                const next: Partial<{ opermaq: boolean; stockpile: boolean; supply: boolean }> = {};
                 snap.forEach((docSnap) => {
                     const data = docSnap.data();
                     const resolvedFlag =
@@ -189,10 +196,14 @@ export const MinReportSessionProvider: React.FC<{ children: React.ReactNode }> =
                     if (docSnap.id === 'stockpile' && typeof resolvedFlag === 'boolean') {
                         next.stockpile = resolvedFlag;
                     }
+                    if (docSnap.id === 'supply' && typeof resolvedFlag === 'boolean') {
+                        next.supply = resolvedFlag;
+                    }
                 });
                 setGlobalModuleStatus({
                     opermaq: next.opermaq ?? true,
                     stockpile: next.stockpile ?? true,
+                    supply: next.supply ?? true,
                 });
             },
             () => {
@@ -333,7 +344,7 @@ export const MinReportSessionProvider: React.FC<{ children: React.ReactNode }> =
             : null;
 
         const resolveMemberAllowedForModule = (
-            moduleKey: 'opermaq' | 'stockpile'
+            moduleKey: CoreModuleId
         ): Record<string, boolean> | null => {
             if (!rawAssignedModules) return rawAllowedModules;
             const assignedSet = new Set(
@@ -364,7 +375,7 @@ export const MinReportSessionProvider: React.FC<{ children: React.ReactNode }> =
                 : null;
 
         const resolveEntitlementsForModule = (
-            moduleKey: 'opermaq' | 'stockpile'
+            moduleKey: CoreModuleId
         ): Record<string, any> | null => {
             if (!hasStructuredEntitlements) return null;
             if (
@@ -392,7 +403,7 @@ export const MinReportSessionProvider: React.FC<{ children: React.ReactNode }> =
 
         const activeModules =
             pilotExpired || isTenantBlocked
-                ? { opermaq: false, stockpile: false }
+                ? { opermaq: false, stockpile: false, supply: false }
                 : {
                       opermaq: resolveEffectiveModuleAccess({
                           moduleKey: 'opermaq',
@@ -413,6 +424,16 @@ export const MinReportSessionProvider: React.FC<{ children: React.ReactNode }> =
                           legacyEnabledPlugins: (currentAccount as any)?.enabledPlugins,
                           memberRole: userMembership?.role,
                           memberAllowedModules: resolveMemberAllowedForModule('stockpile'),
+                      }),
+                      supply: resolveEffectiveModuleAccess({
+                          moduleKey: 'supply',
+                          globalModuleActive: globalModuleStatus.supply !== false,
+                          hasFullSuiteOverride: hasFullSuiteAccess,
+                          entitlements: resolveEntitlementsForModule('supply'),
+                          legacyContractActiveModules: mergedLegacyActiveModules,
+                          legacyEnabledPlugins: (currentAccount as any)?.enabledPlugins,
+                          memberRole: userMembership?.role,
+                          memberAllowedModules: resolveMemberAllowedForModule('supply'),
                       }),
                   };
 
@@ -547,7 +568,7 @@ export const MinReportSessionProvider: React.FC<{ children: React.ReactNode }> =
         }
     }, [effectiveSession?.tenantId]);
 
-    const hasModuleAccess = (moduleKey: 'opermaq' | 'stockpile'): boolean => {
+    const hasModuleAccess = (moduleKey: CoreModuleId): boolean => {
         if (!effectiveSession || effectiveSession.pilotExpired) return false;
         if (effectiveSession.isDevRoot || effectiveSession.isSuperAdmin || effectiveSession.isTestPilot) {
             return true;

@@ -14,6 +14,7 @@ import { computeSixYearRetentionTimestamp } from './retention-policy';
 export type AuditLedgerModule =
     | 'opermaq'
     | 'stockpile'
+    | 'supply'
     | 'b2b-core'
     | 'core'
     | 'test-pilot'

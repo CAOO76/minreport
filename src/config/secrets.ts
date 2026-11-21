@@ -11,12 +11,25 @@ import { env, isDevPrivateReleaseStage } from './env';
  * en desarrollo/test con recarga en caliente.
  */
 
+export const WHATSAPP_CLOUD_SECRETS = [
+    'WHATSAPP_ACCESS_TOKEN',
+    'WHATSAPP_APP_SECRET',
+    'WHATSAPP_VERIFY_TOKEN',
+    'WHATSAPP_PHONE_NUMBER_ID',
+] as const;
+
+export type WhatsAppSecretName = (typeof WHATSAPP_CLOUD_SECRETS)[number];
+
 export const CORE_HYDRATED_SECRETS = [
     'GEMINI_API_KEY',
     'RESEND_API_KEY',
     'SUPER_ADMIN_PASSWORD',
     'DEV_ROOT_PASSWORD',
     'X402_HMAC_SECRET',
+    'WHATSAPP_ACCESS_TOKEN',
+    'WHATSAPP_APP_SECRET',
+    'WHATSAPP_VERIFY_TOKEN',
+    'WHATSAPP_PHONE_NUMBER_ID',
 ] as const;
 
 export type CoreSecretName = (typeof CORE_HYDRATED_SECRETS)[number];
@@ -280,4 +293,44 @@ export async function resolveGoogleGeocodingApiKey(): Promise<string | null> {
     } catch {
         return null;
     }
+}
+
+export async function resolveWhatsAppAccessToken(): Promise<string | null> {
+    return getSecret('WHATSAPP_ACCESS_TOKEN');
+}
+
+export async function resolveWhatsAppAppSecret(): Promise<string | null> {
+    return getSecret('WHATSAPP_APP_SECRET');
+}
+
+export async function resolveWhatsAppVerifyToken(): Promise<string | null> {
+    return getSecret('WHATSAPP_VERIFY_TOKEN');
+}
+
+export async function resolveWhatsAppPhoneNumberId(): Promise<string | null> {
+    return getSecret('WHATSAPP_PHONE_NUMBER_ID');
+}
+
+export interface WhatsAppCloudSecretsSnapshot {
+    accessToken: string | null;
+    appSecret: string | null;
+    verifyToken: string | null;
+    phoneNumberId: string | null;
+    configured: boolean;
+}
+
+export async function resolveWhatsAppCloudSecrets(): Promise<WhatsAppCloudSecretsSnapshot> {
+    const [accessToken, appSecret, verifyToken, phoneNumberId] = await Promise.all([
+        resolveWhatsAppAccessToken(),
+        resolveWhatsAppAppSecret(),
+        resolveWhatsAppVerifyToken(),
+        resolveWhatsAppPhoneNumberId(),
+    ]);
+    return {
+        accessToken,
+        appSecret,
+        verifyToken,
+        phoneNumberId,
+        configured: Boolean(accessToken && appSecret && verifyToken && phoneNumberId),
+    };
 }

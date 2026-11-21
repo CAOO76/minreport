@@ -5,6 +5,10 @@
  * Strict ISO 9241-300 / WCAG 2.2 AAA ergonomics & zero hallucination.
  */
 import { z } from 'zod';
+import {
+    MemberNotificationPreferencesSchema,
+    SupplyMemberProfileSchema,
+} from './supply.contracts';
 
 // ── 0. Sovereign 5-Tier Account & Role Taxonomy ───────────────────────────────
 // 1º DEV | 2º ADMIN | 3º TEST-PILOT | 4º CLIENTES B2B | 5º EDU
@@ -63,6 +67,7 @@ export const UnifiedUserSessionSchema = z.object({
     activeModules: z.object({
         opermaq: z.boolean(),
         stockpile: z.boolean(),
+        supply: z.boolean().default(false),
     }),
 });
 
@@ -148,7 +153,7 @@ export const PilotFeedbackSchema = z.object({
     authorUid: z.string().min(1),
     authorEmail: z.string().email(),
     authorName: z.string().min(1),
-    module: z.enum(['core', 'opermaq', 'stockpile']),
+    module: z.enum(['core', 'opermaq', 'stockpile', 'supply']),
     executionMode: z.enum(['integrated', 'standalone']).default('integrated'),
     category: z.enum(['AI_KNOWLEDGE_TRAINING', 'CHANGE_REQUEST', 'BUG_CORRECTION', 'FIELD_SIMULATION']),
     priority: z.enum(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']).default('MEDIUM'),
@@ -166,7 +171,7 @@ export type PilotFeedback = z.infer<typeof PilotFeedbackSchema>;
 export const SystemEventSchema = z.object({
     eventId: z.string().uuid(),
     tenantId: z.string().min(1),
-    sourceApp: z.enum(['opermaq', 'stockpile-control', 'minreport-core']),
+    sourceApp: z.enum(['opermaq', 'stockpile-control', 'supply', 'minreport-core']),
     eventType: z.string().min(1),
     payload: z.record(z.string(), z.unknown()),
     timestamp: z.string().datetime(),
@@ -185,6 +190,9 @@ export * from './media.contracts';
 // ── 8. Sovereign Geospatial Core Contracts (Bloque 3.2) ──────────────────────
 export * from './geo.contracts';
 
+// ── 8b. MINREPORT · ABASTECIMIENTO Contracts (Módulo Nativo `supply`) ────────
+export * from './supply.contracts';
+
 // ── 8. B2B Team Seats & Equipment Onboarding Contracts (Bloque 2.2) ─────────
 export const B2BSeatRoleSchema = z.enum(['OWNER', 'ADMIN', 'OPERATOR', 'VIEWER']);
 export type B2BSeatRole = z.infer<typeof B2BSeatRoleSchema>;
@@ -192,6 +200,7 @@ export type B2BSeatRole = z.infer<typeof B2BSeatRoleSchema>;
 export const B2BMemberAllowedModulesSchema = z.object({
     opermaq: z.boolean().default(true),
     stockpile: z.boolean().default(false),
+    supply: z.boolean().default(false),
 });
 export type B2BMemberAllowedModules = z.infer<typeof B2BMemberAllowedModulesSchema>;
 
@@ -204,8 +213,16 @@ export const UpsertB2BMemberPayloadSchema = z.object({
     countryCode: z.string().trim().toUpperCase().min(2).max(4).default('CL'),
     role: z.enum(['ADMIN', 'OPERATOR', 'VIEWER']).default('OPERATOR'),
     jobTitle: z.string().trim().max(100).optional().or(z.literal('')),
-    allowedModules: B2BMemberAllowedModulesSchema.default({ opermaq: true, stockpile: false }),
+    allowedModules: B2BMemberAllowedModulesSchema.default({
+        opermaq: true,
+        stockpile: false,
+        supply: false,
+    }),
     canViewBilling: z.boolean().default(false),
+    phoneE164: z.string().trim().max(24).nullable().optional().or(z.literal('')),
+    whatsappOptInAt: z.union([z.number(), z.string().trim().max(64)]).nullable().optional(),
+    supplyProfile: SupplyMemberProfileSchema.nullable().optional(),
+    notificationPreferences: MemberNotificationPreferencesSchema.nullable().optional(),
 });
 export type UpsertB2BMemberPayload = z.infer<typeof UpsertB2BMemberPayloadSchema>;
 
@@ -217,6 +234,10 @@ export const UpdateB2BMemberPayloadSchema = z.object({
     allowedModules: B2BMemberAllowedModulesSchema.optional(),
     canViewBilling: z.boolean().optional(),
     status: z.enum(['ACTIVE', 'SUSPENDED']).optional(),
+    phoneE164: z.string().trim().max(24).nullable().optional().or(z.literal('')),
+    whatsappOptInAt: z.union([z.number(), z.string().trim().max(64)]).nullable().optional(),
+    supplyProfile: SupplyMemberProfileSchema.nullable().optional(),
+    notificationPreferences: MemberNotificationPreferencesSchema.nullable().optional(),
 });
 export type UpdateB2BMemberPayload = z.infer<typeof UpdateB2BMemberPayloadSchema>;
 
@@ -315,12 +336,14 @@ export const AccountEntitlementsSchema = z.object({
         .object({
             opermaq: z.boolean().default(false),
             stockpile: z.boolean().default(false),
+            supply: z.boolean().default(false),
         })
         .optional(),
     addonModules: z
         .object({
             opermaq: AddonModuleStateSchema.optional(),
             stockpile: AddonModuleStateSchema.optional(),
+            supply: AddonModuleStateSchema.optional(),
         })
         .default({}),
     maxProjects: z.number().int().min(1).max(100).nullable().default(null),
@@ -328,7 +351,7 @@ export const AccountEntitlementsSchema = z.object({
 export type AccountEntitlements = z.infer<typeof AccountEntitlementsSchema>;
 
 export function resolveEffectiveModuleAccess(params: {
-    moduleKey: 'opermaq' | 'stockpile';
+    moduleKey: 'opermaq' | 'stockpile' | 'supply';
     globalModuleActive: boolean;
     hasFullSuiteOverride?: boolean;
     entitlements?: Record<string, any> | null;
@@ -429,6 +452,7 @@ export const UpdateAccountEntitlementsPayloadSchema = z.object({
     addonModules: z.object({
         opermaq: z.boolean(),
         stockpile: z.boolean(),
+        supply: z.boolean().optional().default(false),
     }),
     maxProjects: z.number().int().min(1).max(100).nullable().optional(),
     eduInstitutionId: z.string().trim().max(128).nullable().optional(),

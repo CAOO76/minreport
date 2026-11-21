@@ -1,4 +1,8 @@
 import { z } from 'zod';
+import {
+    MemberNotificationPreferencesSchema,
+    SupplyMemberProfileSchema,
+} from './supply.contracts';
 
 // ── Sovereign 5-Tier Account & Role Taxonomy (CJS Backend Mirror) ────────────
 // 1º DEV | 2º ADMIN | 3º TEST-PILOT | 4º CLIENTES B2B | 5º EDU
@@ -57,6 +61,7 @@ export const UnifiedUserSessionSchema = z.object({
     activeModules: z.object({
         opermaq: z.boolean(),
         stockpile: z.boolean(),
+        supply: z.boolean().default(false),
     }),
 });
 
@@ -82,6 +87,7 @@ export type B2BSeatRole = z.infer<typeof B2BSeatRoleSchema>;
 export const B2BMemberAllowedModulesSchema = z.object({
     opermaq: z.boolean().default(true),
     stockpile: z.boolean().default(false),
+    supply: z.boolean().default(false),
 });
 export type B2BMemberAllowedModules = z.infer<typeof B2BMemberAllowedModulesSchema>;
 
@@ -94,8 +100,16 @@ export const UpsertB2BMemberPayloadSchema = z.object({
     countryCode: z.string().trim().toUpperCase().min(2).max(4).default('CL'),
     role: z.enum(['ADMIN', 'OPERATOR', 'VIEWER']).default('OPERATOR'),
     jobTitle: z.string().trim().max(100).optional().or(z.literal('')),
-    allowedModules: B2BMemberAllowedModulesSchema.default({ opermaq: true, stockpile: false }),
+    allowedModules: B2BMemberAllowedModulesSchema.default({
+        opermaq: true,
+        stockpile: false,
+        supply: false,
+    }),
     canViewBilling: z.boolean().default(false),
+    phoneE164: z.string().trim().max(24).nullable().optional().or(z.literal('')),
+    whatsappOptInAt: z.union([z.number(), z.string().trim().max(64)]).nullable().optional(),
+    supplyProfile: SupplyMemberProfileSchema.nullable().optional(),
+    notificationPreferences: MemberNotificationPreferencesSchema.nullable().optional(),
 });
 export type UpsertB2BMemberPayload = z.infer<typeof UpsertB2BMemberPayloadSchema>;
 
@@ -107,6 +121,10 @@ export const UpdateB2BMemberPayloadSchema = z.object({
     allowedModules: B2BMemberAllowedModulesSchema.optional(),
     canViewBilling: z.boolean().optional(),
     status: z.enum(['ACTIVE', 'SUSPENDED']).optional(),
+    phoneE164: z.string().trim().max(24).nullable().optional().or(z.literal('')),
+    whatsappOptInAt: z.union([z.number(), z.string().trim().max(64)]).nullable().optional(),
+    supplyProfile: SupplyMemberProfileSchema.nullable().optional(),
+    notificationPreferences: MemberNotificationPreferencesSchema.nullable().optional(),
 });
 export type UpdateB2BMemberPayload = z.infer<typeof UpdateB2BMemberPayloadSchema>;
 
@@ -208,12 +226,14 @@ export const AccountEntitlementsSchema = z.object({
         .object({
             opermaq: z.boolean().default(false),
             stockpile: z.boolean().default(false),
+            supply: z.boolean().default(false),
         })
         .optional(),
     addonModules: z
         .object({
             opermaq: AddonModuleStateSchema.optional(),
             stockpile: AddonModuleStateSchema.optional(),
+            supply: AddonModuleStateSchema.optional(),
         })
         .default({}),
     maxProjects: z.number().int().min(1).max(100).nullable().default(null),
@@ -221,14 +241,14 @@ export const AccountEntitlementsSchema = z.object({
 export type AccountEntitlements = z.infer<typeof AccountEntitlementsSchema>;
 
 export function resolveEffectiveModuleAccess(params: {
-    moduleKey: 'opermaq' | 'stockpile';
+    moduleKey: 'opermaq' | 'stockpile' | 'supply';
     globalModuleActive: boolean;
     hasFullSuiteOverride?: boolean;
     entitlements?: Record<string, any> | null;
-    legacyContractActiveModules?: Record<string, boolean> | null;
+    legacyContractActiveModules?: Record<string, boolean | undefined> | null;
     legacyEnabledPlugins?: string[] | null;
     memberRole?: string | null;
-    memberAllowedModules?: Record<string, boolean> | null;
+    memberAllowedModules?: Record<string, boolean | undefined> | null;
 }): boolean {
     if (params.hasFullSuiteOverride) return true;
     if (!params.globalModuleActive) return false;
@@ -322,6 +342,7 @@ export const UpdateAccountEntitlementsPayloadSchema = z.object({
     addonModules: z.object({
         opermaq: z.boolean(),
         stockpile: z.boolean(),
+        supply: z.boolean().optional().default(false),
     }),
     maxProjects: z.number().int().min(1).max(100).nullable().optional(),
     eduInstitutionId: z.string().trim().max(128).nullable().optional(),
