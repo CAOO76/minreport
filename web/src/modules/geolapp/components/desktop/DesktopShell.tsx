@@ -7,7 +7,6 @@ import type {
     StockpileMeasurement,
 } from '../../core/types/GeolappTypes';
 import { DesktopCalibrationAuditView } from './DesktopCalibrationAuditView';
-import { DesktopClosureModal, type ClosureModalMode } from './DesktopClosureModal';
 import { DesktopDeviceCompatibilityView } from './DesktopDeviceCompatibilityView';
 import { DesktopDossierPanel } from './DesktopDossierPanel';
 import { DesktopFaenaDirectory } from './DesktopFaenaDirectory';
@@ -51,8 +50,6 @@ export const DesktopShell: React.FC<DesktopShellProps> = ({
     const [navLevel, setNavLevel] = useState<DesktopNavLevel>('FAENAS');
     const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
     const [selectedMeasurementId, setSelectedMeasurementId] = useState<string | null>(null);
-
-    const [closureMode, setClosureMode] = useState<ClosureModalMode>(null);
 
     const faenaScopedAssets = useMemo(() => {
         return assets
@@ -174,11 +171,10 @@ export const DesktopShell: React.FC<DesktopShellProps> = ({
                     <button
                         type="button"
                         onClick={handleGoRootFaenas}
-                        className={`bg-transparent border-0 outline-none px-1 py-1 font-mono text-microcopy font-bold uppercase cursor-pointer rounded-none shrink-0 transition-colors ${
-                            navLevel === 'FAENAS'
-                                ? 'text-[#C68346]'
-                                : 'text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
-                        }`}
+                        className={`bg-transparent border-0 outline-none px-1 py-1 font-mono text-microcopy font-bold uppercase cursor-pointer rounded-none shrink-0 transition-colors ${navLevel === 'FAENAS'
+                            ? 'text-[#C68346]'
+                            : 'text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
+                            }`}
                     >
                         {t('desktop.breadcrumb_faenas', 'FAENAS')}
                     </button>
@@ -189,11 +185,10 @@ export const DesktopShell: React.FC<DesktopShellProps> = ({
                             <button
                                 type="button"
                                 onClick={() => handleOpenFaena(activeFaenaId)}
-                                className={`bg-transparent border-0 outline-none px-1 py-1 font-mono text-microcopy font-bold uppercase cursor-pointer rounded-none truncate max-w-[220px] transition-colors ${
-                                    navLevel === 'FAENA_STOCKPILES'
-                                        ? 'text-[#C68346]'
-                                        : 'text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
-                                }`}
+                                className={`bg-transparent border-0 outline-none px-1 py-1 font-mono text-microcopy font-bold uppercase cursor-pointer rounded-none truncate max-w-[220px] transition-colors ${navLevel === 'FAENA_STOCKPILES'
+                                    ? 'text-[#C68346]'
+                                    : 'text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
+                                    }`}
                             >
                                 {activeFaenaLabel}
                             </button>
@@ -267,11 +262,10 @@ export const DesktopShell: React.FC<DesktopShellProps> = ({
                         title={t('desktop.nav_directory_aria', 'Faenas y acopios')}
                         aria-label={t('desktop.nav_directory_aria', 'Faenas y acopios')}
                         aria-pressed={isDirectoryFlow}
-                        className={`relative h-[52px] px-2 bg-transparent border-0 border-b-2 outline-none cursor-pointer flex items-center justify-center rounded-none transition-colors ${
-                            isDirectoryFlow
-                                ? 'border-[#C68346] text-[#C68346]'
-                                : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
-                        }`}
+                        className={`relative h-[52px] px-2 bg-transparent border-0 border-b-2 outline-none cursor-pointer flex items-center justify-center rounded-none transition-colors ${isDirectoryFlow
+                            ? 'border-[#C68346] text-[#C68346]'
+                            : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
+                            }`}
                     >
                         <span className="material-symbols-outlined text-[24px]">landscape</span>
                     </button>
@@ -282,11 +276,10 @@ export const DesktopShell: React.FC<DesktopShellProps> = ({
                         title={t('monitoring.title', 'ESTADÍSTICAS POR FAENA')}
                         aria-label={t('monitoring.title', 'ESTADÍSTICAS POR FAENA')}
                         aria-pressed={navLevel === 'MONITORING'}
-                        className={`relative h-[52px] px-2 bg-transparent border-0 border-b-2 outline-none cursor-pointer flex items-center justify-center rounded-none transition-colors ${
-                            navLevel === 'MONITORING'
-                                ? 'border-[#C68346] text-[#C68346]'
-                                : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
-                        }`}
+                        className={`relative h-[52px] px-2 bg-transparent border-0 border-b-2 outline-none cursor-pointer flex items-center justify-center rounded-none transition-colors ${navLevel === 'MONITORING'
+                            ? 'border-[#C68346] text-[#C68346]'
+                            : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
+                            }`}
                     >
                         <span className="material-symbols-outlined text-[24px]">monitoring</span>
                     </button>
@@ -300,11 +293,10 @@ export const DesktopShell: React.FC<DesktopShellProps> = ({
                             'AUDITORÍA DE CALIBRACIONES DE CAMPO'
                         )}
                         aria-pressed={navLevel === 'CALIBRATIONS'}
-                        className={`relative h-[52px] px-2 bg-transparent border-0 border-b-2 outline-none cursor-pointer flex items-center justify-center rounded-none transition-colors ${
-                            navLevel === 'CALIBRATIONS'
-                                ? 'border-[#C68346] text-[#C68346]'
-                                : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
-                        }`}
+                        className={`relative h-[52px] px-2 bg-transparent border-0 border-b-2 outline-none cursor-pointer flex items-center justify-center rounded-none transition-colors ${navLevel === 'CALIBRATIONS'
+                            ? 'border-[#C68346] text-[#C68346]'
+                            : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
+                            }`}
                     >
                         <span className="material-symbols-outlined text-[24px]">
                             compass_calibration
@@ -317,11 +309,10 @@ export const DesktopShell: React.FC<DesktopShellProps> = ({
                         title={t('compatibility.nav_tooltip', 'COMPATIBILIDAD HARDWARE')}
                         aria-label={t('compatibility.nav_tooltip', 'COMPATIBILIDAD HARDWARE')}
                         aria-pressed={navLevel === 'COMPATIBILITY'}
-                        className={`relative h-[52px] px-2 bg-transparent border-0 border-b-2 outline-none cursor-pointer flex items-center justify-center rounded-none transition-colors ${
-                            navLevel === 'COMPATIBILITY'
-                                ? 'border-[#C68346] text-[#C68346]'
-                                : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
-                        }`}
+                        className={`relative h-[52px] px-2 bg-transparent border-0 border-b-2 outline-none cursor-pointer flex items-center justify-center rounded-none transition-colors ${navLevel === 'COMPATIBILITY'
+                            ? 'border-[#C68346] text-[#C68346]'
+                            : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
+                            }`}
                     >
                         <span className="material-symbols-outlined text-[24px]">devices</span>
                     </button>
@@ -372,27 +363,11 @@ export const DesktopShell: React.FC<DesktopShellProps> = ({
                             measurements={activeAssetMeasurements}
                             selectedMeasurementId={selectedMeasurementId}
                             onSelectMeasurement={(m) => setSelectedMeasurementId(m.id)}
-                            onRequestClosure={() => setClosureMode('CLOSE_SHIPMENT')}
-                            onRequestReopen={() => setClosureMode('REOPEN_CYCLE')}
-                            onRequestDelete={() => setClosureMode('DELETE_ASSET')}
                         />
                         <DesktopDossierPanel asset={activeAsset} sites={sites} />
                     </div>
                 )}
             </div>
-
-            <DesktopClosureModal
-                mode={closureMode}
-                asset={activeAsset}
-                onClose={() => setClosureMode(null)}
-                onCompleted={(deletedId) => {
-                    if (deletedId && deletedId === selectedAssetId) {
-                        setSelectedAssetId(null);
-                        setSelectedMeasurementId(null);
-                        setNavLevel(activeFaenaId !== 'ALL' ? 'FAENA_STOCKPILES' : 'FAENAS');
-                    }
-                }}
-            />
         </div>
     );
 };

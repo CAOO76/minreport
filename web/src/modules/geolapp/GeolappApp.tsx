@@ -9,44 +9,29 @@ import type {
     StockpileMeasurement,
 } from './core/types/GeolappTypes';
 import { dataService } from './core/services/DataService';
+import { warmSpatialDeviceCapability } from './core/services/spatialDeviceCapability';
 import { UNASSIGNED_FAENA_ID } from './core/services/stockpile-faena-metrics';
 import { usePlatform } from './core/hooks/usePlatform';
 import { useMinReportSession } from '../../context/MinReportSessionContext';
 import { M3LinearProgress } from '../../components/common/M3LinearProgress';
 
-const MobileAcopiosHub = lazy(() =>
-    import('./components/MobileAcopiosHub').then((m) => ({ default: m.MobileAcopiosHub }))
-);
-const MobileCalibrationView = lazy(() =>
-    import('./components/MobileCalibrationView').then((m) => ({
-        default: m.MobileCalibrationView,
-    }))
-);
-const MobileFaenaList = lazy(() =>
-    import('./components/MobileFaenaList').then((m) => ({ default: m.MobileFaenaList }))
-);
-const MobileHome = lazy(() =>
-    import('./components/MobileHome').then((m) => ({ default: m.MobileHome }))
-);
+import { MobileAcopiosHub } from './components/MobileAcopiosHub';
+import { MobileCalibrationView } from './components/MobileCalibrationView';
+import { MobileFaenaList } from './components/MobileFaenaList';
+import { MobileHome } from './components/MobileHome';
+import { QuickStockpileCapture } from './components/QuickStockpileCapture';
+import { StockpileDossierView } from './components/StockpileDossierView';
+import { MobileStockpileClosureView } from './components/MobileStockpileClosureView';
+import { MobileScanner } from './components/MobileScanner';
+import { MeasurementDetail } from './components/MeasurementDetail';
+
 const MobileFaenaMonitoring = lazy(() =>
     import('./components/MobileFaenaMonitoring').then((m) => ({
         default: m.MobileFaenaMonitoring,
     }))
 );
-const QuickStockpileCapture = lazy(() =>
-    import('./components/QuickStockpileCapture').then((m) => ({ default: m.QuickStockpileCapture }))
-);
-const StockpileDossierView = lazy(() =>
-    import('./components/StockpileDossierView').then((m) => ({ default: m.StockpileDossierView }))
-);
-const MobileScanner = lazy(() =>
-    import('./components/MobileScanner').then((m) => ({ default: m.MobileScanner }))
-);
 const DesktopAnalytics = lazy(() =>
     import('./components/DesktopAnalytics').then((m) => ({ default: m.DesktopAnalytics }))
-);
-const MeasurementDetail = lazy(() =>
-    import('./components/MeasurementDetail').then((m) => ({ default: m.MeasurementDetail }))
 );
 
 export interface GeolappAppProps {
@@ -105,7 +90,13 @@ export const GeolappApp: React.FC<GeolappAppProps> = ({
     const [selectedMeasurement, setSelectedMeasurement] = useState<StockpileMeasurement | null>(
         null
     );
+    const [mobileHomeFilterResetKey, setMobileHomeFilterResetKey] = useState<number>(0);
     const [isLoadingAssets, setIsLoadingAssets] = useState<boolean>(true);
+
+    useEffect(() => {
+        if (isDesktopLayout) return;
+        void warmSpatialDeviceCapability().catch(() => {});
+    }, [isDesktopLayout]);
 
     useEffect(() => {
         if (typeof window === 'undefined') return;
@@ -342,7 +333,11 @@ export const GeolappApp: React.FC<GeolappAppProps> = ({
 
     const handleToggleClosureFromLayout = useCallback(() => {
         if (!selectedAsset) return;
-        if (view === 'detail') {
+        if (selectedAsset.status !== 'CLOSED') {
+            setView('closure');
+            return;
+        }
+        if (view === 'detail' || view === 'closure') {
             setView('summary');
             if (typeof window !== 'undefined') {
                 window.setTimeout(() => {
@@ -355,6 +350,14 @@ export const GeolappApp: React.FC<GeolappAppProps> = ({
             window.dispatchEvent(new CustomEvent('minreport:toggle-closure'));
         }
     }, [selectedAsset, view]);
+
+    const handleReturnToActiveStockpilesList = useCallback(() => {
+        setSelectedAsset(null);
+        setSelectedMeasurement(null);
+        setJustCreatedAssetId(null);
+        setMobileHomeFilterResetKey((k) => k + 1);
+        setView(activeFaenaMeta ? 'home' : 'faenas');
+    }, [activeFaenaMeta]);
 
     const mobileHubElement = (
         <MobileAcopiosHub
@@ -386,6 +389,8 @@ export const GeolappApp: React.FC<GeolappAppProps> = ({
             isUnassignedBucket={activeFaenaMeta.isUnassigned}
             assets={assets}
             isLoading={isLoadingAssets}
+            defaultFilter="ACTIVE"
+            filterResetKey={mobileHomeFilterResetKey}
             onBackToFaenas={handleBackToFaenas}
             onStartNewStockpile={handleStartNewStockpileInFaena}
             onSelectAsset={handleSelectAsset}
@@ -486,6 +491,19 @@ export const GeolappApp: React.FC<GeolappAppProps> = ({
                             setCaptureTargetAsset(selectedAsset);
                             setView('quick-capture');
                         }}
+                        onOpenClosure={() => setView('closure')}
+                    />
+                ) : (
+                    mobileHomeElement
+                );
+
+            case 'closure':
+                return selectedAsset ? (
+                    <MobileStockpileClosureView
+                        asset={selectedAsset}
+                        measurements={assetMeasurements}
+                        onBackToDossier={() => setView('summary')}
+                        onCloseToActiveList={handleReturnToActiveStockpilesList}
                     />
                 ) : (
                     mobileHomeElement
@@ -510,6 +528,11 @@ export const GeolappApp: React.FC<GeolappAppProps> = ({
                 return selectedAsset ? (
                     <MobileScanner
                         assetId={selectedAsset.id}
+                        assetName={selectedAsset.name}
+                        autoStartScan
+                        initialCopperDomain={selectedAsset.copper_domain ?? null}
+                        initialGranulometry={selectedAsset.tipo_granulometria ?? null}
+                        initialDensityFactor={selectedAsset.density_factor ?? null}
                         onSuccess={handleMeasurementCreated}
                         onBack={() => setView('summary')}
                     />

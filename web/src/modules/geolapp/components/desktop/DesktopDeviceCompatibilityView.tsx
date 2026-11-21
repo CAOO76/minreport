@@ -236,6 +236,7 @@ export const DesktopDeviceCompatibilityView: React.FC = () => {
             {/* Formulario Único On-Demand */}
             <form
                 autoComplete="off"
+                spellCheck={false}
                 onSubmit={handleSubmitCheck}
                 className="flex flex-wrap items-center gap-fib-13 p-fib-21 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] rounded-none shadow-none"
             >
@@ -404,6 +405,7 @@ export const DesktopDeviceCompatibilityView: React.FC = () => {
                     <div className="flex items-center gap-fib-13">
                         <form
                             autoComplete="off"
+                            spellCheck={false}
                             onSubmit={(e) => e.preventDefault()}
                         >
                             <input

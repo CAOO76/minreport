@@ -9,15 +9,12 @@ import {
     XAxis,
     YAxis,
 } from 'recharts';
+import CopyButton from '../../../../components/common/CopyButton';
 import { SecureImage } from '../../../../components/common/SecureImage';
 import { UNDECLARED_TECH_VALUE } from '../../../../components/common/ReportBlockEditable';
 import { useOptionalTheme } from '../../../../context/ThemeContext';
+import { buildCanonicalGeoFix } from '../../../../core/geo/wgs84UtmProjection';
 import { computeStockpileMeasurementChain } from '../../core/services/calculation-engine';
-import { dataService } from '../../core/services/DataService';
-import {
-    photogrammetry3dService,
-    type Reconstruct3DResult,
-} from '../../core/services/photogrammetry3d.service';
 import { useResolvedStockpileImage } from '../../core/services/StorageService';
 import { downloadGeolappVectorPdf } from '../../core/utils/vectorPdfGenerator';
 import type { StockpileAsset, StockpileMeasurement } from '../../core/types/GeolappTypes';
@@ -41,9 +38,6 @@ export interface DesktopStageWorkspaceProps {
     measurements: StockpileMeasurement[];
     selectedMeasurementId?: string | null;
     onSelectMeasurement: (m: StockpileMeasurement) => void;
-    onRequestClosure: () => void;
-    onRequestReopen: () => void;
-    onRequestDelete: () => void;
 }
 
 const LedgerPhotoPair: React.FC<{ prevUrl?: string | null; currUrl?: string | null }> = ({
@@ -79,11 +73,22 @@ const LedgerPhotoPair: React.FC<{ prevUrl?: string | null; currUrl?: string | nu
     );
 };
 
+const formatCampaignDepthMode = (depthMode?: string | null): string | null => {
+    if (typeof depthMode !== 'string') return null;
+    const norm = depthMode.trim().toUpperCase();
+    if (!norm) return null;
+    if (norm === 'RAW_DEPTH_ONLY') return 'ARCORE RAW DEPTH';
+    if (norm === 'AUTOMATIC') return 'ARCORE DEPTH';
+    if (norm === 'VIO_POINTCLOUD') return 'ARCORE VIO';
+    return depthMode.trim();
+};
+
 const CampaignComparisonPanel: React.FC<{
     measurement: StockpileMeasurement;
+    asset: StockpileAsset;
     onOpen3D: () => void;
     onClose: () => void;
-}> = ({ measurement, onOpen3D, onClose }) => {
+}> = ({ measurement, asset, onOpen3D, onClose }) => {
     const { t } = useTranslation();
     const resolvedPrev = useResolvedStockpileImage(measurement.previous_photo_url);
     const resolvedCurr = useResolvedStockpileImage(measurement.photo_url);
@@ -92,8 +97,17 @@ const CampaignComparisonPanel: React.FC<{
         measurement.delta_volumen,
         measurement.delta_volumen_pct
     );
+    const hasRealWeight =
+        typeof measurement.density_factor === 'number' &&
+        Number.isFinite(measurement.density_factor) &&
+        measurement.density_factor > 0 &&
+        typeof measurement.peso_t === 'number' &&
+        Number.isFinite(measurement.peso_t) &&
+        measurement.peso_t > 0;
     const deltaPesoStr =
-        typeof measurement.delta_peso === 'number' && Number.isFinite(measurement.delta_peso)
+        hasRealWeight &&
+        typeof measurement.delta_peso === 'number' &&
+        Number.isFinite(measurement.delta_peso)
             ? `${measurement.delta_peso > 0 ? '+' : ''}${measurement.delta_peso.toLocaleString(
                 undefined,
                 { maximumFractionDigits: 1 }
@@ -104,16 +118,44 @@ const CampaignComparisonPanel: React.FC<{
         measurement.cas_optimized_bytes,
         measurement.cas_savings_pct
     );
+    const depthModeStr = formatCampaignDepthMode(measurement.depth_mode);
 
     const imuParts = [
         typeof measurement.imu_pitch_deg === 'number'
             ? `${measurement.imu_pitch_deg.toFixed(1)}°`
             : null,
         typeof measurement.imu_height_m === 'number'
-            ? `${measurement.imu_height_m.toFixed(2)} m`
+            ? `H ${measurement.imu_height_m.toFixed(2)} m`
             : null,
-        measurement.geometry?.type ? String(measurement.geometry.type) : null,
+        typeof measurement.imu_distance_m === 'number'
+            ? `D ${measurement.imu_distance_m.toFixed(2)} m`
+            : null,
     ].filter((val): val is string => Boolean(val));
+
+    const measGeoFix = useMemo(() => {
+        const lat = measurement.location_metadata?.lat ?? asset.geo_point?.latitude ?? asset.location?.lat;
+        const lng = measurement.location_metadata?.lng ?? asset.geo_point?.longitude ?? asset.location?.lng;
+        if (
+            typeof lat !== 'number' ||
+            typeof lng !== 'number' ||
+            !Number.isFinite(lat) ||
+            !Number.isFinite(lng) ||
+            (lat === 0 && lng === 0)
+        ) {
+            return null;
+        }
+        try {
+            return buildCanonicalGeoFix({
+                lat,
+                lng,
+                altitudeM: asset.geo_point?.altitude ?? null,
+                accuracyM: measurement.location_metadata?.accuracy ?? asset.geo_point?.accuracy ?? null,
+                source: 'CAPACITOR_GNSS',
+            });
+        } catch {
+            return null;
+        }
+    }, [measurement.location_metadata, asset.geo_point, asset.location]);
 
     const undeclaredLabel = t('core_common.undeclared_tech_value', UNDECLARED_TECH_VALUE);
 
@@ -122,11 +164,12 @@ const CampaignComparisonPanel: React.FC<{
             <header className="px-fib-21 py-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] flex flex-wrap items-center justify-between gap-fib-13">
                 <div className="min-w-0">
                     <span className="block text-microcopy font-mono font-bold uppercase text-[#C68346]">
-                        {t('desktop.campaign_comparison', 'COMPARATIVA DE CAMPAÑA')}
+                        {t('desktop.campaign_comparison', 'TELEMETRÍA DE CAMPAÑA')}
                     </span>
                     <span className="block text-data-dense font-mono tabular-nums text-[#0F172A] dark:text-[#F3F4F6]">
                         {new Date(measurement.timestamp).toLocaleString()} ·{' '}
                         <span className="uppercase text-[#00AEEF]">{measurement.method}</span>
+                        {measurement.geometry?.type ? ` · ${measurement.geometry.type}` : ''}
                     </span>
                 </div>
 
@@ -134,10 +177,11 @@ const CampaignComparisonPanel: React.FC<{
                     <button
                         type="button"
                         onClick={onOpen3D}
-                        className="px-fib-13 py-1.5 bg-transparent border border-[#00AEEF] text-[#00AEEF] hover:bg-[#00AEEF]/10 font-mono text-microcopy font-bold uppercase cursor-pointer flex items-center gap-1 rounded-none"
+                        aria-label={t('desktop.open_in_3d', 'VER EN GEMELO 3D')}
+                        title={t('desktop.open_in_3d', 'VER EN GEMELO 3D')}
+                        className="bg-transparent border-0 outline-none p-1.5 text-[#00AEEF] hover:text-[#C68346] cursor-pointer flex items-center justify-center rounded-none"
                     >
-                        <span className="material-symbols-outlined text-[16px]">deployed_code</span>
-                        <span>{t('desktop.open_in_3d', 'VER EN GEMELO 3D')}</span>
+                        <span className="material-symbols-outlined text-[20px]">deployed_code</span>
                     </button>
                     <button
                         type="button"
@@ -205,14 +249,11 @@ const CampaignComparisonPanel: React.FC<{
                         <span className="text-h2-section font-bold text-[#C68346]">
                             {measurement.volumen_m3.toFixed(2)} m³
                         </span>
-                    </div>
-                    <div>
-                        <span className="block text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">
-                            {t('desktop.col_weight_thm', 'THM [t]')}
-                        </span>
-                        <span className="text-h2-section font-bold text-[#0F172A] dark:text-[#F3F4F6]">
-                            {measurement.peso_t.toFixed(1)} t
-                        </span>
+                        {typeof measurement.uncertainty_pct === 'number' && (
+                            <span className="block text-microcopy text-[#00AEEF]">
+                                ± {measurement.uncertainty_pct.toFixed(1)}%
+                            </span>
+                        )}
                     </div>
                     <div>
                         <span className="block text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">
@@ -229,18 +270,117 @@ const CampaignComparisonPanel: React.FC<{
                     </div>
                     <div>
                         <span className="block text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">
-                            CAS / IMU
+                            {t('dossier.tonnage_label', 'MASA / DENSIDAD')}
+                        </span>
+                        <span className="block text-h2-section font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                            {hasRealWeight ? `${measurement.peso_t.toFixed(1)} t` : undeclaredLabel}
+                        </span>
+                        {typeof measurement.density_factor === 'number' &&
+                            measurement.density_factor > 0 && (
+                                <span className="block text-microcopy text-[#475569] dark:text-[#8A93A6]">
+                                    {measurement.density_factor.toFixed(2)} t/m³
+                                </span>
+                            )}
+                    </div>
+                    <div>
+                        <span className="block text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">
+                            V_TIN / ESPACIAL
+                        </span>
+                        <span className="block text-data-dense font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                            {typeof measurement.tin_volume_m3 === 'number'
+                                ? `${measurement.tin_volume_m3.toFixed(2)} m³`
+                                : undeclaredLabel}
+                        </span>
+                        {depthModeStr && (
+                            <span className="block text-microcopy text-[#00AEEF]">
+                                {depthModeStr}
+                            </span>
+                        )}
+                    </div>
+                    <div>
+                        <span className="block text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">
+                            COB / TOE
+                        </span>
+                        <span className="block text-data-dense text-[#0F172A] dark:text-[#F3F4F6]">
+                            {typeof measurement.coverage_pct === 'number'
+                                ? `${Math.round(measurement.coverage_pct)}%`
+                                : '--'}{' '}
+                            /{' '}
+                            {typeof measurement.toe_score === 'number'
+                                ? `${Math.round(measurement.toe_score)}%`
+                                : '--'}
+                        </span>
+                    </div>
+                    <div>
+                        <span className="block text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">
+                            TALUD / PISO
+                        </span>
+                        <span
+                            className={`block text-data-dense font-bold ${
+                                typeof measurement.detected_slope_angle_deg === 'number' &&
+                                measurement.detected_slope_angle_deg > 38
+                                    ? 'text-[#C68346]'
+                                    : 'text-[#0F172A] dark:text-[#F3F4F6]'
+                            }`}
+                        >
+                            {typeof measurement.detected_slope_angle_deg === 'number'
+                                ? `α ${measurement.detected_slope_angle_deg.toFixed(1)}°`
+                                : '--'}
+                            {typeof measurement.ground_slope_deg === 'number'
+                                ? ` · ${measurement.ground_slope_deg.toFixed(1)}°`
+                                : ''}
+                        </span>
+                    </div>
+                    <div>
+                        <span className="block text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">
+                            IMU
+                        </span>
+                        <span className="block text-microcopy text-[#0F172A] dark:text-[#F3F4F6]">
+                            {imuParts.length > 0 ? imuParts.join(' · ') : undeclaredLabel}
+                        </span>
+                    </div>
+                    <div>
+                        <span className="block text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">
+                            CAS
                         </span>
                         <span className="block text-microcopy text-[#0F172A] dark:text-[#F3F4F6] break-words">
                             {casStr || undeclaredLabel}
                         </span>
-                        {imuParts.length > 0 && (
-                            <span className="block text-microcopy text-[#475569] dark:text-[#8A93A6]">
-                                {imuParts.join(' · ')}
-                            </span>
-                        )}
                     </div>
                 </div>
+
+                {(measGeoFix || measurement.mesh_sha256 || measurement.is_closure_measurement) && (
+                    <div className="pt-fib-8 border-t border-[#E2E8F0] dark:border-[#12151C] grid grid-cols-1 md:grid-cols-2 gap-fib-8 font-mono text-microcopy tabular-nums">
+                        {measGeoFix && (
+                            <div className="flex items-center justify-between gap-fib-8">
+                                <span className="text-[#475569] dark:text-[#8A93A6] truncate">
+                                    UTM: {measGeoFix.utm.formatted}
+                                </span>
+                                <CopyButton value={measGeoFix.utm.formatted} />
+                            </div>
+                        )}
+                        {measurement.mesh_sha256 && (
+                            <div className="flex items-center justify-between gap-fib-8">
+                                <span className="text-[#475569] dark:text-[#8A93A6] truncate">
+                                    SHA-256: {measurement.mesh_sha256.slice(0, 16)}…
+                                </span>
+                                <CopyButton value={measurement.mesh_sha256} />
+                            </div>
+                        )}
+                        {measurement.is_closure_measurement && (
+                            <div className="md:col-span-2 text-[#C68346]">
+                                {measurement.closure_reason || 'CLOSED'}
+                                {measurement.closure_cause ? ` · ${measurement.closure_cause}` : ''}
+                                {measurement.dispatch_reference
+                                    ? ` · ${measurement.dispatch_reference}`
+                                    : ''}
+                                {measurement.closure_origin
+                                    ? ` · ${measurement.closure_origin}`
+                                    : ''}
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
         </div>
     );
@@ -251,9 +391,6 @@ export const DesktopStageWorkspace: React.FC<DesktopStageWorkspaceProps> = ({
     measurements,
     selectedMeasurementId,
     onSelectMeasurement,
-    onRequestClosure,
-    onRequestReopen,
-    onRequestDelete,
 }) => {
     const { t } = useTranslation();
     const themeCtx = useOptionalTheme();
@@ -262,18 +399,11 @@ export const DesktopStageWorkspace: React.FC<DesktopStageWorkspaceProps> = ({
     const [stageTab, setStageTab] = useState<StageTab>('OVERVIEW');
     const [visualMode, setVisualMode] = useState<StockpileVisualMode>('DUAL');
     const [ledgerCompareOpen, setLedgerCompareOpen] = useState(false);
-    const [isReconstructing3D, setIsReconstructing3D] = useState(false);
-    const [localMeshByKey, setLocalMeshByKey] = useState<Record<string, Reconstruct3DResult>>({});
-    const [reconstructNotice, setReconstructNotice] = useState<{
-        type: 'success' | 'error';
-        text: string;
-    } | null>(null);
 
     useEffect(() => {
         setStageTab('OVERVIEW');
         setVisualMode('DUAL');
         setLedgerCompareOpen(false);
-        setReconstructNotice(null);
     }, [asset?.id]);
 
     const chain = useMemo(
@@ -325,37 +455,21 @@ export const DesktopStageWorkspace: React.FC<DesktopStageWorkspaceProps> = ({
         orderedMeas.find((m) => m.id === selectedMeasurementId) ||
         chain.summary.latestActive ||
         null;
-    const meshCacheKey = `${asset.id}:${selectedMeas?.id || 'asset'}`;
-    const localMeshResult = localMeshByKey[meshCacheKey] ?? null;
 
-    const effMeshUrl =
-        localMeshResult?.meshUrl ?? selectedMeas?.mesh_url ?? asset.mesh_url ?? null;
-    const effMeshSha256 =
-        localMeshResult?.sha256 ?? selectedMeas?.mesh_sha256 ?? asset.mesh_sha256;
-    const effMeshSource =
-        localMeshResult?.source ?? selectedMeas?.mesh_source ?? asset.mesh_source;
-    const effTinVolumeM3 =
-        localMeshResult?.tinVolumeM3 ?? selectedMeas?.tin_volume_m3 ?? asset.tin_volume_m3 ?? null;
+    const effMeshUrl = selectedMeas?.mesh_url ?? asset.mesh_url ?? null;
+    const effMeshSha256 = selectedMeas?.mesh_sha256 ?? asset.mesh_sha256;
+    const effMeshSource = selectedMeas?.mesh_source ?? asset.mesh_source;
+    const effTinVolumeM3 = selectedMeas?.tin_volume_m3 ?? asset.tin_volume_m3 ?? null;
     const effMeshCas =
-        localMeshResult ||
         selectedMeas?.mesh_original_bytes !== undefined ||
         selectedMeas?.mesh_optimized_bytes !== undefined ||
         asset.mesh_original_bytes !== undefined ||
         asset.mesh_optimized_bytes !== undefined ||
         effMeshSha256
             ? {
-                  originalBytes:
-                      localMeshResult?.originalBytes ??
-                      selectedMeas?.mesh_original_bytes ??
-                      asset.mesh_original_bytes,
-                  optimizedBytes:
-                      localMeshResult?.optimizedBytes ??
-                      selectedMeas?.mesh_optimized_bytes ??
-                      asset.mesh_optimized_bytes,
-                  savingsPct:
-                      localMeshResult?.savingsPct ??
-                      selectedMeas?.mesh_savings_pct ??
-                      asset.mesh_savings_pct,
+                  originalBytes: selectedMeas?.mesh_original_bytes ?? asset.mesh_original_bytes,
+                  optimizedBytes: selectedMeas?.mesh_optimized_bytes ?? asset.mesh_optimized_bytes,
+                  savingsPct: selectedMeas?.mesh_savings_pct ?? asset.mesh_savings_pct,
                   sha256: effMeshSha256,
               }
             : undefined;
@@ -367,59 +481,6 @@ export const DesktopStageWorkspace: React.FC<DesktopStageWorkspaceProps> = ({
                 (v) => typeof v === 'number' && Number.isFinite(v) && v > 0
             )
     );
-
-    const handleReconstruct3D = async () => {
-        if (!selectedMeas?.geometry?.type || !selectedMeas?.geometry?.dimensions) return;
-        setIsReconstructing3D(true);
-        setReconstructNotice(null);
-        try {
-            const result = await photogrammetry3dService.reconstructStockpile3D({
-                stockpileId: asset.id,
-                measurementId: selectedMeas.id,
-                geometryType: selectedMeas.geometry.type,
-                dimensions: selectedMeas.geometry.dimensions as Record<string, number | undefined>,
-                photoUrls: [
-                    ...(selectedMeas.photo_url ? [selectedMeas.photo_url] : []),
-                    ...(selectedMeas.perimeter_photo_urls || asset.perimeter_photo_urls || []),
-                ].filter((u) => Boolean(u) && !u.startsWith('data:')),
-            });
-            setLocalMeshByKey((prev) => ({ ...prev, [meshCacheKey]: result }));
-            await dataService.saveStockpileData(
-                {
-                    mesh_url: result.meshUrl,
-                    mesh_sha256: result.sha256,
-                    mesh_source: result.source,
-                    tin_volume_m3: result.tinVolumeM3,
-                    mesh_original_bytes: result.originalBytes,
-                    mesh_optimized_bytes: result.optimizedBytes,
-                    mesh_savings_pct: result.savingsPct,
-                },
-                asset.id
-            );
-            setReconstructNotice({
-                type: 'success',
-                text:
-                    result.source === 'LOCAL_DETERMINISTIC_TIN_GLB'
-                        ? t(
-                              'twin3d.reconstruction_offline',
-                              'Malla .glb generada localmente (TIN Determinista Offline-First).'
-                          )
-                        : t(
-                              'twin3d.reconstruction_ready',
-                              'Malla 3D .glb verificada y consolidada en CAS.'
-                          ),
-            });
-        } catch (err) {
-            setReconstructNotice({
-                type: 'error',
-                text: `${t('twin3d.reconstruction_error', 'Error al reconstruir gemelo 3D .glb')}${
-                    err instanceof Error && err.message ? `: ${err.message}` : ''
-                }`,
-            });
-        } finally {
-            setIsReconstructing3D(false);
-        }
-    };
 
     const stagePhotoUrl =
         selectedMeas?.photo_url ||
@@ -456,68 +517,56 @@ export const DesktopStageWorkspace: React.FC<DesktopStageWorkspaceProps> = ({
                 </div>
 
                 <div className="flex items-center gap-fib-8 shrink-0">
-                    {!isClosed ? (
-                        <button
-                            type="button"
-                            onClick={onRequestClosure}
-                            title={t('lifecycle.close_shipment_action', 'Cerrar por embarque')}
-                            aria-label={t('lifecycle.close_shipment_action', 'Cerrar por embarque')}
-                            className="bg-transparent border-0 outline-none p-1.5 text-[#475569] dark:text-[#8A93A6] hover:text-[#C68346] cursor-pointer rounded-none"
-                        >
-                            <span className="material-symbols-outlined text-[20px]">
-                                local_shipping
-                            </span>
-                        </button>
-                    ) : (
-                        <button
-                            type="button"
-                            onClick={onRequestReopen}
-                            className="px-fib-13 py-2 border border-[#C68346] text-[#C68346] font-mono text-microcopy font-bold uppercase bg-transparent cursor-pointer rounded-none"
-                        >
-                            {t('lifecycle.reopen_action', 'REABRIR')}
-                        </button>
-                    )}
-
                     <button
                         type="button"
                         onClick={() => void downloadGeolappVectorPdf(asset, orderedMeas)}
                         title={t('pdf.export_button', 'Exportar PDF')}
                         aria-label={t('pdf.export_button', 'Exportar PDF')}
-                        className="bg-transparent border-0 outline-none p-1.5 text-[#475569] dark:text-[#8A93A6] hover:text-[#00AEEF] cursor-pointer rounded-none"
+                        className="bg-transparent border-0 outline-none p-1.5 text-[#475569] dark:text-[#8A93A6] hover:text-[#00AEEF] cursor-pointer rounded-none flex items-center justify-center"
                     >
                         <span className="material-symbols-outlined text-[20px]">
                             picture_as_pdf
                         </span>
-                    </button>
-                    <button
-                        type="button"
-                        onClick={onRequestDelete}
-                        title={t('common.delete_button', 'Eliminar acopio')}
-                        aria-label={t('common.delete_button', 'Eliminar acopio')}
-                        className="bg-transparent border-0 outline-none p-1.5 text-[#475569] dark:text-[#8A93A6] hover:text-red-500 cursor-pointer rounded-none"
-                    >
-                        <span className="material-symbols-outlined text-[20px]">delete</span>
                     </button>
                 </div>
             </header>
 
             {/* Stage Tabs */}
             <nav className="shrink-0 flex items-center gap-fib-21 px-fib-21 border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000]">
-                {(['OVERVIEW', 'TWIN_3D', 'LEDGER'] as const).map((tab) => (
+                {(
+                    [
+                        {
+                            id: 'OVERVIEW' as const,
+                            icon: 'monitoring',
+                            label: t('desktop.stage_overview', 'RESUMEN Y EVOLUCIÓN'),
+                        },
+                        {
+                            id: 'TWIN_3D' as const,
+                            icon: 'deployed_code',
+                            label: t('twin3d.title', 'GEMELO 3D / VISUAL'),
+                        },
+                        {
+                            id: 'LEDGER' as const,
+                            icon: 'history',
+                            label: t('analytics.history_title', 'HISTORIAL DE CAMPAÑAS'),
+                        },
+                    ] as const
+                ).map((tab) => (
                     <button
-                        key={tab}
+                        key={tab.id}
                         type="button"
-                        onClick={() => setStageTab(tab)}
-                        className={`py-fib-13 text-microcopy font-mono font-bold uppercase border-0 border-b-2 bg-transparent cursor-pointer rounded-none transition-colors ${stageTab === tab
-                            ? 'border-[#C68346] text-[#C68346]'
-                            : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
-                            }`}
+                        onClick={() => setStageTab(tab.id)}
+                        aria-label={tab.label}
+                        title={tab.label}
+                        className={`py-fib-13 px-2 inline-flex items-center justify-center border-0 border-b-2 bg-transparent cursor-pointer rounded-none transition-colors ${
+                            stageTab === tab.id
+                                ? 'border-[#C68346] text-[#C68346]'
+                                : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
+                        }`}
                     >
-                        {tab === 'OVERVIEW'
-                            ? t('desktop.stage_overview', 'RESUMEN Y EVOLUCIÓN')
-                            : tab === 'TWIN_3D'
-                                ? t('twin3d.title', 'GEMELO 3D / VISUAL')
-                                : t('analytics.history_title', 'HISTORIAL DE CAMPAÑAS')}
+                        <span className="material-symbols-outlined text-[20px]" aria-hidden="true">
+                            {tab.icon}
+                        </span>
                     </button>
                 ))}
             </nav>
@@ -564,34 +613,10 @@ export const DesktopStageWorkspace: React.FC<DesktopStageWorkspaceProps> = ({
                             </div>
                         </div>
 
-                        {reconstructNotice && (
-                            <div
-                                role="status"
-                                className={`p-fib-13 border rounded-none shadow-none flex items-center justify-between gap-fib-13 text-data-dense font-mono ${
-                                    reconstructNotice.type === 'error'
-                                        ? 'border-red-600/50 bg-red-600/10 text-red-700 dark:text-red-400'
-                                        : 'border-[#00AEEF]/50 bg-[#00AEEF]/10 text-[#0F172A] dark:text-[#F3F4F6]'
-                                }`}
-                            >
-                                <span>{reconstructNotice.text}</span>
-                                <button
-                                    type="button"
-                                    onClick={() => setReconstructNotice(null)}
-                                    aria-label={t('common.close_button', 'CERRAR')}
-                                    className="bg-transparent border-0 outline-none p-1 text-current cursor-pointer rounded-none"
-                                >
-                                    <span className="material-symbols-outlined text-[16px]">
-                                        close
-                                    </span>
-                                </button>
-                            </div>
-                        )}
-
                         {/* Escenario Visual Unificado: Foto Real / Malla 3D / Dual */}
                         <div className="p-fib-13 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] rounded-none shadow-none">
                             <StockpileVisualStage
                                 photoUrl={stagePhotoUrl}
-                                initialPhotoUrl={asset.initial_photo_url}
                                 perimeterPhotoUrls={
                                     selectedMeas?.perimeter_photo_urls ??
                                     asset.perimeter_photo_urls ??
@@ -629,9 +654,7 @@ export const DesktopStageWorkspace: React.FC<DesktopStageWorkspaceProps> = ({
                                 }
                                 isMobile={false}
                                 heightPx={320}
-                                canReconstruct3D={hasDeclaredGeometry}
-                                isReconstructing3D={isReconstructing3D}
-                                onReconstruct3D={() => void handleReconstruct3D()}
+                                canReconstruct3D={false}
                                 mode={visualMode}
                                 onModeChange={setVisualMode}
                             />
@@ -717,6 +740,7 @@ export const DesktopStageWorkspace: React.FC<DesktopStageWorkspaceProps> = ({
                         {ledgerCompareOpen && selectedMeas && (
                             <CampaignComparisonPanel
                                 measurement={selectedMeas}
+                                asset={asset}
                                 onOpen3D={() => {
                                     setVisualMode('3D');
                                     setStageTab('OVERVIEW');
@@ -731,9 +755,9 @@ export const DesktopStageWorkspace: React.FC<DesktopStageWorkspaceProps> = ({
                                         <th className="p-fib-13">{t('dossier.col_evidence', 'CAMPAÑA')}</th>
                                         <th className="p-fib-13">{t('dossier.col_date', 'FECHA')}</th>
                                         <th className="p-fib-13 text-right">m³</th>
+                                        <th className="p-fib-13 text-right">t</th>
                                         <th className="p-fib-13 text-right">Δ</th>
                                         <th className="p-fib-13">CAS</th>
-                                        <th className="p-fib-13 text-right" />
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-[#E2E8F0] dark:divide-[#12151C]">
@@ -747,6 +771,13 @@ export const DesktopStageWorkspace: React.FC<DesktopStageWorkspaceProps> = ({
                                             m.delta_volumen,
                                             m.delta_volumen_pct
                                         );
+                                        const hasRowRealWeight =
+                                            typeof m.density_factor === 'number' &&
+                                            Number.isFinite(m.density_factor) &&
+                                            m.density_factor > 0 &&
+                                            typeof m.peso_t === 'number' &&
+                                            Number.isFinite(m.peso_t) &&
+                                            m.peso_t > 0;
                                         const isRowSelected =
                                             ledgerCompareOpen && m.id === selectedMeas?.id;
                                         return (
@@ -773,40 +804,22 @@ export const DesktopStageWorkspace: React.FC<DesktopStageWorkspaceProps> = ({
                                                     </span>
                                                     <span className="text-microcopy uppercase text-[#00AEEF]">
                                                         {m.method}
+                                                        {typeof m.uncertainty_pct === 'number'
+                                                            ? ` · ±${m.uncertainty_pct.toFixed(1)}%`
+                                                            : ''}
                                                     </span>
                                                 </td>
                                                 <td className="p-fib-13 text-right font-bold">
                                                     {m.volumen_m3.toFixed(2)}
+                                                </td>
+                                                <td className="p-fib-13 text-right text-[#475569] dark:text-[#8A93A6]">
+                                                    {hasRowRealWeight ? m.peso_t.toFixed(1) : '--'}
                                                 </td>
                                                 <td className="p-fib-13 text-right text-[#00AEEF]">
                                                     {dStr || '--'}
                                                 </td>
                                                 <td className="p-fib-13 text-microcopy">
                                                     {casStr || '--'}
-                                                </td>
-                                                <td className="p-fib-13 text-right">
-                                                    <button
-                                                        type="button"
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            void dataService.toggleIgnoreMeasurement(
-                                                                m.id,
-                                                                m.assetId,
-                                                                Boolean(m.ignored)
-                                                            );
-                                                        }}
-                                                        aria-label={t(
-                                                            'history.ignore_measurement',
-                                                            'Alternar visibilidad'
-                                                        )}
-                                                        className="bg-transparent border-0 p-1 text-[#475569] dark:text-[#8A93A6] hover:text-[#C68346] cursor-pointer rounded-none"
-                                                    >
-                                                        <span className="material-symbols-outlined text-[18px]">
-                                                            {m.ignored
-                                                                ? 'visibility'
-                                                                : 'visibility_off'}
-                                                        </span>
-                                                    </button>
                                                 </td>
                                             </tr>
                                         );

@@ -138,13 +138,45 @@ export async function requestArCoreInstall(): Promise<{ status: string; message?
     }
 }
 
+let cachedCapability: SpatialDeviceCapabilityReport | null = null;
+let inflightCapabilityProbe: Promise<SpatialDeviceCapabilityReport> | null = null;
+
+export function getCachedSpatialDeviceCapability(): SpatialDeviceCapabilityReport | null {
+    return cachedCapability;
+}
+
+export function warmSpatialDeviceCapability(
+    forceRefresh = false
+): Promise<SpatialDeviceCapabilityReport> {
+    if (!forceRefresh && cachedCapability) {
+        return Promise.resolve(cachedCapability);
+    }
+    if (!forceRefresh && inflightCapabilityProbe) {
+        return inflightCapabilityProbe;
+    }
+    const probePromise = probeSpatialDeviceCapability()
+        .then((report) => {
+            cachedCapability = report;
+            return report;
+        })
+        .finally(() => {
+            if (inflightCapabilityProbe === probePromise) {
+                inflightCapabilityProbe = null;
+            }
+        });
+    inflightCapabilityProbe = probePromise;
+    return probePromise;
+}
+
 export function useSpatialDeviceCapability() {
-    const [capability, setCapability] = useState<SpatialDeviceCapabilityReport | null>(null);
-    const [loading, setLoading] = useState<boolean>(true);
+    const [capability, setCapability] = useState<SpatialDeviceCapabilityReport | null>(
+        () => cachedCapability
+    );
+    const [loading, setLoading] = useState<boolean>(() => !cachedCapability);
 
     const refresh = useCallback(async () => {
         setLoading(true);
-        const report = await probeSpatialDeviceCapability();
+        const report = await warmSpatialDeviceCapability(true);
         setCapability(report);
         setLoading(false);
         return report;
@@ -152,8 +184,10 @@ export function useSpatialDeviceCapability() {
 
     useEffect(() => {
         let active = true;
-        setLoading(true);
-        void probeSpatialDeviceCapability().then((report) => {
+        if (!cachedCapability) {
+            setLoading(true);
+        }
+        void warmSpatialDeviceCapability().then((report) => {
             if (!active) return;
             setCapability(report);
             setLoading(false);

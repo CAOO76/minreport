@@ -423,3 +423,29 @@ export function computeAllFaenasBreakdown(
         .filter((m) => m.totalCount > 0 || knownSites.some((s) => s.id === m.faenaId))
         .sort((a, b) => b.activeVolumeM3 - a.activeVolumeM3);
 }
+
+export type StockpileLifecycleGroupRank = 0 | 1 | 2 | 3;
+
+export function getStockpileLifecycleRank(asset: StockpileAsset): StockpileLifecycleGroupRank {
+    if (asset.status !== 'CLOSED') return 0;
+    if (asset.closure_reason === 'SHIPPED') return 1;
+    if (asset.closure_reason === 'FIELD_REMOVED') return 2;
+    return 3;
+}
+
+export function sortStockpilesByLifecycle(assets: StockpileAsset[]): StockpileAsset[] {
+    return [...assets].sort((a, b) => {
+        const rankDiff = getStockpileLifecycleRank(a) - getStockpileLifecycleRank(b);
+        if (rankDiff !== 0) return rankDiff;
+        const tsA =
+            a.status === 'CLOSED'
+                ? a.dispatch_timestamp || a.closed_at || a.last_measured_at || a.createdAt || 0
+                : a.last_measured_at || a.captured_at || a.createdAt || 0;
+        const tsB =
+            b.status === 'CLOSED'
+                ? b.dispatch_timestamp || b.closed_at || b.last_measured_at || b.createdAt || 0
+                : b.last_measured_at || b.captured_at || b.createdAt || 0;
+        if (tsB !== tsA) return tsB - tsA;
+        return (a.name || '').localeCompare(b.name || '');
+    });
+}

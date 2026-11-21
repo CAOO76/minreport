@@ -120,8 +120,10 @@ Inspirado en la ingeniería aeronáutica, aeroespacial y topográfica de alta ga
   - `fib-55` (`55px`): Márgenes mayores de bloque y paddings de contenedor.
   - `fib-89` (`89px`): Separación de pantalla monumental y transiciones.
 
-### 3.6 Iconografía Exclusiva y Botones Planos
+### 3.6 Iconografía Exclusiva, Botones Planos e Icon-First Ad Hoc (`ICON-FIRST-MINIMALISM-AUDITOR`)
 - **Fuente de Iconos Exclusiva:** **Material Symbols Outlined** (`material-symbols-outlined`). Prohibido `material-symbols-rounded` o librerías externas de iconos.
+- **Anti-FOUT Estricto:** Todo `@font-face` de `Material Symbols Outlined` debe usar `font-display: block` y puerta `html:not(.ms-ready)` con caja `1em × 1em` dentro de `@layer components`, evitando destellos de texto literal (`LANDSCAPE`, `WIFI`) al iniciar o transicionar. Todo nombre de glifo literal debe existir en el binario WOFF local y verificarse mediante `npm run audit:hmi-icons`.
+- **Acciones Operativas Icon-First Ad Hoc:** Toda acción o conmutador operativo usa únicamente su icono Material Symbols ad hoc con `aria-label` y `title` traducidos (`add_a_photo`, `picture_as_pdf`, `done_all`, `lock_open`, `measuring_tape`, `compass_calibration`, `photo_camera`, `deployed_code`, `view_column_2`, `satellite_alt`, `monitoring`, `history`), sustituyendo botones con texto descriptivo.
 - **Prohibición Total de Emojis:** Sustituidos por códigos ISO alfanuméricos (`CL`, `US`, `EU`) o glifos de Material Symbols.
 - **Botones de Iconos Planos y Transparentes:**
   `bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer`
@@ -148,16 +150,17 @@ Inspirado en la ingeniería aeronáutica, aeroespacial y topográfica de alta ga
 - **Blindaje de Medios:** Imágenes y SVGs con `draggable={false}`, CSS `-webkit-user-drag: none;` y clases `select-none pointer-events-none`.
 - **Gobierno de Selección de Texto:** `select-none` en layouts y tarjetas estáticas. `select-text` habilitado exclusivamente en códigos operativos (SKUs, normativas) acompañado de botón de copia.
 
-### 3.10 Estándar Estricto para App Móvil (Terreno Minero Zero-Layer)
-- **Cero Prosa Operativa:** Prohibida toda prosa, slogans, párrafos explicativos y textos tutoriales. Solo botones funcionales, datos tabulares, indicadores precisos, gráficos vectoriales e imágenes/mallas 3D finales.
+### 3.10 Estándar Estricto para App Móvil (Terreno Minero Zero-Layer) vs Escritorio Solo Lectura
+- **Cero Prosa Operativa:** Prohibida toda prosa, slogans, párrafos explicativos y textos tutoriales. Solo iconos funcionales ad hoc, datos tabulares, indicadores precisos, gráficos vectoriales e imágenes/mallas 3D finales.
 - **Lienzo Plano (Prohibidas Tarjetas con Bordes y Relleno):** Prohibido envolver listas o formularios móviles en tarjetas/cajas con borde y relleno. Usar lienzo plano (`#000000` / `#FFFFFF`) con divisores `hairline 1px` (`#12151C` / `#E2E8F0`) y **barra lateral `3px` ISA-101 por excepción** (`#C68346` en alertas/pendientes/cola, `#00AEEF` en verificado IA, transparente en estado nominal).
 - **Cabecera Superior Única Contextual (`56px` — MBUX Zero-Layer):** Máximo una cabecera de `56px` en móvil. Prohibido apilar `TopBar` + subheaders + banners offline redundantes.
-- **Menú Inicial `MINREPORT`:** Renderiza un **único icono plano centrado** (`#C68346`, sin texto ni caja, target táctil apto para guantes `>= 48px–64px` / zona `88×88px`).
-- **Barra Inferior (`56px`) Exclusiva en Detalle de Acopio:** Se muestra únicamente dentro del detalle de acopio con el botón `CÁMARA` (`add_a_photo`) centrado (`#C68346`); prohibida barra inferior en vistas de faenas, listados o monitoreo.
+- **Menú Inicial `MINREPORT` y Hub `ACOPIOS`:** Menú inicial con único icono plano centrado (`#C68346`, sin texto ni caja, target `>= 48px–64px` / `88×88px`); al abrir `ACOPIOS`, hub de terreno con iconos puros `measuring_tape` y `compass_calibration` sin palabras superpuestas.
+- **Barra Inferior (`64px`) en Detalle de Acopio:** Fija únicamente en `StockpileDossierView` con 3 botones de iconos puros transparentes: `picture_as_pdf` (izquierda), `add_a_photo` (centro `#C68346`) y `done_all` / `lock_open` (derecha).
+- **Detalle de Medición Senior (70+) vs Escritorio 100% Solo Lectura:** La vista móvil de medición prioriza legibilidad de alto contraste con foto única y datos esenciales reales sin ruido técnico (`CAS`, `ARCORE`, `EPSG`, `THM/TMS`); el escritorio Web exhibe el detalle técnico completo de cada captura en modo **100% solo lectura** (cero edición, cierre, reapertura ni borrado desde escritorio). Todo cierre (`SHIPPED` despacho o `FIELD_REMOVED` eliminación con `closure_cause` obligatoria) o reapertura es exclusivo de terreno móvil (`closure_origin: 'MOBILE_FIELD'`) bajo confirmación `"ACTUALIZAR"`.
 - **Targets Táctiles de Faena:** Controles primarios con área táctil `>= 48px–64px` (estándar SpaceX Dragon HMI para operación con guantes y vibración).
 
 ### 3.11 Estándar Visual Dual Foto Real / Malla 3D Digital en `ACOPIOS` (`stockpile`)
-- **Componente Unificado Obligatorio:** Todo registro de acopio en escritorio (**`FOTO | 3D | DUAL`**) y móvil (**`FOTO | 3D`**) debe integrar visualización optimizada de fotos reales (con perimetrales y detecciones `box_2d` cuando existan) y/o mallas 3D digitales `.glb`/TIN mediante **`StockpileVisualStage`** + **`StockpileTwin3DLazy`** (`StockpileTwin3D`).
+- **Componente Unificado Obligatorio (Foto Única Vigente):** Todo registro de acopio exhibe por defecto **exclusivamente la última captura vigente** (sin carrusel ni etiquetas `"ÚLTIMA / INICIAL"`; las capturas históricas se visualizan únicamente al abrir cada medición desde el listado). El conmutador de modo se opera por iconos (`photo_camera` | `deployed_code` | `view_column_2` | `satellite_alt`) integrando **`StockpileVisualStage`** + **`StockpileTwin3DLazy`**.
 - **Carga Diferida, Compact Mode e Higiene WebGL:** Obligatoria carga diferida con `M3LinearProgress`, modo `compact` para móvil/comparativas y liberación estricta WebGL (`geometry.dispose()`, `material.dispose()`, `texture.dispose()`, `controls.dispose()`, `renderer.dispose()`, `renderer.forceContextLoss()`, `URL.revokeObjectURL`) al desmontar o conmutar de modo (`3D`/`DUAL` ➔ `PHOTO`).
 
 ---
@@ -173,11 +176,11 @@ Antes de generar o modificar cualquier componente, interfaz o estilo en MINREPOR
 5. [ ] **Sombras:** ¿Está libre de sombras decorativas difusas o neomorfismo (`shadow-none`)?
 6. [ ] **Cero Prosa & Minimalismo Operativo:** ¿Está 100% libre de prosa, slogans, párrafos explicativos, textos tutoriales, badges largos o decoración "árbol de Navidad"?
 7. [ ] **Veracidad & Marca Única:** ¿Usa exclusivamente la marca **MINREPORT** y los módulos **`OPERMAQ`** / **`ACOPIOS`** (`moduleId`: `stockpile`), con cero sub-marcas heredadas, cero badges inventados ("PRO", "ONLINE", "SECURED") y `[Información técnica no declarada en ficha]` en datos ausentes?
-8. [ ] **Iconos & M3:** ¿Usa exclusivamente `material-symbols-outlined` planos (sin texto adosado ni cajas), `M3Switch`, `M3LinearProgress` (`4px`, `gap 4px`, `stop indicator 4×4px`) y `M3CircularProgress`?
+8. [ ] **Iconos Icon-First Ad Hoc, Anti-FOUT & M3:** ¿Usa exclusivamente `material-symbols-outlined` verificados en WOFF con puerta `ms-ready` y `font-display: block`, sin texto redundante en botones de acción/tabs, junto con `M3Switch`, `M3LinearProgress` (`4px`, `gap 4px`, `stop indicator 4×4px`) y `M3CircularProgress`?
 9. [ ] **Formularios:** ¿Incluye `autoComplete="off"` / `autocomplete="off"` y `spellCheck={false}`?
 10. [ ] **Métricas:** ¿Los números y tablas usan `tabular-nums font-mono` y espaciado de Fibonacci (`fib-8` a `fib-89`)?
 11. [ ] **Protección de Datos (Ley N° 19.628 / Ley N° 21.719):** ¿Cumple residencia en `southamerica-west1`, cero exposición a servicios de consumo externos (`Drive`/`NotebookLM`/`Colab`), modo `SOVEREIGN_VAULT_FIRST` y sanitización previa por `ConfidentialityAirlockService`?
 12. [ ] **Digestor Multimedia y CAS Ligero (`MINREPORT-MEDIA-DIGESTOR-CAS`):** ¿Todo PDF, imagen, recorte `box_2d`, símbolo SVG o video pasa por `MediaDigestorClient` / `MediaDigestorServer` / `SegmentedDocumentProcessorService` y `CasStorageService` (SHA-256 + `dHash` 64-bit), guardando en las bases de datos únicamente la versión liviana optimizada?
 13. [ ] **Referentes HMI Aeroespaciales & Targets Táctiles:** ¿Cumple NASA OpenMCT (lienzo único telemetría + curva + evidencia), SpaceX Dragon HMI (Dark Cockpit, targets `>= 48px–64px` en faena, HITL `"ACTUALIZAR"` solo en mutaciones críticas) y MBUX Zero-Layer (controles contextuales sin cabeceras apiladas)?
-14. [ ] **Estándar Móvil Plano:** ¿Elimina tarjetas con borde y relleno usando lienzo plano con divisores `hairline 1px` y barra lateral `3px` ISA-101, cabecera única `56px`, menú inicial con único icono plano centrado sin texto ni caja y barra inferior `56px` exclusiva en detalle de acopio con botón `CÁMARA` centrado?
-15. [ ] **Estándar Visual Dual Foto/3D (`ACOPIOS`):** ¿Integra `StockpileVisualStage` + `StockpileTwin3DLazy` (`FOTO | 3D | DUAL` escritorio; `FOTO | 3D` móvil), fotos con perimetrales y `box_2d`, `.glb`/TIN, `compact` mode e higiene GPU `dispose()` al desmontar o conmutar?
+14. [ ] **Estándar Móvil Plano & Escritorio Solo Lectura:** ¿Elimina tarjetas con borde y relleno usando lienzo plano con divisores `hairline 1px`, barra inferior `64px` de 3 iconos ad hoc en detalle de acopio (`picture_as_pdf`, `add_a_photo`, `done_all`/`lock_open`), detalle de medición legible Senior (70+), cierre dual exclusivo móvil (`MOBILE_FIELD`) y escritorio `ACOPIOS` 100% solo lectura?
+15. [ ] **Estándar Visual Foto Única / Dual 3D (`ACOPIOS`):** ¿Exhibe únicamente la foto vigente por defecto (sin carrusel ni `"ÚLTIMA/INICIAL"`), integra `StockpileVisualStage` + `StockpileTwin3DLazy` con conmutación por iconos, `compact` mode e higiene GPU `dispose()`?

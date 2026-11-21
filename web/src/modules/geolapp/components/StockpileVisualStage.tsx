@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { M3LinearProgress } from '../../../components/common/M3LinearProgress';
 import { SecureImage } from '../../../components/common/SecureImage';
@@ -11,7 +11,9 @@ export type StockpileVisualMode = 'PHOTO' | '3D' | 'DUAL' | 'MAP';
 
 export interface StockpileVisualStageProps {
     photoUrl?: string | null;
+    /** @deprecated Solo se exhibe la foto actual en StockpileVisualStage */
     initialPhotoUrl?: string | null;
+    /** @deprecated Carrusel eliminado; historial fotográfico en listado de mediciones */
     perimeterPhotoUrls?: string[];
     boulderDetections?: BoulderDetectionBox2D[];
     slopeAngleDeg?: number | null;
@@ -48,11 +50,6 @@ export interface StockpileVisualStageProps {
     showMetrologyFooter?: boolean;
 }
 
-type ActivePhotoSource =
-    | { kind: 'LATEST' }
-    | { kind: 'INITIAL' }
-    | { kind: 'PERIMETER'; index: number };
-
 const PENDING_RECORD = '[Pendiente de registro]';
 const FLAT_ICON_BTN_CLASS =
     'bg-transparent border-0 outline-none p-1.5 text-[#475569] dark:text-[#8A93A6] hover:text-[#00AEEF] disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer rounded-none shadow-none inline-flex items-center justify-center';
@@ -74,57 +71,8 @@ function formatCasBytesCompact(bytes?: number): string | null {
     return `${Math.round(bytes)} B`;
 }
 
-const StagePhotoThumb: React.FC<{
-    url: string;
-    label: string;
-    active: boolean;
-    onSelect: () => void;
-}> = ({ url, label, active, onSelect }) => {
-    const { resolvedUrl: resolved, isLoading } = useResolvedStockpileImageState(url);
-    const [failedUrl, setFailedUrl] = useState<string | null>(null);
-    const hasValidImage = Boolean(resolved) && failedUrl !== resolved;
-
-    return (
-        <button
-            type="button"
-            onClick={onSelect}
-            aria-label={label}
-            aria-pressed={active}
-            className={`w-12 h-12 shrink-0 p-0 overflow-hidden rounded-none shadow-none bg-[#F8FAFC] dark:bg-[#030508] cursor-pointer flex items-center justify-center relative ${
-                active
-                    ? 'border-2 border-[#C68346]'
-                    : 'border border-[#E2E8F0] dark:border-[#12151C] opacity-75 hover:opacity-100'
-            }`}
-        >
-            {isLoading ? (
-                <div className="w-full h-full flex flex-col items-center justify-center relative">
-                    <div className="absolute top-0 left-0 right-0">
-                        <M3LinearProgress indeterminate ariaLabel={label} />
-                    </div>
-                    <span className="material-symbols-outlined text-[16px] text-[#94A3B8] dark:text-[#5A6072]">
-                        photo_camera
-                    </span>
-                </div>
-            ) : hasValidImage ? (
-                <SecureImage
-                    src={resolved}
-                    alt={label}
-                    className="w-full h-full object-cover"
-                    onError={() => setFailedUrl(resolved)}
-                />
-            ) : (
-                <span className="material-symbols-outlined text-[16px] text-[#94A3B8] dark:text-[#5A6072]">
-                    image_not_supported
-                </span>
-            )}
-        </button>
-    );
-};
-
 export const StockpileVisualStage: React.FC<StockpileVisualStageProps> = ({
     photoUrl,
-    initialPhotoUrl,
-    perimeterPhotoUrls,
     boulderDetections,
     slopeAngleDeg,
     meshUrl,
@@ -172,40 +120,7 @@ export const StockpileVisualStage: React.FC<StockpileVisualStageProps> = ({
         onModeChange?.(normalized);
     };
 
-    const normalizedLatest = typeof photoUrl === 'string' ? photoUrl.trim() : '';
-    const normalizedInitial = typeof initialPhotoUrl === 'string' ? initialPhotoUrl.trim() : '';
-    const hasInitialToggle = Boolean(
-        normalizedLatest && normalizedInitial && normalizedLatest !== normalizedInitial
-    );
-
-    const cleanPerimeterUrls = useMemo(
-        () =>
-            (perimeterPhotoUrls ?? [])
-                .map((u) => (typeof u === 'string' ? u.trim() : ''))
-                .filter((u): u is string => u.length > 0),
-        [perimeterPhotoUrls]
-    );
-
-    const [activePhotoSource, setActivePhotoSource] = useState<ActivePhotoSource>({
-        kind: 'LATEST',
-    });
-
-    useEffect(() => {
-        setActivePhotoSource({ kind: 'LATEST' });
-    }, [normalizedLatest, normalizedInitial]);
-
-    const activeRawPhotoUrl = useMemo(() => {
-        if (activePhotoSource.kind === 'INITIAL' && normalizedInitial) {
-            return normalizedInitial;
-        }
-        if (
-            activePhotoSource.kind === 'PERIMETER' &&
-            cleanPerimeterUrls[activePhotoSource.index]
-        ) {
-            return cleanPerimeterUrls[activePhotoSource.index];
-        }
-        return normalizedLatest || normalizedInitial || cleanPerimeterUrls[0] || '';
-    }, [activePhotoSource, normalizedLatest, normalizedInitial, cleanPerimeterUrls]);
+    const activeRawPhotoUrl = typeof photoUrl === 'string' ? photoUrl.trim() : '';
 
     const { resolvedUrl: resolvedPhoto, isLoading: isPhotoLoading } = useResolvedStockpileImageState(
         activeRawPhotoUrl || null
@@ -220,14 +135,8 @@ export const StockpileVisualStage: React.FC<StockpileVisualStageProps> = ({
         [boulderDetections]
     );
 
-    const isViewingPrimaryLatest = Boolean(
-        normalizedLatest && activeRawPhotoUrl === normalizedLatest
-    );
-    const showBoulderOverlay = isViewingPrimaryLatest && validBoulders.length > 0;
-    const showSlopeOverlay =
-        typeof slopeAngleDeg === 'number' &&
-        Number.isFinite(slopeAngleDeg) &&
-        activePhotoSource.kind !== 'INITIAL';
+    const showBoulderOverlay = Boolean(activeRawPhotoUrl) && validBoulders.length > 0;
+    const showSlopeOverlay = typeof slopeAngleDeg === 'number' && Number.isFinite(slopeAngleDeg);
 
     const cleanMeshUrl = typeof meshUrl === 'string' ? meshUrl.trim() : '';
     const hasDeclaredGeometry = Boolean(
@@ -240,45 +149,18 @@ export const StockpileVisualStage: React.FC<StockpileVisualStageProps> = ({
     const canRender3D = Boolean(cleanMeshUrl || hasDeclaredGeometry);
     const stageHeightPx = heightPx ?? (isMobile ? 236 : 340);
 
-    const thumbnailEntries = useMemo(() => {
-        if (cleanPerimeterUrls.length === 0) return [];
-        const items: Array<{
-            key: string;
-            url: string;
-            label: string;
-            source: ActivePhotoSource;
-        }> = [];
-        if (normalizedLatest && !cleanPerimeterUrls.includes(normalizedLatest)) {
-            items.push({
-                key: `latest_${normalizedLatest}`,
-                url: normalizedLatest,
-                label: t('visual.latest_short', 'ÚLTIMA'),
-                source: { kind: 'LATEST' },
-            });
-        }
-        cleanPerimeterUrls.forEach((url, index) => {
-            items.push({
-                key: `perim_${index}_${url}`,
-                url,
-                label: `P${index + 1}`,
-                source: { kind: 'PERIMETER', index },
-            });
-        });
-        return items;
-    }, [cleanPerimeterUrls, normalizedLatest, t]);
-
-    const baseModeOptions: Array<{ id: StockpileVisualMode; label: string }> = isMobile
+    const baseModeOptions: Array<{ id: StockpileVisualMode; icon: string; label: string }> = isMobile
         ? [
-              { id: 'PHOTO', label: t('visual.mode_photo', 'FOTO') },
-              { id: '3D', label: t('visual.mode_3d', '3D') },
+              { id: 'PHOTO', icon: 'photo_camera', label: t('visual.mode_photo', 'FOTO') },
+              { id: '3D', icon: 'deployed_code', label: t('visual.mode_3d', '3D') },
           ]
         : [
-              { id: 'PHOTO', label: t('visual.mode_photo', 'FOTO') },
-              { id: '3D', label: t('visual.mode_3d', '3D') },
-              { id: 'DUAL', label: t('visual.mode_dual', 'FOTO + 3D') },
+              { id: 'PHOTO', icon: 'photo_camera', label: t('visual.mode_photo', 'FOTO') },
+              { id: '3D', icon: 'deployed_code', label: t('visual.mode_3d', '3D') },
+              { id: 'DUAL', icon: 'view_column_2', label: t('visual.mode_dual', 'FOTO + 3D') },
           ];
-    const modeOptions: Array<{ id: StockpileVisualMode; label: string }> = mapNode
-        ? [...baseModeOptions, { id: 'MAP', label: t('visual.mode_map', 'MAPA') }]
+    const modeOptions: Array<{ id: StockpileVisualMode; icon: string; label: string }> = mapNode
+        ? [...baseModeOptions, { id: 'MAP', icon: 'satellite_alt', label: t('visual.mode_map', 'MAPA') }]
         : baseModeOptions;
 
     const showPhotoPanel = effectiveMode === 'PHOTO' || effectiveMode === 'DUAL';
@@ -343,35 +225,6 @@ export const StockpileVisualStage: React.FC<StockpileVisualStageProps> = ({
                 style={{ height: `${stageHeightPx}px` }}
                 className="relative w-full bg-[#F8FAFC] dark:bg-[#030508] flex items-center justify-center overflow-hidden rounded-none shadow-none"
             >
-                {hasInitialToggle && (
-                    <div className="absolute top-fib-8 left-fib-8 z-10 flex items-center gap-fib-8 bg-[#FFFFFF]/85 dark:bg-[#000000]/80 px-fib-8 py-0.5 rounded-none">
-                        <button
-                            type="button"
-                            onClick={() => setActivePhotoSource({ kind: 'LATEST' })}
-                            aria-pressed={activePhotoSource.kind === 'LATEST'}
-                            className={`py-0.5 text-microcopy font-mono font-bold uppercase border-0 border-b-2 bg-transparent cursor-pointer rounded-none transition-colors ${
-                                activePhotoSource.kind === 'LATEST'
-                                    ? 'border-[#C68346] text-[#C68346]'
-                                    : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
-                            }`}
-                        >
-                            {t('visual.latest_short', 'ÚLTIMA')}
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => setActivePhotoSource({ kind: 'INITIAL' })}
-                            aria-pressed={activePhotoSource.kind === 'INITIAL'}
-                            className={`py-0.5 text-microcopy font-mono font-bold uppercase border-0 border-b-2 bg-transparent cursor-pointer rounded-none transition-colors ${
-                                activePhotoSource.kind === 'INITIAL'
-                                    ? 'border-[#C68346] text-[#C68346]'
-                                    : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
-                            }`}
-                        >
-                            {t('visual.initial_short', 'INICIAL')}
-                        </button>
-                    </div>
-                )}
-
                 {isPhotoLoading ? (
                     <div className="w-full h-full flex flex-col items-center justify-center bg-[#F8FAFC] dark:bg-[#030508] rounded-none shadow-none relative">
                         <div className="absolute top-0 left-0 right-0">
@@ -453,28 +306,6 @@ export const StockpileVisualStage: React.FC<StockpileVisualStageProps> = ({
                     </span>
                 )}
             </div>
-
-            {thumbnailEntries.length > 0 && (
-                <div className="flex items-center gap-fib-8 overflow-x-auto hide-scrollbar">
-                    {thumbnailEntries.map((item) => {
-                        const isThumbActive =
-                            item.source.kind === 'LATEST'
-                                ? activePhotoSource.kind === 'LATEST'
-                                : activePhotoSource.kind === 'PERIMETER' &&
-                                  item.source.kind === 'PERIMETER' &&
-                                  activePhotoSource.index === item.source.index;
-                        return (
-                            <StagePhotoThumb
-                                key={item.key}
-                                url={item.url}
-                                label={item.label}
-                                active={isThumbActive}
-                                onSelect={() => setActivePhotoSource(item.source)}
-                            />
-                        );
-                    })}
-                </div>
-            )}
         </div>
     );
 
@@ -564,16 +395,20 @@ export const StockpileVisualStage: React.FC<StockpileVisualStageProps> = ({
                                     type="button"
                                     role="tab"
                                     aria-selected={isActive}
+                                    aria-label={opt.label}
+                                    title={opt.label}
                                     onClick={() => handleSelectMode(opt.id)}
-                                    className={`text-microcopy font-mono font-bold uppercase tabular-nums border-0 border-b-2 bg-transparent cursor-pointer rounded-none shadow-none transition-colors ${
-                                        isMobile ? 'min-h-[48px] px-fib-8' : 'py-fib-8 px-1'
+                                    className={`inline-flex items-center justify-center border-0 border-b-2 bg-transparent cursor-pointer rounded-none shadow-none transition-colors ${
+                                        isMobile ? 'min-w-[48px] min-h-[48px] px-fib-8' : 'py-fib-8 px-2'
                                     } ${
                                         isActive
                                             ? 'border-[#C68346] text-[#C68346]'
                                             : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
                                     }`}
                                 >
-                                    {opt.label}
+                                    <span className="material-symbols-outlined text-[20px]" aria-hidden="true">
+                                        {opt.icon}
+                                    </span>
                                 </button>
                             );
                         })}

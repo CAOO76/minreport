@@ -1,5 +1,6 @@
 import React, { Component, Suspense, type ErrorInfo, type ReactNode } from 'react';
 import { Navigate } from 'react-router-dom';
+import { Capacitor } from '@capacitor/core';
 import { useTranslation } from 'react-i18next';
 import i18n from '../../i18n';
 import { useMinReportSession } from '../../context/MinReportSessionContext';
@@ -20,6 +21,21 @@ export const M3ModuleHudFallback: React.FC<M3ModuleHudFallbackProps> = ({
 }) => {
     const { t } = useTranslation();
     const normalizedLabel = (label || t('core_shell.loading_module', 'CARGANDO MÓDULO')).toUpperCase();
+    const isNativeMobile = Capacitor.isNativePlatform();
+
+    if (isNativeMobile) {
+        return (
+            <div
+                className="w-full h-full min-h-[180px] flex flex-col justify-start bg-[#FFFFFF] dark:bg-[#000000] rounded-none shadow-none select-none"
+                role="status"
+                aria-label={normalizedLabel}
+                aria-live="polite"
+            >
+                <M3LinearProgress indeterminate ariaLabel={normalizedLabel} />
+            </div>
+        );
+    }
+
     return (
         <div
             className="w-full h-full min-h-[180px] flex items-center justify-center p-fib-34 bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-none"

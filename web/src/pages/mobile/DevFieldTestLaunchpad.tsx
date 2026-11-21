@@ -9,6 +9,7 @@ import {
 } from '../../modules/geolapp/core/hooks/useXCoverHardwareKey';
 import { M3ModuleHudFallback } from '../../core/modules/ModuleHost';
 import { MobileAppTopBar } from '../../components/mobile/MobileAppTopBar';
+import { warmSpatialDeviceCapability } from '../../modules/geolapp/core/services/spatialDeviceCapability';
 
 interface DevMobileModuleEntry {
     id: string;
@@ -45,6 +46,11 @@ export const DevFieldTestLaunchpad: React.FC = () => {
             keyCodes: [XCOVER_HARDWARE_KEY_CODES.XCOVER_SIDE_KEY],
         }
     );
+
+    useEffect(() => {
+        void import('../../modules/geolapp/GeolappModule').catch(() => {});
+        void warmSpatialDeviceCapability().catch(() => {});
+    }, []);
 
     useEffect(() => {
         if (isLoaded && session && !session.isDevRoot) {

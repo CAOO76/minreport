@@ -20,14 +20,16 @@ import { isFieldTestApp } from './core/runtime/appFlavor';
 import { isDevPrivateReleaseStage } from './config/releaseStage';
 import type { AccountReference } from './types/user_directory';
 
-// Carga diferida de módulos pesados, cabinas y rutas móviles (Capa 2 Performance)
+// Flujo crítico APK DEV importado de forma estática (0 ms de transición, sin flash de fallback)
+import DevFieldTestLaunchpad from './pages/mobile/DevFieldTestLaunchpad';
+import DevFieldTestModuleShell from './pages/mobile/DevFieldTestModuleShell';
+
+// Carga diferida de módulos pesados, cabinas y rutas web (Capa 2 Performance)
 const DevVaultGateway = lazy(() => import('./pages/dev/DevVaultGateway').then(m => ({ default: m.DevVaultGateway })));
 const MobileLogin = lazy(() => import('./pages/mobile/MobileLogin'));
 const MobileDashboard = lazy(() => import('./pages/mobile/MobileDashboard'));
 const MobileTools = lazy(() => import('./pages/mobile/MobileTools'));
 const DevFieldTestLogin = lazy(() => import('./pages/mobile/DevFieldTestLogin'));
-const DevFieldTestLaunchpad = lazy(() => import('./pages/mobile/DevFieldTestLaunchpad').then(m => ({ default: m.DevFieldTestLaunchpad })));
-const DevFieldTestModuleShell = lazy(() => import('./pages/mobile/DevFieldTestModuleShell').then(m => ({ default: m.DevFieldTestModuleShell })));
 const SuperAdminConsole = lazy(() => import('./pages/admin/SuperAdminConsole').then(m => ({ default: m.SuperAdminConsole })));
 const TestPilotWorkspace = lazy(() => import('./pages/pilot/TestPilotWorkspace').then(m => ({ default: m.TestPilotWorkspace })));
 const AccessPage = lazy(() => import('./pages/AccessPage').then(m => ({ default: m.AccessPage })));

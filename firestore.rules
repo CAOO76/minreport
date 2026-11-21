@@ -30,8 +30,8 @@ rules_version = '2';
 //     equipment_inspections, stockpiles, job_profiles, project_profiles, report_templates, generated_reports,
 //     edu_sandbox_fleet):
 //     Requieren tenantId/tenant_id/accountId string no vacío con pertenencia verificada, inmutabilidad cross-tenant en update y delete exclusivo isTenantAdminOrOwner.
-//   - /stockpiles/{stkId}: Acopios STOCKPILE CONTROL Next-Gen — Aislamiento multi-tenant estricto + descripción, mapa estático CAS (static_map_url/sha256/bytes), deltas de volumen, proyecto (project_id/project_name), cierre de ciclo (closed_at/by, closure_reason ['SHIPPED'|'ZERO_VOLUME'|'MANUAL_CLOSE'], dispatch_reference, shipped_weight_t, pre_closure_volume_m3) y bloqueo data: Base64 en URLs.
-//   - /stockpiles/{stkId}/measurements/{measId}: Mediciones STOCKPILE CONTROL Next-Gen — volumen_m3 >= 0, peso_t >= 0, cadena previa (previous_measurement_id/photo_url), deltas, metadatos de cierre y bloqueo data: Base64 en photo_url/previous_photo_url/mesh_url.
+//   - /stockpiles/{stkId}: Acopios STOCKPILE CONTROL Next-Gen — Aislamiento multi-tenant estricto + descripción, mapa estático CAS (static_map_url/sha256/bytes), deltas de volumen, proyecto (project_id/project_name), cierre de ciclo exclusivo móvil (closed_at/by, closure_reason ['SHIPPED'|'FIELD_REMOVED'|'ZERO_VOLUME'|'MANUAL_CLOSE'], closure_cause <= 300, closure_origin ['MOBILE_FIELD'], dispatch_reference, dispatch_transport <= 200, dispatch_destination <= 200, dispatch_timestamp >= 0, shipped_weight_t, pre_closure_volume_m3) y bloqueo data: Base64 en URLs.
+//   - /stockpiles/{stkId}/measurements/{measId}: Mediciones STOCKPILE CONTROL Next-Gen — volumen_m3 >= 0, peso_t >= 0, cadena previa (previous_measurement_id/photo_url), deltas, metadatos de cierre y despacho (closure_reason ['SHIPPED'|'FIELD_REMOVED'|'ZERO_VOLUME'|'MANUAL_CLOSE'], closure_cause <= 300, closure_origin ['MOBILE_FIELD'], dispatch_transport <= 200, dispatch_destination <= 200, dispatch_timestamp >= 0) y bloqueo data: Base64 en photo_url/previous_photo_url/mesh_url.
 //   - /device_calibrations/{calId}: Calibración geométrica on-demand por dispositivo (R5) — Aislamiento multi-tenant estricto, rango scaleFactor [0.85..1.15], distancias y calibratedAt > 0, campos opcionales (id, calibrationId, deviceId, deviceModel, platform <= 32, calibratedBy, userId, actorUid, tenantId, region, planeNoiseRmsM, imuPitchOffsetDeg, imuRollOffsetDeg, createdAt), sin PII (actorEmail/email/ipAddress prohibidos), append-only en cliente (update == false, delete exclusivo isAdmin).
 //   - /device_compatibility_registry/{deviceId}: Registro global del motor on-demand de compatibilidad móvil — Lectura autenticada (isAuthenticated), escritura bloqueada en cliente (exclusivo Cloud Run Admin SDK).
 //   - /financial_events/{eventId}: Append-Only estricto (create exclusivo Admin/Owner de cuenta, update/delete == false).
@@ -130,11 +130,7 @@ service cloud.firestore {
         'pilotExpiresAt' in request.auth.token &&
         request.auth.token.pilotExpiresAt is number &&
         request.time.toMillis() < request.auth.token.pilotExpiresAt &&
-        isNotRevokedPilotUser() &&
-        (
-          ('role' in request.auth.token && request.auth.token.role == 'TEST_PILOT') ||
-          hasServerAssignedRole(['TEST_PILOT'])
-        );
+        isNotRevokedPilotUser();
     }
 
     // Gobierno Administrativo Superior (1º DEV + 2º ADMIN)
@@ -335,8 +331,8 @@ service cloud.firestore {
         data.keys().size() > 0 &&
         data.keys().size() <= 200 &&
         isConsistentTenantFields(data) &&
-        (!('observations' in data) || data.observations == null || (data.observations is string && data.observations.size() <= 20000)) &&
-        (!('notas' in data) || data.notas == null || (data.notas is string && data.notas.size() <= 20000));
+        isOptCalStr(data, 'observations', 20000) &&
+        isOptCalStr(data, 'notas', 20000);
     }
 
     // Validador de dominio para perfiles en /users/{userId} (Create & Update)
@@ -530,12 +526,22 @@ service cloud.firestore {
     // Rechazo barato de data: URLs sin regex PCRE costoso (STOCKPILE CONTROL Next-Gen)
     function isNoDataUrlPrefix(s) {
       let t = s.trim();
-      return !(t.size() >= 5 && t[0:5].lower() == 'data:');
+      return t.size() < 5 || t[0:5].lower() != 'data:';
     }
 
     function isSafeUrlField(d, k) {
       let v = d.get(k, null);
       return v == null || (v is string && v.size() <= 2048 && isNoDataUrlPrefix(v));
+    }
+
+    function isOptCalStr(d, k, maxLen) {
+      let v = d.get(k, null);
+      return v == null || (v is string && v.size() <= maxLen);
+    }
+
+    function isOptNonNegNum(d, k) {
+      let v = d.get(k, null);
+      return v == null || (v is number && v >= 0);
     }
 
     // Validador ultra-compacto de dominio para acopios en /stockpiles/{stkId} (STOCKPILE CONTROL Next-Gen — Create & Update)
@@ -547,7 +553,12 @@ service cloud.firestore {
       return isBoundedPayload(data) &&
         data.get('clase', null) in [null, 'mineral', 'esteril', 'baja_ley'] &&
         data.get('status', null) in [null, 'ACTIVE', 'ARCHIVED', 'CONCILIATED', 'CLOSED'] &&
-        data.get('closure_reason', null) in [null, 'SHIPPED', 'ZERO_VOLUME', 'MANUAL_CLOSE'] &&
+        data.get('closure_reason', null) in [null, 'SHIPPED', 'FIELD_REMOVED', 'ZERO_VOLUME', 'MANUAL_CLOSE'] &&
+        isOptCalStr(data, 'closure_cause', 300) &&
+        data.get('closure_origin', null) in [null, 'MOBILE_FIELD'] &&
+        isOptCalStr(data, 'dispatch_transport', 200) &&
+        isOptCalStr(data, 'dispatch_destination', 200) &&
+        isOptNonNegNum(data, 'dispatch_timestamp') &&
         (name == null || (name is string && name.size() <= 240)) &&
         isSafeUrlField(data, 'initial_photo_url') &&
         isSafeUrlField(data, 'last_photo_url') &&
@@ -566,17 +577,18 @@ service cloud.firestore {
       let perim = data.get('perimeter_photo_urls', null);
       return isBoundedPayload(data) &&
         data.get('method', null) in [null, 'digital', 'manual'] &&
-        data.get('closure_reason', null) in [null, 'SHIPPED', 'ZERO_VOLUME', 'MANUAL_CLOSE'] &&
+        data.get('closure_reason', null) in [null, 'SHIPPED', 'FIELD_REMOVED', 'ZERO_VOLUME', 'MANUAL_CLOSE'] &&
+        isOptCalStr(data, 'closure_cause', 300) &&
+        data.get('closure_origin', null) in [null, 'MOBILE_FIELD'] &&
+        isOptCalStr(data, 'dispatch_transport', 200) &&
+        isOptCalStr(data, 'dispatch_destination', 200) &&
+        isOptNonNegNum(data, 'dispatch_timestamp') &&
         (!('volumen_m3' in data) || (vol is number && vol >= 0)) &&
         (!('peso_t' in data) || (peso is number && peso >= 0)) &&
         isSafeUrlField(data, 'photo_url') &&
         isSafeUrlField(data, 'previous_photo_url') &&
         isSafeUrlField(data, 'mesh_url') &&
         (perim == null || (perim is list && perim.size() <= 32));
-    }
-
-    function isOptCalStr(d, k, maxLen) {
-      return d.get(k, null) == null || (d[k] is string && d[k].size() <= maxLen);
     }
 
     // Validador compacto de calibración on-demand en /device_calibrations/{calId} (R5 — Create)

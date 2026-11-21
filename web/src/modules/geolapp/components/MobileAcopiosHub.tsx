@@ -40,7 +40,7 @@ export const MobileAcopiosHub: React.FC<MobileAcopiosHubProps> = ({
                     setCalibration(cal);
                 }
             })
-            .catch(() => {});
+            .catch(() => { });
         return () => {
             active = false;
         };
@@ -89,16 +89,14 @@ export const MobileAcopiosHub: React.FC<MobileAcopiosHubProps> = ({
                             onSelectMeasure();
                         }}
                         aria-label={t('hub.measure_action', 'MEDIR')}
-                        className="w-[144px] min-h-[104px] bg-transparent border-0 outline-none p-fib-13 flex flex-col items-center justify-center gap-fib-13 text-[#0F172A] dark:text-[#F3F4F6] active:opacity-70 transition-opacity cursor-pointer rounded-none shadow-none"
+                        title={t('hub.measure_action', 'MEDIR')}
+                        className="min-w-[88px] min-h-[88px] bg-transparent border-0 outline-none p-fib-13 flex items-center justify-center text-[#C68346] active:opacity-70 transition-opacity cursor-pointer rounded-none shadow-none"
                     >
                         <span
                             aria-hidden="true"
-                            className="material-symbols-outlined text-[40px] leading-none text-[#C68346]"
+                            className="material-symbols-outlined text-[56px] leading-none text-[#C68346]"
                         >
                             measuring_tape
-                        </span>
-                        <span className="text-microcopy font-mono font-bold uppercase tracking-widest text-[#0F172A] dark:text-[#F3F4F6]">
-                            {t('hub.measure_action', 'MEDIR')}
                         </span>
                     </button>
                     <div className="mt-fib-8 font-mono tabular-nums text-data-dense text-[#475569] dark:text-[#8A93A6]">
@@ -117,22 +115,19 @@ export const MobileAcopiosHub: React.FC<MobileAcopiosHubProps> = ({
                             onSelectCalibrate();
                         }}
                         aria-label={t('hub.calibrate_action', 'CALIBRAR')}
-                        className="w-[144px] min-h-[104px] bg-transparent border-0 outline-none p-fib-13 flex flex-col items-center justify-center gap-fib-13 text-[#0F172A] dark:text-[#F3F4F6] active:opacity-70 transition-opacity cursor-pointer rounded-none shadow-none"
+                        title={t('hub.calibrate_action', 'CALIBRAR')}
+                        className="min-w-[88px] min-h-[88px] bg-transparent border-0 outline-none p-fib-13 flex items-center justify-center active:opacity-70 transition-opacity cursor-pointer rounded-none shadow-none"
                     >
                         <span
                             aria-hidden="true"
-                            className={`material-symbols-outlined text-[40px] leading-none ${calIconColor}`}
+                            className={`material-symbols-outlined text-[56px] leading-none ${calIconColor}`}
                         >
                             compass_calibration
                         </span>
-                        <span className="text-microcopy font-mono font-bold uppercase tracking-widest text-[#0F172A] dark:text-[#F3F4F6]">
-                            {t('hub.calibrate_action', 'CALIBRAR')}
-                        </span>
                     </button>
                     <div
-                        className={`mt-fib-8 font-mono tabular-nums text-data-dense ${
-                            calValid ? 'text-[#00AEEF]' : 'text-[#C68346]'
-                        }`}
+                        className={`mt-fib-8 font-mono tabular-nums text-data-dense ${calValid ? 'text-[#00AEEF]' : 'text-[#C68346]'
+                            }`}
                     >
                         {calStatusLabel}
                     </div>

@@ -19,7 +19,7 @@ export type StockpileStatus = 'ACTIVE' | 'ARCHIVED' | 'CONCILIATED' | 'CLOSED';
 
 export type GeolappDomainMode = 'STOCKPILE';
 
-export type StockpileClosureReason = 'SHIPPED' | 'ZERO_VOLUME' | 'MANUAL_CLOSE';
+export type StockpileClosureReason = 'SHIPPED' | 'FIELD_REMOVED' | 'ZERO_VOLUME' | 'MANUAL_CLOSE';
 
 export type GeolappGeometryType =
     | 'CONO_ELIPTICO'
@@ -178,11 +178,16 @@ export interface StockpileAsset {
     last_delta_volumen_m3?: number | null;
     last_delta_volumen_pct?: number | null;
 
-    // Cierre de Ciclo (Embarque / Volumen Cero)
+    // Cierre de Ciclo exclusivo móvil (Embarque / Eliminación en terreno con causa / Volumen Cero)
     closed_at?: number | null;
     closed_by?: string | null;
     closure_reason?: StockpileClosureReason | null;
+    closure_cause?: string | null;
+    closure_origin?: 'MOBILE_FIELD' | null;
     dispatch_reference?: string | null;
+    dispatch_transport?: string | null;
+    dispatch_destination?: string | null;
+    dispatch_timestamp?: number | null;
     shipped_weight_t?: number | null;
     pre_closure_volume_m3?: number | null;
 
@@ -321,10 +326,15 @@ export interface StockpileMeasurement {
     delta_volumen_pct?: number | null;
     delta_peso?: number;
 
-    // Cierre de Ciclo (Agotamiento 0 m³ / Embarque)
+    // Cierre de Ciclo (Agotamiento 0 m³ / Despacho / Eliminación en Terreno)
     is_closure_measurement?: boolean;
     closure_reason?: StockpileClosureReason;
     dispatch_reference?: string;
+    dispatch_transport?: string;
+    dispatch_destination?: string;
+    dispatch_timestamp?: number;
+    closure_cause?: string | null;
+    closure_origin?: 'MOBILE_FIELD' | null;
 
     // Parámetros Geo-Metalúrgicos Cobre (Cu) + Trazabilidad CAS
     copper_domain?: CopperMineralDomain;

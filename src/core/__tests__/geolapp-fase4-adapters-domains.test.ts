@@ -137,8 +137,8 @@ function assertValidGlbChunks(buf: Buffer | Uint8Array | ArrayBuffer, contextLab
         buf instanceof Buffer
             ? buf
             : buf instanceof ArrayBuffer
-            ? Buffer.from(buf)
-            : Buffer.from(buf.buffer, buf.byteOffset, buf.byteLength);
+                ? Buffer.from(buf)
+                : Buffer.from(buf.buffer, buf.byteOffset, buf.byteLength);
 
     assert.ok(buffer.length >= 28, `${contextLabel}: .glb demasiado corto (${buffer.length} bytes)`);
     assert.equal(buffer.readUInt32LE(0), 0x46546c67, `${contextLabel}: magic glTF inválido`);
@@ -812,6 +812,9 @@ async function run() {
             status: 'CLOSED',
             closure_reason: 'SHIPPED',
             closed_at: t2,
+            dispatch_transport: 'FLOTA TOLVA SUR 07',
+            dispatch_destination: 'PLANTA CHANCADO NORTE',
+            dispatch_timestamp: t2,
             dispatch_reference: 'BL-NORTE-2026',
             shipped_weight_t: 410,
             pre_closure_volume_m3: 205,
@@ -933,6 +936,10 @@ async function run() {
             patch: {
                 status: 'CLOSED',
                 closure_reason: 'SHIPPED',
+                closure_origin: 'MOBILE_FIELD',
+                dispatch_transport: 'CAMION CONCENTRADO 04',
+                dispatch_destination: 'PUERTO ANGAMOS',
+                dispatch_timestamp: nowTs,
                 dispatch_reference: 'BL-001',
             },
         },
@@ -976,6 +983,111 @@ async function run() {
         createdBy: 'uid-tenant-b',
     });
 
+    // Bloqueo estricto de cierre desde escritorio / sin origen móvil de terreno
+    const desktopCloseBlockRes = await dispatchExpressInMemory(app, {
+        method: 'POST',
+        path: '/api/geolapp/stockpiles/stk-nextgen-01/hitl-update',
+        headers: { Authorization: 'Bearer tok-tenant-a' },
+        body: {
+            confirmationKeyword: 'ACTUALIZAR',
+            patch: {
+                status: 'CLOSED',
+                closure_reason: 'SHIPPED',
+                dispatch_reference: 'GUIA-DESKTOP-BLOCK',
+            },
+        },
+    });
+    assert.equal(
+        desktopCloseBlockRes.status,
+        403,
+        `Cierre sin closure_origin MOBILE_FIELD debe rechazarse con 403 (${desktopCloseBlockRes.rawText})`
+    );
+
+    // Validación obligatoria de transporte, destino y fecha/hora al cerrar por despacho
+    const missingTransportShippedRes = await dispatchExpressInMemory(app, {
+        method: 'POST',
+        path: '/api/geolapp/stockpiles/stk-nextgen-01/hitl-update',
+        headers: { Authorization: 'Bearer tok-tenant-a' },
+        body: {
+            confirmationKeyword: 'ACTUALIZAR',
+            patch: {
+                status: 'CLOSED',
+                closure_reason: 'SHIPPED',
+                closure_origin: 'MOBILE_FIELD',
+                dispatch_destination: 'PLANTA SUR',
+                dispatch_timestamp: nowTs,
+            },
+        },
+    });
+    assert.equal(
+        missingTransportShippedRes.status,
+        400,
+        `Cierre SHIPPED sin transporte debe rechazarse con 400 (${missingTransportShippedRes.rawText})`
+    );
+
+    const missingDestShippedRes = await dispatchExpressInMemory(app, {
+        method: 'POST',
+        path: '/api/geolapp/stockpiles/stk-nextgen-01/hitl-update',
+        headers: { Authorization: 'Bearer tok-tenant-a' },
+        body: {
+            confirmationKeyword: 'ACTUALIZAR',
+            patch: {
+                status: 'CLOSED',
+                closure_reason: 'SHIPPED',
+                closure_origin: 'MOBILE_FIELD',
+                dispatch_transport: 'TOLVA-01',
+                dispatch_timestamp: nowTs,
+            },
+        },
+    });
+    assert.equal(
+        missingDestShippedRes.status,
+        400,
+        `Cierre SHIPPED sin destino debe rechazarse con 400 (${missingDestShippedRes.rawText})`
+    );
+
+    const missingTsShippedRes = await dispatchExpressInMemory(app, {
+        method: 'POST',
+        path: '/api/geolapp/stockpiles/stk-nextgen-01/hitl-update',
+        headers: { Authorization: 'Bearer tok-tenant-a' },
+        body: {
+            confirmationKeyword: 'ACTUALIZAR',
+            patch: {
+                status: 'CLOSED',
+                closure_reason: 'SHIPPED',
+                closure_origin: 'MOBILE_FIELD',
+                dispatch_transport: 'TOLVA-01',
+                dispatch_destination: 'PLANTA SUR',
+            },
+        },
+    });
+    assert.equal(
+        missingTsShippedRes.status,
+        400,
+        `Cierre SHIPPED sin fecha/hora debe rechazarse con 400 (${missingTsShippedRes.rawText})`
+    );
+
+    // Validación obligatoria de causa al cerrar por eliminación en terreno
+    const missingCauseRemovedRes = await dispatchExpressInMemory(app, {
+        method: 'POST',
+        path: '/api/geolapp/stockpiles/stk-nextgen-01/hitl-update',
+        headers: { Authorization: 'Bearer tok-tenant-a' },
+        body: {
+            confirmationKeyword: 'ACTUALIZAR',
+            patch: {
+                status: 'CLOSED',
+                closure_reason: 'FIELD_REMOVED',
+                closure_origin: 'MOBILE_FIELD',
+                closure_cause: '',
+            },
+        },
+    });
+    assert.equal(
+        missingCauseRemovedRes.status,
+        400,
+        `Cierre FIELD_REMOVED sin causa debe rechazarse con 400 (${missingCauseRemovedRes.rawText})`
+    );
+
     const closeHitlRes = await dispatchExpressInMemory(app, {
         method: 'POST',
         path: '/api/geolapp/stockpiles/stk-nextgen-01/hitl-update',
@@ -985,6 +1097,10 @@ async function run() {
             patch: {
                 status: 'CLOSED',
                 closure_reason: 'SHIPPED',
+                closure_origin: 'MOBILE_FIELD',
+                dispatch_transport: 'TOLVA MINERA 12',
+                dispatch_destination: 'CHANCADO PRIMARIO',
+                dispatch_timestamp: nowTs,
                 dispatch_reference: 'GUIA-900',
                 shipped_weight_t: 420,
                 pre_closure_volume_m3: 240,
@@ -993,11 +1109,15 @@ async function run() {
             diffSummary: [{ field: 'status', current: 'ACTIVE', suggested: 'CLOSED' }],
         },
     });
-    assert.equal(closeHitlRes.status, 200, `Cierre por embarque HITL falló: ${closeHitlRes.rawText}`);
+    assert.equal(closeHitlRes.status, 200, `Cierre por despacho móvil HITL falló: ${closeHitlRes.rawText}`);
     assert.equal(closeHitlRes.body?.asset?.status, 'CLOSED');
+    assert.equal(closeHitlRes.body?.asset?.dispatch_transport, 'TOLVA MINERA 12');
+    assert.equal(closeHitlRes.body?.asset?.dispatch_destination, 'CHANCADO PRIMARIO');
+    assert.equal(closeHitlRes.body?.asset?.dispatch_timestamp, nowTs);
     assert.equal(closeHitlRes.body?.asset?.dispatch_reference, 'GUIA-900');
+    assert.equal(closeHitlRes.body?.asset?.closure_origin, 'MOBILE_FIELD');
 
-    const reopenHitlRes = await dispatchExpressInMemory(app, {
+    const desktopReopenBlockRes = await dispatchExpressInMemory(app, {
         method: 'POST',
         path: '/api/geolapp/stockpiles/stk-nextgen-01/hitl-update',
         headers: { Authorization: 'Bearer tok-tenant-a' },
@@ -1009,8 +1129,76 @@ async function run() {
             },
         },
     });
+    assert.equal(
+        desktopReopenBlockRes.status,
+        403,
+        `Reapertura sin closure_origin MOBILE_FIELD debe rechazarse con 403 (${desktopReopenBlockRes.rawText})`
+    );
+
+    const reopenHitlRes = await dispatchExpressInMemory(app, {
+        method: 'POST',
+        path: '/api/geolapp/stockpiles/stk-nextgen-01/hitl-update',
+        headers: { Authorization: 'Bearer tok-tenant-a' },
+        body: {
+            confirmationKeyword: 'ACTUALIZAR',
+            patch: {
+                status: 'ACTIVE',
+                closure_reason: null,
+                closure_cause: null,
+                closure_origin: 'MOBILE_FIELD',
+            },
+        },
+    });
     assert.equal(reopenHitlRes.status, 200, `Reapertura HITL falló: ${reopenHitlRes.rawText}`);
     assert.equal(reopenHitlRes.body?.asset?.status, 'ACTIVE');
+    assert.equal(reopenHitlRes.body?.asset?.closure_origin, null);
+    assert.equal(reopenHitlRes.body?.asset?.dispatch_transport, null);
+    assert.equal(reopenHitlRes.body?.asset?.dispatch_destination, null);
+    assert.equal(reopenHitlRes.body?.asset?.dispatch_timestamp, null);
+    assert.equal(reopenHitlRes.body?.asset?.dispatch_reference, null);
+
+    // Cierre auditable por eliminación en terreno desde móvil
+    const closeRemovedRes = await dispatchExpressInMemory(app, {
+        method: 'POST',
+        path: '/api/geolapp/stockpiles/stk-nextgen-01/hitl-update',
+        headers: { Authorization: 'Bearer tok-tenant-a' },
+        body: {
+            confirmationKeyword: 'ACTUALIZAR',
+            patch: {
+                status: 'CLOSED',
+                closure_reason: 'FIELD_REMOVED',
+                closure_origin: 'MOBILE_FIELD',
+                closure_cause: 'RETIRADO DE CANCHA POR OPERACIÓN',
+                closed_at: nowTs + 1000,
+            },
+        },
+    });
+    assert.equal(
+        closeRemovedRes.status,
+        200,
+        `Cierre FIELD_REMOVED con causa desde móvil falló: ${closeRemovedRes.rawText}`
+    );
+    assert.equal(closeRemovedRes.body?.asset?.closure_reason, 'FIELD_REMOVED');
+    assert.equal(
+        closeRemovedRes.body?.asset?.closure_cause,
+        'RETIRADO DE CANCHA POR OPERACIÓN'
+    );
+
+    const reopenSecondRes = await dispatchExpressInMemory(app, {
+        method: 'POST',
+        path: '/api/geolapp/stockpiles/stk-nextgen-01/hitl-update',
+        headers: { Authorization: 'Bearer tok-tenant-a' },
+        body: {
+            confirmationKeyword: 'ACTUALIZAR',
+            patch: {
+                status: 'ACTIVE',
+                closure_reason: null,
+                closure_cause: null,
+                closure_origin: 'MOBILE_FIELD',
+            },
+        },
+    });
+    assert.equal(reopenSecondRes.status, 200);
 
     const ledgerDocs = Array.from(store.collections.get('audit_ledger')?.values() || []);
     assert.ok(
@@ -1224,36 +1412,36 @@ async function run() {
         assert.equal(src.includes(forbiddenMapsApiHost), false, `${checkRel}: prohíbe URL directa externa`);
     }
 
-function extractOpeningTags(source: string, tagNames: string[]): string[] {
-    const tags: string[] = [];
-    const nameGroup = tagNames.join('|');
-    const startRegex = new RegExp(`<(?:${nameGroup})(?=[\\s>/])`, 'g');
-    let match: RegExpExecArray | null;
+    function extractOpeningTags(source: string, tagNames: string[]): string[] {
+        const tags: string[] = [];
+        const nameGroup = tagNames.join('|');
+        const startRegex = new RegExp(`<(?:${nameGroup})(?=[\\s>/])`, 'g');
+        let match: RegExpExecArray | null;
 
-    while ((match = startRegex.exec(source)) !== null) {
-        let idx = match.index;
-        let braceDepth = 0;
-        let quote: string | null = null;
-        while (idx < source.length) {
-            const ch = source[idx];
-            const prev = idx > 0 ? source[idx - 1] : '';
-            if (quote) {
-                if (ch === quote && prev !== '\\') quote = null;
-            } else if (ch === '"' || ch === "'" || ch === '`') {
-                quote = ch;
-            } else if (ch === '{') {
-                braceDepth++;
-            } else if (ch === '}') {
-                if (braceDepth > 0) braceDepth--;
-            } else if (ch === '>' && braceDepth === 0) {
-                tags.push(source.slice(match.index, idx + 1));
-                break;
+        while ((match = startRegex.exec(source)) !== null) {
+            let idx = match.index;
+            let braceDepth = 0;
+            let quote: string | null = null;
+            while (idx < source.length) {
+                const ch = source[idx];
+                const prev = idx > 0 ? source[idx - 1] : '';
+                if (quote) {
+                    if (ch === quote && prev !== '\\') quote = null;
+                } else if (ch === '"' || ch === "'" || ch === '`') {
+                    quote = ch;
+                } else if (ch === '{') {
+                    braceDepth++;
+                } else if (ch === '}') {
+                    if (braceDepth > 0) braceDepth--;
+                } else if (ch === '>' && braceDepth === 0) {
+                    tags.push(source.slice(match.index, idx + 1));
+                    break;
+                }
+                idx++;
             }
-            idx++;
         }
+        return tags;
     }
-    return tags;
-}
 
     const fase4UiFiles = [
         'modules/geolapp/GeolappApp.tsx',
@@ -1265,6 +1453,7 @@ function extractOpeningTags(source: string, tagNames: string[]): string[] {
         'modules/geolapp/components/MobileHome.tsx',
         'modules/geolapp/components/MobileFaenaMonitoring.tsx',
         'modules/geolapp/components/StockpileDossierView.tsx',
+        'modules/geolapp/components/MobileStockpileClosureView.tsx',
         'modules/geolapp/components/StockpileVisualStage.tsx',
         'modules/geolapp/components/QuickStockpileCapture.tsx',
         'modules/geolapp/components/MobileScanner.tsx',
@@ -1461,7 +1650,7 @@ function extractOpeningTags(source: string, tagNames: string[]): string[] {
     );
     assert.ok(
         desktopStageSrc.includes('desktop.campaign_comparison') &&
-            desktopStageSrc.includes('desktop.open_in_3d'),
+        desktopStageSrc.includes('desktop.open_in_3d'),
         'DesktopStageWorkspace debe incluir visor Comparativa de Campaña con enlace al Gemelo 3D'
     );
 
@@ -1536,7 +1725,7 @@ function extractOpeningTags(source: string, tagNames: string[]): string[] {
     );
     assert.ok(
         geolappAppSrc.includes('MobileAcopiosHub') &&
-            geolappAppSrc.includes('MobileCalibrationView'),
+        geolappAppSrc.includes('MobileCalibrationView'),
         'GeolappApp debe montar MobileAcopiosHub y MobileCalibrationView'
     );
     assert.ok(
@@ -1557,6 +1746,26 @@ function extractOpeningTags(source: string, tagNames: string[]): string[] {
     );
     assert.equal(mobileHomeSrc.includes('domain_add'), false, 'MobileHome no debe incluir domain_add');
     assert.ok(mobileHomeSrc.includes('onStartNewStockpile'), 'MobileHome debe incluir botón + de nuevo acopio en faena');
+    assert.ok(
+        mobileHomeSrc.includes('sortStockpilesByLifecycle') &&
+            mobileHomeSrc.includes('delivery_truck_speed') &&
+            mobileHomeSrc.includes('delete_sweep'),
+        'MobileHome debe ordenar por ciclo y distinguir SHIPPED (delivery_truck_speed) de FIELD_REMOVED (delete_sweep)'
+    );
+
+    const scannerSrc = fs.readFileSync(
+        path.join(WEB_SRC, 'modules/geolapp/components/MobileScanner.tsx'),
+        'utf8'
+    );
+    assert.equal(
+        scannerSrc.includes('MEDIR VOLUMEN'),
+        false,
+        'MobileScanner no debe incluir botón con texto prohibido MEDIR VOLUMEN'
+    );
+    assert.ok(
+        scannerSrc.includes('autoStartScan') && scannerSrc.includes('tune'),
+        'MobileScanner debe disparar captura directa e incluir icono tune'
+    );
 
     const quickCaptureSrc = fs.readFileSync(
         path.join(WEB_SRC, 'modules/geolapp/components/QuickStockpileCapture.tsx'),
@@ -1572,20 +1781,90 @@ function extractOpeningTags(source: string, tagNames: string[]): string[] {
         path.join(WEB_SRC, 'modules/geolapp/layouts/MainLayout.tsx'),
         'utf8'
     );
-    assert.ok(mainLayoutSrc.includes('showCenterCamera'), 'MainLayout debe calcular showCenterCamera contextual');
-    assert.ok(
-        mainLayoutSrc.includes("key: 'new_measurement'"),
-        'MainLayout debe centrar add_a_photo solo al estar dentro de un acopio'
+    assert.equal(
+        mainLayoutSrc.includes('showMobileBottomNav'),
+        false,
+        'MainLayout no debe contener barra inferior muerta showMobileBottomNav'
     );
 
     const dossierSrc = fs.readFileSync(
         path.join(WEB_SRC, 'modules/geolapp/components/StockpileDossierView.tsx'),
         'utf8'
     );
+    assert.ok(
+        dossierSrc.includes('picture_as_pdf') &&
+        dossierSrc.includes('add_a_photo') &&
+        dossierSrc.includes('done_all') &&
+        dossierSrc.includes('lock_open') &&
+        dossierSrc.includes('onOpenClosure'),
+        'StockpileDossierView móvil debe incluir barra inferior fija de 3 iconos ad hoc y navegar a interfaz dedicada de cierre'
+    );
     assert.equal(
-        dossierSrc.includes('new_digital_capture'),
+        dossierSrc.includes('showClosureForm') || dossierSrc.includes('quickCauses'),
         false,
-        'StockpileDossierView móvil no debe duplicar footer de captura sobre barra inferior'
+        'StockpileDossierView no debe mantener diálogo ni chips de cierre inline'
+    );
+
+    const closureViewSrc = fs.readFileSync(
+        path.join(WEB_SRC, 'modules/geolapp/components/MobileStockpileClosureView.tsx'),
+        'utf8'
+    );
+    assert.ok(
+        closureViewSrc.includes('arrow_back') &&
+        closureViewSrc.includes('close') &&
+        closureViewSrc.includes('check') &&
+        closureViewSrc.includes('delivery_truck_speed') &&
+        closureViewSrc.includes('delete_sweep') &&
+        closureViewSrc.includes('FIELD_REMOVED') &&
+        closureViewSrc.includes('closeAssetInField'),
+        'MobileStockpileClosureView debe implementar interfaz dedicada dual de cierre con iconos ad hoc'
+    );
+    assert.equal(
+        closureViewSrc.includes('quickCauses') || closureViewSrc.includes('chip_removed_cleared'),
+        false,
+        'MobileStockpileClosureView no debe incluir razones preestablecidas'
+    );
+
+    const visualStageSrc = fs.readFileSync(
+        path.join(WEB_SRC, 'modules/geolapp/components/StockpileVisualStage.tsx'),
+        'utf8'
+    );
+    assert.equal(
+        visualStageSrc.includes('StagePhotoThumb'),
+        false,
+        'StockpileVisualStage no debe renderizar carrusel StagePhotoThumb'
+    );
+    assert.ok(
+        visualStageSrc.includes('photo_camera') &&
+        visualStageSrc.includes('deployed_code') &&
+        visualStageSrc.includes('view_column_2') &&
+        visualStageSrc.includes('satellite_alt'),
+        'StockpileVisualStage debe conmutar modos visuales mediante iconos puros'
+    );
+
+    const desktopClosureExists = fs.existsSync(
+        path.join(WEB_SRC, 'modules/geolapp/components/desktop/DesktopClosureModal.tsx')
+    );
+    assert.equal(desktopClosureExists, false, 'DesktopClosureModal.tsx debe estar eliminado');
+
+    const desktopStageReadOnlySrc = fs.readFileSync(
+        path.join(WEB_SRC, 'modules/geolapp/components/desktop/DesktopStageWorkspace.tsx'),
+        'utf8'
+    );
+    const desktopDossierSrc = fs.readFileSync(
+        path.join(WEB_SRC, 'modules/geolapp/components/desktop/DesktopDossierPanel.tsx'),
+        'utf8'
+    );
+    assert.equal(
+        desktopStageReadOnlySrc.includes('onRequestClosure') ||
+        desktopStageReadOnlySrc.includes('toggleIgnoreMeasurement'),
+        false,
+        'DesktopStageWorkspace debe permanecer 100% solo lectura sin cierre/borrado ni mutación'
+    );
+    assert.ok(
+        desktopDossierSrc.includes('canEdit={false}') &&
+        !desktopDossierSrc.includes('GeolappAiEnrichDrawer'),
+        'DesktopDossierPanel debe permanecer 100% solo lectura sin edición ni IA'
     );
 
     // Aserciones publicación privada 1º DEV en minreport.com + App móvil MINREPORT ACOPIOS-only
@@ -1614,17 +1893,17 @@ function extractOpeningTags(source: string, tagNames: string[]): string[] {
 
     assert.ok(
         backendIndexSrc.includes('RELEASE_STAGE_DEV_ONLY') &&
-            authMiddlewareSrc.includes('RELEASE_STAGE_DEV_ONLY') &&
-            sessionScopeSrc.includes('RELEASE_STAGE_DEV_ONLY') &&
-            webAppSrc.includes('isDevPrivateReleaseStage'),
+        authMiddlewareSrc.includes('RELEASE_STAGE_DEV_ONLY') &&
+        sessionScopeSrc.includes('RELEASE_STAGE_DEV_ONLY') &&
+        webAppSrc.includes('isDevPrivateReleaseStage'),
         'Backend y Web deben implementar compuerta DEV_PRIVATE / RELEASE_STAGE_DEV_ONLY'
     );
     assert.ok(
         backendIndexSrc.includes('https://minreport.com') &&
-            backendEnvSrc.includes('https://minreport.com') &&
-            webauthnSrc.includes('https://minreport.com') &&
-            webNetworkSrc.includes('https://minreport.com') &&
-            firebaseJsonSrc.includes('https://minreport.com'),
+        backendEnvSrc.includes('https://minreport.com') &&
+        webauthnSrc.includes('https://minreport.com') &&
+        webNetworkSrc.includes('https://minreport.com') &&
+        firebaseJsonSrc.includes('https://minreport.com'),
         'El dominio canónico https://minreport.com debe estar configurado en backend, WebAuthn, frontend y Firebase Hosting'
     );
     assert.ok(
@@ -1637,8 +1916,8 @@ function extractOpeningTags(source: string, tagNames: string[]): string[] {
     );
     assert.ok(
         devLaunchpadSrc.includes('items-center justify-center') &&
-            devLaunchpadSrc.includes("id: 'stockpile'") &&
-            !devLaunchpadSrc.includes("id: 'opermaq'"),
+        devLaunchpadSrc.includes("id: 'stockpile'") &&
+        !devLaunchpadSrc.includes("id: 'opermaq'"),
         'DevFieldTestLaunchpad debe centrar el icono único de MINREPORT ACOPIOS sin mostrar otros módulos aún'
     );
     assert.ok(
@@ -1651,6 +1930,25 @@ function extractOpeningTags(source: string, tagNames: string[]): string[] {
             `.gitignore debe proteger ${ignoredPattern}`
         );
     }
+
+    // Orden determinista de ciclo y tipo de cierre (ACTIVE -> SHIPPED -> FIELD_REMOVED -> CLOSED otros)
+    const faenaMetricsMod = loadWebModule(
+        path.join(WEB_SRC, 'modules/geolapp/core/services/stockpile-faena-metrics.ts')
+    );
+    const orderedSample = faenaMetricsMod.sortStockpilesByLifecycle([
+        { id: 'z1', name: 'Z-ZERO', status: 'CLOSED', closure_reason: 'ZERO_VOLUME', closed_at: 4000, createdAt: 4000 },
+        { id: 'r1', name: 'R-OLD', status: 'CLOSED', closure_reason: 'FIELD_REMOVED', closed_at: 1000, createdAt: 1000 },
+        { id: 's1', name: 'S-OLD', status: 'CLOSED', closure_reason: 'SHIPPED', dispatch_timestamp: 2000, createdAt: 2000 },
+        { id: 'a1', name: 'A-OLD', status: 'ACTIVE', last_measured_at: 1500, createdAt: 1500 },
+        { id: 'r2', name: 'R-NEW', status: 'CLOSED', closure_reason: 'FIELD_REMOVED', closed_at: 5000, createdAt: 5000 },
+        { id: 's2', name: 'S-NEW', status: 'CLOSED', closure_reason: 'SHIPPED', dispatch_timestamp: 6000, createdAt: 6000 },
+        { id: 'a2', name: 'A-NEW', status: 'ACTIVE', last_measured_at: 7000, createdAt: 7000 },
+    ]);
+    assert.deepEqual(
+        orderedSample.map((item: any) => item.id),
+        ['a2', 'a1', 's2', 's1', 'r2', 'r1', 'z1'],
+        'sortStockpilesByLifecycle debe ordenar ACTIVE -> SHIPPED -> FIELD_REMOVED -> otros cierres por fecha descendente'
+    );
 
     passedCases++;
     assert.equal(

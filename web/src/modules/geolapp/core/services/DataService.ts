@@ -47,8 +47,26 @@ export interface TenantContextInput {
     userId?: string;
 }
 
+export type FieldClosureMode = 'SHIPPED' | 'FIELD_REMOVED';
+
 export interface ShipmentClosureInput {
-    dispatchReference: string;
+    dispatchReference?: string;
+    dispatchTransport?: string;
+    dispatchDestination?: string;
+    dispatchTimestamp?: number;
+    shippedWeightT?: number | null;
+    cause?: string;
+    photoUrl?: string;
+    confirmationKeyword: string;
+}
+
+export interface FieldClosureInput {
+    mode: FieldClosureMode;
+    cause?: string;
+    dispatchReference?: string;
+    dispatchTransport?: string;
+    dispatchDestination?: string;
+    dispatchTimestamp?: number;
     shippedWeightT?: number | null;
     photoUrl?: string;
     confirmationKeyword: string;
@@ -773,7 +791,12 @@ export class DataService {
             closed_at: rawDoc.closed_at ?? null,
             closed_by: rawDoc.closed_by ?? null,
             closure_reason: rawDoc.closure_reason ?? null,
+            closure_cause: rawDoc.closure_cause ?? null,
+            closure_origin: rawDoc.closure_origin ?? null,
             dispatch_reference: rawDoc.dispatch_reference ?? null,
+            dispatch_transport: rawDoc.dispatch_transport ?? null,
+            dispatch_destination: rawDoc.dispatch_destination ?? null,
+            dispatch_timestamp: rawDoc.dispatch_timestamp ?? null,
             shipped_weight_t: rawDoc.shipped_weight_t ?? null,
             pre_closure_volume_m3: rawDoc.pre_closure_volume_m3 ?? null,
             volumen: rawDoc.volumen ?? rawDoc.volumeM3 ?? rawDoc.last_volume_m3 ?? 0,
@@ -1420,6 +1443,8 @@ export class DataService {
                 ? {
                     is_closure_measurement: true,
                     closure_reason: measurement.closure_reason || 'ZERO_VOLUME',
+                    closure_cause: measurement.closure_cause ?? null,
+                    closure_origin: measurement.closure_origin || 'MOBILE_FIELD',
                     wet_weight_thm: 0,
                     dry_weight_tms: 0,
                     fine_cu_t: 0,
@@ -1527,9 +1552,20 @@ export class DataService {
                         closed_at: newM.timestamp,
                         closed_by: newM.user_id || this.getUserId() || 'field-operator',
                         closure_reason: closureReason,
+                        closure_cause: newM.closure_cause ?? null,
+                        closure_origin: newM.closure_origin || 'MOBILE_FIELD',
                         pre_closure_volume_m3: prevActiveVol,
                         ...(newM.dispatch_reference
                             ? { dispatch_reference: newM.dispatch_reference }
+                            : {}),
+                        ...(newM.dispatch_transport
+                            ? { dispatch_transport: newM.dispatch_transport }
+                            : {}),
+                        ...(newM.dispatch_destination
+                            ? { dispatch_destination: newM.dispatch_destination }
+                            : {}),
+                        ...(typeof newM.dispatch_timestamp === 'number'
+                            ? { dispatch_timestamp: newM.dispatch_timestamp }
                             : {}),
                     }
                     : {}),
@@ -1881,15 +1917,34 @@ export class DataService {
         return bus.on(`meas_item:${id}`, cb);
     }
 
-    // ─── CICLO DE VIDA NEXT-GEN (CIERRE POR EMBARQUE / REAPERTURA HITL / MAPA ESTÁTICO) ───
+    // ─── CICLO DE VIDA NEXT-GEN (CIERRE DUAL EN TERRENO / REAPERTURA MÓVIL HITL) ───
 
-    async closeAssetByShipment(
+    async closeAssetInField(
         assetId: string,
-        params: ShipmentClosureInput
+        params: FieldClosureInput
     ): Promise<StockpileAsset> {
+        const mode: FieldClosureMode =
+            params.mode === 'FIELD_REMOVED' ? 'FIELD_REMOVED' : 'SHIPPED';
         const dispatchRef = String(params.dispatchReference || '').trim();
-        if (!dispatchRef) {
-            throw new Error('La referencia de embarque o lote es obligatoria.');
+        const dispatchTransport = String(params.dispatchTransport || '').trim();
+        const dispatchDestination = String(params.dispatchDestination || '').trim();
+        const hasValidDispatchTs =
+            typeof params.dispatchTimestamp === 'number' &&
+            Number.isFinite(params.dispatchTimestamp) &&
+            params.dispatchTimestamp > 0;
+        const closureCause = String(params.cause || '').trim();
+
+        if (mode === 'SHIPPED' && dispatchTransport.length < 2) {
+            throw new Error('Debe indicar el transporte de despacho.');
+        }
+        if (mode === 'SHIPPED' && dispatchDestination.length < 2) {
+            throw new Error('Debe indicar el destino de despacho.');
+        }
+        if (mode === 'SHIPPED' && params.dispatchTimestamp !== undefined && !hasValidDispatchTs) {
+            throw new Error('Debe indicar fecha y hora válidas de despacho.');
+        }
+        if (mode === 'FIELD_REMOVED' && closureCause.length < 3) {
+            throw new Error('Debe indicar la causa de eliminación en terreno.');
         }
         if (String(params.confirmationKeyword || '').trim().toUpperCase() !== 'ACTUALIZAR') {
             throw new Error('Confirmacion HITL requerida: escriba exactamente "ACTUALIZAR".');
@@ -1903,27 +1958,59 @@ export class DataService {
             throw new Error('CYCLE_ALREADY_CLOSED: El historial del acopio ya se encuentra cerrado.');
         }
 
-        const gov = calculationEngine.evaluateCopperGovernance({
-            copperDomain: asset.copper_domain,
-            residenceDays: asset.residence_days,
-            moisturePct: asset.moisture_pct,
-            tmlLimitPct: asset.tml_pct,
-        });
-        if (gov.hasCriticalBlock) {
-            throw new Error(
-                gov.alerts.find((a) => a.severity === 'BLOCK')?.message ||
-                'IMSBC_TML_BLOCK: Humedad >= TML bloquea embarque de concentrado.'
-            );
+        if (mode === 'SHIPPED') {
+            const gov = calculationEngine.evaluateCopperGovernance({
+                copperDomain: asset.copper_domain,
+                residenceDays: asset.residence_days,
+                moisturePct: asset.moisture_pct,
+                tmlLimitPct: asset.tml_pct,
+            });
+            if (gov.hasCriticalBlock) {
+                throw new Error(
+                    gov.alerts.find((a) => a.severity === 'BLOCK')?.message ||
+                    'IMSBC_TML_BLOCK: Humedad >= TML bloquea despacho de concentrado.'
+                );
+            }
         }
 
         const existingMeas = await this.getMeasurementsLocal(assetId);
         const now = Date.now();
+        const dispatchTimestamp =
+            mode === 'SHIPPED' ? Math.round(hasValidDispatchTs ? params.dispatchTimestamp! : now) : null;
         const activeTenant = (this.tenantId || asset.tenantId || '').slice(0, 128);
         const actor = this.getUserId() || 'operator';
         const prevVol =
             typeof asset.last_volume_m3 === 'number' && Number.isFinite(asset.last_volume_m3)
                 ? asset.last_volume_m3
                 : 0;
+        const granDensityFallback: Record<string, number> = {
+            COLPAS: 1.55,
+            GRANSA: 1.65,
+            MIXTO: 1.75,
+            FINOS: 1.9,
+        };
+        const assetDensity =
+            typeof asset.density_factor === 'number' &&
+            Number.isFinite(asset.density_factor) &&
+            asset.density_factor > 0
+                ? asset.density_factor
+                : asset.tipo_granulometria && granDensityFallback[asset.tipo_granulometria]
+                  ? granDensityFallback[asset.tipo_granulometria]
+                  : 0;
+        const deducedShippedWeightT =
+            mode === 'SHIPPED'
+                ? typeof params.shippedWeightT === 'number' &&
+                  Number.isFinite(params.shippedWeightT) &&
+                  params.shippedWeightT >= 0
+                    ? Number(params.shippedWeightT.toFixed(2))
+                    : prevVol > 0 && assetDensity > 0
+                      ? Number((prevVol * assetDensity).toFixed(2))
+                      : typeof asset.last_weight_t === 'number' &&
+                          Number.isFinite(asset.last_weight_t) &&
+                          asset.last_weight_t > 0
+                        ? Number(asset.last_weight_t.toFixed(2))
+                        : null
+                : null;
         const cleanPhoto =
             params.photoUrl && !params.photoUrl.startsWith('data:')
                 ? params.photoUrl
@@ -1942,8 +2029,13 @@ export class DataService {
             method: 'manual',
             user_id: actor,
             is_closure_measurement: true,
-            closure_reason: 'SHIPPED',
-            dispatch_reference: dispatchRef,
+            closure_reason: mode,
+            closure_origin: 'MOBILE_FIELD',
+            ...(closureCause ? { closure_cause: closureCause } : {}),
+            ...(dispatchRef ? { dispatch_reference: dispatchRef } : {}),
+            ...(dispatchTransport ? { dispatch_transport: dispatchTransport } : {}),
+            ...(dispatchDestination ? { dispatch_destination: dispatchDestination } : {}),
+            ...(typeof dispatchTimestamp === 'number' ? { dispatch_timestamp: dispatchTimestamp } : {}),
             wet_weight_thm: 0,
             dry_weight_tms: 0,
             fine_cu_t: 0,
@@ -1960,13 +2052,53 @@ export class DataService {
             {
                 field: 'status',
                 current: String(asset.status || 'ACTIVE'),
-                suggested: 'CLOSED (SHIPPED)',
+                suggested: `CLOSED (${mode})`,
             },
-            {
-                field: 'dispatch_reference',
-                current: String(asset.dispatch_reference || '--'),
-                suggested: dispatchRef,
-            },
+            ...(dispatchTransport
+                ? [
+                      {
+                          field: 'dispatch_transport',
+                          current: String(asset.dispatch_transport || '--'),
+                          suggested: dispatchTransport,
+                      },
+                  ]
+                : []),
+            ...(dispatchDestination
+                ? [
+                      {
+                          field: 'dispatch_destination',
+                          current: String(asset.dispatch_destination || '--'),
+                          suggested: dispatchDestination,
+                      },
+                  ]
+                : []),
+            ...(typeof dispatchTimestamp === 'number'
+                ? [
+                      {
+                          field: 'dispatch_timestamp',
+                          current: '--',
+                          suggested: new Date(dispatchTimestamp).toISOString(),
+                      },
+                  ]
+                : []),
+            ...(dispatchRef
+                ? [
+                      {
+                          field: 'dispatch_reference',
+                          current: String(asset.dispatch_reference || '--'),
+                          suggested: dispatchRef,
+                      },
+                  ]
+                : []),
+            ...(closureCause
+                ? [
+                      {
+                          field: 'closure_cause',
+                          current: String(asset.closure_cause || '--'),
+                          suggested: closureCause,
+                      },
+                  ]
+                : []),
             {
                 field: 'last_volume_m3',
                 current: `${prevVol.toFixed(2)} m³`,
@@ -1978,16 +2110,16 @@ export class DataService {
             assetId,
             {
                 status: 'CLOSED',
-                closure_reason: 'SHIPPED',
+                closure_reason: mode,
+                closure_cause: closureCause || null,
+                closure_origin: 'MOBILE_FIELD',
                 closed_at: now,
                 closed_by: actor,
-                dispatch_reference: dispatchRef,
-                shipped_weight_t:
-                    typeof params.shippedWeightT === 'number' &&
-                        Number.isFinite(params.shippedWeightT) &&
-                        params.shippedWeightT >= 0
-                        ? params.shippedWeightT
-                        : null,
+                dispatch_reference: dispatchRef || null,
+                dispatch_transport: dispatchTransport || null,
+                dispatch_destination: dispatchDestination || null,
+                dispatch_timestamp: dispatchTimestamp,
+                shipped_weight_t: deducedShippedWeightT,
                 pre_closure_volume_m3: prevVol,
                 last_volume_m3: 0,
                 last_weight_t: 0,
@@ -2017,6 +2149,23 @@ export class DataService {
         return updatedAsset;
     }
 
+    async closeAssetByShipment(
+        assetId: string,
+        params: ShipmentClosureInput
+    ): Promise<StockpileAsset> {
+        return this.closeAssetInField(assetId, {
+            mode: 'SHIPPED',
+            dispatchReference: params.dispatchReference,
+            dispatchTransport: params.dispatchTransport,
+            dispatchDestination: params.dispatchDestination,
+            dispatchTimestamp: params.dispatchTimestamp,
+            shippedWeightT: params.shippedWeightT,
+            cause: params.cause,
+            photoUrl: params.photoUrl,
+            confirmationKeyword: params.confirmationKeyword,
+        });
+    }
+
     async reopenClosedAssetWithHitl(
         assetId: string,
         confirmationKeyword: string,
@@ -2043,6 +2192,13 @@ export class DataService {
                 closed_at: null,
                 closed_by: null,
                 closure_reason: null,
+                closure_cause: null,
+                closure_origin: 'MOBILE_FIELD',
+                dispatch_reference: null,
+                dispatch_transport: null,
+                dispatch_destination: null,
+                dispatch_timestamp: null,
+                shipped_weight_t: null,
             },
             confirmationKeywordTrimmed(confirmationKeyword),
             diffs

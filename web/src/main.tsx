@@ -8,11 +8,25 @@ import '@fontsource/atkinson-hyperlegible-mono/400.css';
 import '@fontsource/atkinson-hyperlegible-mono/500.css';
 import '@fontsource/atkinson-hyperlegible-mono/600.css';
 import '@fontsource/atkinson-hyperlegible-mono/700.css';
-import '@fontsource/material-symbols-outlined/400.css';
 import App from './App.tsx'
 import './index.css'
 import './i18n';
 import { registerSW } from 'virtual:pwa-register'
+
+const markMaterialSymbolsReady = () => {
+    if (typeof document !== 'undefined') {
+        document.documentElement.classList.add('ms-ready');
+    }
+};
+
+if (typeof document !== 'undefined' && 'fonts' in document) {
+    Promise.race([
+        document.fonts.load('400 24px "Material Symbols Outlined"'),
+        new Promise<void>((resolve) => window.setTimeout(resolve, 600)),
+    ]).finally(markMaterialSymbolsReady);
+} else {
+    markMaterialSymbolsReady();
+}
 
 if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
     registerSW({

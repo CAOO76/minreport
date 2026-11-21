@@ -60,7 +60,12 @@ const CopperDomainSchema = z.enum([
 ]);
 
 const StockpileStatusSchema = z.enum(['ACTIVE', 'ARCHIVED', 'CONCILIATED', 'CLOSED']);
-const StockpileClosureReasonSchema = z.enum(['SHIPPED', 'ZERO_VOLUME', 'MANUAL_CLOSE']);
+const StockpileClosureReasonSchema = z.enum([
+    'SHIPPED',
+    'FIELD_REMOVED',
+    'ZERO_VOLUME',
+    'MANUAL_CLOSE',
+]);
 
 const CopperGovernanceAlertSchema = z.object({
     code: z.enum([
@@ -148,7 +153,12 @@ const HitlPatchSchema = z.object({
     closed_at: z.number().finite().nonnegative().nullable().optional(),
     closed_by: z.string().trim().max(160).nullable().optional(),
     closure_reason: StockpileClosureReasonSchema.nullable().optional(),
+    closure_cause: z.string().trim().max(300).nullable().optional(),
+    closure_origin: z.enum(['MOBILE_FIELD']).nullable().optional(),
     dispatch_reference: z.string().trim().max(240).nullable().optional(),
+    dispatch_transport: z.string().trim().max(200).nullable().optional(),
+    dispatch_destination: z.string().trim().max(200).nullable().optional(),
+    dispatch_timestamp: z.number().finite().nonnegative().nullable().optional(),
     shipped_weight_t: z.number().finite().nonnegative().nullable().optional(),
     pre_closure_volume_m3: z.number().finite().nonnegative().nullable().optional(),
     volumen: z.number().finite().nonnegative().optional(),
@@ -508,6 +518,66 @@ router.post(
                       ? existingData.tml_pct
                       : null;
 
+            const isClosingCycle = sanitizedPatch.status === 'CLOSED';
+            const isReopeningCycle =
+                existingData.status === 'CLOSED' && sanitizedPatch.status === 'ACTIVE';
+
+            if (isClosingCycle) {
+                if (sanitizedPatch.closure_origin !== 'MOBILE_FIELD') {
+                    return res.status(403).json({
+                        error: 'MOBILE_FIELD_ONLY_CLOSURE: El cierre de acopio solo puede ejecutarse en terreno desde la aplicación móvil MINREPORT.',
+                    });
+                }
+                const effectiveReason = String(
+                    sanitizedPatch.closure_reason || existingData.closure_reason || ''
+                ).toUpperCase();
+                if (effectiveReason === 'SHIPPED') {
+                    const effectiveTransport = String(
+                        sanitizedPatch.dispatch_transport ?? existingData.dispatch_transport ?? ''
+                    ).trim();
+                    const effectiveDestination = String(
+                        sanitizedPatch.dispatch_destination ?? existingData.dispatch_destination ?? ''
+                    ).trim();
+                    const rawDispatchTs =
+                        sanitizedPatch.dispatch_timestamp ?? existingData.dispatch_timestamp;
+                    const effectiveDispatchTs =
+                        typeof rawDispatchTs === 'number' &&
+                        Number.isFinite(rawDispatchTs) &&
+                        rawDispatchTs > 0
+                            ? rawDispatchTs
+                            : null;
+                    if (effectiveTransport.length < 2) {
+                        return res.status(400).json({
+                            error: 'DISPATCH_TRANSPORT_REQUIRED: Debe indicar el transporte para cerrar por despacho.',
+                        });
+                    }
+                    if (effectiveDestination.length < 2) {
+                        return res.status(400).json({
+                            error: 'DISPATCH_DESTINATION_REQUIRED: Debe indicar el destino para cerrar por despacho.',
+                        });
+                    }
+                    if (!effectiveDispatchTs) {
+                        return res.status(400).json({
+                            error: 'DISPATCH_TIMESTAMP_REQUIRED: Debe indicar fecha y hora válidas de despacho.',
+                        });
+                    }
+                }
+                if (effectiveReason === 'FIELD_REMOVED') {
+                    const effectiveCause = String(sanitizedPatch.closure_cause ?? '').trim();
+                    if (effectiveCause.length < 3) {
+                        return res.status(400).json({
+                            error: 'CLOSURE_CAUSE_REQUIRED: Debe indicar la causa de eliminación en terreno (mínimo 3 caracteres).',
+                        });
+                    }
+                }
+            }
+
+            if (isReopeningCycle && sanitizedPatch.closure_origin !== 'MOBILE_FIELD') {
+                return res.status(403).json({
+                    error: 'MOBILE_FIELD_ONLY_REOPEN: La reapertura del ciclo solo puede ejecutarse desde la aplicación móvil MINREPORT.',
+                });
+            }
+
             if (
                 sanitizedPatch.status === 'CLOSED' &&
                 sanitizedPatch.closure_reason === 'SHIPPED' &&
@@ -524,6 +594,17 @@ router.post(
             const now = Date.now();
             const updatePayload: Record<string, unknown> = {
                 ...sanitizedPatch,
+                ...(isReopeningCycle
+                    ? {
+                          closure_cause: null,
+                          closure_origin: null,
+                          dispatch_reference: null,
+                          dispatch_transport: null,
+                          dispatch_destination: null,
+                          dispatch_timestamp: null,
+                          shipped_weight_t: null,
+                      }
+                    : {}),
                 updatedAt: now,
                 lastHitlUpdatedBy: authz.uid,
                 lastHitlUpdatedAt: now,
@@ -561,8 +642,23 @@ router.post(
                     ...(sanitizedPatch.closure_reason
                         ? { closureReason: sanitizedPatch.closure_reason }
                         : {}),
+                    ...(sanitizedPatch.closure_cause
+                        ? { closureCause: sanitizedPatch.closure_cause }
+                        : {}),
+                    ...(sanitizedPatch.closure_origin
+                        ? { closureOrigin: sanitizedPatch.closure_origin }
+                        : {}),
                     ...(sanitizedPatch.dispatch_reference
                         ? { dispatchReference: sanitizedPatch.dispatch_reference }
+                        : {}),
+                    ...(sanitizedPatch.dispatch_transport
+                        ? { dispatchTransport: sanitizedPatch.dispatch_transport }
+                        : {}),
+                    ...(sanitizedPatch.dispatch_destination
+                        ? { dispatchDestination: sanitizedPatch.dispatch_destination }
+                        : {}),
+                    ...(typeof sanitizedPatch.dispatch_timestamp === 'number'
+                        ? { dispatchTimestamp: sanitizedPatch.dispatch_timestamp }
                         : {}),
                 },
                 ipAddress: extractClientIp(req),
@@ -1556,6 +1652,25 @@ async function collectVisualMediaParts(params: {
     return mediaParts;
 }
 
+function estimateReferenceDensityByGranulometry(
+    granulometry: 'COLPAS' | 'GRANSA' | 'MIXTO' | 'FINOS' | null | undefined,
+    isNonStockpile?: boolean
+): number | null {
+    if (isNonStockpile || !granulometry) return null;
+    switch (granulometry) {
+        case 'COLPAS':
+            return 1.55;
+        case 'GRANSA':
+            return 1.65;
+        case 'MIXTO':
+            return 1.75;
+        case 'FINOS':
+            return 1.9;
+        default:
+            return null;
+    }
+}
+
 function parseStockpileDecisionChoices(decisionRes: any) {
     const rawGeomChoice =
         decisionRes?.answers?.geometry_type?.type === 'choice'
@@ -1770,7 +1885,10 @@ async function runDigitalStockpileAnalyze(params: {
         copperDomain: null,
         granulometry: null,
         aiSuggestedGranulometry,
-        suggestedDensityTm3: null,
+        suggestedDensityTm3: estimateReferenceDensityByGranulometry(
+            aiSuggestedGranulometry,
+            isNonStockpile
+        ),
         slopeAngleLeftDeg: extracted.slope_angle_left_deg ?? null,
         slopeAngleRightDeg: extracted.slope_angle_right_deg ?? null,
         slopeAngleAvgDeg: avgSlope,
@@ -2243,7 +2361,10 @@ async function runSpatialStockpileAnalyze(params: {
             granulometry: null,
             aiSuggestedGranulometry: choices.aiSuggestedGranulometry,
             isNonStockpile: choices.isNonStockpile,
-            suggestedDensityTm3: null,
+            suggestedDensityTm3: estimateReferenceDensityByGranulometry(
+                choices.aiSuggestedGranulometry,
+                choices.isNonStockpile
+            ),
             reasoning,
         };
     })();
@@ -2272,7 +2393,7 @@ async function runSpatialStockpileAnalyze(params: {
             copperDomain: null,
             granulometry: null,
             aiSuggestedGranulometry: visual.aiSuggestedGranulometry,
-            suggestedDensityTm3: null,
+            suggestedDensityTm3: visual.suggestedDensityTm3,
             slopeAngleLeftDeg: spatial.slopeAngleLeftDeg,
             slopeAngleRightDeg: spatial.slopeAngleRightDeg,
             slopeAngleAvgDeg: spatial.slopeAngleAvgDeg,

@@ -14,7 +14,10 @@ import SecureImage from '../../../components/common/SecureImage';
 import { dataService } from '../core/services/DataService';
 import { storageService, type UploadResult } from '../core/services/StorageService';
 import { geolappDigitalAiService } from '../core/services/GeolappDigitalAiService';
-import { useSpatialDeviceCapability } from '../core/services/spatialDeviceCapability';
+import {
+    getCachedSpatialDeviceCapability,
+    useSpatialDeviceCapability,
+} from '../core/services/spatialDeviceCapability';
 import {
     SpatialScanRejectedError,
     analyzeSpatialScan,
@@ -50,6 +53,11 @@ import type {
 export interface MobileScannerProps {
     assetId?: string;
     assetName?: string;
+    autoStartScan?: boolean;
+    onDraftNameChange?: (nextName: string) => void;
+    initialCopperDomain?: CopperMineralDomain | null;
+    initialGranulometry?: 'COLPAS' | 'GRANSA' | 'MIXTO' | 'FINOS' | null;
+    initialDensityFactor?: number | null;
     draftAsset?: {
         name: string;
         projectId?: string;
@@ -64,6 +72,41 @@ export interface MobileScannerProps {
 }
 
 type ScannerStage = 'READY' | 'ANALYZING' | 'RESULT' | 'REJECTED' | 'ERROR';
+
+const GRANULOMETRY_DENSITY_TABLE: Record<'COLPAS' | 'GRANSA' | 'MIXTO' | 'FINOS', number> = {
+    COLPAS: 1.55,
+    GRANSA: 1.65,
+    MIXTO: 1.75,
+    FINOS: 1.9,
+};
+
+function resolveEffectiveDensityFactor(params: {
+    manualDensityText: string;
+    aiDensityDismissed: boolean;
+    isNonStockpile?: boolean;
+    suggestedDensityTm3?: number | null;
+    granulometry: 'COLPAS' | 'GRANSA' | 'MIXTO' | 'FINOS' | null;
+}): { density: number | null; source: 'USER' | 'AI' | 'NONE' } {
+    const raw = Number.parseFloat(params.manualDensityText.replace(',', '.'));
+    if (Number.isFinite(raw) && raw > 0 && raw <= 8) {
+        return { density: Number(raw.toFixed(3)), source: 'USER' };
+    }
+    if (params.isNonStockpile || params.aiDensityDismissed) {
+        return { density: null, source: 'NONE' };
+    }
+    if (params.granulometry && GRANULOMETRY_DENSITY_TABLE[params.granulometry]) {
+        return { density: GRANULOMETRY_DENSITY_TABLE[params.granulometry], source: 'AI' };
+    }
+    if (
+        typeof params.suggestedDensityTm3 === 'number' &&
+        Number.isFinite(params.suggestedDensityTm3) &&
+        params.suggestedDensityTm3 > 0 &&
+        params.suggestedDensityTm3 <= 8
+    ) {
+        return { density: Number(params.suggestedDensityTm3.toFixed(3)), source: 'AI' };
+    }
+    return { density: null, source: 'NONE' };
+}
 
 const XCOVER_ALLOWED_CODES = [
     XCOVER_HARDWARE_KEY_CODES.XCOVER_SIDE_KEY,
@@ -82,6 +125,11 @@ function getActiveTenantId(): string | undefined {
 export const MobileScanner: React.FC<MobileScannerProps> = ({
     assetId,
     assetName,
+    autoStartScan = false,
+    onDraftNameChange,
+    initialCopperDomain = null,
+    initialGranulometry = null,
+    initialDensityFactor = null,
     draftAsset,
     onSuccess,
     onBack,
@@ -90,17 +138,31 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
     const { t, i18n } = useTranslation();
     const { isOnline } = useNetworkStatus();
     const imu = useImuClinometer();
-    const { capability, requestInstall } = useSpatialDeviceCapability();
+    const {
+        capability,
+        loading: capabilityLoading,
+        requestInstall,
+    } = useSpatialDeviceCapability();
 
+    const effectiveCapability = capability ?? getCachedSpatialDeviceCapability();
     const isNewAssetMode = Boolean(!assetId && draftAsset);
     const isNativeRuntime = Capacitor.isNativePlatform();
     const isSpatialCapable = Boolean(
         isNativeRuntime &&
-            (capability?.tier === 'OPTIMAL_SPATIAL' || capability?.tier === 'COMPATIBLE_VIO')
+            (effectiveCapability?.tier === 'OPTIMAL_SPATIAL' ||
+                effectiveCapability?.tier === 'COMPATIBLE_VIO')
     );
 
+    const [editableDraftName, setEditableDraftName] = useState<string>(
+        () => draftAsset?.name?.trim() || assetName?.trim() || ''
+    );
+    const [isEditingDraftName, setIsEditingDraftName] = useState<boolean>(false);
+
     const displayStockpileName =
-        assetName?.trim() || draftAsset?.name?.trim() || t('scanner.title', 'ACOPIO');
+        (isNewAssetMode ? editableDraftName.trim() : '') ||
+        assetName?.trim() ||
+        draftAsset?.name?.trim() ||
+        t('scanner.title', 'ACOPIO');
 
     const cameraInputRef = useRef<HTMLInputElement>(null);
     const galleryInputRef = useRef<HTMLInputElement>(null);
@@ -110,6 +172,12 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
     });
 
     const [stage, setStage] = useState<ScannerStage>('READY');
+    const stageRef = useRef<ScannerStage>('READY');
+    useEffect(() => {
+        stageRef.current = stage;
+    }, [stage]);
+    const autoTriggeredRef = useRef<boolean>(false);
+
     const [photoBlob, setPhotoBlob] = useState<Blob | null>(null);
     const [photoPreview, setPhotoPreview] = useState<string | null>(null);
     const [extraPhotos, setExtraPhotos] = useState<Array<{ blob: Blob; previewUrl: string }>>([]);
@@ -119,12 +187,20 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
 
     const [calibration, setCalibration] = useState<NativeCalibrationResult | null>(null);
     const [selectedCopperDomain, setSelectedCopperDomain] = useState<CopperMineralDomain | null>(
-        null
+        initialCopperDomain ?? null
     );
     const [selectedGranulometry, setSelectedGranulometry] = useState<
         'COLPAS' | 'GRANSA' | 'MIXTO' | 'FINOS' | null
-    >(null);
-    const [manualDensityText, setManualDensityText] = useState<string>('');
+    >(initialGranulometry ?? null);
+    const [manualDensityText, setManualDensityText] = useState<string>(
+        typeof initialDensityFactor === 'number' &&
+            Number.isFinite(initialDensityFactor) &&
+            initialDensityFactor > 0
+            ? String(initialDensityFactor)
+            : ''
+    );
+    const [aiDensityDismissed, setAiDensityDismissed] = useState<boolean>(false);
+    const [showSpecsPanel, setShowSpecsPanel] = useState<boolean>(false);
 
     const [isScanningSpatial, setIsScanningSpatial] = useState<boolean>(false);
     const [isSaving, setIsSaving] = useState<boolean>(false);
@@ -194,14 +270,21 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
         setSpatialScan(null);
         setSpatialResult(null);
         setOfflinePendingSpatial(false);
-        setSelectedCopperDomain(null);
-        setSelectedGranulometry(null);
-        setManualDensityText('');
+        setSelectedCopperDomain(initialCopperDomain ?? null);
+        setSelectedGranulometry(initialGranulometry ?? null);
+        setManualDensityText(
+            typeof initialDensityFactor === 'number' &&
+                Number.isFinite(initialDensityFactor) &&
+                initialDensityFactor > 0
+                ? String(initialDensityFactor)
+                : ''
+        );
+        setAiDensityDismissed(false);
         setRejectionMessage(null);
         setErrorMessage(null);
         setStatusMessage(null);
         setStage('READY');
-    }, []);
+    }, [initialCopperDomain, initialDensityFactor, initialGranulometry]);
 
     const processPrimaryBlob = useCallback(async (rawBlob: Blob) => {
         const previewUrl = URL.createObjectURL(rawBlob);
@@ -252,6 +335,10 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                 });
                 setSpatialResult(res);
                 setOfflinePendingSpatial(false);
+                setAiDensityDismissed(false);
+                if (!res.isNonStockpile && res.aiSuggestedGranulometry) {
+                    setSelectedGranulometry((prev) => prev ?? res.aiSuggestedGranulometry ?? null);
+                }
                 setStage('RESULT');
                 void triggerFieldNotification(res.slopeWarning ? 'WARNING' : 'SUCCESS');
             } catch (err: unknown) {
@@ -283,6 +370,9 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
         try {
             const { scan, photoBlobs } = await startNativeSpatialScan();
             if (scan.cancelled) {
+                if (autoStartScan && stageRef.current === 'READY') {
+                    onBack();
+                }
                 return;
             }
             setSpatialScan(scan);
@@ -321,12 +411,31 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
             setIsScanningSpatial(false);
         }
     }, [
+        autoStartScan,
         isSaving,
         isScanningSpatial,
         isSpatialCapable,
+        onBack,
         processPrimaryBlob,
         runSpatialAnalysis,
         t,
+    ]);
+
+    useEffect(() => {
+        if (!autoStartScan) return;
+        if (capabilityLoading && !effectiveCapability) return;
+        if (!isSpatialCapable) return;
+        if (stage !== 'READY') return;
+        if (autoTriggeredRef.current) return;
+        autoTriggeredRef.current = true;
+        void handleStartSpatialScan();
+    }, [
+        autoStartScan,
+        capabilityLoading,
+        effectiveCapability,
+        handleStartSpatialScan,
+        isSpatialCapable,
+        stage,
     ]);
 
     const handleCaptureSource = useCallback(
@@ -479,14 +588,16 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                 : resolvedAi && resolvedAi.scaleVerified && resolvedAi.volumeM3 > 0
                   ? resolvedAi.volumeM3
                   : 0;
-            const rawDensNum = Number.parseFloat(manualDensityText.replace(',', '.'));
-            const parsedManualDensity =
-                Number.isFinite(rawDensNum) && rawDensNum > 0 && rawDensNum <= 8
-                    ? Number(rawDensNum.toFixed(3))
-                    : null;
+            const { density: resolvedDensity } = resolveEffectiveDensityFactor({
+                manualDensityText,
+                aiDensityDismissed,
+                isNonStockpile: spatialResult?.isNonStockpile,
+                suggestedDensityTm3: spatialResult?.suggestedDensityTm3,
+                granulometry: selectedGranulometry,
+            });
             const finalWeightT =
-                finalVolumeM3 > 0 && parsedManualDensity
-                    ? Number((finalVolumeM3 * parsedManualDensity).toFixed(2))
+                finalVolumeM3 > 0 && resolvedDensity
+                    ? Number((finalVolumeM3 * resolvedDensity).toFixed(2))
                     : 0;
 
             const safeGeo =
@@ -528,7 +639,7 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                 captured_at: now,
                 volumen_m3: finalVolumeM3,
                 peso_t: finalWeightT,
-                density_factor: parsedManualDensity ?? undefined,
+                density_factor: resolvedDensity ?? undefined,
                 photo_url: primaryUpload?.url || '',
                 perimeter_photo_urls: extraUploads.map((item) => item.url),
                 method: 'digital' as const,
@@ -596,7 +707,10 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                 const created = await dataService.createAssetWithInitialMeasurement({
                     asset: {
                         id: targetAssetId,
-                        name: draftAsset?.name?.trim() || `AC-${String(now).slice(-4)}`,
+                        name:
+                            editableDraftName.trim() ||
+                            draftAsset?.name?.trim() ||
+                            `AC-${String(now).slice(-4)}`,
                         ...(draftAsset?.projectId ? { project_id: draftAsset.projectId } : {}),
                         ...(draftAsset?.projectName ? { project_name: draftAsset.projectName } : {}),
                         clase: mapCopperDomainToClase(selectedCopperDomain),
@@ -608,7 +722,7 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                         captured_at: now,
                         copper_domain: selectedCopperDomain ?? undefined,
                         tipo_granulometria: selectedGranulometry ?? undefined,
-                        density_factor: parsedManualDensity ?? undefined,
+                        density_factor: resolvedDensity ?? undefined,
                         analysis_status: analysisStatus,
                         scale_anchor_type: scaleAnchorType,
                         uncertainty_pct: isSpatialFlow
@@ -704,8 +818,10 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
             setIsSaving(false);
         }
     }, [
+        aiDensityDismissed,
         assetId,
         draftAsset,
+        editableDraftName,
         extraPhotos,
         hasSpatialPoints,
         imu.pitchDeg,
@@ -725,6 +841,14 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
         spatialScan,
         t,
     ]);
+
+    const handleRetryScan = useCallback(() => {
+        if (isSpatialCapable) {
+            void handleStartSpatialScan();
+            return;
+        }
+        clearCapturedMedia();
+    }, [clearCapturedMedia, handleStartSpatialScan, isSpatialCapable]);
 
     useXCoverHardwareKey(
         () => {
@@ -749,7 +873,14 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
         }
     );
 
-    const calValid = isCalibrationValid(calibration);
+    const { density: resolvedResultDensity, source: resolvedDensitySource } =
+        resolveEffectiveDensityFactor({
+            manualDensityText,
+            aiDensityDismissed,
+            isNonStockpile: spatialResult?.isNonStockpile,
+            suggestedDensityTm3: spatialResult?.suggestedDensityTm3,
+            granulometry: selectedGranulometry,
+        });
     const allResultThumbs = useMemo(() => {
         const list: string[] = [];
         if (photoPreview) list.push(photoPreview);
@@ -759,6 +890,18 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
         }
         return list;
     }, [extraPhotos, photoPreview]);
+
+    const suppressScannerChrome =
+        (capabilityLoading && !effectiveCapability) ||
+        (stage === 'READY' && isSpatialCapable && (autoStartScan || isScanningSpatial));
+
+    if (suppressScannerChrome) {
+        return (
+            <div className="h-full w-full flex-1 flex flex-col bg-[#FFFFFF] dark:bg-[#000000] overflow-hidden rounded-none shadow-none select-none">
+                <M3LinearProgress indeterminate ariaLabel={t('common.loading', 'CARGANDO')} />
+            </div>
+        );
+    }
 
     return (
         <div className="h-full w-full flex-1 flex flex-col bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] font-atkinson overflow-hidden rounded-none shadow-none select-none">
@@ -772,9 +915,56 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                     >
                         <span className="material-symbols-outlined text-[24px]">arrow_back</span>
                     </button>
-                    <h2 className="flex-1 text-[18px] font-mono font-bold uppercase truncate">
-                        {displayStockpileName}
-                    </h2>
+                    {isNewAssetMode ? (
+                        <div className="flex-1 min-w-0 flex items-center gap-1">
+                            {isEditingDraftName ? (
+                                <input
+                                    type="text"
+                                    autoComplete="off"
+                                    spellCheck={false}
+                                    autoFocus
+                                    value={editableDraftName}
+                                    onChange={(e) => {
+                                        const v = e.target.value;
+                                        setEditableDraftName(v);
+                                        onDraftNameChange?.(v);
+                                    }}
+                                    onBlur={() => setIsEditingDraftName(false)}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter' || e.key === 'Escape') {
+                                            setIsEditingDraftName(false);
+                                        }
+                                    }}
+                                    aria-label={t(
+                                        'registration.name_label',
+                                        'ID / NOMBRE DEL ACOPIO'
+                                    )}
+                                    className="flex-1 min-w-0 h-11 px-fib-8 bg-transparent border-0 border-b border-[#C68346] outline-none font-mono font-bold text-[18px] uppercase text-[#0F172A] dark:text-[#F3F4F6] rounded-none"
+                                />
+                            ) : (
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        void triggerFieldImpact('LIGHT');
+                                        setIsEditingDraftName(true);
+                                    }}
+                                    aria-label={t('digital_v2.edit_code', 'Editar código')}
+                                    className="flex-1 min-w-0 min-h-[48px] bg-transparent border-0 text-left flex items-center gap-fib-8 cursor-pointer rounded-none px-0"
+                                >
+                                    <span className="text-[18px] font-mono font-bold uppercase truncate text-[#0F172A] dark:text-[#F3F4F6]">
+                                        {displayStockpileName}
+                                    </span>
+                                    <span className="material-symbols-outlined text-[18px] text-[#475569] dark:text-[#8A93A6] shrink-0">
+                                        edit
+                                    </span>
+                                </button>
+                            )}
+                        </div>
+                    ) : (
+                        <h2 className="flex-1 text-[18px] font-mono font-bold uppercase truncate">
+                            {displayStockpileName}
+                        </h2>
+                    )}
                     <span className="material-symbols-outlined text-[22px] text-[#00AEEF]">
                         view_in_ar
                     </span>
@@ -801,7 +991,7 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                 className="hidden"
             />
 
-            {isNativeRuntime && capability?.tier === 'INCOMPATIBLE' && (
+            {isNativeRuntime && effectiveCapability?.tier === 'INCOMPATIBLE' && (
                 <div
                     role="alert"
                     className="shrink-0 px-fib-21 py-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C] border-l-[4px] border-l-[#C68346] flex items-start gap-fib-13 bg-transparent"
@@ -823,7 +1013,7 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                 </div>
             )}
 
-            {isNativeRuntime && capability?.tier === 'NEEDS_UPDATE' && (
+            {isNativeRuntime && effectiveCapability?.tier === 'NEEDS_UPDATE' && (
                 <div
                     role="status"
                     className="shrink-0 px-fib-21 py-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C] border-l-[4px] border-l-[#C68346] flex items-center justify-between gap-fib-13 bg-transparent"
@@ -835,9 +1025,11 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                         type="button"
                         onClick={() => void handleRequestArCoreInstall()}
                         disabled={isRequestingArCore}
-                        className="min-h-[52px] px-fib-21 bg-transparent border border-[#C68346] text-[#C68346] font-mono text-[18px] font-bold uppercase cursor-pointer disabled:opacity-40 rounded-none shrink-0"
+                        aria-label={t('compatibility.mobile_update_arcore', 'ACTUALIZAR SERVICIOS AR')}
+                        title={t('compatibility.mobile_update_arcore', 'ACTUALIZAR SERVICIOS AR')}
+                        className="min-w-[48px] min-h-[48px] bg-transparent border-0 text-[#C68346] flex items-center justify-center cursor-pointer disabled:opacity-40 rounded-none shrink-0"
                     >
-                        ARCore
+                        <span className="material-symbols-outlined text-[24px]">download</span>
                     </button>
                 </div>
             )}
@@ -845,16 +1037,11 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
             {isSaving && (
                 <div className="shrink-0 px-fib-21 py-fib-13 border-b border-[#00AEEF] bg-transparent space-y-fib-8">
                     <div className="flex items-center justify-between gap-fib-8">
-                        <div className="flex items-center gap-fib-8">
-                            <M3CircularProgress
-                                size={22}
-                                value={uploadProgress}
-                                ariaLabel={t('digital_v2.saving_progress', 'Guardando medición')}
-                            />
-                            <span className="text-[18px] font-mono font-bold uppercase text-[#00AEEF]">
-                                GUARDANDO...
-                            </span>
-                        </div>
+                        <M3CircularProgress
+                            size={22}
+                            value={uploadProgress}
+                            ariaLabel={t('digital_v2.saving_progress', 'Guardando medición')}
+                        />
                         <span className="text-[18px] font-mono font-bold tabular-nums text-[#00AEEF]">
                             {uploadProgress}%
                         </span>
@@ -888,9 +1075,6 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                                 ariaLabel={t('scanner.calculating_volume', 'Calculando volumen')}
                             />
                         </div>
-                        <span className="font-mono text-[20px] font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6]">
-                            {t('scanner.calculating_volume', 'CALCULANDO VOLUMEN...')}
-                        </span>
                     </div>
                 )}
 
@@ -908,14 +1092,20 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                             </p>
                         </div>
 
-                        <button
-                            type="button"
-                            onClick={() => void handleStartSpatialScan()}
-                            disabled={isScanningSpatial || isSaving}
-                            className="w-full min-h-[68px] px-fib-21 bg-[#C68346] hover:bg-[#b5753b] text-white font-mono text-[20px] font-bold uppercase border-0 cursor-pointer disabled:opacity-40 rounded-none shadow-none"
-                        >
-                            {t('scanner.remeasure_btn', 'VOLVER A MEDIR')}
-                        </button>
+                        <div className="shrink-0 h-[64px] border-t border-[#E2E8F0] dark:border-[#12151C] flex items-center justify-center pb-[env(safe-area-inset-bottom)]">
+                            <button
+                                type="button"
+                                onClick={() => void handleStartSpatialScan()}
+                                disabled={isScanningSpatial || isSaving}
+                                aria-label={t('scanner.remeasure_btn', 'VOLVER A MEDIR')}
+                                title={t('scanner.remeasure_btn', 'VOLVER A MEDIR')}
+                                className="min-w-[64px] min-h-[56px] bg-transparent border-0 text-[#C68346] flex items-center justify-center cursor-pointer disabled:opacity-40 rounded-none"
+                            >
+                                <span className="material-symbols-outlined text-[36px]">
+                                    measuring_tape
+                                </span>
+                            </button>
+                        </div>
                     </div>
                 )}
 
@@ -929,11 +1119,11 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                                 error
                             </span>
                             <p className="font-mono text-[18px] font-bold leading-snug text-[#0F172A] dark:text-[#F3F4F6]">
-                                {errorMessage || 'ERROR EN MEDICIÓN'}
+                                {errorMessage || t('scanner.analyze_error', 'ERROR EN MEDICIÓN')}
                             </p>
                         </div>
 
-                        <div className="space-y-fib-13">
+                        <div className="shrink-0 h-[64px] border-t border-[#E2E8F0] dark:border-[#12151C] flex items-center justify-around pb-[env(safe-area-inset-bottom)]">
                             {hasSpatialPoints && spatialScan && isOnline && (
                                 <button
                                     type="button"
@@ -945,18 +1135,26 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                                         )
                                     }
                                     disabled={isScanningSpatial || isSaving}
-                                    className="w-full min-h-[68px] px-fib-21 bg-[#00AEEF] text-white font-mono text-[20px] font-bold uppercase border-0 cursor-pointer disabled:opacity-40 rounded-none shadow-none"
+                                    aria-label={t('twin3d.retry_load', 'REINTENTAR')}
+                                    title={t('twin3d.retry_load', 'REINTENTAR')}
+                                    className="min-w-[64px] min-h-[56px] bg-transparent border-0 text-[#00AEEF] flex items-center justify-center cursor-pointer disabled:opacity-40 rounded-none"
                                 >
-                                    REINTENTAR CÁLCULO
+                                    <span className="material-symbols-outlined text-[30px]">
+                                        refresh
+                                    </span>
                                 </button>
                             )}
                             <button
                                 type="button"
                                 onClick={() => void handleStartSpatialScan()}
                                 disabled={isScanningSpatial || isSaving}
-                                className="w-full min-h-[64px] px-fib-21 bg-[#C68346] text-white font-mono text-[20px] font-bold uppercase border-0 cursor-pointer disabled:opacity-40 rounded-none shadow-none"
+                                aria-label={t('scanner.remeasure_btn', 'VOLVER A MEDIR')}
+                                title={t('scanner.remeasure_btn', 'VOLVER A MEDIR')}
+                                className="min-w-[64px] min-h-[56px] bg-transparent border-0 text-[#C68346] flex items-center justify-center cursor-pointer disabled:opacity-40 rounded-none"
                             >
-                                {t('scanner.remeasure_btn', 'VOLVER A MEDIR')}
+                                <span className="material-symbols-outlined text-[34px]">
+                                    measuring_tape
+                                </span>
                             </button>
                         </div>
                     </div>
@@ -974,30 +1172,64 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                                 </div>
                             )}
 
-                            <div className="py-fib-21 border-b border-[#E2E8F0] dark:border-[#12151C] space-y-fib-8">
-                                <span className="block font-mono text-[18px] font-bold uppercase text-[#475569] dark:text-[#8A93A6]">
-                                    {displayStockpileName}
-                                </span>
+                            <div className="py-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C] space-y-fib-8">
+                                <div className="flex items-center justify-between gap-fib-8">
+                                    <span className="block font-mono text-[18px] font-bold uppercase text-[#475569] dark:text-[#8A93A6] truncate">
+                                        {displayStockpileName}
+                                    </span>
+                                    {!spatialResult?.isNonStockpile && (
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                void triggerFieldImpact('LIGHT');
+                                                setShowSpecsPanel((p) => !p);
+                                            }}
+                                            aria-expanded={showSpecsPanel}
+                                            aria-label={t(
+                                                'scanner.classification_title',
+                                                'CLASIFICACIÓN Y DENSIDAD'
+                                            )}
+                                            title={t(
+                                                'scanner.classification_title',
+                                                'CLASIFICACIÓN Y DENSIDAD'
+                                            )}
+                                            className={`min-w-[48px] min-h-[48px] bg-transparent border-0 flex items-center justify-center cursor-pointer rounded-none shrink-0 ${
+                                                showSpecsPanel
+                                                    ? 'text-[#C68346]'
+                                                    : 'text-[#475569] dark:text-[#8A93A6]'
+                                            }`}
+                                        >
+                                            <span className="material-symbols-outlined text-[24px]">
+                                                tune
+                                            </span>
+                                        </button>
+                                    )}
+                                </div>
+
                                 {spatialResult ? (
                                     <>
                                         <div className="font-mono text-[48px] font-bold tabular-nums leading-none text-[#C68346]">
                                             {formatStockpileVolumeM3(spatialResult.volumeM3)} m³
                                         </div>
                                         {(() => {
-                                            const dNum = Number.parseFloat(
-                                                manualDensityText.replace(',', '.')
-                                            );
-                                            const validD =
-                                                Number.isFinite(dNum) && dNum > 0 && dNum <= 8
-                                                    ? dNum
-                                                    : null;
                                             const previewT =
-                                                spatialResult.volumeM3 > 0 && validD
-                                                    ? spatialResult.volumeM3 * validD
+                                                spatialResult.volumeM3 > 0 && resolvedResultDensity
+                                                    ? spatialResult.volumeM3 * resolvedResultDensity
                                                     : 0;
-                                            return previewT > 0 ? (
-                                                <div className="font-mono text-[20px] font-bold tabular-nums text-[#0F172A] dark:text-[#F3F4F6]">
-                                                    {previewT.toFixed(1)} t
+                                            return previewT > 0 && resolvedResultDensity ? (
+                                                <div className="flex items-center flex-wrap gap-fib-8 font-mono text-[20px] font-bold tabular-nums text-[#0F172A] dark:text-[#F3F4F6]">
+                                                    <span>{previewT.toFixed(1)} t</span>
+                                                    <span className="text-[14px] text-[#475569] dark:text-[#8A93A6]">
+                                                        {resolvedResultDensity.toFixed(2)} t/m³
+                                                    </span>
+                                                    {resolvedDensitySource === 'AI' && (
+                                                        <span className="text-[13px] font-bold text-[#00AEEF]">
+                                                            {t('scanner.ai_granulometry_optin', 'IA')}
+                                                            {selectedGranulometry
+                                                                ? ` · ${selectedGranulometry}`
+                                                                : ''}
+                                                        </span>
+                                                    )}
                                                 </div>
                                             ) : null;
                                         })()}
@@ -1014,7 +1246,7 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                                 )}
                             </div>
 
-                            {!spatialResult?.isNonStockpile && (
+                            {showSpecsPanel && !spatialResult?.isNonStockpile && (
                                 <div className="space-y-fib-13 pb-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C]">
                                     <div>
                                         <span className="block font-mono text-microcopy font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6] mb-fib-8">
@@ -1062,11 +1294,12 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                                             {spatialResult?.aiSuggestedGranulometry && (
                                                 <button
                                                     type="button"
-                                                    onClick={() =>
+                                                    onClick={() => {
+                                                        setAiDensityDismissed(false);
                                                         setSelectedGranulometry(
                                                             spatialResult.aiSuggestedGranulometry!
-                                                        )
-                                                    }
+                                                        );
+                                                    }}
                                                     className={`px-fib-8 py-1 border font-mono text-microcopy font-bold uppercase cursor-pointer rounded-none ${
                                                         selectedGranulometry ===
                                                         spatialResult.aiSuggestedGranulometry
@@ -1087,11 +1320,15 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                                                         <button
                                                             key={gran}
                                                             type="button"
-                                                            onClick={() =>
-                                                                setSelectedGranulometry((prev) =>
-                                                                    prev === gran ? null : gran
-                                                                )
-                                                            }
+                                                            onClick={() => {
+                                                                if (selectedGranulometry === gran) {
+                                                                    setSelectedGranulometry(null);
+                                                                    setAiDensityDismissed(true);
+                                                                } else {
+                                                                    setAiDensityDismissed(false);
+                                                                    setSelectedGranulometry(gran);
+                                                                }
+                                                            }}
                                                             aria-pressed={active}
                                                             className={`min-h-[44px] border font-mono text-microcopy font-bold uppercase cursor-pointer rounded-none ${
                                                                 active
@@ -1107,24 +1344,46 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                                         </div>
                                     </div>
 
-                                    <div>
+                                    <div className="flex items-center gap-fib-8">
                                         <input
                                             type="text"
                                             inputMode="decimal"
                                             autoComplete="off"
                                             spellCheck={false}
                                             value={manualDensityText}
-                                            onChange={(e) =>
+                                            onChange={(e) => {
+                                                setAiDensityDismissed(false);
                                                 setManualDensityText(
                                                     sanitizeDecimalText(e.target.value)
-                                                )
+                                                );
+                                            }}
+                                            placeholder={
+                                                resolvedDensitySource === 'AI' &&
+                                                resolvedResultDensity
+                                                    ? `${t('scanner.ai_granulometry_optin', 'IA')}: ${resolvedResultDensity.toFixed(2)} t/m³`
+                                                    : t(
+                                                          'scanner.density_optional_placeholder',
+                                                          'DENSIDAD (t/m³, OPCIONAL)'
+                                                      )
                                             }
-                                            placeholder={t(
-                                                'scanner.density_optional_placeholder',
-                                                'DENSIDAD (t/m³, OPCIONAL)'
-                                            )}
-                                            className="w-full h-11 px-fib-13 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] font-mono tabular-nums text-data-dense text-[#0F172A] dark:text-[#F3F4F6] focus:outline-none focus:border-[#C68346] rounded-none"
+                                            className="flex-1 min-w-0 h-11 px-fib-13 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] font-mono tabular-nums text-data-dense text-[#0F172A] dark:text-[#F3F4F6] focus:outline-none focus:border-[#C68346] rounded-none"
                                         />
+                                        {(manualDensityText.trim().length > 0 ||
+                                            resolvedResultDensity !== null) && (
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setManualDensityText('');
+                                                    setAiDensityDismissed(true);
+                                                }}
+                                                aria-label={t('common.clear', 'LIMPIAR')}
+                                                className="min-w-[48px] min-h-[48px] bg-transparent border-0 text-[#475569] dark:text-[#8A93A6] flex items-center justify-center cursor-pointer rounded-none"
+                                            >
+                                                <span className="material-symbols-outlined text-[20px]">
+                                                    close
+                                                </span>
+                                            </button>
+                                        )}
                                     </div>
                                 </div>
                             )}
@@ -1147,58 +1406,49 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                             )}
                         </div>
 
-                        <div className="space-y-fib-13 pb-[env(safe-area-inset-bottom)]">
+                        <div className="shrink-0 h-[64px] border-t border-[#E2E8F0] dark:border-[#12151C] flex items-center justify-around pb-[env(safe-area-inset-bottom)]">
+                            <button
+                                type="button"
+                                onClick={handleRetryScan}
+                                disabled={isSaving || isScanningSpatial}
+                                aria-label={t('scanner.remeasure_btn', 'VOLVER A MEDIR')}
+                                title={t('scanner.remeasure_btn', 'VOLVER A MEDIR')}
+                                className="min-w-[64px] min-h-[56px] bg-transparent border-0 text-[#475569] dark:text-[#8A93A6] hover:text-[#C68346] flex items-center justify-center cursor-pointer disabled:opacity-40 rounded-none"
+                            >
+                                <span className="material-symbols-outlined text-[28px]">
+                                    refresh
+                                </span>
+                            </button>
                             <button
                                 type="button"
                                 onClick={() => void handleSaveCapture()}
                                 disabled={isSaving || isScanningSpatial}
                                 aria-label={t('scanner.save_measurement_btn', 'GUARDAR MEDICIÓN')}
-                                className="w-full min-h-[68px] px-fib-21 bg-[#00AEEF] hover:bg-[#0099d4] text-white font-mono text-[20px] font-bold uppercase border-0 cursor-pointer disabled:opacity-40 rounded-none shadow-none"
+                                title={t('scanner.save_measurement_btn', 'GUARDAR MEDICIÓN')}
+                                className="min-w-[64px] min-h-[56px] bg-transparent border-0 text-[#00AEEF] flex items-center justify-center cursor-pointer disabled:opacity-40 rounded-none"
                             >
-                                {t('scanner.save_measurement_btn', 'GUARDAR MEDICIÓN')}
-                            </button>
-                            <button
-                                type="button"
-                                onClick={clearCapturedMedia}
-                                disabled={isSaving || isScanningSpatial}
-                                className="w-full min-h-[56px] px-fib-21 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#0F172A] dark:text-[#F3F4F6] font-mono text-[18px] font-bold uppercase cursor-pointer disabled:opacity-40 rounded-none shadow-none"
-                            >
-                                {t('scanner.discard_retry_btn', 'DESCARTAR Y REPETIR')}
+                                <span className="material-symbols-outlined text-[32px]">
+                                    check
+                                </span>
                             </button>
                         </div>
                     </div>
                 )}
 
-                {stage === 'READY' && isSpatialCapable && (
-                    <div className="flex-1 flex flex-col justify-between gap-fib-21">
-                        <div className="space-y-fib-21 pt-fib-13">
-                            <div className="pb-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C] space-y-fib-8">
-                                <span className="block font-mono text-[22px] font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6] truncate">
-                                    {displayStockpileName}
-                                </span>
-                                <span
-                                    className={`block font-mono tabular-nums text-data-dense font-bold uppercase ${
-                                        calValid ? 'text-[#00AEEF]' : 'text-[#C68346]'
-                                    }`}
-                                >
-                                    {calValid && calibration
-                                        ? `${t('scanner.ready_cal_factor_prefix', 'CAL')} ×${calibration.scaleFactor.toFixed(3)}`
-                                        : t('scanner.ready_uncalibrated', 'SIN CALIBRAR')}
-                                </span>
-                            </div>
-                        </div>
-
-                        <div className="pb-[env(safe-area-inset-bottom)]">
-                            <button
-                                type="button"
-                                onClick={() => void handleStartSpatialScan()}
-                                disabled={isSaving || isScanningSpatial}
-                                aria-label={t('scanner.measure_volume_btn', 'MEDIR VOLUMEN')}
-                                className="w-full min-h-[68px] px-fib-21 bg-[#C68346] hover:bg-[#b5753b] active:bg-[#9c6330] text-white font-mono text-[22px] font-bold uppercase border-0 flex items-center justify-center cursor-pointer disabled:opacity-40 rounded-none shadow-none"
-                            >
-                                {t('scanner.measure_volume_btn', 'MEDIR VOLUMEN')}
-                            </button>
-                        </div>
+                {stage === 'READY' && isSpatialCapable && !autoStartScan && (
+                    <div className="flex-1 flex items-center justify-center pb-[env(safe-area-inset-bottom)]">
+                        <button
+                            type="button"
+                            onClick={() => void handleStartSpatialScan()}
+                            disabled={isSaving || isScanningSpatial}
+                            aria-label={t('scanner.remeasure_btn', 'MEDIR')}
+                            title={t('scanner.remeasure_btn', 'MEDIR')}
+                            className="min-w-[88px] min-h-[88px] bg-transparent border-0 text-[#C68346] hover:opacity-75 flex items-center justify-center cursor-pointer disabled:opacity-40 rounded-none shadow-none"
+                        >
+                            <span className="material-symbols-outlined text-[56px]">
+                                measuring_tape
+                            </span>
+                        </button>
                     </div>
                 )}
 
@@ -1261,15 +1511,18 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                             )}
                         </div>
 
-                        <div className="pb-[env(safe-area-inset-bottom)]">
+                        <div className="shrink-0 h-[64px] border-t border-[#E2E8F0] dark:border-[#12151C] flex items-center justify-center pb-[env(safe-area-inset-bottom)]">
                             <button
                                 type="button"
                                 onClick={() => void handleSaveCapture()}
                                 disabled={!photoBlob || isSaving}
                                 aria-label={t('common.save_button', 'GUARDAR')}
-                                className="w-full min-h-[64px] bg-[#00AEEF] text-white font-mono text-[20px] font-bold uppercase border-0 cursor-pointer disabled:opacity-35 rounded-none shadow-none"
+                                title={t('common.save_button', 'GUARDAR')}
+                                className="min-w-[64px] min-h-[56px] bg-transparent border-0 text-[#00AEEF] flex items-center justify-center cursor-pointer disabled:opacity-30 rounded-none shadow-none"
                             >
-                                {t('common.save_button', 'GUARDAR')}
+                                <span className="material-symbols-outlined text-[32px]">
+                                    check
+                                </span>
                             </button>
                         </div>
                     </div>

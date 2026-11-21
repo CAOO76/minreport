@@ -3,9 +3,14 @@ import { useTranslation } from 'react-i18next';
 import { M3LinearProgress } from '../../../components/common/M3LinearProgress';
 import { SecureImage } from '../../../components/common/SecureImage';
 import { useResolvedStockpileImage } from '../core/services/StorageService';
-import { UNASSIGNED_FAENA_ID } from '../core/services/stockpile-faena-metrics';
+import {
+    sortStockpilesByLifecycle,
+    UNASSIGNED_FAENA_ID,
+} from '../core/services/stockpile-faena-metrics';
 import type { StockpileAsset } from '../core/types/GeolappTypes';
 import { triggerFieldImpact } from '../core/utils/fieldHaptics';
+
+export type MobileCycleFilter = 'ACTIVE' | 'SHIPPED' | 'FIELD_REMOVED' | 'ALL';
 
 interface MobileHomeProps {
     faenaId: string;
@@ -13,13 +18,13 @@ interface MobileHomeProps {
     isUnassignedBucket?: boolean;
     assets: StockpileAsset[];
     isLoading: boolean;
+    defaultFilter?: MobileCycleFilter;
+    filterResetKey?: number;
     onBackToFaenas: () => void;
     onStartNewStockpile: () => void;
     onSelectAsset: (asset: StockpileAsset) => void;
     connectivitySlot?: React.ReactNode;
 }
-
-type CycleFilter = 'ACTIVE' | 'CLOSED';
 
 const MobileHomeAssetRow: React.FC<{
     asset: StockpileAsset;
@@ -30,8 +35,24 @@ const MobileHomeAssetRow: React.FC<{
     const resolvedCover = useResolvedStockpileImage(coverRaw);
 
     const volume = asset.last_volume_m3 ?? asset.volumen ?? 0;
-    const tonnage = asset.last_weight_t ?? asset.peso_final_toneladas ?? 0;
+    const tonnage =
+        asset.status === 'CLOSED' &&
+        asset.closure_reason === 'SHIPPED' &&
+        typeof asset.shipped_weight_t === 'number' &&
+        asset.shipped_weight_t > 0
+            ? asset.shipped_weight_t
+            : asset.last_weight_t ?? asset.peso_final_toneladas ?? 0;
     const isClosed = asset.status === 'CLOSED';
+    const closedIconName =
+        asset.closure_reason === 'SHIPPED'
+            ? 'delivery_truck_speed'
+            : asset.closure_reason === 'FIELD_REMOVED'
+              ? 'delete_sweep'
+              : 'lock';
+    const closedIconClass =
+        asset.closure_reason === 'SHIPPED'
+            ? 'text-[#C68346]'
+            : 'text-[#475569] dark:text-[#8A93A6]';
     const isPendingAi = asset.analysis_status === 'PENDING_AI_SYNC';
     const isPendingScale = asset.analysis_status === 'PENDING_SCALE';
     const slopeDeg = asset.detected_slope_angle_deg;
@@ -48,9 +69,20 @@ const MobileHomeAssetRow: React.FC<{
           ? 'bg-[#00AEEF]'
           : 'bg-transparent';
 
-    const domainLabel = asset.copper_domain
-        ? t(`copper_domains.${asset.copper_domain}`, asset.copper_domain)
-        : asset.underground_sector || asset.clase;
+    const domainLabel = isClosed
+        ? asset.closure_reason === 'SHIPPED' &&
+          (asset.dispatch_transport || asset.dispatch_destination)
+            ? [asset.dispatch_transport, asset.dispatch_destination]
+                  .filter(Boolean)
+                  .join(' -> ')
+            : asset.closure_cause ||
+              asset.dispatch_reference ||
+              (asset.copper_domain
+                  ? t(`copper_domains.${asset.copper_domain}`, asset.copper_domain)
+                  : asset.underground_sector || asset.clase)
+        : asset.copper_domain
+          ? t(`copper_domains.${asset.copper_domain}`, asset.copper_domain)
+          : asset.underground_sector || asset.clase;
 
     return (
         <button
@@ -92,8 +124,10 @@ const MobileHomeAssetRow: React.FC<{
                                 <span className="text-[#C68346]">α &gt;38°</span>
                             )}
                             {isClosed && (
-                                <span className="material-symbols-outlined text-[16px] text-[#475569] dark:text-[#8A93A6]">
-                                    lock
+                                <span
+                                    className={`material-symbols-outlined text-[18px] ${closedIconClass}`}
+                                >
+                                    {closedIconName}
                                 </span>
                             )}
                         </div>
@@ -142,15 +176,23 @@ export const MobileHome: React.FC<MobileHomeProps> = ({
     isUnassignedBucket = false,
     assets,
     isLoading,
+    defaultFilter = 'ACTIVE',
+    filterResetKey,
     onBackToFaenas,
     onStartNewStockpile,
     onSelectAsset,
     connectivitySlot,
 }) => {
     const { t } = useTranslation();
-    const [cycleFilter, setCycleFilter] = useState<CycleFilter>('ACTIVE');
+    const [cycleFilter, setCycleFilter] = useState<MobileCycleFilter>(defaultFilter);
     const [searchQuery, setSearchQuery] = useState('');
     const [showSearch, setShowSearch] = useState(false);
+
+    useEffect(() => {
+        if (defaultFilter) {
+            setCycleFilter(defaultFilter);
+        }
+    }, [defaultFilter, filterResetKey]);
 
     useEffect(() => {
         if (isUnassignedBucket) return;
@@ -172,32 +214,43 @@ export const MobileHome: React.FC<MobileHomeProps> = ({
 
     const cycleCounts = useMemo(() => {
         let active = 0;
-        let closed = 0;
+        let shipped = 0;
+        let removed = 0;
         for (const a of faenaAssets) {
-            if (a.status === 'CLOSED') closed += 1;
-            else active += 1;
+            if (a.status !== 'CLOSED') active += 1;
+            else if (a.closure_reason === 'SHIPPED') shipped += 1;
+            else if (a.closure_reason === 'FIELD_REMOVED') removed += 1;
         }
-        return { active, closed };
+        return { active, shipped, removed, all: faenaAssets.length };
     }, [faenaAssets]);
 
     const filteredAssets = useMemo(() => {
         const q = searchQuery.trim().toLowerCase();
-        return [...faenaAssets]
-            .filter((asset) => {
-                if (cycleFilter === 'ACTIVE' && asset.status === 'CLOSED') return false;
-                if (cycleFilter === 'CLOSED' && asset.status !== 'CLOSED') return false;
-                if (!q) return true;
-                return (
-                    asset.name.toLowerCase().includes(q) ||
-                    (asset.copper_domain || '').toLowerCase().includes(q) ||
-                    (asset.underground_sector || '').toLowerCase().includes(q) ||
-                    (asset.location_ref || '').toLowerCase().includes(q)
-                );
-            })
-            .sort(
-                (a, b) =>
-                    (b.last_measured_at || b.createdAt) - (a.last_measured_at || a.createdAt)
+        const filtered = faenaAssets.filter((asset) => {
+            if (cycleFilter === 'ACTIVE' && asset.status === 'CLOSED') return false;
+            if (
+                cycleFilter === 'SHIPPED' &&
+                !(asset.status === 'CLOSED' && asset.closure_reason === 'SHIPPED')
+            ) {
+                return false;
+            }
+            if (
+                cycleFilter === 'FIELD_REMOVED' &&
+                !(asset.status === 'CLOSED' && asset.closure_reason === 'FIELD_REMOVED')
+            ) {
+                return false;
+            }
+            if (!q) return true;
+            return (
+                asset.name.toLowerCase().includes(q) ||
+                (asset.copper_domain || '').toLowerCase().includes(q) ||
+                (asset.underground_sector || '').toLowerCase().includes(q) ||
+                (asset.location_ref || '').toLowerCase().includes(q) ||
+                (asset.dispatch_transport || '').toLowerCase().includes(q) ||
+                (asset.dispatch_destination || '').toLowerCase().includes(q)
             );
+        });
+        return sortStockpilesByLifecycle(filtered);
     }, [faenaAssets, cycleFilter, searchQuery]);
 
     return (
@@ -263,28 +316,57 @@ export const MobileHome: React.FC<MobileHomeProps> = ({
             </header>
 
             <div className="shrink-0 border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000]">
-                <div className="h-10 grid grid-cols-2 px-fib-13">
-                    {(['ACTIVE', 'CLOSED'] as const).map((tab) => {
-                        const active = cycleFilter === tab;
-                        const label =
-                            tab === 'ACTIVE'
-                                ? `${t('home.filter_active', 'ACTIVOS')} (${cycleCounts.active})`
-                                : `${t('home.filter_closed', 'CERRADOS')} (${cycleCounts.closed})`;
+                <div className="h-12 grid grid-cols-4 px-fib-8">
+                    {(
+                        [
+                            {
+                                id: 'ACTIVE' as const,
+                                icon: 'landscape',
+                                label: t('home.filter_active', 'ACTIVOS'),
+                                count: cycleCounts.active,
+                            },
+                            {
+                                id: 'SHIPPED' as const,
+                                icon: 'delivery_truck_speed',
+                                label: t('lifecycle.filter_shipped', 'DESPACHADOS'),
+                                count: cycleCounts.shipped,
+                            },
+                            {
+                                id: 'FIELD_REMOVED' as const,
+                                icon: 'delete_sweep',
+                                label: t('lifecycle.filter_removed', 'ELIMINADOS'),
+                                count: cycleCounts.removed,
+                            },
+                            {
+                                id: 'ALL' as const,
+                                icon: 'list',
+                                label: t('home.filter_all', 'TODOS'),
+                                count: cycleCounts.all,
+                            },
+                        ] as const
+                    ).map((tab) => {
+                        const active = cycleFilter === tab.id;
                         return (
                             <button
-                                key={tab}
+                                key={tab.id}
                                 type="button"
+                                aria-pressed={active}
+                                aria-label={tab.label}
+                                title={tab.label}
                                 onClick={() => {
                                     void triggerFieldImpact('LIGHT');
-                                    setCycleFilter(tab);
+                                    setCycleFilter(tab.id);
                                 }}
-                                className={`h-10 px-fib-8 bg-transparent border-0 border-b-2 font-mono text-microcopy font-bold uppercase tabular-nums cursor-pointer rounded-none transition-colors ${
+                                className={`min-h-[48px] px-fib-8 bg-transparent border-0 border-b-2 inline-flex items-center justify-center gap-1 font-mono text-microcopy font-bold tabular-nums cursor-pointer rounded-none transition-colors ${
                                     active
-                                        ? 'border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6]'
+                                        ? 'border-[#C68346] text-[#C68346]'
                                         : 'border-transparent text-[#475569] dark:text-[#8A93A6]'
                                 }`}
                             >
-                                {label}
+                                <span className="material-symbols-outlined text-[20px]">
+                                    {tab.icon}
+                                </span>
+                                <span>{tab.count}</span>
                             </button>
                         );
                     })}

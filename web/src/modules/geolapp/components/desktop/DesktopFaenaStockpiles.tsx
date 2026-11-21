@@ -3,7 +3,10 @@ import { useTranslation } from 'react-i18next';
 import { SecureImage } from '../../../../components/common/SecureImage';
 import { UNDECLARED_TECH_VALUE } from '../../../../components/common/ReportBlockEditable';
 import { useResolvedStockpileImage } from '../../core/services/StorageService';
-import { UNASSIGNED_FAENA_ID } from '../../core/services/stockpile-faena-metrics';
+import {
+    sortStockpilesByLifecycle,
+    UNASSIGNED_FAENA_ID,
+} from '../../core/services/stockpile-faena-metrics';
 import type { CopperMineralDomain, StockpileAsset } from '../../core/types/GeolappTypes';
 import { formatSignedDelta } from './desktopHelpers';
 
@@ -14,7 +17,7 @@ export interface DesktopFaenaStockpilesProps {
     onSelectAsset: (asset: StockpileAsset) => void;
 }
 
-type CycleFilter = 'ALL' | 'ACTIVE' | 'CLOSED';
+type CycleFilter = 'ALL' | 'ACTIVE' | 'SHIPPED' | 'FIELD_REMOVED';
 
 const StockpileRowThumb: React.FC<{ asset: StockpileAsset }> = ({ asset }) => {
     const rawUrl = asset.last_photo_url || asset.initial_photo_url || asset.thumbnail_url;
@@ -54,27 +57,24 @@ export const DesktopFaenaStockpiles: React.FC<DesktopFaenaStockpilesProps> = ({
     const [searchQuery, setSearchQuery] = useState('');
 
     const faenaAssets = useMemo(() => {
-        return assets
-            .filter((a) => {
-                const pid = (a.project_id || '').trim();
-                if (faenaId === UNASSIGNED_FAENA_ID) return !pid;
-                return pid === faenaId;
-            })
-            .sort(
-                (a, b) =>
-                    (b.last_measured_at || b.createdAt || 0) -
-                    (a.last_measured_at || a.createdAt || 0)
-            );
+        const scoped = assets.filter((a) => {
+            const pid = (a.project_id || '').trim();
+            if (faenaId === UNASSIGNED_FAENA_ID) return !pid;
+            return pid === faenaId;
+        });
+        return sortStockpilesByLifecycle(scoped);
     }, [assets, faenaId]);
 
     const cycleCounts = useMemo(() => {
         let active = 0;
-        let closed = 0;
+        let shipped = 0;
+        let removed = 0;
         for (const a of faenaAssets) {
-            if (a.status === 'CLOSED') closed += 1;
-            else active += 1;
+            if (a.status !== 'CLOSED') active += 1;
+            else if (a.closure_reason === 'SHIPPED') shipped += 1;
+            else if (a.closure_reason === 'FIELD_REMOVED') removed += 1;
         }
-        return { total: faenaAssets.length, active, closed };
+        return { total: faenaAssets.length, active, shipped, removed };
     }, [faenaAssets]);
 
     const availableDomains = useMemo(() => {
@@ -89,12 +89,25 @@ export const DesktopFaenaStockpiles: React.FC<DesktopFaenaStockpilesProps> = ({
         const q = searchQuery.trim().toLowerCase();
         return faenaAssets.filter((a) => {
             if (cycleFilter === 'ACTIVE' && a.status === 'CLOSED') return false;
-            if (cycleFilter === 'CLOSED' && a.status !== 'CLOSED') return false;
+            if (
+                cycleFilter === 'SHIPPED' &&
+                !(a.status === 'CLOSED' && a.closure_reason === 'SHIPPED')
+            ) {
+                return false;
+            }
+            if (
+                cycleFilter === 'FIELD_REMOVED' &&
+                !(a.status === 'CLOSED' && a.closure_reason === 'FIELD_REMOVED')
+            ) {
+                return false;
+            }
             if (domainFilter !== 'ALL' && a.copper_domain !== domainFilter) return false;
             if (!q) return true;
             return (
                 a.name.toLowerCase().includes(q) ||
-                (a.location_ref || '').toLowerCase().includes(q)
+                (a.location_ref || '').toLowerCase().includes(q) ||
+                (a.dispatch_transport || '').toLowerCase().includes(q) ||
+                (a.dispatch_destination || '').toLowerCase().includes(q)
             );
         });
     }, [faenaAssets, cycleFilter, domainFilter, searchQuery]);
@@ -105,9 +118,26 @@ export const DesktopFaenaStockpiles: React.FC<DesktopFaenaStockpilesProps> = ({
                 <div className="flex items-center gap-fib-21">
                     {(
                         [
-                            { id: 'ALL' as const, label: t('lifecycle.filter_all', 'TODOS'), count: cycleCounts.total },
-                            { id: 'ACTIVE' as const, label: t('lifecycle.filter_active', 'ACTIVOS'), count: cycleCounts.active },
-                            { id: 'CLOSED' as const, label: t('lifecycle.filter_closed', 'CERRADOS'), count: cycleCounts.closed },
+                            {
+                                id: 'ALL' as const,
+                                label: t('lifecycle.filter_all', 'TODOS'),
+                                count: cycleCounts.total,
+                            },
+                            {
+                                id: 'ACTIVE' as const,
+                                label: t('lifecycle.filter_active', 'ACTIVOS'),
+                                count: cycleCounts.active,
+                            },
+                            {
+                                id: 'SHIPPED' as const,
+                                label: t('lifecycle.filter_shipped', 'DESPACHADOS'),
+                                count: cycleCounts.shipped,
+                            },
+                            {
+                                id: 'FIELD_REMOVED' as const,
+                                label: t('lifecycle.filter_removed', 'ELIMINADOS'),
+                                count: cycleCounts.removed,
+                            },
                         ]
                     ).map((tab) => (
                         <button
@@ -257,15 +287,40 @@ export const DesktopFaenaStockpiles: React.FC<DesktopFaenaStockpilesProps> = ({
                                                     {asset.name}
                                                 </span>
                                                 <span
-                                                    className={`text-microcopy font-bold uppercase ${
+                                                    className={`inline-flex items-center gap-1 text-microcopy font-bold uppercase ${
                                                         isClosed
-                                                            ? 'text-[#C68346]'
+                                                            ? asset.closure_reason === 'SHIPPED'
+                                                                ? 'text-[#C68346]'
+                                                                : 'text-[#475569] dark:text-[#8A93A6]'
                                                             : 'text-[#00AEEF]'
                                                     }`}
                                                 >
-                                                    {isClosed
-                                                        ? t('lifecycle.filter_closed', 'CERRADO')
-                                                        : t('lifecycle.active', 'ACTIVO')}
+                                                    {isClosed && (
+                                                        <span className="material-symbols-outlined text-[14px]">
+                                                            {asset.closure_reason === 'SHIPPED'
+                                                                ? 'delivery_truck_speed'
+                                                                : asset.closure_reason ===
+                                                                    'FIELD_REMOVED'
+                                                                  ? 'delete_sweep'
+                                                                  : 'lock'}
+                                                        </span>
+                                                    )}
+                                                    <span>
+                                                        {isClosed
+                                                            ? asset.closure_reason === 'SHIPPED'
+                                                                ? t('lifecycle.shipped', 'DESPACHADO')
+                                                                : asset.closure_reason ===
+                                                                    'FIELD_REMOVED'
+                                                                  ? t(
+                                                                        'lifecycle.removed',
+                                                                        'ELIMINADO'
+                                                                    )
+                                                                  : t(
+                                                                        'lifecycle.filter_closed',
+                                                                        'CERRADO'
+                                                                    )
+                                                            : t('lifecycle.active', 'ACTIVO')}
+                                                    </span>
                                                 </span>
                                             </td>
                                             <td className="px-fib-13 py-fib-13 uppercase text-[#475569] dark:text-[#8A93A6]">

@@ -63,9 +63,14 @@ interface PdfCopy {
     cycleStatusLabel: string;
     cycleActiveLabel: string;
     cycleClosedShipped: string;
+    cycleClosedRemoved: string;
     cycleClosedZero: string;
     cycleClosedManual: string;
+    closureCauseLabel: string;
     dispatchRefLabel: string;
+    dispatchTransportLabel: string;
+    dispatchDestinationLabel: string;
+    dispatchTimestampLabel: string;
     shippedWeightLabel: string;
     visualBlockHeader: string;
     coverPhotoBoxLabel: string;
@@ -167,11 +172,16 @@ const PDF_COPY: Record<PdfLocale, PdfCopy> = {
         projectPending: '[Desarrollo pendiente]',
         cycleStatusLabel: 'ESTADO DEL CICLO',
         cycleActiveLabel: 'ACTIVO EN CANCHA',
-        cycleClosedShipped: 'CERRADO - EMBARCADO',
+        cycleClosedShipped: 'CERRADO - DESPACHO',
+        cycleClosedRemoved: 'CERRADO - ELIMINADO EN TERRENO',
         cycleClosedZero: 'CERRADO - VOLUMEN 0 m3',
         cycleClosedManual: 'CERRADO',
-        dispatchRefLabel: 'REF. EMBARQUE / LOTE',
-        shippedWeightLabel: 'TONELAJE EMBARCADO [t]',
+        closureCauseLabel: 'CAUSA DE CIERRE EN TERRENO',
+        dispatchRefLabel: 'REF. DESPACHO / LOTE',
+        dispatchTransportLabel: 'TRANSPORTE DESPACHO',
+        dispatchDestinationLabel: 'DESTINO DESPACHO',
+        dispatchTimestampLabel: 'FECHA/HORA DESPACHO',
+        shippedWeightLabel: 'TONELAJE DEDUCIDO [t]',
         visualBlockHeader: '00 · PORTADA FOTOGRÁFICA Y MAPA GEORREFERENCIADO (SIN INTERACCIÓN)',
         coverPhotoBoxLabel: 'ÚLTIMA CAPTURA VIGENTE (CAS)',
         staticMapBoxLabel: 'MAPA SATELITAL ESTÁTICO (SIN INTERACCIÓN)',
@@ -270,11 +280,16 @@ const PDF_COPY: Record<PdfLocale, PdfCopy> = {
         projectPending: '[Pending development]',
         cycleStatusLabel: 'CYCLE STATUS',
         cycleActiveLabel: 'ACTIVE ON PAD',
-        cycleClosedShipped: 'CLOSED - SHIPPED',
+        cycleClosedShipped: 'CLOSED - DISPATCHED',
+        cycleClosedRemoved: 'CLOSED - FIELD REMOVED',
         cycleClosedZero: 'CLOSED - ZERO VOLUME',
         cycleClosedManual: 'CLOSED',
-        dispatchRefLabel: 'SHIPMENT / LOT REF.',
-        shippedWeightLabel: 'SHIPPED WEIGHT [t]',
+        closureCauseLabel: 'FIELD CLOSURE CAUSE',
+        dispatchRefLabel: 'DISPATCH / LOT REF.',
+        dispatchTransportLabel: 'DISPATCH TRANSPORT',
+        dispatchDestinationLabel: 'DISPATCH DESTINATION',
+        dispatchTimestampLabel: 'DISPATCH TIMESTAMP',
+        shippedWeightLabel: 'DEDUCED WEIGHT [t]',
         visualBlockHeader: '00 · COVER PHOTO AND STATIC GEOREFERENCE MAP (NON-INTERACTIVE)',
         coverPhotoBoxLabel: 'LATEST ACTIVE PHOTO (CAS)',
         staticMapBoxLabel: 'STATIC SATELLITE MAP (NON-INTERACTIVE)',
@@ -373,11 +388,16 @@ const PDF_COPY: Record<PdfLocale, PdfCopy> = {
         projectPending: '[Desenvolvimento pendente]',
         cycleStatusLabel: 'ESTADO DO CICLO',
         cycleActiveLabel: 'ATIVO EM PÁTIO',
-        cycleClosedShipped: 'FECHADO - EMBARCADO',
+        cycleClosedShipped: 'FECHADO - DESPACHO',
+        cycleClosedRemoved: 'FECHADO - REMOVIDO EM CAMPO',
         cycleClosedZero: 'FECHADO - VOLUME 0 m3',
         cycleClosedManual: 'FECHADO',
-        dispatchRefLabel: 'REF. EMBARQUE / LOTE',
-        shippedWeightLabel: 'TONELAGEM EMBARCADA [t]',
+        closureCauseLabel: 'CAUSA DO FECHAMENTO EM CAMPO',
+        dispatchRefLabel: 'REF. DESPACHO / LOTE',
+        dispatchTransportLabel: 'TRANSPORTE DESPACHO',
+        dispatchDestinationLabel: 'DESTINO DESPACHO',
+        dispatchTimestampLabel: 'DATA/HORA DESPACHO',
+        shippedWeightLabel: 'TONELAGEM DEDUZIDA [t]',
         visualBlockHeader: '00 · CAPA FOTOGRÁFICA E MAPA GEORREFERENCIADO (SEM INTERAÇÃO)',
         coverPhotoBoxLabel: 'ÚLTIMA CAPTURA VIGENTE (CAS)',
         staticMapBoxLabel: 'MAPA SATELITAL ESTÁTICO (SEM INTERAÇÃO)',
@@ -1354,9 +1374,11 @@ export async function generateGeolappVectorPdf(
         asset.status === 'CLOSED'
             ? asset.closure_reason === 'SHIPPED'
                 ? copy.cycleClosedShipped
-                : asset.closure_reason === 'ZERO_VOLUME'
-                  ? copy.cycleClosedZero
-                  : copy.cycleClosedManual
+                : asset.closure_reason === 'FIELD_REMOVED'
+                  ? copy.cycleClosedRemoved
+                  : asset.closure_reason === 'ZERO_VOLUME'
+                    ? copy.cycleClosedZero
+                    : copy.cycleClosedManual
             : copy.cycleActiveLabel;
 
     cursor.drawKeyValueGrid(
@@ -1402,12 +1424,45 @@ export async function generateGeolappVectorPdf(
                 label: copy.descriptionLabel,
                 value: sanitizePdfText(asset.description, copy.undeclared),
             },
-            ...(asset.status === 'CLOSED'
+            ...(asset.status === 'CLOSED' && asset.dispatch_transport
+                ? [
+                      {
+                          label: copy.dispatchTransportLabel,
+                          value: sanitizePdfText(asset.dispatch_transport, copy.undeclared),
+                      },
+                  ]
+                : []),
+            ...(asset.status === 'CLOSED' && asset.dispatch_destination
+                ? [
+                      {
+                          label: copy.dispatchDestinationLabel,
+                          value: sanitizePdfText(asset.dispatch_destination, copy.undeclared),
+                      },
+                  ]
+                : []),
+            ...(asset.status === 'CLOSED' && isFiniteNum(asset.dispatch_timestamp)
+                ? [
+                      {
+                          label: copy.dispatchTimestampLabel,
+                          value: `${new Date(asset.dispatch_timestamp).toISOString().replace('T', ' ').slice(0, 16)} UTC`,
+                          mono: true,
+                      },
+                  ]
+                : []),
+            ...(asset.status === 'CLOSED' && asset.dispatch_reference
                 ? [
                       {
                           label: copy.dispatchRefLabel,
                           value: sanitizePdfText(asset.dispatch_reference, copy.undeclared),
                           mono: true,
+                      },
+                  ]
+                : []),
+            ...(asset.status === 'CLOSED' && asset.closure_cause
+                ? [
+                      {
+                          label: copy.closureCauseLabel,
+                          value: sanitizePdfText(asset.closure_cause, copy.undeclared),
                       },
                   ]
                 : []),

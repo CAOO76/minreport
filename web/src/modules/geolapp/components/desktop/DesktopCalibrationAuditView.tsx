@@ -80,6 +80,7 @@ export const DesktopCalibrationAuditView: React.FC = () => {
                 <div className="flex items-center gap-fib-13">
                     <form
                         autoComplete="off"
+                        spellCheck={false}
                         onSubmit={(e) => e.preventDefault()}
                         className="flex items-center"
                     >

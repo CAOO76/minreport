@@ -12,7 +12,6 @@ import type {
     MiningSiteProfile,
     StockpileAsset,
 } from '../core/types/GeolappTypes';
-import { triggerFieldImpact } from '../core/utils/fieldHaptics';
 import { MobileScanner } from './MobileScanner';
 
 export interface QuickStockpileCaptureProps {
@@ -46,7 +45,6 @@ export const QuickStockpileCapture: React.FC<QuickStockpileCaptureProps> = ({
         const saved = loadCaptureDraft<{ stockpileName?: string }>('new_stockpile');
         return saved?.stockpileName || defaultCode;
     });
-    const [isEditingName, setIsEditingName] = useState<boolean>(false);
 
     const resolvedSite = useMemo<MiningSiteProfile | null>(() => {
         if (existingAsset?.project_id) {
@@ -169,6 +167,21 @@ export const QuickStockpileCapture: React.FC<QuickStockpileCaptureProps> = ({
         [defaultCode, geoPoint, gnssStatus, isNewAsset, resolvedSite, stockpileName]
     );
 
+    if (existingAsset) {
+        return (
+            <MobileScanner
+                assetId={existingAsset.id}
+                assetName={existingAsset.name}
+                autoStartScan
+                initialCopperDomain={existingAsset.copper_domain ?? null}
+                initialGranulometry={existingAsset.tipo_granulometria ?? null}
+                initialDensityFactor={existingAsset.density_factor ?? null}
+                onSuccess={handleChildSuccess}
+                onBack={onCancel}
+            />
+        );
+    }
+
     if (isNewAsset && !resolvedSite) {
         return (
             <div className="h-full w-full flex-1 flex flex-col bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] font-atkinson overflow-hidden rounded-none shadow-none select-none">
@@ -199,96 +212,13 @@ export const QuickStockpileCapture: React.FC<QuickStockpileCaptureProps> = ({
     }
 
     return (
-        <div className="h-full w-full flex-1 flex flex-col bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] font-atkinson overflow-hidden rounded-none shadow-none select-none">
-            <header className="shrink-0 bg-[#FFFFFF] dark:bg-[#000000] border-b border-[#E2E8F0] dark:border-[#12151C]">
-                <div className="min-h-[56px] pt-[env(safe-area-inset-top)] px-fib-13 flex items-center justify-between gap-fib-8">
-                    {!hideCancelButton && (
-                        <button
-                            type="button"
-                            onClick={onCancel}
-                            aria-label={t('common.back_button', 'VOLVER')}
-                            className="min-w-[48px] min-h-[48px] bg-transparent border-0 text-[#475569] dark:text-[#8A93A6] hover:text-[#C68346] flex items-center justify-center cursor-pointer rounded-none shrink-0"
-                        >
-                            <span className="material-symbols-outlined text-[24px]">
-                                arrow_back
-                            </span>
-                        </button>
-                    )}
-
-                    {isNewAsset ? (
-                        <div className="flex-1 min-w-0 flex items-center gap-1">
-                            {isEditingName ? (
-                                <input
-                                    type="text"
-                                    autoComplete="off"
-                                    spellCheck={false}
-                                    autoFocus
-                                    value={stockpileName}
-                                    onChange={(e) => setStockpileName(e.target.value)}
-                                    onBlur={() => setIsEditingName(false)}
-                                    onKeyDown={(e) => {
-                                        if (e.key === 'Enter' || e.key === 'Escape') {
-                                            setIsEditingName(false);
-                                        }
-                                    }}
-                                    aria-label={t('registration.name_label', 'ID / NOMBRE DEL ACOPIO')}
-                                    className="flex-1 min-w-0 h-11 px-fib-8 bg-transparent border-0 border-b border-[#C68346] outline-none font-mono font-bold text-[18px] uppercase text-[#0F172A] dark:text-[#F3F4F6] rounded-none"
-                                />
-                            ) : (
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        void triggerFieldImpact('LIGHT');
-                                        setIsEditingName(true);
-                                    }}
-                                    aria-label={t('digital_v2.edit_code', 'Editar código')}
-                                    className="flex-1 min-w-0 min-h-[48px] bg-transparent border-0 text-left flex items-center gap-fib-8 cursor-pointer rounded-none px-0"
-                                >
-                                    <span className="text-[18px] font-mono font-bold uppercase truncate text-[#0F172A] dark:text-[#F3F4F6]">
-                                        {stockpileName}
-                                    </span>
-                                    <span className="material-symbols-outlined text-[18px] text-[#475569] dark:text-[#8A93A6] shrink-0">
-                                        edit
-                                    </span>
-                                </button>
-                            )}
-                        </div>
-                    ) : (
-                        <span className="flex-1 min-w-0 text-[18px] font-mono font-bold uppercase truncate text-[#0F172A] dark:text-[#F3F4F6]">
-                            {existingAsset?.name}
-                        </span>
-                    )}
-
-                    <button
-                        type="button"
-                        onClick={() => {
-                            void triggerFieldImpact('LIGHT');
-                            void captureGnssFix();
-                        }}
-                        aria-label={t('capture_v2.gnss_refresh', 'Actualizar georreferencia GNSS')}
-                        title={t('capture_v2.gnss_refresh', 'Actualizar georreferencia GNSS')}
-                        className="min-w-[48px] min-h-[48px] bg-transparent border-0 flex items-center justify-center cursor-pointer rounded-none shrink-0"
-                    >
-                        <span
-                            aria-hidden="true"
-                            className={`w-2 h-2 block rounded-none ${
-                                gnssStatus === 'FIX_OK' ? 'bg-[#00AEEF]' : 'bg-[#C68346]'
-                            }`}
-                        />
-                    </button>
-                </div>
-            </header>
-
-            <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-                <MobileScanner
-                    assetId={existingAsset?.id}
-                    assetName={existingAsset?.name || stockpileName}
-                    draftAsset={draftAssetPayload}
-                    onSuccess={handleChildSuccess}
-                    onBack={onCancel}
-                    hideHeader
-                />
-            </div>
-        </div>
+        <MobileScanner
+            assetName={stockpileName}
+            draftAsset={draftAssetPayload}
+            autoStartScan
+            onDraftNameChange={setStockpileName}
+            onSuccess={handleChildSuccess}
+            onBack={onCancel}
+        />
     );
 };

@@ -114,18 +114,16 @@ export const MobileCalibrationView: React.FC<MobileCalibrationViewProps> = ({
             <div className="flex-1 min-h-0 overflow-y-auto">
                 {/* Estado Activo de Calibración */}
                 <div
-                    className={`p-fib-21 border-b border-[#E2E8F0] dark:border-[#12151C] border-l-[3px] ${
-                        calValid ? 'border-l-[#00AEEF]' : 'border-l-[#C68346]'
-                    }`}
+                    className={`p-fib-21 border-b border-[#E2E8F0] dark:border-[#12151C] border-l-[3px] ${calValid ? 'border-l-[#00AEEF]' : 'border-l-[#C68346]'
+                        }`}
                 >
                     <div className="flex items-center justify-between gap-fib-13">
                         <span className="text-microcopy font-mono font-bold uppercase tracking-widest text-[#475569] dark:text-[#8A93A6]">
                             {t('calibration.active_factor_label', 'FACTOR ESCALA AR')}
                         </span>
                         <span
-                            className={`text-microcopy font-mono font-bold uppercase ${
-                                calValid ? 'text-[#00AEEF]' : 'text-[#C68346]'
-                            }`}
+                            className={`text-microcopy font-mono font-bold uppercase ${calValid ? 'text-[#00AEEF]' : 'text-[#C68346]'
+                                }`}
                         >
                             {calValid
                                 ? `${t('calibration.status_valid', 'CALIBRADO')} · ${remainingDays}d`
@@ -194,11 +192,14 @@ export const MobileCalibrationView: React.FC<MobileCalibrationViewProps> = ({
                             type="button"
                             onClick={() => void handleCalibrate()}
                             disabled={!isNative || calibrating}
-                            className="w-full min-h-[56px] px-fib-21 bg-[#C68346] disabled:opacity-40 text-white border-0 font-mono text-data-dense font-bold uppercase tracking-wider flex items-center justify-center cursor-pointer disabled:cursor-not-allowed rounded-none shadow-none"
+                            aria-label={t('calibration.start_action', 'CALIBRAR HUINCHA 2.00 m')}
+                            title={t('calibration.start_action', 'CALIBRAR HUINCHA 2.00 m')}
+                            className="w-full min-h-[64px] px-fib-21 bg-[#C68346] disabled:opacity-40 text-white border-0 font-mono text-[18px] font-bold uppercase tabular-nums flex items-center justify-center gap-fib-13 cursor-pointer disabled:cursor-not-allowed rounded-none shadow-none"
                         >
-                            {calibrating
-                                ? t('calibration.running', 'CALIBRANDO...')
-                                : t('calibration.start_action', 'CALIBRAR HUINCHA 2.00 m')}
+                            <span className="material-symbols-outlined text-[28px]" aria-hidden="true">
+                                compass_calibration
+                            </span>
+                            <span>2.00 m</span>
                         </button>
                         {!isNative && (
                             <div className="mt-fib-8 font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">
@@ -254,9 +255,8 @@ export const MobileCalibrationView: React.FC<MobileCalibrationViewProps> = ({
                                         item.localId ||
                                         `${item.calibratedAt}_${idx}`
                                     }
-                                    className={`px-fib-21 py-fib-13 border-l-[3px] ${
-                                        synced ? 'border-l-[#00AEEF]' : 'border-l-[#C68346]'
-                                    }`}
+                                    className={`px-fib-21 py-fib-13 border-l-[3px] ${synced ? 'border-l-[#00AEEF]' : 'border-l-[#C68346]'
+                                        }`}
                                 >
                                     <div className="flex items-center justify-between gap-fib-13">
                                         <span className="font-mono tabular-nums text-data-dense font-bold text-[#0F172A] dark:text-[#F3F4F6]">
