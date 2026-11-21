@@ -1,0 +1,448 @@
+import crypto from 'crypto';
+import { z } from 'zod';
+import type { MediaDigestionProfile } from '../../../contracts/media.contracts';
+import { CasStorageService } from '../../../core/media/CasStorageService';
+import { ConfidentialityAirlockService } from '../../../core/privacy/ConfidentialityAirlockService';
+import { ResilientAIClient } from '../../../core/resilient-ai-client';
+import { validateChileanRut } from '../../../utils/taxIdValidator';
+import {
+    type AtypicalFlagCode,
+    buildSiiDedupeKey,
+    computeRcvDeadline,
+    type EvidenceCasRef,
+    normalizeSupplyItemFromText,
+    type ParsedSiiHeader,
+    parseSiiTedOrXmlDeterministic,
+    type PurchaseLineDestination,
+    type SiiDteType,
+    SUPPLY_AI_MODULE,
+    type SupplyPurchaseLine,
+    verifyReceiptArithmetic,
+} from './supply.types';
+
+/**
+ * RECEIPT INTELLIGENCE PIPELINE (MINREPORT · ABASTECIMIENTO)
+ *
+ * Procesa boletas, facturas electrónicas (DTE 33/34/39/41/52/61), comprobantes rurales (0),
+ * XML SII y códigos TED PDF417:
+ * 1. Digestión obligatoria vía `MediaDigestorServer` + `CasStorageService.digestAndStore`
+ *    (`TENANT_PRIVATE`, preservando `originalBytes`, `optimizedBytes`, `savingsPct`).
+ * 2. Extracción determinista prioritaria desde XML DTE / TED PDF417 (Módulo-11 RUT + anti-duplicado).
+ * 3. Sanitización pre-vuelo Ley N° 21.719 (`ConfidentialityAirlockService.scrubDeterministicPii`).
+ * 4. Extracción multimodal de ítems vía `ResilientAIClient` (Gemini Flash Structured Output;
+ *    prohibido instanciar `new GoogleGenAI` fuera de `resilient-ai-client.ts`).
+ * 5. Verificación aritmética determinista (±2 CLP) y alerta CAPEX sin Factura Electrónica.
+ */
+
+const ReceiptAiLineSchema = z.object({
+    description: z.string().min(1).max(240),
+    quantity: z.number().positive(),
+    unitRaw: z.string().max(40).optional(),
+    unitPriceClp: z.number().nonnegative(),
+    subtotalClp: z.number().nonnegative(),
+    isCapexSuspected: z.boolean().optional(),
+});
+
+const ReceiptAiExtractionSchema = z.object({
+    supplierName: z.string().max(200).optional(),
+    supplierTaxId: z.string().max(32).optional(),
+    documentType: z.number().int().optional(),
+    folio: z.number().int().nonnegative().optional(),
+    issueDate: z.string().max(32).optional(),
+    netAmountClp: z.number().nonnegative().optional(),
+    vatAmountClp: z.number().nonnegative().optional(),
+    totalAmountClp: z.number().nonnegative().optional(),
+    lines: z.array(ReceiptAiLineSchema).optional(),
+});
+
+export interface AnalyzeReceiptInput {
+    tenantId: string;
+    actorUid: string;
+    rawBuffer?: Buffer;
+    mimeType?: string;
+    originalFilename?: string;
+    clientOriginalBytes?: number;
+    xmlContent?: string;
+    tedRawXml?: string;
+    contextCaption?: string;
+    defaultDestination?: PurchaseLineDestination;
+    defaultCostCenter?: string;
+    checkDuplicateDedupeKey?: (dedupeKey: string) => Promise<boolean>;
+}
+
+export interface ReceiptArithmeticCheck {
+    verified: boolean;
+    linesSumClp: number;
+    expectedTotalClp: number;
+    deltaClp: number;
+    pricingBasis: 'GROSS' | 'NET_PLUS_VAT' | 'MISMATCH';
+}
+
+export interface AnalyzedReceiptResult {
+    extractionSource: 'XML_DTE' | 'TED_PLUS_AI' | 'AI_VISION_OCR' | 'TED_ONLY';
+    supplierTaxId: string;
+    supplierRutValid: boolean;
+    supplierName: string;
+    documentType: SiiDteType;
+    folio: number;
+    dedupeKey: string;
+    duplicateDetected: boolean;
+    issueDate: string;
+    netAmountClp: number;
+    vatAmountClp: number;
+    vatCreditRecoverableClp: number;
+    totalAmountClp: number;
+    rcvDeadlineDate: string | null;
+    rcvDaysRemaining: number | null;
+    lines: SupplyPurchaseLine[];
+    arithmeticCheck: ReceiptArithmeticCheck;
+    atypicalFlags: AtypicalFlagCode[];
+    missingInvoiceAlert: boolean;
+    evidenceCasRef?: EvidenceCasRef;
+    tedRawXml?: string;
+    scrubbedRedactedCategories: string[];
+    aiModelUsed?: string;
+}
+
+function coerceDteType(code: number | undefined): SiiDteType {
+    if (code === 33 || code === 34 || code === 39 || code === 41 || code === 52 || code === 61) {
+        return code;
+    }
+    return 0;
+}
+
+function resolveDigestionProfile(mimeType: string): MediaDigestionProfile {
+    const lower = (mimeType || '').toLowerCase();
+    if (lower.includes('pdf')) return 'PDF_HYBRID_OEM';
+    if (lower.startsWith('image/')) return 'IMAGE_TECHNICAL_HD';
+    return 'VIDEO_FIELD_COMPACT';
+}
+
+export class ReceiptIntelligencePipeline {
+    /**
+     * Analiza una boleta, factura, PDF o XML DTE cumpliendo CAS + Ley 21.719 + ResilientAIClient.
+     */
+    public static async analyze(input: AnalyzeReceiptInput): Promise<AnalyzedReceiptResult> {
+        if (!input.tenantId || !input.tenantId.trim()) {
+            throw new Error('tenantId es obligatorio para analizar comprobantes en TENANT_PRIVATE.');
+        }
+
+        const defaultDest: PurchaseLineDestination = input.defaultDestination || 'STOCK_IN_TRANSIT';
+        const defaultCc = (input.defaultCostCenter || 'CC-CAMPAMENTO').trim() || 'CC-CAMPAMENTO';
+
+        let rawBuf = input.rawBuffer;
+        let mimeType = (input.mimeType || '').toLowerCase().trim();
+        let xmlCandidate = (input.xmlContent || '').trim();
+        const tedCandidate = (input.tedRawXml || '').trim();
+
+        if (!rawBuf && xmlCandidate) {
+            rawBuf = Buffer.from(xmlCandidate, 'utf8');
+            mimeType = 'application/xml';
+        } else if (rawBuf && (mimeType.includes('xml') || input.originalFilename?.toLowerCase().endsWith('.xml'))) {
+            if (!xmlCandidate) {
+                xmlCandidate = rawBuf.toString('utf8').trim();
+            }
+            mimeType = 'application/xml';
+        }
+
+        // 1. Digestión obligatoria y almacenamiento CAS (`TENANT_PRIVATE`) preservando trazabilidad de peso
+        let evidenceCasRef: EvidenceCasRef | undefined;
+        let aiMediaBuffer: Buffer | undefined;
+        let aiMediaMimeType: string | undefined;
+
+        if (rawBuf && rawBuf.length > 0) {
+            const trueClientOriginalBytes = Math.max(
+                Number(input.clientOriginalBytes || 0),
+                rawBuf.length
+            );
+
+            // Para XML DTE, compactar espacios superfluos antes de almacenar en CAS preservando clientOriginalBytes
+            const bufferToDigest =
+                mimeType.includes('xml')
+                    ? Buffer.from(rawBuf.toString('utf8').replace(/>\s+</g, '><').trim(), 'utf8')
+                    : rawBuf;
+
+            const profile = resolveDigestionProfile(mimeType || 'image/jpeg');
+            const { descriptor, digested } = await CasStorageService.digestAndStore(
+                bufferToDigest,
+                mimeType || 'image/jpeg',
+                profile,
+                {
+                    scope: 'TENANT_PRIVATE',
+                    tenantId: input.tenantId,
+                    actorUid: input.actorUid,
+                    originalFilename: input.originalFilename || 'receipt_evidence',
+                    clientOriginalBytes: trueClientOriginalBytes,
+                    enableSelectiveRaster: true,
+                }
+            );
+
+            evidenceCasRef = {
+                sha256: descriptor.sha256,
+                phashHex: descriptor.phashHex,
+                storagePath: descriptor.storagePath,
+                downloadUrl: descriptor.downloadUrl,
+                mimeType: descriptor.mimeType,
+                extension: descriptor.extension,
+                profile: descriptor.profile,
+                originalBytes: descriptor.originalBytes,
+                optimizedBytes: descriptor.optimizedBytes,
+                savingsRatio: descriptor.savingsRatio,
+                savingsPct:
+                    typeof descriptor.savingsPct === 'number'
+                        ? descriptor.savingsPct
+                        : Number((descriptor.savingsRatio * 100).toFixed(1)),
+                originalFilename: descriptor.originalFilename,
+                createdAt: descriptor.createdAt,
+            };
+
+            if (digested.mimeType.startsWith('image/') || digested.mimeType === 'application/pdf') {
+                aiMediaBuffer = digested.buffer;
+                aiMediaMimeType = digested.mimeType;
+            }
+        }
+
+        // 2. Extracción determinista prioritaria (XML DTE completo o TED PDF417)
+        let deterministicHeader: ParsedSiiHeader | null = null;
+        if (xmlCandidate) {
+            deterministicHeader = parseSiiTedOrXmlDeterministic(xmlCandidate);
+        }
+        if (!deterministicHeader && tedCandidate) {
+            deterministicHeader = parseSiiTedOrXmlDeterministic(tedCandidate);
+        }
+
+        // 3. Sanitización pre-vuelo Ley N° 21.719 antes de cualquier llamada IA
+        const rawPromptContext = [
+            input.contextCaption || '',
+            deterministicHeader?.firstItemSummary ? `Referencia TED IT1: ${deterministicHeader.firstItemSummary}` : '',
+        ]
+            .filter(Boolean)
+            .join(' | ');
+
+        const airlock = ConfidentialityAirlockService.scrubDeterministicPii(rawPromptContext, 'CL');
+
+        let aiExtracted: z.infer<typeof ReceiptAiExtractionSchema> | null = null;
+        let aiModelUsed: string | undefined;
+
+        const hasDeterministicXmlLines = Boolean(
+            deterministicHeader?.source === 'XML_DTE' &&
+                deterministicHeader.xmlLines &&
+                deterministicHeader.xmlLines.length > 0
+        );
+
+        // 4. Si no tenemos detalle completo desde XML DTE, extraer ítems con Gemini Flash Structured Output
+        if (!hasDeterministicXmlLines && (aiMediaBuffer || airlock.scrubbed.length > 0)) {
+            const prompt = [
+                'Eres un extractor estructurado de comprobantes de compra mineros en Chile (SII DTE 33/34/39/41/52/61 o vale rural 0).',
+                'Extrae estrictamente los ítems visibles en la boleta/factura sin inventar precios ni cantidades.',
+                'Devuelve JSON válido con:',
+                '- supplierName (razón social o comercio)',
+                '- supplierTaxId (RUT emisor si es visible, ej. 76123456-K, o vacío)',
+                '- documentType (33=Factura, 34=Factura Exenta, 39=Boleta, 41=Boleta Exenta, 52=Guía, 61=Nota Crédito, 0=Sin DTE)',
+                '- folio (entero, 0 si no visible)',
+                '- issueDate (YYYY-MM-DD)',
+                '- netAmountClp, vatAmountClp, totalAmountClp (enteros CLP)',
+                '- lines: [{ description, quantity, unitRaw, unitPriceClp, subtotalClp, isCapexSuspected }]',
+                'Marca isCapexSuspected=true para activos durables o equipamiento (cocina industrial, generador, compresor, bomba, soldadora, refrigerador).',
+                airlock.scrubbed ? `Contexto sanitizado adicional: ${airlock.scrubbed}` : '',
+            ]
+                .filter(Boolean)
+                .join('\n');
+
+            const { data, meta } = await ResilientAIClient.generateStructured(
+                {
+                    module: SUPPLY_AI_MODULE,
+                    preferredTier: 'SECONDARY',
+                    temperature: 0,
+                    tenantId: input.tenantId,
+                    prompt,
+                    media:
+                        aiMediaBuffer && aiMediaMimeType
+                            ? [
+                                  {
+                                      mimeType: aiMediaMimeType,
+                                      dataBase64: aiMediaBuffer.toString('base64'),
+                                  },
+                              ]
+                            : undefined,
+                },
+                ReceiptAiExtractionSchema
+            );
+            aiExtracted = data;
+            aiModelUsed = meta.model;
+        }
+
+        // 5. Fusión determinista (XML/TED manda sobre OCR IA para todos los campos tributarios)
+        const rawSupplierTaxId =
+            deterministicHeader?.supplierTaxId || aiExtracted?.supplierTaxId || 'SIN-RUT';
+        const rutValidation = validateChileanRut(rawSupplierTaxId);
+        const supplierTaxId = rutValidation.valid
+            ? rutValidation.normalized
+            : rawSupplierTaxId.trim() || 'SIN-RUT';
+        const supplierRutValid = rutValidation.valid;
+
+        const supplierName =
+            deterministicHeader?.supplierName ||
+            aiExtracted?.supplierName ||
+            '[Información técnica no declarada en ficha]';
+
+        const documentType: SiiDteType = deterministicHeader
+            ? deterministicHeader.documentType
+            : coerceDteType(aiExtracted?.documentType);
+
+        const folio =
+            deterministicHeader && deterministicHeader.folio > 0
+                ? deterministicHeader.folio
+                : Number(aiExtracted?.folio || 0);
+
+        const issueDate =
+            deterministicHeader?.issueDate ||
+            aiExtracted?.issueDate ||
+            new Date().toISOString().slice(0, 10);
+
+        const rawLinesSource = hasDeterministicXmlLines
+            ? (deterministicHeader!.xmlLines || []).map((l) => ({
+                  description: l.description,
+                  quantity: l.qty,
+                  unitRaw: l.unitRaw || 'un',
+                  unitPriceClp: l.unitPriceClp,
+                  subtotalClp: l.subtotalClp,
+                  isCapexSuspected: false,
+              }))
+            : aiExtracted?.lines && aiExtracted.lines.length > 0
+              ? aiExtracted.lines
+              : deterministicHeader?.firstItemSummary
+                ? [
+                      {
+                          description: deterministicHeader.firstItemSummary,
+                          quantity: 1,
+                          unitRaw: 'un',
+                          unitPriceClp: deterministicHeader.totalAmountClp,
+                          subtotalClp: deterministicHeader.totalAmountClp,
+                          isCapexSuspected: false,
+                      },
+                  ]
+                : [];
+
+        const lines: SupplyPurchaseLine[] = rawLinesSource.map((rawLine, idx) => {
+            const norm = normalizeSupplyItemFromText(rawLine.description, rawLine.quantity, rawLine.unitRaw);
+            const isCapex = Boolean(norm.isCapexAsset || rawLine.isCapexSuspected);
+            const qty = norm.qtySi && norm.qtySi > 0 ? norm.qtySi : rawLine.quantity;
+            const subtotalClp = Math.round(
+                rawLine.subtotalClp > 0 ? rawLine.subtotalClp : rawLine.quantity * rawLine.unitPriceClp
+            );
+            const unitPriceClp =
+                qty > 0 ? Math.round(subtotalClp / qty) : Math.round(rawLine.unitPriceClp || 0);
+
+            return {
+                purchaseLineId: `pline_${idx + 1}_${crypto.randomBytes(3).toString('hex')}`,
+                canonicalSkuId: norm.canonicalSkuId,
+                description: rawLine.description.trim(),
+                categoryCode: isCapex ? 'ACTIVO_EQUIPAMIENTO' : norm.categoryCode,
+                procurementBucket: isCapex ? 'MANTENCION_EQUIPAMIENTO' : norm.procurementBucket,
+                unitSi: norm.unitSi,
+                qtyPurchased: qty,
+                unitPriceClp,
+                subtotalClp,
+                destination: isCapex ? 'CAPEX_ASSET' : defaultDest,
+                costCenter: isCapex ? 'CC-CAPEX' : defaultCc,
+                isCapexAsset: isCapex,
+            };
+        });
+
+        const summedLinesClp = lines.reduce((acc, l) => acc + l.subtotalClp, 0);
+        const totalAmountClp = Math.round(
+            deterministicHeader?.totalAmountClp ||
+                aiExtracted?.totalAmountClp ||
+                summedLinesClp
+        );
+
+        let netAmountClp: number;
+        let vatAmountClp: number;
+        if (typeof deterministicHeader?.netAmountClp === 'number' && typeof deterministicHeader?.vatAmountClp === 'number') {
+            netAmountClp = Math.round(deterministicHeader.netAmountClp);
+            vatAmountClp = Math.round(deterministicHeader.vatAmountClp);
+        } else if (documentType === 33) {
+            netAmountClp =
+                typeof aiExtracted?.netAmountClp === 'number' && aiExtracted.netAmountClp > 0
+                    ? Math.round(aiExtracted.netAmountClp)
+                    : Math.round(totalAmountClp / 1.19);
+            vatAmountClp =
+                typeof aiExtracted?.vatAmountClp === 'number' && aiExtracted.vatAmountClp >= 0
+                    ? Math.round(aiExtracted.vatAmountClp)
+                    : Math.max(0, totalAmountClp - netAmountClp);
+        } else if (documentType === 39) {
+            netAmountClp = Math.round(totalAmountClp / 1.19);
+            vatAmountClp = Math.max(0, totalAmountClp - netAmountClp);
+        } else {
+            netAmountClp = totalAmountClp;
+            vatAmountClp = 0;
+        }
+
+        // Crédito fiscal IVA recuperable SOLO en Factura Electrónica Afecta (DTE 33)
+        const vatCreditRecoverableClp = documentType === 33 ? vatAmountClp : 0;
+
+        // 6. Verificación aritmética determinista
+        const arithmeticCheck = verifyReceiptArithmetic({
+            lines,
+            netAmountClp,
+            vatAmountClp,
+            totalAmountClp,
+            documentType,
+        });
+
+        // 7. Llave anti-duplicación SII y plazo 8 días RCV (Ley N° 19.983)
+        const dedupeKey = buildSiiDedupeKey(supplierTaxId, documentType, folio);
+        const duplicateDetected =
+            documentType !== 0 && folio > 0 && input.checkDuplicateDedupeKey
+                ? await input.checkDuplicateDedupeKey(dedupeKey)
+                : false;
+
+        const { rcvDeadlineDate, rcvDaysRemaining } = computeRcvDeadline(issueDate, documentType);
+
+        const hasCapexLine = lines.some((l) => l.isCapexAsset || l.destination === 'CAPEX_ASSET');
+        const missingInvoiceAlert = hasCapexLine && documentType !== 33 && documentType !== 34;
+
+        const atypicalFlags: AtypicalFlagCode[] = [];
+        if (hasCapexLine) {
+            atypicalFlags.push('ATYPICAL_HIGH_VALUE_OR_CAPEX');
+        }
+        if (missingInvoiceAlert) {
+            atypicalFlags.push('ATYPICAL_ASSET_WITHOUT_INVOICE');
+        }
+
+        const extractionSource: AnalyzedReceiptResult['extractionSource'] = hasDeterministicXmlLines
+            ? 'XML_DTE'
+            : deterministicHeader && aiExtracted
+              ? 'TED_PLUS_AI'
+              : deterministicHeader
+                ? 'TED_ONLY'
+                : 'AI_VISION_OCR';
+
+        return {
+            extractionSource,
+            supplierTaxId,
+            supplierRutValid,
+            supplierName,
+            documentType,
+            folio,
+            dedupeKey,
+            duplicateDetected,
+            issueDate,
+            netAmountClp,
+            vatAmountClp,
+            vatCreditRecoverableClp,
+            totalAmountClp,
+            rcvDeadlineDate,
+            rcvDaysRemaining,
+            lines,
+            arithmeticCheck,
+            atypicalFlags: Array.from(new Set(atypicalFlags)),
+            missingInvoiceAlert,
+            evidenceCasRef,
+            tedRawXml: deterministicHeader?.tedRawXml || (tedCandidate || undefined),
+            scrubbedRedactedCategories: airlock.redactedCategories,
+            aiModelUsed,
+        };
+    }
+}
