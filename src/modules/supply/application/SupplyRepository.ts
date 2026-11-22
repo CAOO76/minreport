@@ -201,6 +201,15 @@ export interface AuditActorContext {
 
 export const WHATSAPP_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 export const WHATSAPP_WAMID_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+export const DEFAULT_LIST_LIMIT = 200;
+export const MAX_LIST_LIMIT = 500;
+
+export function resolveListLimit(requested?: number, fallback: number = DEFAULT_LIST_LIMIT): number {
+    if (typeof requested !== 'number' || !Number.isFinite(requested) || requested <= 0) {
+        return Math.min(MAX_LIST_LIMIT, Math.max(1, Math.floor(fallback)));
+    }
+    return Math.min(MAX_LIST_LIMIT, Math.max(1, Math.floor(requested)));
+}
 
 /**
  * Enmascara teléfono E.164 para minimización PII Ley N° 21.719 (ej. `+56900001234` -> `+569****1234`).
@@ -371,10 +380,11 @@ export class SupplyRepository {
     // Sites (`supply_sites`)
     // -----------------------------------------------------------------------
 
-    public static async listSites(tenantId: string): Promise<SupplySite[]> {
+    public static async listSites(tenantId: string, limit?: number): Promise<SupplySite[]> {
         const snap = await db
             .collection(SUPPLY_COLLECTIONS.SITES)
             .where('tenantId', '==', tenantId)
+            .limit(resolveListLimit(limit))
             .get();
         return snap.docs
             .map((d) => d.data() as SupplySite)
@@ -589,11 +599,12 @@ export class SupplyRepository {
 
     public static async listRequisitions(
         tenantId: string,
-        filters?: { siteId?: string; status?: RequisitionStatus; origin?: string }
+        filters?: { siteId?: string; status?: RequisitionStatus; origin?: string; limit?: number }
     ): Promise<SupplyRequisition[]> {
         const snap = await db
             .collection(SUPPLY_COLLECTIONS.REQUISITIONS)
             .where('tenantId', '==', tenantId)
+            .limit(resolveListLimit(filters?.limit))
             .get();
 
         let list = snap.docs.map((d) => d.data() as SupplyRequisition);
@@ -774,10 +785,15 @@ export class SupplyRepository {
         return snap.exists;
     }
 
-    public static async listPurchases(tenantId: string, siteId?: string): Promise<SupplyPurchase[]> {
+    public static async listPurchases(
+        tenantId: string,
+        siteId?: string,
+        limit?: number
+    ): Promise<SupplyPurchase[]> {
         const snap = await db
             .collection(SUPPLY_COLLECTIONS.PURCHASES)
             .where('tenantId', '==', tenantId)
+            .limit(resolveListLimit(limit))
             .get();
         let list = snap.docs.map((d) => d.data() as SupplyPurchase);
         if (siteId) list = list.filter((p) => p.siteId === siteId);
@@ -1609,6 +1625,7 @@ export class SupplyRepository {
             .collection(SUPPLY_COLLECTIONS.FULFILLMENT_ALLOCATIONS)
             .where('tenantId', '==', params.tenantId)
             .where('purchaseId', '==', params.purchaseId)
+            .limit(MAX_LIST_LIMIT)
             .get();
         const allocs = allocSnap.docs.map((d) => d.data() as FulfillmentAllocation);
         const affectedReqIds = Array.from(
@@ -1905,10 +1922,15 @@ export class SupplyRepository {
         return resultRecord;
     }
 
-    public static async listInventory(tenantId: string, siteId?: string): Promise<SupplyInventoryItem[]> {
+    public static async listInventory(
+        tenantId: string,
+        siteId?: string,
+        limit?: number
+    ): Promise<SupplyInventoryItem[]> {
         const snap = await db
             .collection(SUPPLY_COLLECTIONS.INVENTORY_ITEMS)
             .where('tenantId', '==', tenantId)
+            .limit(resolveListLimit(limit))
             .get();
         let list = snap.docs.map((d) => d.data() as SupplyInventoryItem);
         if (siteId) list = list.filter((i) => i.siteId === siteId);
@@ -1919,10 +1941,15 @@ export class SupplyRepository {
     // Assets (`supply_assets`) + OPERMAQ Link
     // -----------------------------------------------------------------------
 
-    public static async listAssets(tenantId: string, siteId?: string): Promise<SupplyAsset[]> {
+    public static async listAssets(
+        tenantId: string,
+        siteId?: string,
+        limit?: number
+    ): Promise<SupplyAsset[]> {
         const snap = await db
             .collection(SUPPLY_COLLECTIONS.ASSETS)
             .where('tenantId', '==', tenantId)
+            .limit(resolveListLimit(limit))
             .get();
         let list = snap.docs.map((d) => d.data() as SupplyAsset);
         if (siteId) list = list.filter((a) => a.siteId === siteId);
@@ -1989,10 +2016,15 @@ export class SupplyRepository {
     // Cash Ledger (`supply_cash_ledger`), SII Docs & Expense Reports
     // -----------------------------------------------------------------------
 
-    public static async listCashLedger(tenantId: string, siteId?: string): Promise<CashLedgerEntry[]> {
+    public static async listCashLedger(
+        tenantId: string,
+        siteId?: string,
+        limit?: number
+    ): Promise<CashLedgerEntry[]> {
         const snap = await db
             .collection(SUPPLY_COLLECTIONS.CASH_LEDGER)
             .where('tenantId', '==', tenantId)
+            .limit(resolveListLimit(limit))
             .get();
         let list = snap.docs.map((d) => d.data() as CashLedgerEntry);
         if (siteId) list = list.filter((e) => e.siteId === siteId);
@@ -2021,11 +2053,12 @@ export class SupplyRepository {
 
     public static async listSiiDocuments(
         tenantId: string,
-        filters?: { siteId?: string; documentType?: number; missingInvoiceOnly?: boolean }
+        filters?: { siteId?: string; documentType?: number; missingInvoiceOnly?: boolean; limit?: number }
     ): Promise<SiiDocumentRecord[]> {
         const snap = await db
             .collection(SUPPLY_COLLECTIONS.SII_DOCUMENTS)
             .where('tenantId', '==', tenantId)
+            .limit(resolveListLimit(filters?.limit))
             .get();
         let list = snap.docs.map((d) => {
             const raw = d.data() as SiiDocumentRecord;
@@ -2046,10 +2079,15 @@ export class SupplyRepository {
         return list.sort((a, b) => b.issueDate.localeCompare(a.issueDate));
     }
 
-    public static async listExpenseReports(tenantId: string, siteId?: string): Promise<SiiExpenseReport[]> {
+    public static async listExpenseReports(
+        tenantId: string,
+        siteId?: string,
+        limit?: number
+    ): Promise<SiiExpenseReport[]> {
         const snap = await db
             .collection(SUPPLY_COLLECTIONS.EXPENSE_REPORTS)
             .where('tenantId', '==', tenantId)
+            .limit(resolveListLimit(limit))
             .get();
         let list = snap.docs.map((d) => d.data() as SiiExpenseReport);
         if (siteId) list = list.filter((r) => r.siteId === siteId);
@@ -2406,6 +2444,7 @@ export class SupplyRepository {
         const sitesSnap = await db
             .collection(SUPPLY_COLLECTIONS.SITES)
             .where('marketplaceOptIn', '==', true)
+            .limit(MAX_LIST_LIMIT)
             .get();
 
         // Verificar en `accounts` que ningún tenant EDU / TEST-PILOT / DEV entre al pool B2B
@@ -2465,7 +2504,10 @@ export class SupplyRepository {
             });
         }
 
-        const reqsSnap = await db.collection(SUPPLY_COLLECTIONS.REQUISITIONS).limit(1000).get();
+        const reqsSnap = await db
+            .collection(SUPPLY_COLLECTIONS.REQUISITIONS)
+            .limit(MAX_LIST_LIMIT)
+            .get();
         const observations: TenantDemandObservation[] = [];
 
         for (const doc of reqsSnap.docs) {

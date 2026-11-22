@@ -18,6 +18,8 @@ import {
     ReceiptIntelligencePipeline,
 } from '../application/ReceiptIntelligencePipeline';
 import { SUPPLY_COLLECTIONS, SupplyRepository } from '../application/SupplyRepository';
+import { SupplyTaskQueueService } from '../application/SupplyTaskQueueService';
+import type { MediaDigestionProfile } from '../../../contracts/media.contracts';
 import {
     type AtypicalFlagCode,
     checkGlobalHardDeny,
@@ -114,10 +116,29 @@ export interface WhatsAppCampSession {
     pendingBuffer: PendingBufferedTurn[];
     debounceUntilMs: number | null;
     processedWamids: string[];
+    version?: number;
+    ttlExpiresAt?: unknown;
     lastReplyText?: string;
     lastCommittedReqId?: string;
     lastCommittedPurchaseId?: string;
     updatedAt: string;
+}
+
+export type WamidStateStatus = 'QUEUED' | 'PROCESSING' | 'DONE' | 'FAILED';
+
+export interface WamidStateRecord {
+    wamid: string;
+    tenantId: string;
+    status: WamidStateStatus;
+    attempts: number;
+    leaseExpiresAtMs: number;
+    dispatchToken?: string | null;
+    lastError?: string | null;
+    processedAt?: string;
+    completedAt?: string;
+    failedAt?: string;
+    updatedAt: string;
+    ttlExpiresAt: unknown;
 }
 
 export interface ResolvedWhatsAppMember {
@@ -157,11 +178,14 @@ export interface HandleInboundOptions {
     inlineTedRawXml?: string;
     overrideMember?: ResolvedWhatsAppMember;
     skipOutboundSend?: boolean;
+    dispatchToken?: string;
 }
 
 const DEFAULT_DEBOUNCE_MS = 10_000;
 const MIN_DEBOUNCE_MS = 8_000;
 const MAX_DEBOUNCE_MS = 15_000;
+export const WAMID_LEASE_MS = 60_000;
+const MAX_SESSION_TX_RETRIES = 5;
 
 const AiMessageExtractionSchema = z.object({
     transcript: z.string().optional(),
@@ -377,16 +401,161 @@ export function parseDeterministicSpanishSupplyClauses(rawText: string): Array<{
     return parsed;
 }
 
+function safeWamidDocId(wamid: string): string {
+    return String(wamid || '')
+        .replace(/[^A-Za-z0-9._-]/g, '_')
+        .slice(0, 128);
+}
+
+function resolveInboundCasProfile(
+    mimeType?: string,
+    filename?: string,
+    isXmlContent: boolean = false
+): MediaDigestionProfile {
+    const lowerMime = String(mimeType || '').toLowerCase();
+    const lowerFile = String(filename || '').toLowerCase();
+    if (isXmlContent || lowerMime.includes('xml') || lowerFile.endsWith('.xml')) {
+        return 'XML_DTE_DOCUMENT';
+    }
+    if (lowerMime.includes('pdf') || lowerFile.endsWith('.pdf')) {
+        return 'PDF_HYBRID_OEM';
+    }
+    if (lowerMime.startsWith('image/')) {
+        return 'IMAGE_FIELD_EVIDENCE';
+    }
+    return 'VIDEO_FIELD_COMPACT';
+}
+
+function descriptorToEvidenceCasRef(descriptor: {
+    sha256: string;
+    phashHex?: string;
+    storagePath: string;
+    downloadUrl: string;
+    mimeType: string;
+    extension: string;
+    profile: MediaDigestionProfile;
+    originalBytes: number;
+    optimizedBytes: number;
+    savingsRatio: number;
+    savingsPct?: number;
+    originalFilename?: string;
+    createdAt: string;
+}): EvidenceCasRef {
+    return {
+        sha256: descriptor.sha256,
+        phashHex: descriptor.phashHex,
+        storagePath: descriptor.storagePath,
+        downloadUrl: descriptor.downloadUrl,
+        mimeType: descriptor.mimeType,
+        extension: descriptor.extension,
+        profile: descriptor.profile,
+        originalBytes: descriptor.originalBytes,
+        optimizedBytes: descriptor.optimizedBytes,
+        savingsRatio: descriptor.savingsRatio,
+        savingsPct:
+            typeof descriptor.savingsPct === 'number'
+                ? descriptor.savingsPct
+                : Number((descriptor.savingsRatio * 100).toFixed(1)),
+        originalFilename: descriptor.originalFilename,
+        createdAt: descriptor.createdAt,
+    };
+}
+
 export class CampChannel {
-    private static readonly activeTimers = new Map<string, NodeJS.Timeout>();
     /**
-     * Buffers efímeros en RAM (jamás persistidos como Base64 en Firestore)
-     * para medios transitorios de simulador/audio durante el turno activo.
+     * Serializador local por clave para evitar carreras intra-instancia en pruebas/contención;
+     * la autoridad de consistencia entre instancias Cloud Run reside 100% en `db.runTransaction`.
      */
-    private static readonly transientTurnMedia = new Map<
-        string,
-        { buffer?: Buffer; mimeType?: string; xmlContent?: string }
-    >();
+    private static readonly inProcessLocks = new Map<string, Promise<unknown>>();
+
+    private static async withKeyedLock<T>(lockKey: string, task: () => Promise<T>): Promise<T> {
+        const previous = this.inProcessLocks.get(lockKey) || Promise.resolve();
+        let release!: () => void;
+        const nextGate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const chained = previous.then(() => nextGate);
+        this.inProcessLocks.set(lockKey, chained);
+
+        await previous;
+        try {
+            return await task();
+        } finally {
+            release();
+            if (this.inProcessLocks.get(lockKey) === chained) {
+                this.inProcessLocks.delete(lockKey);
+            }
+        }
+    }
+
+    private static async runSessionTransaction<T>(
+        sessionId: string,
+        txBody: (tx: FirebaseFirestore.Transaction) => Promise<T>
+    ): Promise<T> {
+        return this.withKeyedLock(`session:${sessionId}`, async () => {
+            let lastErr: unknown;
+            for (let attempt = 1; attempt <= MAX_SESSION_TX_RETRIES; attempt++) {
+                try {
+                    if (typeof db.runTransaction === 'function') {
+                        return await db.runTransaction(txBody);
+                    }
+                    const fallbackTx: any = {
+                        get: (ref: any) => ref.get(),
+                        set: (ref: any, data: any, opts?: any) => ref.set(data, opts),
+                        update: (ref: any, patch: any) => ref.update(patch),
+                        delete: (ref: any) => ref.delete(),
+                    };
+                    return await txBody(fallbackTx);
+                } catch (err: any) {
+                    lastErr = err;
+                    const code = String(err?.code ?? '').toUpperCase();
+                    const msg = String(err?.message ?? '').toLowerCase();
+                    const retryable =
+                        code === '10' ||
+                        code === 'ABORTED' ||
+                        msg.includes('aborted') ||
+                        msg.includes('contention');
+                    if (!retryable || attempt >= MAX_SESSION_TX_RETRIES) {
+                        throw err;
+                    }
+                    await new Promise((r) => setTimeout(r, 25 * attempt));
+                }
+            }
+            throw lastErr;
+        });
+    }
+
+    private static async persistSessionFsmUpdate(
+        sessionId: string,
+        patch: Partial<
+            Pick<
+                WhatsAppCampSession,
+                | 'fsmState'
+                | 'draftItems'
+                | 'deniedNotices'
+                | 'pendingDirectPurchaseDraft'
+                | 'lastReplyText'
+                | 'lastCommittedReqId'
+                | 'lastCommittedPurchaseId'
+            >
+        >
+    ): Promise<WhatsAppCampSession> {
+        const sessionRef = db.collection(SUPPLY_COLLECTIONS.WHATSAPP_SESSIONS).doc(sessionId);
+        return this.runSessionTransaction(sessionId, async (tx) => {
+            const snap = await tx.get(sessionRef);
+            const current = (snap.exists ? snap.data() : {}) as WhatsAppCampSession;
+            const nextVersion = Number(current.version || 0) + 1;
+            const next: WhatsAppCampSession = {
+                ...current,
+                ...patch,
+                version: nextVersion,
+                ttlExpiresAt: SupplyRepository.computeWhatsAppSessionTtl(),
+                updatedAt: new Date().toISOString(),
+            };
+            tx.set(sessionRef, next, { merge: true });
+            return next;
+        });
+    }
 
     /**
      * Resuelve miembro activo y con consentimiento `whatsappOptInAt` buscando por teléfono E.164
@@ -535,36 +704,206 @@ export class CampChannel {
     }
 
     /**
-     * Verifica y reserva atómicamente idempotencia por `wamid` en `supply_whatsapp_wamids`.
+     * Pre-reserva rápida en el webhook (< 10ms) para descartar replays de Meta sin encolar duplicados,
+     * emitiendo un `dispatchToken` único para el worker Cloud Tasks que reclamará el `wamid`.
      */
-    private static async tryClaimWamid(wamid: string, tenantId: string): Promise<boolean> {
-        const safeId = wamid.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 128);
+    public static async preEnqueueWamidForWebhook(
+        wamid: string
+    ): Promise<{ shouldEnqueue: boolean; duplicate: boolean; dispatchToken?: string }> {
+        const safeId = safeWamidDocId(wamid);
         const ref = db.collection(SUPPLY_COLLECTIONS.WHATSAPP_WAMIDS).doc(safeId);
-        const payload = {
-            wamid,
-            tenantId,
-            processedAt: new Date().toISOString(),
-        };
 
-        if (typeof db.runTransaction === 'function') {
-            return db.runTransaction(async (tx) => {
+        return this.withKeyedLock(`wamid:${safeId}`, async () => {
+            const nowMs = Date.now();
+            const nowIso = new Date(nowMs).toISOString();
+            const dispatchToken = crypto.randomBytes(12).toString('hex');
+
+            const exec = async (tx: any) => {
                 const snap = await tx.get(ref);
-                if (snap.exists) return false;
-                tx.set(ref, payload);
-                return true;
-            });
-        }
+                if (snap.exists) {
+                    const cur = (snap.data() || {}) as Partial<WamidStateRecord>;
+                    const status = cur.status || 'DONE';
+                    const leaseExpiresAtMs = Number(cur.leaseExpiresAtMs || 0);
+                    if (
+                        status === 'DONE' ||
+                        ((status === 'PROCESSING' || status === 'QUEUED') && leaseExpiresAtMs > nowMs)
+                    ) {
+                        return { shouldEnqueue: false, duplicate: true };
+                    }
+                    const nextRec: WamidStateRecord = {
+                        wamid,
+                        tenantId: cur.tenantId || 'pending',
+                        status: 'QUEUED',
+                        attempts: Number(cur.attempts || 0),
+                        leaseExpiresAtMs: nowMs + WAMID_LEASE_MS,
+                        dispatchToken,
+                        lastError: null,
+                        updatedAt: nowIso,
+                        ttlExpiresAt: SupplyRepository.computeWhatsAppWamidTtl(nowMs),
+                    };
+                    tx.set(ref, nextRec);
+                    return { shouldEnqueue: true, duplicate: false, dispatchToken };
+                }
 
-        const snap = await ref.get();
-        if (snap.exists) {
-            return false;
-        }
-        await ref.set(payload);
-        return true;
+                const freshRec: WamidStateRecord = {
+                    wamid,
+                    tenantId: 'pending',
+                    status: 'QUEUED',
+                    attempts: 0,
+                    leaseExpiresAtMs: nowMs + WAMID_LEASE_MS,
+                    dispatchToken,
+                    lastError: null,
+                    updatedAt: nowIso,
+                    ttlExpiresAt: SupplyRepository.computeWhatsAppWamidTtl(nowMs),
+                };
+                tx.set(ref, freshRec);
+                return { shouldEnqueue: true, duplicate: false, dispatchToken };
+            };
+
+            if (typeof db.runTransaction === 'function') {
+                return db.runTransaction(exec);
+            }
+            return exec({
+                get: (r: any) => r.get(),
+                set: (r: any, d: any) => r.set(d),
+            });
+        });
     }
 
     /**
-     * Punto de entrada principal para mensajes entrantes de WhatsApp (webhook o simulador).
+     * Máquina de estados transaccional de idempotencia por `wamid` (`supply_whatsapp_wamids/{wamid}`):
+     * - Estados: `QUEUED | PROCESSING | DONE | FAILED`, `attempts`, `leaseExpiresAtMs` (60s), `ttlExpiresAt` (7d).
+     * - Si `DONE` -> rechaza duplicado (`false`).
+     * - Si no existe, o `FAILED`, o `PROCESSING` con lease expirado, o `QUEUED` con `dispatchToken` válido ->
+     *   reclama atómicamente (`PROCESSING`, `attempts + 1`) y retorna `true`.
+     */
+    public static async tryClaimWamid(
+        wamid: string,
+        tenantId: string,
+        dispatchToken?: string
+    ): Promise<boolean> {
+        const safeId = safeWamidDocId(wamid);
+        const ref = db.collection(SUPPLY_COLLECTIONS.WHATSAPP_WAMIDS).doc(safeId);
+
+        return this.withKeyedLock(`wamid:${safeId}`, async () => {
+            const nowMs = Date.now();
+            const nowIso = new Date(nowMs).toISOString();
+
+            const exec = async (tx: any): Promise<boolean> => {
+                const snap = await tx.get(ref);
+                if (!snap.exists) {
+                    const freshRec: WamidStateRecord = {
+                        wamid,
+                        tenantId,
+                        status: 'PROCESSING',
+                        attempts: 1,
+                        leaseExpiresAtMs: nowMs + WAMID_LEASE_MS,
+                        dispatchToken: dispatchToken || null,
+                        lastError: null,
+                        processedAt: nowIso,
+                        updatedAt: nowIso,
+                        ttlExpiresAt: SupplyRepository.computeWhatsAppWamidTtl(nowMs),
+                    };
+                    tx.set(ref, freshRec);
+                    return true;
+                }
+
+                const cur = (snap.data() || {}) as Partial<WamidStateRecord>;
+                const status = cur.status || 'DONE';
+                const prevAttempts = Number(cur.attempts || 0);
+                const leaseExpiresAtMs = Number(cur.leaseExpiresAtMs || 0);
+
+                if (status === 'DONE') {
+                    return false;
+                }
+
+                const canReclaim =
+                    status === 'FAILED' ||
+                    (status === 'PROCESSING' && leaseExpiresAtMs <= nowMs) ||
+                    (status === 'QUEUED' &&
+                        ((Boolean(dispatchToken) && cur.dispatchToken === dispatchToken) ||
+                            leaseExpiresAtMs <= nowMs));
+
+                if (!canReclaim) {
+                    return false;
+                }
+
+                const claimedRec: WamidStateRecord = {
+                    wamid,
+                    tenantId,
+                    status: 'PROCESSING',
+                    attempts: prevAttempts + 1,
+                    leaseExpiresAtMs: nowMs + WAMID_LEASE_MS,
+                    dispatchToken: dispatchToken || cur.dispatchToken || null,
+                    lastError: null,
+                    processedAt: cur.processedAt || nowIso,
+                    updatedAt: nowIso,
+                    ttlExpiresAt: SupplyRepository.computeWhatsAppWamidTtl(nowMs),
+                };
+                tx.set(ref, claimedRec);
+                return true;
+            };
+
+            if (typeof db.runTransaction === 'function') {
+                return db.runTransaction(exec);
+            }
+            return exec({
+                get: (r: any) => r.get(),
+                set: (r: any, d: any) => r.set(d),
+            });
+        });
+    }
+
+    public static async markWamidDone(wamid: string, tenantId: string): Promise<void> {
+        const safeId = safeWamidDocId(wamid);
+        const ref = db.collection(SUPPLY_COLLECTIONS.WHATSAPP_WAMIDS).doc(safeId);
+        const nowMs = Date.now();
+        const nowIso = new Date(nowMs).toISOString();
+        await this.withKeyedLock(`wamid:${safeId}`, async () => {
+            await ref.set(
+                {
+                    wamid,
+                    tenantId,
+                    status: 'DONE' as WamidStateStatus,
+                    leaseExpiresAtMs: 0,
+                    lastError: null,
+                    completedAt: nowIso,
+                    updatedAt: nowIso,
+                    ttlExpiresAt: SupplyRepository.computeWhatsAppWamidTtl(nowMs),
+                },
+                { merge: true }
+            );
+        });
+    }
+
+    public static async markWamidFailed(
+        wamid: string,
+        tenantId: string,
+        errorMessage: string
+    ): Promise<void> {
+        const safeId = safeWamidDocId(wamid);
+        const ref = db.collection(SUPPLY_COLLECTIONS.WHATSAPP_WAMIDS).doc(safeId);
+        const nowMs = Date.now();
+        const nowIso = new Date(nowMs).toISOString();
+        await this.withKeyedLock(`wamid:${safeId}`, async () => {
+            await ref.set(
+                {
+                    wamid,
+                    tenantId,
+                    status: 'FAILED' as WamidStateStatus,
+                    leaseExpiresAtMs: 0,
+                    lastError: String(errorMessage || 'UnknownError').slice(0, 300),
+                    failedAt: nowIso,
+                    updatedAt: nowIso,
+                    ttlExpiresAt: SupplyRepository.computeWhatsAppWamidTtl(nowMs),
+                },
+                { merge: true }
+            );
+        });
+    }
+
+    /**
+     * Punto de entrada principal para mensajes entrantes de WhatsApp (worker Cloud Tasks o simulador).
      */
     public static async handleInboundMessage(
         message: InboundWhatsAppMessage,
@@ -589,8 +928,12 @@ export class CampChannel {
             };
         }
 
-        // 1. Idempotencia estricta por `wamid`
-        const claimed = await this.tryClaimWamid(message.wamid, member.tenantId);
+        // 1. Idempotencia transaccional con máquina de estados por `wamid`
+        const claimed = await this.tryClaimWamid(
+            message.wamid,
+            member.tenantId,
+            options.dispatchToken
+        );
         if (!claimed) {
             return {
                 handled: false,
@@ -599,160 +942,177 @@ export class CampChannel {
             };
         }
 
-        await MetaWhatsAppCloudAdapter.markAsRead(message.wamid);
+        try {
+            await MetaWhatsAppCloudAdapter.markAsRead(message.wamid);
 
-        // 2. Cargar o inicializar sesión en Firestore `supply_whatsapp_sessions`
-        const sessionId = buildSessionId(member.tenantId, member.phoneE164);
-        const sessionRef = db.collection(SUPPLY_COLLECTIONS.WHATSAPP_SESSIONS).doc(sessionId);
-        const sessionSnap = await sessionRef.get();
-        const nowIso = new Date().toISOString();
+            const sessionId = buildSessionId(member.tenantId, member.phoneE164);
+            const sessionRef = db.collection(SUPPLY_COLLECTIONS.WHATSAPP_SESSIONS).doc(sessionId);
 
-        const session: WhatsAppCampSession = sessionSnap.exists
-            ? (sessionSnap.data() as WhatsAppCampSession)
-            : {
-                  sessionId,
-                  tenantId: member.tenantId,
-                  siteId: member.siteId,
-                  memberUid: member.uid,
-                  memberName: member.displayName,
-                  memberRole: member.supplyProfile.role,
-                  phoneE164: member.phoneE164,
-                  fsmState: 'COLLECTING',
-                  draftItems: [],
-                  deniedNotices: [],
-                  pendingDirectPurchaseDraft: null,
-                  pendingBuffer: [],
-                  debounceUntilMs: null,
-                  processedWamids: [],
-                  updatedAt: nowIso,
-              };
+            // 2. Pre-digestión Stateless CAS (`TENANT_PRIVATE`) — CERO base64 en Firestore, CERO dependencia de RAM
+            let effectiveMime = options.inlineMediaMimeType || message.mimeType;
+            let preDigestedCasRef: EvidenceCasRef | undefined;
 
-        if (session.processedWamids.includes(message.wamid)) {
-            return { handled: false, duplicate: true, sessionId };
-        }
+            let stageBuffer: Buffer | undefined = options.inlineMediaBuffer;
+            let stageIsXml = Boolean(options.inlineXmlContent);
 
-        const effectiveMime = options.inlineMediaMimeType || message.mimeType;
-        let preDigestedCasRef: EvidenceCasRef | undefined;
-
-        // CERO base64 en Firestore: pre-digerir imágenes/PDF/XML hacia CAS (`TENANT_PRIVATE`) antes de persistir sesión
-        if (
-            options.inlineMediaBuffer &&
-            options.inlineMediaBuffer.length > 0 &&
-            message.type !== 'audio'
-        ) {
-            const profile =
-                effectiveMime?.includes('pdf')
-                    ? 'PDF_HYBRID_OEM'
-                    : effectiveMime?.startsWith('image/')
-                      ? 'IMAGE_FIELD_EVIDENCE'
-                      : 'VIDEO_FIELD_COMPACT';
-            const { descriptor } = await CasStorageService.digestAndStore(
-                options.inlineMediaBuffer,
-                effectiveMime || 'image/jpeg',
-                profile,
-                {
-                    scope: 'TENANT_PRIVATE',
-                    tenantId: member.tenantId,
-                    actorUid: member.uid,
-                    originalFilename: message.filename || 'wa_inbound_media',
-                    clientOriginalBytes: options.inlineMediaBuffer.length,
+            if (!stageBuffer && options.inlineXmlContent && options.inlineXmlContent.trim()) {
+                stageBuffer = Buffer.from(options.inlineXmlContent, 'utf8');
+                effectiveMime = effectiveMime || 'application/xml';
+                stageIsXml = true;
+            } else if (!stageBuffer && message.mediaId && (message.type === 'image' || message.type === 'document' || message.type === 'audio')) {
+                try {
+                    const downloaded = await MetaWhatsAppCloudAdapter.downloadMedia(message.mediaId);
+                    if (downloaded.buffer.length > 0) {
+                        stageBuffer = downloaded.buffer;
+                        effectiveMime = downloaded.mimeType || effectiveMime;
+                    }
+                } catch {
+                    // Mantener `message.mediaId` para reintento en worker de flush si Meta CDN falla transitoriamente
                 }
-            );
-            preDigestedCasRef = {
-                sha256: descriptor.sha256,
-                phashHex: descriptor.phashHex,
-                storagePath: descriptor.storagePath,
-                downloadUrl: descriptor.downloadUrl,
-                mimeType: descriptor.mimeType,
-                extension: descriptor.extension,
-                profile: descriptor.profile,
-                originalBytes: descriptor.originalBytes,
-                optimizedBytes: descriptor.optimizedBytes,
-                savingsRatio: descriptor.savingsRatio,
-                savingsPct:
-                    typeof descriptor.savingsPct === 'number'
-                        ? descriptor.savingsPct
-                        : Number((descriptor.savingsRatio * 100).toFixed(1)),
-                originalFilename: descriptor.originalFilename,
-                createdAt: descriptor.createdAt,
-            };
-        }
+            }
 
-        // Buffers efímeros (audio .ogg o xmlContent) se mantienen únicamente en RAM durante el turno
-        if (options.inlineMediaBuffer || options.inlineXmlContent) {
-            this.transientTurnMedia.set(message.wamid, {
-                buffer: options.inlineMediaBuffer,
+            if (stageBuffer && stageBuffer.length > 0) {
+                const casProfile = resolveInboundCasProfile(effectiveMime, message.filename, stageIsXml);
+                const resolvedMime =
+                    casProfile === 'XML_DTE_DOCUMENT'
+                        ? 'application/xml'
+                        : effectiveMime ||
+                          (message.type === 'audio' ? 'audio/ogg' : 'image/jpeg');
+                const { descriptor } = await CasStorageService.digestAndStore(
+                    stageBuffer,
+                    resolvedMime,
+                    casProfile,
+                    {
+                        scope: 'TENANT_PRIVATE',
+                        tenantId: member.tenantId,
+                        actorUid: member.uid,
+                        originalFilename:
+                            message.filename ||
+                            (casProfile === 'XML_DTE_DOCUMENT'
+                                ? 'wa_inbound_dte.xml'
+                                : message.type === 'audio'
+                                  ? 'wa_inbound_audio.ogg'
+                                  : 'wa_inbound_media'),
+                        clientOriginalBytes: stageBuffer.length,
+                    }
+                );
+                preDigestedCasRef = descriptorToEvidenceCasRef(descriptor);
+                effectiveMime = descriptor.mimeType;
+            }
+
+            const turnEntry: PendingBufferedTurn = {
+                wamid: message.wamid,
+                receivedAtMs: message.timestampMs || Date.now(),
+                type: message.type,
+                text: message.textBody,
+                interactiveReplyId: message.interactiveReplyId,
+                mediaId: message.mediaId,
                 mimeType: effectiveMime,
-                xmlContent: options.inlineXmlContent,
-            });
-        }
-
-        const turnEntry: PendingBufferedTurn = {
-            wamid: message.wamid,
-            receivedAtMs: message.timestampMs || Date.now(),
-            type: message.type,
-            text: message.textBody,
-            interactiveReplyId: message.interactiveReplyId,
-            mediaId: message.mediaId,
-            mimeType: effectiveMime,
-            caption: message.caption,
-            filename: message.filename,
-            evidenceCasRef: preDigestedCasRef,
-            tedRawXml: options.inlineTedRawXml,
-        };
-
-        session.pendingBuffer = [...(session.pendingBuffer || []), turnEntry];
-        session.processedWamids = [...(session.processedWamids || []).slice(-99), message.wamid];
-
-        const rawTextCommand = (message.interactiveReplyId || message.textBody || '').trim();
-        const isImmediateAction =
-            Boolean(options.flushImmediately) ||
-            message.type === 'interactive' ||
-            CONFIRM_REGEX.test(rawTextCommand) ||
-            CANCEL_REGEX.test(rawTextCommand) ||
-            this.isExecutiveDirectPurchaseTurn(member, turnEntry, Boolean(options.inlineXmlContent));
-
-        if (!isImmediateAction) {
-            const debounceMs = clampDebounceMs(options.debounceWindowMs);
-            session.debounceUntilMs = Date.now() + debounceMs;
-            session.updatedAt = new Date().toISOString();
-            await sessionRef.set(session, { merge: true });
-
-            // Programar flush local no bloqueante (respetando debounceUntilMs en Firestore)
-            const prevTimer = this.activeTimers.get(sessionId);
-            if (prevTimer) clearTimeout(prevTimer);
-            const timer = setTimeout(() => {
-                this.activeTimers.delete(sessionId);
-                void this.flushDebouncedSession(sessionId, member, {
-                    skipOutboundSend: options.skipOutboundSend,
-                }).catch(() => {});
-            }, debounceMs + 50);
-            if (typeof timer.unref === 'function') timer.unref();
-            this.activeTimers.set(sessionId, timer);
-
-            return {
-                handled: true,
-                buffered: true,
-                sessionId,
-                fsmState: session.fsmState,
+                caption: message.caption,
+                filename: message.filename,
+                evidenceCasRef: preDigestedCasRef,
+                tedRawXml: options.inlineTedRawXml,
             };
+
+            const rawTextCommand = (message.interactiveReplyId || message.textBody || '').trim();
+            const isImmediateAction =
+                Boolean(options.flushImmediately) ||
+                message.type === 'interactive' ||
+                CONFIRM_REGEX.test(rawTextCommand) ||
+                CANCEL_REGEX.test(rawTextCommand) ||
+                this.isExecutiveDirectPurchaseTurn(member, turnEntry, stageIsXml);
+
+            const debounceMs = clampDebounceMs(options.debounceWindowMs);
+            const targetDebounceUntilMs = isImmediateAction ? null : Date.now() + debounceMs;
+
+            // 3. Append atómico en `supply_whatsapp_sessions/{sessionId}` con `version` optimista + TTL 24h
+            const appendOutcome = await this.runSessionTransaction(sessionId, async (tx) => {
+                const sessionSnap = await tx.get(sessionRef);
+                const nowIso = new Date().toISOString();
+
+                const session: WhatsAppCampSession = sessionSnap.exists
+                    ? (sessionSnap.data() as WhatsAppCampSession)
+                    : {
+                          sessionId,
+                          tenantId: member.tenantId,
+                          siteId: member.siteId,
+                          memberUid: member.uid,
+                          memberName: member.displayName,
+                          memberRole: member.supplyProfile.role,
+                          phoneE164: member.phoneE164,
+                          fsmState: 'COLLECTING',
+                          draftItems: [],
+                          deniedNotices: [],
+                          pendingDirectPurchaseDraft: null,
+                          pendingBuffer: [],
+                          debounceUntilMs: null,
+                          processedWamids: [],
+                          version: 0,
+                          updatedAt: nowIso,
+                      };
+
+                if ((session.processedWamids || []).includes(message.wamid)) {
+                    return { duplicate: true as const, session };
+                }
+
+                const nextSession: WhatsAppCampSession = {
+                    ...session,
+                    pendingBuffer: [...(session.pendingBuffer || []), turnEntry],
+                    processedWamids: [...(session.processedWamids || []).slice(-99), message.wamid],
+                    debounceUntilMs: targetDebounceUntilMs,
+                    version: Number(session.version || 0) + 1,
+                    ttlExpiresAt: SupplyRepository.computeWhatsAppSessionTtl(),
+                    updatedAt: nowIso,
+                };
+                tx.set(sessionRef, nextSession);
+                return { duplicate: false as const, session: nextSession };
+            });
+
+            if (appendOutcome.duplicate) {
+                await this.markWamidDone(message.wamid, member.tenantId);
+                return { handled: false, duplicate: true, sessionId };
+            }
+
+            if (!isImmediateAction && targetDebounceUntilMs !== null) {
+                await SupplyTaskQueueService.enqueueSessionFlush(
+                    {
+                        sessionId,
+                        tenantId: member.tenantId,
+                        expectedDebounceUntilMs: targetDebounceUntilMs,
+                        skipOutboundSend: options.skipOutboundSend,
+                    },
+                    targetDebounceUntilMs
+                );
+
+                await this.markWamidDone(message.wamid, member.tenantId);
+                return {
+                    handled: true,
+                    buffered: true,
+                    sessionId,
+                    fsmState: appendOutcome.session.fsmState,
+                };
+            }
+
+            const flushResult = await this.flushDebouncedSession(sessionId, member, {
+                skipOutboundSend: options.skipOutboundSend,
+                forceFlush: true,
+            });
+            await this.markWamidDone(message.wamid, member.tenantId);
+            return flushResult;
+        } catch (err: any) {
+            await this.markWamidFailed(
+                message.wamid,
+                member.tenantId,
+                err instanceof Error ? err.message : String(err || 'UnknownError')
+            ).catch(() => {});
+            throw err;
         }
-
-        // Guardar buffer y ejecutar turno consolidado de inmediato
-        session.debounceUntilMs = null;
-        session.updatedAt = new Date().toISOString();
-        await sessionRef.set(session, { merge: true });
-
-        return this.flushDebouncedSession(sessionId, member, {
-            skipOutboundSend: options.skipOutboundSend,
-            forceFlush: true,
-        });
     }
 
     private static isExecutiveDirectPurchaseTurn(
         member: ResolvedWhatsAppMember,
         turn: PendingBufferedTurn,
-        hasTransientXml: boolean = false
+        hasXmlContent: boolean = false
     ): boolean {
         const canDirect =
             member.supplyProfile.canRecordDirectPurchase ||
@@ -763,8 +1123,9 @@ export class CampChannel {
 
         const hasReceiptMedia =
             turn.type === 'document' ||
-            hasTransientXml ||
-            Boolean(this.transientTurnMedia.get(turn.wamid)?.xmlContent) ||
+            hasXmlContent ||
+            turn.evidenceCasRef?.profile === 'XML_DTE_DOCUMENT' ||
+            Boolean(turn.mimeType && turn.mimeType.toLowerCase().includes('xml')) ||
             Boolean(turn.tedRawXml) ||
             (turn.type === 'image' &&
                 (member.supplyProfile.role === 'OWNER_EXEC' ||
@@ -778,42 +1139,73 @@ export class CampChannel {
 
     /**
      * Procesa todos los mensajes acumulados en `session.pendingBuffer` en UN solo turno consolidado
-     * y emite UNA sola burbuja de respuesta.
+     * drenando el buffer atómicamente vía `db.runTransaction` (sin lost updates ni dobles flushes).
      */
     public static async flushDebouncedSession(
         sessionId: string,
         memberOverride?: ResolvedWhatsAppMember,
-        options: { skipOutboundSend?: boolean; forceFlush?: boolean } = {}
+        options: {
+            skipOutboundSend?: boolean;
+            forceFlush?: boolean;
+            expectedDebounceUntilMs?: number;
+        } = {}
     ): Promise<CampChannelProcessResult> {
         const sessionRef = db.collection(SUPPLY_COLLECTIONS.WHATSAPP_SESSIONS).doc(sessionId);
-        const snap = await sessionRef.get();
-        if (!snap.exists) {
+
+        // 1. Verificar `debounceUntilMs` y drenar `pendingBuffer` atómicamente dentro de `db.runTransaction`
+        const drainResult = await this.runSessionTransaction(sessionId, async (tx) => {
+            const snap = await tx.get(sessionRef);
+            if (!snap.exists) {
+                return { status: 'NOT_FOUND' as const };
+            }
+
+            const current = snap.data() as WhatsAppCampSession;
+            const bufferedTurns = current.pendingBuffer || [];
+            if (bufferedTurns.length === 0) {
+                return { status: 'EMPTY' as const, fsmState: current.fsmState };
+            }
+
+            if (
+                !options.forceFlush &&
+                typeof current.debounceUntilMs === 'number' &&
+                Date.now() < current.debounceUntilMs
+            ) {
+                return { status: 'STILL_DEBOUNCING' as const, fsmState: current.fsmState };
+            }
+
+            const drainedSession: WhatsAppCampSession = {
+                ...current,
+                pendingBuffer: [],
+                debounceUntilMs: null,
+                version: Number(current.version || 0) + 1,
+                ttlExpiresAt: SupplyRepository.computeWhatsAppSessionTtl(),
+                updatedAt: new Date().toISOString(),
+            };
+            tx.set(sessionRef, drainedSession);
+            return {
+                status: 'DRAINED' as const,
+                session: drainedSession,
+                bufferedTurns: [...bufferedTurns],
+            };
+        });
+
+        if (drainResult.status === 'NOT_FOUND') {
             return { handled: false, sessionId };
         }
-
-        const session = snap.data() as WhatsAppCampSession;
-        const bufferedTurns = session.pendingBuffer || [];
-        if (bufferedTurns.length === 0) {
-            return { handled: false, sessionId, fsmState: session.fsmState };
+        if (drainResult.status === 'EMPTY') {
+            return { handled: false, sessionId, fsmState: drainResult.fsmState };
+        }
+        if (drainResult.status === 'STILL_DEBOUNCING') {
+            return { handled: true, buffered: true, sessionId, fsmState: drainResult.fsmState };
         }
 
-        if (
-            !options.forceFlush &&
-            typeof session.debounceUntilMs === 'number' &&
-            Date.now() < session.debounceUntilMs
-        ) {
-            return { handled: true, buffered: true, sessionId, fsmState: session.fsmState };
-        }
+        const { session, bufferedTurns } = drainResult;
 
         const member =
             memberOverride || (await this.resolveMemberByPhone(session.phoneE164));
         if (!member) {
             return { handled: false, unauthorized: true, sessionId };
         }
-
-        // Vaciar buffer atómicamente antes de procesar
-        session.pendingBuffer = [];
-        session.debounceUntilMs = null;
 
         // 1. Verificar atajo Ejecutivo de Compra Directa (foto/PDF/XML reenviado por OWNER/BUYER/ADMIN)
         const directTurn = bufferedTurns.find((t) => this.isExecutiveDirectPurchaseTurn(member, t));
@@ -830,16 +1222,16 @@ export class CampChannel {
 
         if (session.pendingDirectPurchaseDraft) {
             if (CANCEL_REGEX.test(combinedCommands)) {
-                session.pendingDirectPurchaseDraft = null;
-                session.fsmState = 'COLLECTING';
                 const replyText = 'Registro de compra directa cancelado. No se realizaron cargos ni movimientos.';
-                session.lastReplyText = replyText;
-                session.updatedAt = new Date().toISOString();
-                await sessionRef.set(session, { merge: true });
+                await this.persistSessionFsmUpdate(sessionId, {
+                    pendingDirectPurchaseDraft: null,
+                    fsmState: 'COLLECTING',
+                    lastReplyText: replyText,
+                });
                 if (!options.skipOutboundSend) {
                     await MetaWhatsAppCloudAdapter.sendTextMessage(member.phoneE164, replyText);
                 }
-                return { handled: true, sessionId, fsmState: session.fsmState, replyText };
+                return { handled: true, sessionId, fsmState: 'COLLECTING', replyText };
             }
 
             if (CONFIRM_REGEX.test(combinedCommands)) {
@@ -849,17 +1241,17 @@ export class CampChannel {
 
         // 3. Verificar cancelación de borrador de requisición
         if (CANCEL_REGEX.test(combinedCommands)) {
-            session.draftItems = [];
-            session.deniedNotices = [];
-            session.fsmState = 'COLLECTING';
             const replyText = 'Pedido borrador cancelado. Cuando necesites solicitar insumos, escríbeme o envíame un audio.';
-            session.lastReplyText = replyText;
-            session.updatedAt = new Date().toISOString();
-            await sessionRef.set(session, { merge: true });
+            await this.persistSessionFsmUpdate(sessionId, {
+                draftItems: [],
+                deniedNotices: [],
+                fsmState: 'COLLECTING',
+                lastReplyText: replyText,
+            });
             if (!options.skipOutboundSend) {
                 await MetaWhatsAppCloudAdapter.sendTextMessage(member.phoneE164, replyText);
             }
-            return { handled: true, sessionId, fsmState: session.fsmState, replyText };
+            return { handled: true, sessionId, fsmState: 'COLLECTING', replyText };
         }
 
         // 4. Verificar confirmación explícita en REVIEW_GATE -> COMMITTED
@@ -867,7 +1259,7 @@ export class CampChannel {
             return this.commitCampRequisition(session, sessionRef, member, options);
         }
 
-        // 5. Extraer ítems desde todos los turnos acumulados (texto + audio .ogg + foto CAS)
+        // 5. Extraer ítems desde todos los turnos acumulados (texto + audio .ogg CAS + foto CAS)
         const extractedItems: Array<{
             rawText: string;
             itemName: string;
@@ -886,42 +1278,54 @@ export class CampChannel {
             if (turn.text) textFragments.push(turn.text);
             if (turn.caption) textFragments.push(turn.caption);
 
-            const transient = this.transientTurnMedia.get(turn.wamid);
-            this.transientTurnMedia.delete(turn.wamid);
-
-            if (turn.type === 'audio' && (turn.mediaId || transient?.buffer)) {
-                const audioBuf = transient?.buffer
-                    ? transient.buffer
-                    : (await MetaWhatsAppCloudAdapter.downloadMedia(turn.mediaId!)).buffer;
-                const audioMime = transient?.mimeType || turn.mimeType || 'audio/ogg';
-                const aiAudio = await this.extractIntentFromMultimodal({
-                    tenantId: member.tenantId,
-                    textPrompt:
-                        'Transcribe este audio de terreno minero chileno y extrae cada insumo solicitado con su cantidad, unidad/envase y atributos (talla/equipo/ubicación) en JSON estricto.',
-                    media: [{ mimeType: audioMime, dataBase64: audioBuf.toString('base64') }],
-                });
-                for (const it of aiAudio.items) {
-                    extractedItems.push({
-                        rawText: it.rawText,
-                        itemName: it.itemName,
-                        quantity: it.quantity ?? null,
-                        unitRaw: it.unitRaw ?? null,
-                        packagingUnit: it.packagingUnit ?? null,
-                        size: it.size ?? null,
-                        location: it.location ?? null,
-                        linkedAssetId: it.linkedAssetId ?? null,
+            if (turn.type === 'audio' && (turn.evidenceCasRef || turn.mediaId)) {
+                let audioBuf: Buffer | undefined;
+                let audioMime = turn.mimeType || 'audio/ogg';
+                if (turn.evidenceCasRef) {
+                    const blob = await CasStorageService.readCasBlob(turn.evidenceCasRef.sha256, {
+                        scope: 'TENANT_PRIVATE',
+                        tenantId: member.tenantId,
                     });
+                    if (blob) {
+                        audioBuf = blob.buffer;
+                        audioMime = blob.contentType || audioMime;
+                    }
                 }
-                if (aiAudio.transcript && aiAudio.items.length === 0) {
-                    textFragments.push(aiAudio.transcript);
+                if (!audioBuf && turn.mediaId) {
+                    const downloaded = await MetaWhatsAppCloudAdapter.downloadMedia(turn.mediaId);
+                    audioBuf = downloaded.buffer;
+                    audioMime = downloaded.mimeType || audioMime;
                 }
-            } else if (turn.type === 'image' && (turn.evidenceCasRef || turn.mediaId || transient?.buffer)) {
+                if (audioBuf && audioBuf.length > 0) {
+                    const aiAudio = await this.extractIntentFromMultimodal({
+                        tenantId: member.tenantId,
+                        textPrompt:
+                            'Transcribe este audio de terreno minero chileno y extrae cada insumo solicitado con su cantidad, unidad/envase y atributos (talla/equipo/ubicación) en JSON estricto.',
+                        media: [{ mimeType: audioMime, dataBase64: audioBuf.toString('base64') }],
+                    });
+                    for (const it of aiAudio.items) {
+                        extractedItems.push({
+                            rawText: it.rawText,
+                            itemName: it.itemName,
+                            quantity: it.quantity ?? null,
+                            unitRaw: it.unitRaw ?? null,
+                            packagingUnit: it.packagingUnit ?? null,
+                            size: it.size ?? null,
+                            location: it.location ?? null,
+                            linkedAssetId: it.linkedAssetId ?? null,
+                        });
+                    }
+                    if (aiAudio.transcript && aiAudio.items.length === 0) {
+                        textFragments.push(aiAudio.transcript);
+                    }
+                }
+            } else if (turn.type === 'image' && (turn.evidenceCasRef || turn.mediaId)) {
                 let casRef = turn.evidenceCasRef;
                 let ocrBuf: Buffer | undefined;
                 let ocrMime = turn.mimeType || 'image/webp';
 
                 if (casRef) {
-                    const blob = await CasStorageService.readCasBlob(casRef.storagePath || casRef.sha256, {
+                    const blob = await CasStorageService.readCasBlob(casRef.sha256, {
                         scope: 'TENANT_PRIVATE',
                         tenantId: member.tenantId,
                     });
@@ -929,11 +1333,10 @@ export class CampChannel {
                         ocrBuf = blob.buffer;
                         ocrMime = blob.contentType;
                     }
-                } else {
-                    const imgBuf = transient?.buffer
-                        ? transient.buffer
-                        : (await MetaWhatsAppCloudAdapter.downloadMedia(turn.mediaId!)).buffer;
-                    const imgMime = transient?.mimeType || turn.mimeType || 'image/jpeg';
+                } else if (turn.mediaId) {
+                    const downloaded = await MetaWhatsAppCloudAdapter.downloadMedia(turn.mediaId);
+                    const imgBuf = downloaded.buffer;
+                    const imgMime = downloaded.mimeType || turn.mimeType || 'image/jpeg';
 
                     // Digestión CAS obligatoria (`TENANT_PRIVATE`, cero crudos/base64 en Firestore)
                     const { descriptor, digested } = await CasStorageService.digestAndStore(
@@ -948,24 +1351,7 @@ export class CampChannel {
                             clientOriginalBytes: imgBuf.length,
                         }
                     );
-                    casRef = {
-                        sha256: descriptor.sha256,
-                        phashHex: descriptor.phashHex,
-                        storagePath: descriptor.storagePath,
-                        downloadUrl: descriptor.downloadUrl,
-                        mimeType: descriptor.mimeType,
-                        extension: descriptor.extension,
-                        profile: descriptor.profile,
-                        originalBytes: descriptor.originalBytes,
-                        optimizedBytes: descriptor.optimizedBytes,
-                        savingsRatio: descriptor.savingsRatio,
-                        savingsPct:
-                            typeof descriptor.savingsPct === 'number'
-                                ? descriptor.savingsPct
-                                : Number((descriptor.savingsRatio * 100).toFixed(1)),
-                        originalFilename: descriptor.originalFilename,
-                        createdAt: descriptor.createdAt,
-                    };
+                    casRef = descriptorToEvidenceCasRef(descriptor);
                     ocrBuf = digested.buffer;
                     ocrMime = digested.mimeType;
                 }
@@ -1124,23 +1510,25 @@ export class CampChannel {
 
         // Si no quedó ningún ítem válido tras POLICY_CHECK
         if (updatedDrafts.length === 0) {
-            session.fsmState = 'COLLECTING';
             const denyBlock =
                 deniedItems.length > 0
                     ? `No se pueden solicitar los siguientes ítems:\n${deniedItems
                           .map((d) => `- ${d.rawText}: ${d.reason}`)
                           .join('\n')}`
                     : 'No logré identificar insumos válidos en tu mensaje. Indícame qué necesitas y la cantidad.';
-            session.lastReplyText = denyBlock;
-            session.updatedAt = new Date().toISOString();
-            await sessionRef.set(session, { merge: true });
+            await this.persistSessionFsmUpdate(sessionId, {
+                fsmState: 'COLLECTING',
+                draftItems: updatedDrafts,
+                deniedNotices: session.deniedNotices,
+                lastReplyText: denyBlock,
+            });
             if (!options.skipOutboundSend) {
                 await MetaWhatsAppCloudAdapter.sendTextMessage(member.phoneE164, denyBlock);
             }
             return {
                 handled: true,
                 sessionId,
-                fsmState: session.fsmState,
+                fsmState: 'COLLECTING',
                 replyText: denyBlock,
                 deniedItems,
                 atypicalFlags: [],
@@ -1157,7 +1545,6 @@ export class CampChannel {
                 : '';
 
         if (incompleteItems.length > 0) {
-            session.fsmState = 'SLOT_FILLING';
             const completeItems = updatedDrafts.filter((d) => d.missingSlots.length === 0);
             const completeSummary =
                 completeItems.length > 0
@@ -1169,16 +1556,19 @@ export class CampChannel {
             const questions = incompleteItems.map((it) => `- ${buildSlotQuestionForItem(it)}`).join('\n');
             const replyText = `${denyPrefix}${completeSummary}Para completar tu pedido necesito:\n${questions}`;
 
-            session.lastReplyText = replyText;
-            session.updatedAt = new Date().toISOString();
-            await sessionRef.set(session, { merge: true });
+            await this.persistSessionFsmUpdate(sessionId, {
+                fsmState: 'SLOT_FILLING',
+                draftItems: updatedDrafts,
+                deniedNotices: session.deniedNotices,
+                lastReplyText: replyText,
+            });
             if (!options.skipOutboundSend) {
                 await MetaWhatsAppCloudAdapter.sendTextMessage(member.phoneE164, replyText);
             }
             return {
                 handled: true,
                 sessionId,
-                fsmState: session.fsmState,
+                fsmState: 'SLOT_FILLING',
                 replyText,
                 deniedItems,
                 atypicalFlags: allAtypicalFlags,
@@ -1186,7 +1576,6 @@ export class CampChannel {
         }
 
         // Todos los slots completos -> REVIEW_GATE con botones interactivos
-        session.fsmState = 'REVIEW_GATE';
         const numberedLines = updatedDrafts.map((it, idx) => {
             const packNote = it.packagingUnit ? ` [${it.packagingUnit}]` : '';
             const sizeNote = it.size ? ` (Talla ${it.size})` : '';
@@ -1200,9 +1589,12 @@ export class CampChannel {
             { id: 'REQ_CANCEL', title: 'Cancelar' },
         ];
 
-        session.lastReplyText = replyText;
-        session.updatedAt = new Date().toISOString();
-        await sessionRef.set(session, { merge: true });
+        await this.persistSessionFsmUpdate(sessionId, {
+            fsmState: 'REVIEW_GATE',
+            draftItems: updatedDrafts,
+            deniedNotices: session.deniedNotices,
+            lastReplyText: replyText,
+        });
         if (!options.skipOutboundSend) {
             await MetaWhatsAppCloudAdapter.sendInteractiveButtons(member.phoneE164, replyText, replyButtons);
         }
@@ -1210,7 +1602,7 @@ export class CampChannel {
         return {
             handled: true,
             sessionId,
-            fsmState: session.fsmState,
+            fsmState: 'REVIEW_GATE',
             replyText,
             replyButtons,
             deniedItems,
@@ -1220,14 +1612,13 @@ export class CampChannel {
 
     private static async commitCampRequisition(
         session: WhatsAppCampSession,
-        sessionRef: FirebaseFirestore.DocumentReference,
+        _sessionRef: FirebaseFirestore.DocumentReference,
         member: ResolvedWhatsAppMember,
         options: { skipOutboundSend?: boolean }
     ): Promise<CampChannelProcessResult> {
         const draftItems = session.draftItems || [];
         if (draftItems.length === 0) {
-            session.fsmState = 'COLLECTING';
-            await sessionRef.set(session, { merge: true });
+            await this.persistSessionFsmUpdate(session.sessionId, { fsmState: 'COLLECTING' });
             return { handled: false, sessionId: session.sessionId, fsmState: 'COLLECTING' };
         }
 
@@ -1290,14 +1681,14 @@ export class CampChannel {
             buyers,
         });
 
-        session.fsmState = 'COMMITTED';
-        session.draftItems = [];
-        session.deniedNotices = [];
-        session.lastCommittedReqId = requisition.reqId;
         const replyText = `Pedido confirmado: ${requisition.reqId} (${requisition.lines.length} ítems). Ya fue enviado a Compras.`;
-        session.lastReplyText = replyText;
-        session.updatedAt = new Date().toISOString();
-        await sessionRef.set(session, { merge: true });
+        await this.persistSessionFsmUpdate(session.sessionId, {
+            fsmState: 'COMMITTED',
+            draftItems: [],
+            deniedNotices: [],
+            lastCommittedReqId: requisition.reqId,
+            lastReplyText: replyText,
+        });
 
         if (!options.skipOutboundSend) {
             await MetaWhatsAppCloudAdapter.sendTextMessage(member.phoneE164, replyText);
@@ -1314,22 +1705,34 @@ export class CampChannel {
     }
 
     /**
-     * Atajo Ejecutivo de Compra Directa: analiza foto/PDF/XML reenviada por OWNER/BUYER/SITE_ADMIN.
+     * Atajo Ejecutivo de Compra Directa: analiza foto/PDF/XML reenviada por OWNER/BUYER/SITE_ADMIN
+     * leyendo el binario estrictamente desde CAS (`TENANT_PRIVATE`) por `sha256` (100% stateless).
      */
     private static async processExecutiveDirectPurchaseIntake(
         session: WhatsAppCampSession,
-        sessionRef: FirebaseFirestore.DocumentReference,
+        _sessionRef: FirebaseFirestore.DocumentReference,
         member: ResolvedWhatsAppMember,
         turn: PendingBufferedTurn,
         options: { skipOutboundSend?: boolean }
     ): Promise<CampChannelProcessResult> {
-        const transient = this.transientTurnMedia.get(turn.wamid);
-        this.transientTurnMedia.delete(turn.wamid);
+        let rawBuffer: Buffer | undefined;
+        let mimeType = turn.mimeType || 'image/jpeg';
+        let xmlContent: string | undefined;
 
-        let rawBuffer: Buffer | undefined = transient?.buffer;
-        let mimeType = transient?.mimeType || turn.mimeType || 'image/jpeg';
-
-        if (!rawBuffer && !turn.evidenceCasRef && turn.mediaId) {
+        if (turn.evidenceCasRef) {
+            if (
+                turn.evidenceCasRef.profile === 'XML_DTE_DOCUMENT' ||
+                turn.evidenceCasRef.mimeType.toLowerCase().includes('xml')
+            ) {
+                const blob = await CasStorageService.readCasBlob(turn.evidenceCasRef.sha256, {
+                    scope: 'TENANT_PRIVATE',
+                    tenantId: member.tenantId,
+                });
+                if (blob) {
+                    xmlContent = blob.buffer.toString('utf8');
+                }
+            }
+        } else if (turn.mediaId) {
             const downloaded = await MetaWhatsAppCloudAdapter.downloadMedia(turn.mediaId);
             rawBuffer = downloaded.buffer;
             mimeType = downloaded.mimeType || mimeType;
@@ -1343,7 +1746,7 @@ export class CampChannel {
             originalFilename: turn.filename || 'wa_direct_purchase',
             clientOriginalBytes: rawBuffer?.length,
             existingEvidenceCasRef: turn.evidenceCasRef,
-            xmlContent: transient?.xmlContent,
+            xmlContent,
             tedRawXml: turn.tedRawXml,
             contextCaption: turn.caption || turn.text,
             defaultDestination: 'STOCK_IN_WAREHOUSE',
@@ -1354,9 +1757,9 @@ export class CampChannel {
 
         if (analysis.duplicateDetected) {
             const dupMsg = `Documento SII duplicado detectado (${analysis.dedupeKey}). Ya existe en MINREPORT y no se volverá a rendir.`;
-            session.lastReplyText = dupMsg;
-            session.updatedAt = new Date().toISOString();
-            await sessionRef.set(session, { merge: true });
+            await this.persistSessionFsmUpdate(session.sessionId, {
+                lastReplyText: dupMsg,
+            });
             if (!options.skipOutboundSend) {
                 await MetaWhatsAppCloudAdapter.sendTextMessage(member.phoneE164, dupMsg);
             }
@@ -1375,14 +1778,6 @@ export class CampChannel {
                 : 'MIXED_FULFILLMENT_AND_DIRECT';
         const paymentMethod: PaymentMethod =
             member.supplyProfile.role === 'OWNER_EXEC' ? 'REEMBOLSO_GERENCIA' : 'FONDO_POR_RENDIR';
-
-        session.pendingDirectPurchaseDraft = {
-            analysis,
-            purchaseMode,
-            paymentMethod,
-            createdAt: new Date().toISOString(),
-        };
-        session.fsmState = 'REVIEW_GATE';
 
         const linesPreview = analysis.lines
             .map(
@@ -1415,9 +1810,16 @@ export class CampChannel {
             { id: 'DIRECT_PURCHASE_CANCEL', title: 'Cancelar' },
         ];
 
-        session.lastReplyText = replyText;
-        session.updatedAt = new Date().toISOString();
-        await sessionRef.set(session, { merge: true });
+        await this.persistSessionFsmUpdate(session.sessionId, {
+            pendingDirectPurchaseDraft: {
+                analysis,
+                purchaseMode,
+                paymentMethod,
+                createdAt: new Date().toISOString(),
+            },
+            fsmState: 'REVIEW_GATE',
+            lastReplyText: replyText,
+        });
 
         if (!options.skipOutboundSend) {
             await MetaWhatsAppCloudAdapter.sendInteractiveButtons(member.phoneE164, replyText, replyButtons);
@@ -1436,7 +1838,7 @@ export class CampChannel {
 
     private static async commitExecutiveDirectPurchase(
         session: WhatsAppCampSession,
-        sessionRef: FirebaseFirestore.DocumentReference,
+        _sessionRef: FirebaseFirestore.DocumentReference,
         member: ResolvedWhatsAppMember,
         options: { skipOutboundSend?: boolean }
     ): Promise<CampChannelProcessResult> {
@@ -1503,18 +1905,17 @@ export class CampChannel {
             });
         }
 
-        session.pendingDirectPurchaseDraft = null;
-        session.fsmState = 'COMMITTED';
-        session.lastCommittedPurchaseId = result.purchase.purchaseId;
-
         const assetsNote =
             result.createdAssets.length > 0
                 ? ` · ${result.createdAssets.length} activo(s) en Bóveda CAPEX`
                 : '';
         const replyText = `Compra registrada: ${result.purchase.purchaseId} · DTE ${result.purchase.documentType} #${result.purchase.folio}${assetsNote}.`;
-        session.lastReplyText = replyText;
-        session.updatedAt = new Date().toISOString();
-        await sessionRef.set(session, { merge: true });
+        await this.persistSessionFsmUpdate(session.sessionId, {
+            pendingDirectPurchaseDraft: null,
+            fsmState: 'COMMITTED',
+            lastCommittedPurchaseId: result.purchase.purchaseId,
+            lastReplyText: replyText,
+        });
 
         if (!options.skipOutboundSend) {
             await MetaWhatsAppCloudAdapter.sendTextMessage(member.phoneE164, replyText);

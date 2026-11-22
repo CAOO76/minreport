@@ -249,6 +249,42 @@
           "order": "DESCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "supply_fulfillment_allocations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "tenantId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "requisitionId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "supply_fulfillment_allocations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "tenantId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "purchaseId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": [
@@ -314,6 +350,38 @@
     },
     {
       "collectionGroup": "supplier_contact_contributions",
+      "fieldPath": "ttlExpiresAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "members",
+      "fieldPath": "phoneE164",
+      "indexes": [
+        {
+          "order": "ASCENDING",
+          "queryScope": "COLLECTION"
+        },
+        {
+          "order": "ASCENDING",
+          "queryScope": "COLLECTION_GROUP"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "supply_whatsapp_sessions",
+      "fieldPath": "ttlExpiresAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "supply_whatsapp_wamids",
+      "fieldPath": "ttlExpiresAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "market_demand_signals",
       "fieldPath": "ttlExpiresAt",
       "ttl": true,
       "indexes": []

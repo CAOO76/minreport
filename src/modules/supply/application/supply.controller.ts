@@ -48,6 +48,10 @@ import {
     SupplyValidationError,
 } from './SupplyRepository';
 import {
+    SupplyTaskQueueService,
+    verifySupplyWorkerOidcAuth,
+} from './SupplyTaskQueueService';
+import {
     CanonicalSupplySkuSchema,
     EvidenceCasRefSchema,
     exportSiiDocumentsToCsv,
@@ -1021,15 +1025,30 @@ router.post(
 
             const results = [];
             for (const event of inboundEvents) {
-                const outcome = await CampChannel.handleInboundMessage(event, {
+                const preCheck = await CampChannel.preEnqueueWamidForWebhook(event.wamid);
+                if (preCheck.duplicate || !preCheck.shouldEnqueue) {
+                    results.push({
+                        wamid: event.wamid,
+                        handled: false,
+                        duplicate: true,
+                        buffered: false,
+                        queued: false,
+                    });
+                    continue;
+                }
+
+                const enqueued = await SupplyTaskQueueService.enqueueInboundWhatsAppMessage({
+                    event,
                     flushImmediately,
+                    dispatchToken: preCheck.dispatchToken,
                 });
                 results.push({
                     wamid: event.wamid,
-                    handled: outcome.handled,
-                    duplicate: Boolean(outcome.duplicate),
-                    buffered: Boolean(outcome.buffered),
-                    fsmState: outcome.fsmState,
+                    handled: true,
+                    duplicate: false,
+                    buffered: true,
+                    queued: enqueued.enqueued,
+                    dispatchMode: enqueued.dispatchMode,
                 });
             }
 
@@ -1041,6 +1060,113 @@ router.post(
         } catch (err) {
             console.error('[SUPPLY-WA-WEBHOOK] Error procesando webhook Meta:', err);
             return res.status(500).json({ error: 'Error interno procesando evento WhatsApp.' });
+        }
+    }
+);
+
+const SupplyWorkerInboundBodySchema = z.object({
+    event: z.object({
+        wamid: z.string().trim().min(1).max(256),
+        fromE164: z.string().trim().min(6).max(32),
+        timestampMs: z.number().finite(),
+        type: z.enum(['text', 'audio', 'image', 'document', 'interactive', 'unknown']),
+        textBody: z.string().optional(),
+        interactiveReplyId: z.string().optional(),
+        interactiveReplyTitle: z.string().optional(),
+        mediaId: z.string().optional(),
+        mimeType: z.string().optional(),
+        caption: z.string().optional(),
+        filename: z.string().optional(),
+        phoneNumberId: z.string().optional(),
+        profileName: z.string().optional(),
+    }),
+    flushImmediately: z.boolean().optional(),
+    dispatchToken: z.string().trim().max(128).optional(),
+    skipOutboundSend: z.boolean().optional(),
+    enqueuedAtMs: z.number().optional(),
+});
+
+const SupplyWorkerFlushBodySchema = z.object({
+    sessionId: z.string().trim().min(4).max(160),
+    tenantId: z.string().trim().max(128).optional(),
+    expectedDebounceUntilMs: z.number().finite().optional(),
+    skipOutboundSend: z.boolean().optional(),
+    forceFlush: z.boolean().optional(),
+    enqueuedAtMs: z.number().optional(),
+});
+
+/**
+ * 1.1 CLOUD TASKS WORKER ENDPOINTS (Protegidos exclusivamente por `verifySupplyWorkerOidcAuth`)
+ * Registrados antes de `requireSupplyTenantScope` porque son invocados por Google Cloud Tasks con OIDC SA.
+ */
+router.post(
+    '/whatsapp/worker/inbound',
+    verifySupplyWorkerOidcAuth,
+    async (req: Request, res: Response) => {
+        try {
+            const parsed = SupplyWorkerInboundBodySchema.safeParse(req.body || {});
+            if (!parsed.success) {
+                return res.status(400).json({
+                    error: 'Payload de worker inbound inválido.',
+                    details: parsed.error.flatten(),
+                });
+            }
+
+            const outcome = await CampChannel.handleInboundMessage(parsed.data.event, {
+                flushImmediately: parsed.data.flushImmediately,
+                dispatchToken: parsed.data.dispatchToken,
+                skipOutboundSend: parsed.data.skipOutboundSend,
+            });
+
+            return res.status(200).json({
+                ok: true,
+                wamid: parsed.data.event.wamid,
+                outcome,
+            });
+        } catch (err) {
+            console.error(
+                '[SUPPLY-WA-WORKER-INBOUND] Error procesando tarea inbound:',
+                err instanceof Error ? err.message : 'UnknownError'
+            );
+            return res.status(500).json({ error: 'Error procesando mensaje WhatsApp en worker.' });
+        }
+    }
+);
+
+router.post(
+    '/whatsapp/worker/flush',
+    verifySupplyWorkerOidcAuth,
+    async (req: Request, res: Response) => {
+        try {
+            const parsed = SupplyWorkerFlushBodySchema.safeParse(req.body || {});
+            if (!parsed.success) {
+                return res.status(400).json({
+                    error: 'Payload de worker flush inválido.',
+                    details: parsed.error.flatten(),
+                });
+            }
+
+            const outcome = await CampChannel.flushDebouncedSession(
+                parsed.data.sessionId,
+                undefined,
+                {
+                    skipOutboundSend: parsed.data.skipOutboundSend,
+                    forceFlush: parsed.data.forceFlush,
+                    expectedDebounceUntilMs: parsed.data.expectedDebounceUntilMs,
+                }
+            );
+
+            return res.status(200).json({
+                ok: true,
+                sessionId: parsed.data.sessionId,
+                outcome,
+            });
+        } catch (err) {
+            console.error(
+                '[SUPPLY-WA-WORKER-FLUSH] Error ejecutando flush de sesión:',
+                err instanceof Error ? err.message : 'UnknownError'
+            );
+            return res.status(500).json({ error: 'Error ejecutando flush diferido de sesión WhatsApp.' });
         }
     }
 );
