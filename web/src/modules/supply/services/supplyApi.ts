@@ -881,24 +881,160 @@ export const supplyApi = {
     },
 
     /**
-     * Pre-digests receipt photo or PDF through MINREPORT-MEDIA-DIGESTOR-CAS (`MediaDigestorClient`),
+     * Pre-digests receipt photo, PDF or XML DTE through MINREPORT-MEDIA-DIGESTOR-CAS,
      * preserving true `clientOriginalBytes` and enforcing `TENANT_PRIVATE` isolation in `southamerica-west1`.
-     * Guarantees #9 `SupplyEvidenceCasRefSchema` compliance (`mimeType`, `extension`, non-`blob:` URL).
+     * Supports explicit `XML_DTE_DOCUMENT` profile for Chilean SII `.xml` DTE files.
      */
-    async digestReceiptMedia(
+    async digestEvidence(
         file: File | Blob,
-        options: { tenantId?: string; filename?: string } = {}
+        options: {
+            tenantId?: string;
+            filename?: string;
+            profile?: 'IMAGE_FIELD_EVIDENCE' | 'PDF_HYBRID_OEM' | 'XML_DTE_DOCUMENT';
+        } = {}
     ): Promise<CasEvidenceRef> {
         const rawSize = file.size;
+        const resolvedFilename =
+            options.filename || (file instanceof File ? file.name : 'evidence.bin');
+        const lowerName = resolvedFilename.toLowerCase();
+        const lowerMime = (file.type || '').toLowerCase();
+
+        const isXml =
+            options.profile === 'XML_DTE_DOCUMENT' ||
+            lowerMime.includes('xml') ||
+            lowerName.endsWith('.xml');
+
+        if (isXml) {
+            const xmlText =
+                typeof file.text === 'function' ? await file.text() : await new Response(file).text();
+            // Compactar únicamente espacios fuera de <TED>...</TED> para preservar la firma RSA-SHA1 del timbre
+            const tedMatch = xmlText.match(/<TED\b[\s\S]*?<\/TED>/i);
+            let compacted = xmlText.replace(/^\uFEFF/, '').trim();
+            if (tedMatch) {
+                const placeholder = '__MINREPORT_TED_PRESERVE_BLOCK__';
+                compacted = compacted
+                    .replace(tedMatch[0], placeholder)
+                    .replace(/>\s+</g, '><')
+                    .replace(placeholder, tedMatch[0]);
+            } else {
+                compacted = compacted.replace(/>\s+</g, '><');
+            }
+            const xmlBlob = new Blob([compacted], { type: 'application/xml' });
+            const optimizedBytes = xmlBlob.size;
+            const originalBytes = Math.max(rawSize, optimizedBytes);
+            const sha256 = await mediaDigestorClient.computeSha256Hex(xmlBlob);
+            const savingsPct = computeSavingsPct(originalBytes, optimizedBytes);
+            const savingsRatio =
+                originalBytes > 0
+                    ? Math.max(0, Number(((originalBytes - optimizedBytes) / originalBytes).toFixed(4)))
+                    : 0;
+
+            if (syncQueueEngine.isOnlineNow()) {
+                try {
+                    const preRes = await coreAuthFetch(
+                        `/api/media/cas-preflight/${sha256}?scope=TENANT_PRIVATE`,
+                        { method: 'GET', headers: buildHeaders(options.tenantId) }
+                    );
+                    if (preRes.ok) {
+                        const preJson = (await preRes.json().catch(() => null)) as {
+                            exists?: boolean;
+                            descriptor?: Record<string, any>;
+                        } | null;
+                        if (preJson?.exists && preJson?.descriptor) {
+                            const d = preJson.descriptor;
+                            const dOrig = Math.max(originalBytes, Number(d.originalBytes || 0));
+                            const dOpt = Number(d.optimizedBytes || optimizedBytes);
+                            return {
+                                sha256: String(d.sha256 || sha256),
+                                downloadUrl: String(d.downloadUrl || `/api/media/blob/${sha256}`),
+                                storagePath: typeof d.storagePath === 'string' ? d.storagePath : undefined,
+                                mimeType: String(d.mimeType || 'application/xml'),
+                                extension: String(d.extension || 'xml'),
+                                originalFilename: resolvedFilename,
+                                originalBytes: dOrig,
+                                optimizedBytes: dOpt,
+                                savingsRatio:
+                                    typeof d.savingsRatio === 'number' ? d.savingsRatio : savingsRatio,
+                                savingsPct:
+                                    typeof d.savingsPct === 'number'
+                                        ? d.savingsPct
+                                        : computeSavingsPct(dOrig, dOpt),
+                                deduplicatedHit: true,
+                                capturedAt: String(d.createdAt || new Date().toISOString()),
+                            };
+                        }
+                    }
+
+                    const form = new FormData();
+                    form.append('file', xmlBlob, resolvedFilename);
+                    form.append('profile', 'XML_DTE_DOCUMENT');
+                    form.append('scope', 'TENANT_PRIVATE');
+                    form.append('clientOriginalBytes', String(originalBytes));
+
+                    const upRes = await coreAuthFetch('/api/media/digest-upload', {
+                        method: 'POST',
+                        headers: buildHeaders(options.tenantId),
+                        body: form,
+                    });
+                    if (upRes.ok) {
+                        const upJson = (await upRes.json().catch(() => null)) as {
+                            descriptor?: Record<string, any>;
+                        } | null;
+                        if (upJson?.descriptor) {
+                            const d = upJson.descriptor;
+                            const dOrig = Math.max(originalBytes, Number(d.originalBytes || 0));
+                            const dOpt = Number(d.optimizedBytes || optimizedBytes);
+                            return {
+                                sha256: String(d.sha256 || sha256),
+                                downloadUrl: String(d.downloadUrl || `/api/media/blob/${sha256}`),
+                                storagePath: typeof d.storagePath === 'string' ? d.storagePath : undefined,
+                                mimeType: String(d.mimeType || 'application/xml'),
+                                extension: String(d.extension || 'xml'),
+                                originalFilename: resolvedFilename,
+                                originalBytes: dOrig,
+                                optimizedBytes: dOpt,
+                                savingsRatio:
+                                    typeof d.savingsRatio === 'number' ? d.savingsRatio : savingsRatio,
+                                savingsPct:
+                                    typeof d.savingsPct === 'number'
+                                        ? d.savingsPct
+                                        : computeSavingsPct(dOrig, dOpt),
+                                deduplicatedHit: Boolean(d.deduplicatedHit),
+                                capturedAt: String(d.createdAt || new Date().toISOString()),
+                            };
+                        }
+                    }
+                } catch {
+                    // Fallback offline CAS determinista sin perder trazabilidad de peso
+                }
+            }
+
+            return {
+                sha256,
+                downloadUrl: `offline-cas://${sha256}.xml`,
+                storagePath: `offline_cas/${sha256}.xml`,
+                mimeType: 'application/xml',
+                extension: 'xml',
+                originalFilename: resolvedFilename,
+                originalBytes,
+                optimizedBytes,
+                savingsRatio,
+                savingsPct,
+                deduplicatedHit: false,
+                capturedAt: new Date().toISOString(),
+            };
+        }
+
         const isPdf =
-            file.type.toLowerCase().includes('pdf') ||
-            (options.filename || (file instanceof File ? file.name : '')).toLowerCase().endsWith('.pdf');
+            options.profile === 'PDF_HYBRID_OEM' ||
+            lowerMime.includes('pdf') ||
+            lowerName.endsWith('.pdf');
 
         const { descriptor, digested } = await mediaDigestorClient.digestAndUploadCas(file, {
-            profile: isPdf ? 'PDF_HYBRID_OEM' : 'IMAGE_FIELD_EVIDENCE',
+            profile: options.profile || (isPdf ? 'PDF_HYBRID_OEM' : 'IMAGE_FIELD_EVIDENCE'),
             scope: 'TENANT_PRIVATE',
             tenantId: options.tenantId,
-            filename: options.filename || (file instanceof File ? file.name : undefined),
+            filename: resolvedFilename,
             clientOriginalBytes: rawSize,
         });
 
@@ -934,6 +1070,17 @@ export const supplyApi = {
             deduplicatedHit: descriptor.deduplicatedHit,
             capturedAt: descriptor.createdAt || new Date().toISOString(),
         };
+    },
+
+    async digestReceiptMedia(
+        file: File | Blob,
+        options: {
+            tenantId?: string;
+            filename?: string;
+            profile?: 'IMAGE_FIELD_EVIDENCE' | 'PDF_HYBRID_OEM' | 'XML_DTE_DOCUMENT';
+        } = {}
+    ): Promise<CasEvidenceRef> {
+        return this.digestEvidence(file, options);
     },
 
     async analyzeReceipt(
@@ -1017,9 +1164,11 @@ export const supplyApi = {
                 await syncQueueEngine.enqueueTask('CAS_MEDIA_UPLOAD', {
                     sha256: req.draft.evidenceCasRef.sha256,
                     scope: 'TENANT_PRIVATE',
-                    profile: req.draft.evidenceCasRef.mimeType.includes('pdf')
-                        ? 'PDF_HYBRID_OEM'
-                        : 'IMAGE_FIELD_EVIDENCE',
+                    profile: req.draft.evidenceCasRef.mimeType.includes('xml')
+                        ? 'XML_DTE_DOCUMENT'
+                        : req.draft.evidenceCasRef.mimeType.includes('pdf')
+                          ? 'PDF_HYBRID_OEM'
+                          : 'IMAGE_FIELD_EVIDENCE',
                     tenantId,
                     filename: req.draft.evidenceCasRef.originalFilename,
                 });
