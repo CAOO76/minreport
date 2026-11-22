@@ -503,14 +503,14 @@ async function runTests(): Promise<void> {
         ownerId: 'uid-owner-a',
         status: 'ACTIVE',
         type: 'B2B',
-        contract: { status: 'ACTIVE' },
+        contract: { status: 'ACTIVE', activeModules: { opermaq: true, stockpile: true, supply: true } },
     });
     await mockDb.collection('accounts').doc(TENANT_B).set({
         id: TENANT_B,
         ownerId: 'uid-owner-b',
         status: 'ACTIVE',
         type: 'B2B',
-        contract: { status: 'ACTIVE' },
+        contract: { status: 'ACTIVE', activeModules: { opermaq: true, stockpile: true, supply: true } },
     });
     await mockDb.collection('users').doc('uid-owner-a').set({
         uid: 'uid-owner-a',

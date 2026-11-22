@@ -104,6 +104,21 @@ export class SupplyConflictError extends Error {
     }
 }
 
+export class SupplyValidationError extends Error {
+    public readonly statusCode = 400;
+    public readonly code: string;
+
+    constructor(code: string, message: string) {
+        super(message);
+        this.name = 'SupplyValidationError';
+        this.code = code;
+    }
+}
+
+type PurchaseLineWithReceptionProgress = SupplyPurchaseLine & {
+    qtyReceivedSoFar?: number;
+};
+
 export interface AuditActorContext {
     actorUid: string;
     actorEmail: string;
@@ -484,6 +499,78 @@ export class SupplyRepository {
         return list.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     }
 
+    private static computeNextInventoryState(
+        existing: SupplyInventoryItem | null,
+        params: {
+            tenantId: string;
+            siteId: string;
+            canonicalSkuId: string;
+            itemName: string;
+            categoryCode: SupplyInventoryItem['categoryCode'];
+            procurementBucket: SupplyInventoryItem['procurementBucket'];
+            unitSi: SupplyInventoryItem['unitSi'];
+            inTransitDelta: number;
+            inWarehouseDelta: number;
+            unitCostClp: number;
+            movementType: StockLedgerEntry['movementType'];
+            referenceId: string;
+            actorUid: string;
+            now: string;
+        }
+    ): { docId: string; record: SupplyInventoryItem; ledgerEntry: StockLedgerEntry } {
+        const docId = buildInventoryDocId(params.tenantId, params.siteId, params.canonicalSkuId);
+        const nextInTransit = Math.max(
+            0,
+            Number(((existing?.qtyInTransit || 0) + params.inTransitDelta).toFixed(3))
+        );
+        const nextInWarehouse = Math.max(
+            0,
+            Number(((existing?.qtyInWarehouse || 0) + params.inWarehouseDelta).toFixed(3))
+        );
+
+        const prevQty = (existing?.qtyInWarehouse || 0) + (existing?.qtyInTransit || 0);
+        const addedQty = Math.max(0, params.inTransitDelta + params.inWarehouseDelta);
+        const avgUnitCostClp =
+            addedQty > 0 && params.unitCostClp > 0
+                ? Math.round(
+                      ((existing?.avgUnitCostClp || 0) * prevQty + params.unitCostClp * addedQty) /
+                          Math.max(1, prevQty + addedQty)
+                  )
+                : existing?.avgUnitCostClp || params.unitCostClp || 0;
+
+        const record: SupplyInventoryItem = {
+            inventoryKey: docId,
+            tenantId: params.tenantId,
+            siteId: params.siteId,
+            canonicalSkuId: params.canonicalSkuId,
+            itemName: existing?.itemName || params.itemName,
+            categoryCode: existing?.categoryCode || params.categoryCode,
+            procurementBucket: existing?.procurementBucket || params.procurementBucket,
+            unitSi: existing?.unitSi || params.unitSi,
+            qtyInTransit: nextInTransit,
+            qtyInWarehouse: nextInWarehouse,
+            avgUnitCostClp,
+            dailyBurnRatePerPax: existing?.dailyBurnRatePerPax,
+            updatedAt: params.now,
+        };
+
+        const ledgerEntry: StockLedgerEntry = {
+            entryId: `stkl_${crypto.randomBytes(5).toString('hex')}`,
+            tenantId: params.tenantId,
+            siteId: params.siteId,
+            canonicalSkuId: params.canonicalSkuId,
+            movementType: params.movementType,
+            qtyDelta: params.inWarehouseDelta !== 0 ? params.inWarehouseDelta : params.inTransitDelta,
+            unitSi: params.unitSi,
+            unitCostClp: params.unitCostClp,
+            referenceId: params.referenceId,
+            actorUid: params.actorUid,
+            createdAt: params.now,
+        };
+
+        return { docId, record, ledgerEntry };
+    }
+
     public static async createPurchaseWithReconciliation(
         params: {
             tenantId: string;
@@ -517,22 +604,9 @@ export class SupplyRepository {
     }> {
         const now = new Date().toISOString();
         const dedupeKey = buildSiiDedupeKey(params.supplierTaxId, params.documentType, params.folio);
-
-        // 1. Anti-duplicación tributaria SII (rutEmisor#tipoDte#folio)
-        if (params.documentType !== 0 && params.folio > 0) {
-            const alreadyExists = await this.existsSiiDocument(params.tenantId, dedupeKey);
-            if (alreadyExists) {
-                throw new SupplyDuplicateSiiDocumentError(dedupeKey);
-            }
-        }
-
         const purchaseId = `pur_${Date.now().toString(36)}_${crypto.randomBytes(3).toString('hex')}`;
-        const supplierId = await this.upsertSupplier({
-            tenantId: params.tenantId,
-            supplierTaxId: params.supplierTaxId,
-            supplierName: params.supplierName,
-            scope: 'TENANT',
-        });
+        const safeRut = safeDocIdPart(params.supplierTaxId || params.supplierName);
+        const supplierId = `tsup_${safeDocIdPart(params.tenantId)}_${safeRut}`;
 
         const hasCapexLine = params.lines.some((l) => l.isCapexAsset || l.destination === 'CAPEX_ASSET');
         const missingInvoiceAlert = hasCapexLine && params.documentType !== 33 && params.documentType !== 34;
@@ -552,6 +626,16 @@ export class SupplyRepository {
             : hasWarehouseDirectLines
               ? 'RECEIVED'
               : 'NOT_APPLICABLE';
+
+        const purchaseLinesWithProgress: PurchaseLineWithReceptionProgress[] = params.lines.map((l) => ({
+            ...l,
+            qtyReceivedSoFar:
+                l.destination === 'STOCK_IN_WAREHOUSE'
+                    ? Number(l.qtyPurchased)
+                    : l.destination === 'STOCK_IN_TRANSIT'
+                      ? 0
+                      : undefined,
+        }));
 
         const purchase: SupplyPurchase = {
             purchaseId,
@@ -578,12 +662,11 @@ export class SupplyRepository {
             receivedAt: receptionStatus === 'RECEIVED' ? now : undefined,
             receivedByUid: receptionStatus === 'RECEIVED' ? actor.actorUid : undefined,
             atypicalFlags,
-            lines: params.lines,
+            lines: purchaseLinesWithProgress,
             createdAt: now,
             updatedAt: now,
         };
 
-        // 2. Reserva atómica anti-duplicación SII (`supply_sii_documents`) dentro de transacción Firestore
         const { rcvDeadlineDate, rcvDaysRemaining } = computeRcvDeadline(
             params.issueDate,
             params.documentType
@@ -618,247 +701,314 @@ export class SupplyRepository {
             updatedAt: now,
         };
 
-        const siiRef = db.collection(SUPPLY_COLLECTIONS.SII_DOCUMENTS).doc(siiDocId);
-        const purchaseRef = db.collection(SUPPLY_COLLECTIONS.PURCHASES).doc(purchaseId);
-
-        if (typeof db.runTransaction === 'function') {
-            await db.runTransaction(async (tx) => {
-                if (enforceUniqueSii) {
-                    const existingSii = await tx.get(siiRef);
-                    if (existingSii.exists) {
-                        throw new SupplyDuplicateSiiDocumentError(dedupeKey);
-                    }
-                }
-                tx.set(siiRef, siiDocument);
-                tx.set(purchaseRef, purchase);
-            });
-        } else {
-            if (enforceUniqueSii && (await siiRef.get()).exists) {
-                throw new SupplyDuplicateSiiDocumentError(dedupeKey);
-            }
-            await siiRef.set(siiDocument);
-            await purchaseRef.set(purchase);
-        }
-
-        // 3. Conciliación N:M FIFO contra backlog de requisiciones (si aplica)
-        const allocations: FulfillmentAllocation[] = [];
-        const mutatedReqs = new Map<string, SupplyRequisition>();
-
-        let openReqs: SupplyRequisition[] = [];
+        // Pre-identificar requisiciones candidatas (se releen y mutan atómicamente dentro de runTransaction)
+        const candidateReqIds = new Set<string>();
         if (
             params.purchaseMode === 'REQUISITION_FULFILLMENT' ||
             params.purchaseMode === 'MIXED_FULFILLMENT_AND_DIRECT'
         ) {
             const allReqs = await this.listRequisitions(params.tenantId, { siteId: params.siteId });
-            openReqs = allReqs
-                .filter((r) => r.status === 'OPEN' || r.status === 'PARTIAL')
-                .sort((a, b) => a.createdAt.localeCompare(b.createdAt)); // FIFO oldest first
-        }
-
-        const reqById = new Map<string, SupplyRequisition>(
-            openReqs.map((r) => [r.reqId, { ...r, lines: r.lines.map((l) => ({ ...l })) }])
-        );
-
-        const createdAssets: SupplyAsset[] = [];
-
-        for (const pLine of params.lines) {
-            const isCapex = pLine.isCapexAsset || pLine.destination === 'CAPEX_ASSET';
-            let remainingQty = Number(pLine.qtyPurchased);
-
-            if (!isCapex && params.purchaseMode !== 'DIRECT_AUTONOMOUS') {
-                // 3.a Explicit allocations first
+            for (const req of allReqs) {
+                if (req.status === 'OPEN' || req.status === 'PARTIAL') {
+                    candidateReqIds.add(req.reqId);
+                }
+            }
+            for (const pLine of params.lines) {
                 if (Array.isArray(pLine.explicitAllocations)) {
                     for (const exp of pLine.explicitAllocations) {
-                        if (remainingQty <= 0) break;
-                        const targetReq = reqById.get(exp.reqId);
-                        if (!targetReq) continue;
-                        const targetLine = targetReq.lines.find((l) => l.lineId === exp.reqLineId);
-                        if (!targetLine || targetLine.qtyPending <= 0) continue;
-
-                        const allocQty = Math.min(remainingQty, exp.qtyAllocated, targetLine.qtyPending);
-                        if (allocQty <= 0) continue;
-
-                        targetLine.qtyPurchased = Number((targetLine.qtyPurchased + allocQty).toFixed(3));
-                        targetLine.qtyPending = Math.max(
-                            0,
-                            Number((targetLine.qtyRequested - targetLine.qtyPurchased).toFixed(3))
-                        );
-                        if (pLine.destination === 'STOCK_IN_WAREHOUSE') {
-                            targetLine.qtyReceived = Number((targetLine.qtyReceived + allocQty).toFixed(3));
-                        }
-                        targetLine.lineStatus = targetLine.qtyPending <= 0 ? 'FULFILLED' : 'PARTIAL';
-                        targetReq.status = computeRequisitionAggregateStatus(targetReq.lines);
-                        targetReq.updatedAt = now;
-                        mutatedReqs.set(targetReq.reqId, targetReq);
-
-                        remainingQty = Number((remainingQty - allocQty).toFixed(3));
-                        allocations.push({
-                            allocationId: `alloc_${crypto.randomBytes(5).toString('hex')}`,
-                            tenantId: params.tenantId,
-                            siteId: params.siteId,
-                            purchaseId,
-                            purchaseLineId: pLine.purchaseLineId,
-                            requisitionId: targetReq.reqId,
-                            requisitionLineId: targetLine.lineId,
-                            canonicalSkuId: pLine.canonicalSkuId,
-                            qtyAllocated: allocQty,
-                            unitSi: pLine.unitSi,
-                            destination: pLine.destination,
-                            createdAt: now,
-                        });
-                    }
-                }
-
-                // 3.b Automatic FIFO matching by canonicalSkuId
-                for (const targetReq of reqById.values()) {
-                    if (remainingQty <= 0) break;
-                    for (const targetLine of targetReq.lines) {
-                        if (remainingQty <= 0) break;
-                        if (targetLine.lineStatus === 'FULFILLED' || targetLine.lineStatus === 'CANCELLED') continue;
-                        if (targetLine.qtyPending <= 0) continue;
-                        if (targetLine.canonicalSkuId !== pLine.canonicalSkuId) continue;
-
-                        const allocQty = Math.min(remainingQty, targetLine.qtyPending);
-                        targetLine.qtyPurchased = Number((targetLine.qtyPurchased + allocQty).toFixed(3));
-                        targetLine.qtyPending = Math.max(
-                            0,
-                            Number((targetLine.qtyRequested - targetLine.qtyPurchased).toFixed(3))
-                        );
-                        if (pLine.destination === 'STOCK_IN_WAREHOUSE') {
-                            targetLine.qtyReceived = Number((targetLine.qtyReceived + allocQty).toFixed(3));
-                        }
-                        targetLine.lineStatus = targetLine.qtyPending <= 0 ? 'FULFILLED' : 'PARTIAL';
-                        targetReq.status = computeRequisitionAggregateStatus(targetReq.lines);
-                        targetReq.updatedAt = now;
-                        mutatedReqs.set(targetReq.reqId, targetReq);
-
-                        remainingQty = Number((remainingQty - allocQty).toFixed(3));
-                        allocations.push({
-                            allocationId: `alloc_${crypto.randomBytes(5).toString('hex')}`,
-                            tenantId: params.tenantId,
-                            siteId: params.siteId,
-                            purchaseId,
-                            purchaseLineId: pLine.purchaseLineId,
-                            requisitionId: targetReq.reqId,
-                            requisitionLineId: targetLine.lineId,
-                            canonicalSkuId: pLine.canonicalSkuId,
-                            qtyAllocated: allocQty,
-                            unitSi: pLine.unitSi,
-                            destination: pLine.destination,
-                            createdAt: now,
-                        });
+                        if (exp.reqId) candidateReqIds.add(exp.reqId);
                     }
                 }
             }
+        }
 
-            // 3.c Remainder -> UNSOLICITED_PURCHASE (direct autonomous purchase or CAPEX)
-            if (remainingQty > 0) {
-                allocations.push({
-                    allocationId: `alloc_${crypto.randomBytes(5).toString('hex')}`,
-                    tenantId: params.tenantId,
-                    siteId: params.siteId,
-                    purchaseId,
-                    purchaseLineId: pLine.purchaseLineId,
-                    requisitionId: 'UNSOLICITED_PURCHASE',
-                    requisitionLineId: 'UNSOLICITED_PURCHASE',
-                    canonicalSkuId: pLine.canonicalSkuId,
-                    qtyAllocated: remainingQty,
-                    unitSi: pLine.unitSi,
-                    destination: pLine.destination,
-                    createdAt: now,
-                });
+        const uniqueInvKeys = Array.from(
+            new Set(
+                params.lines
+                    .filter(
+                        (l) =>
+                            !(l.isCapexAsset || l.destination === 'CAPEX_ASSET') &&
+                            (l.destination === 'STOCK_IN_TRANSIT' || l.destination === 'STOCK_IN_WAREHOUSE')
+                    )
+                    .map((l) => buildInventoryDocId(params.tenantId, params.siteId, l.canonicalSkuId))
+            )
+        );
+
+        const siiRef = db.collection(SUPPLY_COLLECTIONS.SII_DOCUMENTS).doc(siiDocId);
+        const purchaseRef = db.collection(SUPPLY_COLLECTIONS.PURCHASES).doc(purchaseId);
+        const supplierRef = db.collection(SUPPLY_COLLECTIONS.TENANT_SUPPLIERS).doc(supplierId);
+
+        let allocations: FulfillmentAllocation[] = [];
+        let createdAssets: SupplyAsset[] = [];
+        let mutatedReqIds: string[] = [];
+
+        // Transacción atómica única: unicidad SII + compra + CAPEX + cash ledger + inventario + allocations + requisiciones
+        await db.runTransaction(async (tx) => {
+            // FASE 1: TODAS LAS LECTURAS PRIMERO (regla estricta Firestore)
+            if (enforceUniqueSii) {
+                const existingSii = await tx.get(siiRef);
+                if (existingSii.exists) {
+                    throw new SupplyDuplicateSiiDocumentError(dedupeKey);
+                }
             }
 
-            // 4. Stock & Assets Routing
-            if (isCapex) {
-                // Art. 31 Nº 5 LIR: Valor neto depreciable (sin contaminar OPEX diario de víveres)
-                const lineNetClp =
+            const invByDocId = new Map<string, SupplyInventoryItem | null>();
+            for (const invDocId of uniqueInvKeys) {
+                const invSnap = await tx.get(db.collection(SUPPLY_COLLECTIONS.INVENTORY_ITEMS).doc(invDocId));
+                invByDocId.set(invDocId, invSnap.exists ? (invSnap.data() as SupplyInventoryItem) : null);
+            }
+
+            const txOpenReqs: SupplyRequisition[] = [];
+            for (const reqId of candidateReqIds) {
+                const reqSnap = await tx.get(db.collection(SUPPLY_COLLECTIONS.REQUISITIONS).doc(reqId));
+                if (!reqSnap.exists) continue;
+                const reqData = reqSnap.data() as SupplyRequisition;
+                if (reqData.tenantId !== params.tenantId) continue;
+                if (reqData.status === 'OPEN' || reqData.status === 'PARTIAL') {
+                    txOpenReqs.push({
+                        ...reqData,
+                        lines: reqData.lines.map((l) => ({ ...l })),
+                    });
+                }
+            }
+            txOpenReqs.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+
+            // FASE 2: CÁLCULO DETERMINISTA EN MEMORIA
+            const reqById = new Map<string, SupplyRequisition>(txOpenReqs.map((r) => [r.reqId, r]));
+            const mutatedReqs = new Map<string, SupplyRequisition>();
+            const txAllocations: FulfillmentAllocation[] = [];
+            const txCreatedAssets: SupplyAsset[] = [];
+            const txCashEntries: CashLedgerEntry[] = [];
+            const txStockLedgers: StockLedgerEntry[] = [];
+            const txUpdatedInventory = new Map<string, SupplyInventoryItem>();
+
+            for (const pLine of params.lines) {
+                const isCapex = pLine.isCapexAsset || pLine.destination === 'CAPEX_ASSET';
+                let remainingQty = Number(pLine.qtyPurchased);
+
+                if (!isCapex && params.purchaseMode !== 'DIRECT_AUTONOMOUS') {
+                    if (Array.isArray(pLine.explicitAllocations)) {
+                        for (const exp of pLine.explicitAllocations) {
+                            if (remainingQty <= 0) break;
+                            const targetReq = reqById.get(exp.reqId);
+                            if (!targetReq) continue;
+                            const targetLine = targetReq.lines.find((l) => l.lineId === exp.reqLineId);
+                            if (!targetLine || targetLine.qtyPending <= 0) continue;
+
+                            const allocQty = Math.min(remainingQty, exp.qtyAllocated, targetLine.qtyPending);
+                            if (allocQty <= 0) continue;
+
+                            targetLine.qtyPurchased = Number((targetLine.qtyPurchased + allocQty).toFixed(3));
+                            targetLine.qtyPending = Math.max(
+                                0,
+                                Number((targetLine.qtyRequested - targetLine.qtyPurchased).toFixed(3))
+                            );
+                            if (pLine.destination === 'STOCK_IN_WAREHOUSE') {
+                                targetLine.qtyReceived = Number((targetLine.qtyReceived + allocQty).toFixed(3));
+                            }
+                            targetLine.lineStatus = targetLine.qtyPending <= 0 ? 'FULFILLED' : 'PARTIAL';
+                            targetReq.status = computeRequisitionAggregateStatus(targetReq.lines);
+                            targetReq.updatedAt = now;
+                            mutatedReqs.set(targetReq.reqId, targetReq);
+
+                            remainingQty = Number((remainingQty - allocQty).toFixed(3));
+                            txAllocations.push({
+                                allocationId: `alloc_${crypto.randomBytes(5).toString('hex')}`,
+                                tenantId: params.tenantId,
+                                siteId: params.siteId,
+                                purchaseId,
+                                purchaseLineId: pLine.purchaseLineId,
+                                requisitionId: targetReq.reqId,
+                                requisitionLineId: targetLine.lineId,
+                                canonicalSkuId: pLine.canonicalSkuId,
+                                qtyAllocated: allocQty,
+                                unitSi: pLine.unitSi,
+                                destination: pLine.destination,
+                                createdAt: now,
+                            });
+                        }
+                    }
+
+                    for (const targetReq of reqById.values()) {
+                        if (remainingQty <= 0) break;
+                        for (const targetLine of targetReq.lines) {
+                            if (remainingQty <= 0) break;
+                            if (targetLine.lineStatus === 'FULFILLED' || targetLine.lineStatus === 'CANCELLED') continue;
+                            if (targetLine.qtyPending <= 0) continue;
+                            if (targetLine.canonicalSkuId !== pLine.canonicalSkuId) continue;
+
+                            const allocQty = Math.min(remainingQty, targetLine.qtyPending);
+                            targetLine.qtyPurchased = Number((targetLine.qtyPurchased + allocQty).toFixed(3));
+                            targetLine.qtyPending = Math.max(
+                                0,
+                                Number((targetLine.qtyRequested - targetLine.qtyPurchased).toFixed(3))
+                            );
+                            if (pLine.destination === 'STOCK_IN_WAREHOUSE') {
+                                targetLine.qtyReceived = Number((targetLine.qtyReceived + allocQty).toFixed(3));
+                            }
+                            targetLine.lineStatus = targetLine.qtyPending <= 0 ? 'FULFILLED' : 'PARTIAL';
+                            targetReq.status = computeRequisitionAggregateStatus(targetReq.lines);
+                            targetReq.updatedAt = now;
+                            mutatedReqs.set(targetReq.reqId, targetReq);
+
+                            remainingQty = Number((remainingQty - allocQty).toFixed(3));
+                            txAllocations.push({
+                                allocationId: `alloc_${crypto.randomBytes(5).toString('hex')}`,
+                                tenantId: params.tenantId,
+                                siteId: params.siteId,
+                                purchaseId,
+                                purchaseLineId: pLine.purchaseLineId,
+                                requisitionId: targetReq.reqId,
+                                requisitionLineId: targetLine.lineId,
+                                canonicalSkuId: pLine.canonicalSkuId,
+                                qtyAllocated: allocQty,
+                                unitSi: pLine.unitSi,
+                                destination: pLine.destination,
+                                createdAt: now,
+                            });
+                        }
+                    }
+                }
+
+                if (remainingQty > 0) {
+                    txAllocations.push({
+                        allocationId: `alloc_${crypto.randomBytes(5).toString('hex')}`,
+                        tenantId: params.tenantId,
+                        siteId: params.siteId,
+                        purchaseId,
+                        purchaseLineId: pLine.purchaseLineId,
+                        requisitionId: 'UNSOLICITED_PURCHASE',
+                        requisitionLineId: 'UNSOLICITED_PURCHASE',
+                        canonicalSkuId: pLine.canonicalSkuId,
+                        qtyAllocated: remainingQty,
+                        unitSi: pLine.unitSi,
+                        destination: pLine.destination,
+                        createdAt: now,
+                    });
+                }
+
+                if (isCapex) {
+                    const lineNetClp =
+                        params.documentType === 33
+                            ? Math.round(pLine.subtotalClp / 1.19)
+                            : Math.round(pLine.subtotalClp);
+                    const lineVatCreditClp =
+                        params.documentType === 33 ? Math.max(0, Math.round(pLine.subtotalClp - lineNetClp)) : 0;
+
+                    txCreatedAssets.push({
+                        assetId: `sasset_${Date.now().toString(36)}_${crypto.randomBytes(3).toString('hex')}`,
+                        tenantId: params.tenantId,
+                        siteId: params.siteId,
+                        purchaseId,
+                        name: pLine.description,
+                        serialOrTag: pLine.serialOrTag,
+                        acquisitionNetClp: lineNetClp,
+                        vatCreditClp: lineVatCreditClp,
+                        invoiceDteType: params.documentType,
+                        invoiceFolio: params.folio,
+                        supplierTaxId: params.supplierTaxId,
+                        supplierName: params.supplierName,
+                        evidenceCasRef: params.evidenceCasRef,
+                        missingInvoiceAlert: params.documentType !== 33 && params.documentType !== 34,
+                        costCenter: 'CC-CAPEX',
+                        createdAt: now,
+                        updatedAt: now,
+                    });
+                } else if (
+                    pLine.destination === 'STOCK_IN_TRANSIT' ||
+                    pLine.destination === 'STOCK_IN_WAREHOUSE'
+                ) {
+                    const invDocId = buildInventoryDocId(params.tenantId, params.siteId, pLine.canonicalSkuId);
+                    const currentInv = txUpdatedInventory.get(invDocId) ?? invByDocId.get(invDocId) ?? null;
+                    const computed = this.computeNextInventoryState(currentInv, {
+                        tenantId: params.tenantId,
+                        siteId: params.siteId,
+                        canonicalSkuId: pLine.canonicalSkuId,
+                        itemName: pLine.description,
+                        categoryCode: pLine.categoryCode,
+                        procurementBucket: pLine.procurementBucket,
+                        unitSi: pLine.unitSi,
+                        inTransitDelta: pLine.destination === 'STOCK_IN_TRANSIT' ? pLine.qtyPurchased : 0,
+                        inWarehouseDelta: pLine.destination === 'STOCK_IN_WAREHOUSE' ? pLine.qtyPurchased : 0,
+                        unitCostClp: pLine.unitPriceClp,
+                        movementType:
+                            pLine.destination === 'STOCK_IN_TRANSIT'
+                                ? 'INBOUND_IN_TRANSIT'
+                                : 'INBOUND_WAREHOUSE_DIRECT',
+                        referenceId: purchaseId,
+                        actorUid: actor.actorUid,
+                        now,
+                    });
+                    txUpdatedInventory.set(invDocId, computed.record);
+                    txStockLedgers.push(computed.ledgerEntry);
+                }
+
+                const lineVatCredit =
                     params.documentType === 33
-                        ? Math.round(pLine.subtotalClp / 1.19)
-                        : Math.round(pLine.subtotalClp);
-                const lineVatCreditClp =
-                    params.documentType === 33 ? Math.max(0, Math.round(pLine.subtotalClp - lineNetClp)) : 0;
-
-                const asset: SupplyAsset = {
-                    assetId: `sasset_${Date.now().toString(36)}_${crypto.randomBytes(3).toString('hex')}`,
+                        ? Math.round(pLine.subtotalClp - pLine.subtotalClp / 1.19)
+                        : 0;
+                const lineNet = Math.max(0, Math.round(pLine.subtotalClp - lineVatCredit));
+                txCashEntries.push({
+                    entryId: `cash_${crypto.randomBytes(5).toString('hex')}`,
                     tenantId: params.tenantId,
                     siteId: params.siteId,
-                    purchaseId,
-                    name: pLine.description,
-                    serialOrTag: pLine.serialOrTag,
-                    acquisitionNetClp: lineNetClp,
-                    vatCreditClp: lineVatCreditClp,
-                    invoiceDteType: params.documentType,
-                    invoiceFolio: params.folio,
-                    supplierTaxId: params.supplierTaxId,
-                    supplierName: params.supplierName,
-                    evidenceCasRef: params.evidenceCasRef,
-                    missingInvoiceAlert: params.documentType !== 33 && params.documentType !== 34,
-                    costCenter: 'CC-CAPEX',
-                    createdAt: now,
-                    updatedAt: now,
-                };
-                await db.collection(SUPPLY_COLLECTIONS.ASSETS).doc(asset.assetId).set(asset);
-                createdAssets.push(asset);
-            } else if (
-                pLine.destination === 'STOCK_IN_TRANSIT' ||
-                pLine.destination === 'STOCK_IN_WAREHOUSE'
-            ) {
-                await this.applyInventoryDelta({
-                    tenantId: params.tenantId,
-                    siteId: params.siteId,
-                    canonicalSkuId: pLine.canonicalSkuId,
-                    itemName: pLine.description,
-                    categoryCode: pLine.categoryCode,
-                    procurementBucket: pLine.procurementBucket,
-                    unitSi: pLine.unitSi,
-                    inTransitDelta: pLine.destination === 'STOCK_IN_TRANSIT' ? pLine.qtyPurchased : 0,
-                    inWarehouseDelta: pLine.destination === 'STOCK_IN_WAREHOUSE' ? pLine.qtyPurchased : 0,
-                    unitCostClp: pLine.unitPriceClp,
-                    movementType:
-                        pLine.destination === 'STOCK_IN_TRANSIT'
-                            ? 'INBOUND_IN_TRANSIT'
-                            : 'INBOUND_WAREHOUSE_DIRECT',
+                    paymentMethod: params.paymentMethod,
+                    direction:
+                        params.paymentMethod === 'REEMBOLSO_GERENCIA'
+                            ? 'REIMBURSEMENT_DUE'
+                            : 'EXPENSE_RENDERED',
+                    amountClp: Math.round(pLine.subtotalClp),
+                    netAmountClp: lineNet,
+                    vatCreditClp: lineVatCredit,
+                    isCapex,
+                    costCenter: isCapex ? 'CC-CAPEX' : pLine.costCenter || 'CC-CAMPAMENTO',
                     referenceId: purchaseId,
                     actorUid: actor.actorUid,
+                    description: `${pLine.description} (${pLine.qtyPurchased} ${pLine.unitSi}) · DTE ${params.documentType} #${params.folio}`,
+                    createdAt: now,
                 });
             }
 
-            // 5. Cash Ledger imputation per line (separando isCapex para no contaminar OPEX alimentario)
-            const lineVatCredit =
-                params.documentType === 33
-                    ? Math.round(pLine.subtotalClp - pLine.subtotalClp / 1.19)
-                    : 0;
-            const lineNet = Math.max(0, Math.round(pLine.subtotalClp - lineVatCredit));
-            const cashEntry: CashLedgerEntry = {
-                entryId: `cash_${crypto.randomBytes(5).toString('hex')}`,
-                tenantId: params.tenantId,
-                siteId: params.siteId,
-                paymentMethod: params.paymentMethod,
-                direction:
-                    params.paymentMethod === 'REEMBOLSO_GERENCIA'
-                        ? 'REIMBURSEMENT_DUE'
-                        : 'EXPENSE_RENDERED',
-                amountClp: Math.round(pLine.subtotalClp),
-                netAmountClp: lineNet,
-                vatCreditClp: lineVatCredit,
-                isCapex,
-                costCenter: isCapex ? 'CC-CAPEX' : pLine.costCenter || 'CC-CAMPAMENTO',
-                referenceId: purchaseId,
-                actorUid: actor.actorUid,
-                description: `${pLine.description} (${pLine.qtyPurchased} ${pLine.unitSi}) · DTE ${params.documentType} #${params.folio}`,
-                createdAt: now,
-            };
-            await db.collection(SUPPLY_COLLECTIONS.CASH_LEDGER).doc(cashEntry.entryId).set(cashEntry);
-        }
+            // FASE 3: TODAS LAS ESCRITURAS ATÓMICAS EN LA MISMA TRANSACCIÓN
+            tx.set(
+                supplierRef,
+                {
+                    supplierId,
+                    tenantId: params.tenantId,
+                    supplierTaxId: params.supplierTaxId,
+                    supplierName: params.supplierName,
+                    updatedAt: now,
+                },
+                { merge: true }
+            );
+            tx.set(siiRef, siiDocument);
+            tx.set(purchaseRef, purchase);
 
-        // Persistir allocations y requisiciones actualizadas
-        for (const alloc of allocations) {
-            await db.collection(SUPPLY_COLLECTIONS.FULFILLMENT_ALLOCATIONS).doc(alloc.allocationId).set(alloc);
-        }
-        for (const req of mutatedReqs.values()) {
-            await db.collection(SUPPLY_COLLECTIONS.REQUISITIONS).doc(req.reqId).set(req, { merge: true });
-        }
+            for (const asset of txCreatedAssets) {
+                tx.set(db.collection(SUPPLY_COLLECTIONS.ASSETS).doc(asset.assetId), asset);
+            }
+            for (const cashEntry of txCashEntries) {
+                tx.set(db.collection(SUPPLY_COLLECTIONS.CASH_LEDGER).doc(cashEntry.entryId), cashEntry);
+            }
+            for (const [invDocId, invRecord] of txUpdatedInventory.entries()) {
+                tx.set(db.collection(SUPPLY_COLLECTIONS.INVENTORY_ITEMS).doc(invDocId), invRecord, {
+                    merge: true,
+                });
+            }
+            for (const ledgerEntry of txStockLedgers) {
+                tx.set(db.collection(SUPPLY_COLLECTIONS.STOCK_LEDGER).doc(ledgerEntry.entryId), ledgerEntry);
+            }
+            for (const alloc of txAllocations) {
+                tx.set(db.collection(SUPPLY_COLLECTIONS.FULFILLMENT_ALLOCATIONS).doc(alloc.allocationId), alloc);
+            }
+            for (const req of mutatedReqs.values()) {
+                tx.set(db.collection(SUPPLY_COLLECTIONS.REQUISITIONS).doc(req.reqId), req, { merge: true });
+            }
+
+            allocations = txAllocations;
+            createdAssets = txCreatedAssets;
+            mutatedReqIds = Array.from(mutatedReqs.keys());
+        });
 
         await this.recordAudit(params.tenantId, actor, 'SUPPLY_PURCHASE_COMMITTED', purchaseId, {
             hitlConfirmed: true,
@@ -879,14 +1029,15 @@ export class SupplyRepository {
             siiDocument,
             allocations,
             createdAssets,
-            updatedRequisitionIds: Array.from(mutatedReqs.keys()),
+            updatedRequisitionIds: mutatedReqIds,
             missingInvoiceAlert,
         };
     }
 
     /**
-     * Confirma recepción física en bodega: transiciona `qtyInTransit` -> `qtyInWarehouse`
-     * y actualiza `qtyReceived` en requisiciones asignadas.
+     * Confirma recepción física en bodega de forma 100% atómica (`db.runTransaction`):
+     * acumula `qtyReceivedSoFar` por línea, rechaza sobre-recepción (`OVER_RECEIVE_NOT_ALLOWED`, HTTP 409)
+     * y cantidades negativas (HTTP 400), transiciona `qtyInTransit` -> `qtyInWarehouse` y actualiza requisiciones.
      */
     public static async confirmPurchaseReception(
         params: {
@@ -898,21 +1049,48 @@ export class SupplyRepository {
         actor: AuditActorContext
     ): Promise<{
         purchase: SupplyPurchase;
+        receptionOutcome: 'RECEIVED_OK' | 'PARTIAL_DISCREPANCY';
         receivedItemCount: number;
         affectedRequisitions: SupplyRequisition[];
     }> {
         const ref = db.collection(SUPPLY_COLLECTIONS.PURCHASES).doc(params.purchaseId);
         const now = new Date().toISOString();
-        const receivedMap = new Map(
-            (params.receivedLines || []).map((r) => [r.purchaseLineId, r.qtyReceived])
+
+        const receivedMap = new Map<string, number>();
+        for (const item of params.receivedLines || []) {
+            const qty = Number(item.qtyReceived);
+            if (!Number.isFinite(qty) || qty < 0) {
+                throw new SupplyValidationError(
+                    'INVALID_RECEPTION_QUANTITY',
+                    'Las cantidades de recepción en bodega no pueden ser negativas.'
+                );
+            }
+            receivedMap.set(item.purchaseLineId, qty);
+        }
+
+        // Allocations de esta compra (inmutables tras alta de compra)
+        const allocSnap = await db
+            .collection(SUPPLY_COLLECTIONS.FULFILLMENT_ALLOCATIONS)
+            .where('tenantId', '==', params.tenantId)
+            .where('purchaseId', '==', params.purchaseId)
+            .get();
+        const allocs = allocSnap.docs.map((d) => d.data() as FulfillmentAllocation);
+        const affectedReqIds = Array.from(
+            new Set(
+                allocs
+                    .filter((a) => a.requisitionId !== 'UNSOLICITED_PURCHASE')
+                    .map((a) => a.requisitionId)
+            )
         );
 
-        let purchase!: SupplyPurchase;
-        let hasDiscrepancy = false;
+        let updatedPurchase!: SupplyPurchase;
+        let receptionOutcome: 'RECEIVED_OK' | 'PARTIAL_DISCREPANCY' = 'RECEIVED_OK';
+        let receivedItemCount = 0;
+        let affectedRequisitions: SupplyRequisition[] = [];
 
-        // Bloqueo atómico anti doble-recepción (evita duplicar qtyInWarehouse y qtyReceived)
-        const claimReception = async (tx?: any): Promise<void> => {
-            const snap = tx ? await tx.get(ref) : await ref.get();
+        await db.runTransaction(async (tx) => {
+            // FASE 1: TODAS LAS LECTURAS PRIMERO
+            const snap = await tx.get(ref);
             if (!snap.exists) {
                 throw new SupplyNotFoundError('Compra no encontrada.');
             }
@@ -933,129 +1111,198 @@ export class SupplyRepository {
                 );
             }
 
-            purchase = loaded;
-            for (const line of loaded.lines) {
-                if (line.destination !== 'STOCK_IN_TRANSIT') continue;
-                const qtyToReceive = receivedMap.has(line.purchaseLineId)
-                    ? Math.max(0, Number(receivedMap.get(line.purchaseLineId)))
-                    : line.qtyPurchased;
-                if (qtyToReceive < line.qtyPurchased) {
-                    hasDiscrepancy = true;
+            const inTransitLines = (loaded.lines as PurchaseLineWithReceptionProgress[]).filter(
+                (l) => l.destination === 'STOCK_IN_TRANSIT'
+            );
+
+            // Validar cantidades entrantes y sobre-recepción ANTES de cualquier escritura
+            const incomingByLineId = new Map<string, { prev: number; incoming: number; next: number }>();
+            for (const line of inTransitLines) {
+                const prevReceived = Number(line.qtyReceivedSoFar ?? 0);
+                const remaining = Math.max(0, Number((line.qtyPurchased - prevReceived).toFixed(3)));
+                const incomingQty = receivedMap.has(line.purchaseLineId)
+                    ? Number(receivedMap.get(line.purchaseLineId))
+                    : remaining;
+
+                if (!Number.isFinite(incomingQty) || incomingQty < 0) {
+                    throw new SupplyValidationError(
+                        'INVALID_RECEPTION_QUANTITY',
+                        'Las cantidades de recepción en bodega no pueden ser negativas.'
+                    );
+                }
+
+                const nextReceived = Number((prevReceived + incomingQty).toFixed(3));
+                if (nextReceived > Number(line.qtyPurchased) + 1e-6) {
+                    throw new SupplyConflictError(
+                        'OVER_RECEIVE_NOT_ALLOWED',
+                        `Sobre-recepción rechazada en línea ${line.purchaseLineId}: acumulado ${nextReceived} excede comprado ${line.qtyPurchased}.`
+                    );
+                }
+                incomingByLineId.set(line.purchaseLineId, {
+                    prev: prevReceived,
+                    incoming: incomingQty,
+                    next: nextReceived,
+                });
+            }
+
+            // Leer ítems de inventario involucrados
+            const uniqueInvKeys = Array.from(
+                new Set(
+                    inTransitLines
+                        .filter((l) => (incomingByLineId.get(l.purchaseLineId)?.incoming || 0) > 0)
+                        .map((l) => buildInventoryDocId(params.tenantId, loaded.siteId, l.canonicalSkuId))
+                )
+            );
+            const invByDocId = new Map<string, SupplyInventoryItem | null>();
+            for (const invDocId of uniqueInvKeys) {
+                const invSnap = await tx.get(db.collection(SUPPLY_COLLECTIONS.INVENTORY_ITEMS).doc(invDocId));
+                invByDocId.set(invDocId, invSnap.exists ? (invSnap.data() as SupplyInventoryItem) : null);
+            }
+
+            // Leer requisiciones enlazadas
+            const txReqs = new Map<string, SupplyRequisition>();
+            for (const reqId of affectedReqIds) {
+                const reqSnap = await tx.get(db.collection(SUPPLY_COLLECTIONS.REQUISITIONS).doc(reqId));
+                if (!reqSnap.exists) continue;
+                const reqData = reqSnap.data() as SupplyRequisition;
+                if (reqData.tenantId === params.tenantId) {
+                    txReqs.set(reqId, {
+                        ...reqData,
+                        lines: reqData.lines.map((l) => ({ ...l })),
+                    });
                 }
             }
 
-            const claimedPatch: Partial<SupplyPurchase> = {
-                receptionStatus: hasDiscrepancy ? 'PARTIAL_DISCREPANCY' : 'RECEIVED',
+            // FASE 2: CÁLCULO ATÓMICO EN MEMORIA
+            let txReceivedItemCount = 0;
+            const txUpdatedInventory = new Map<string, SupplyInventoryItem>();
+            const txStockLedgers: StockLedgerEntry[] = [];
+
+            const updatedPurchaseLines: PurchaseLineWithReceptionProgress[] = (
+                loaded.lines as PurchaseLineWithReceptionProgress[]
+            ).map((line) => {
+                if (line.destination !== 'STOCK_IN_TRANSIT') return line;
+                const prog = incomingByLineId.get(line.purchaseLineId)!;
+                if (prog.incoming > 0) {
+                    txReceivedItemCount += 1;
+                    const invDocId = buildInventoryDocId(params.tenantId, loaded.siteId, line.canonicalSkuId);
+                    const currentInv = txUpdatedInventory.get(invDocId) ?? invByDocId.get(invDocId) ?? null;
+                    const computed = this.computeNextInventoryState(currentInv, {
+                        tenantId: params.tenantId,
+                        siteId: loaded.siteId,
+                        canonicalSkuId: line.canonicalSkuId,
+                        itemName: line.description,
+                        categoryCode: line.categoryCode,
+                        procurementBucket: line.procurementBucket,
+                        unitSi: line.unitSi,
+                        inTransitDelta: -prog.incoming,
+                        inWarehouseDelta: prog.incoming,
+                        unitCostClp: line.unitPriceClp,
+                        movementType: 'RECEPTION_CONFIRMED',
+                        referenceId: loaded.purchaseId,
+                        actorUid: actor.actorUid,
+                        now,
+                    });
+                    txUpdatedInventory.set(invDocId, computed.record);
+                    txStockLedgers.push(computed.ledgerEntry);
+                }
+                return {
+                    ...line,
+                    qtyReceivedSoFar: prog.next,
+                };
+            });
+
+            const allInTransitComplete = updatedPurchaseLines
+                .filter((l) => l.destination === 'STOCK_IN_TRANSIT')
+                .every((l) => Number(l.qtyReceivedSoFar ?? 0) >= Number(l.qtyPurchased) - 1e-6);
+
+            const nextStatus: SupplyPurchase['receptionStatus'] = allInTransitComplete
+                ? 'RECEIVED'
+                : 'PARTIAL_DISCREPANCY';
+            const nextOutcome: 'RECEIVED_OK' | 'PARTIAL_DISCREPANCY' = allInTransitComplete
+                ? 'RECEIVED_OK'
+                : 'PARTIAL_DISCREPANCY';
+
+            // Distribuir qty entrante hacia requisiciones sin doble conteo entre recepciones parciales
+            const txAffectedReqs: SupplyRequisition[] = [];
+            for (const [reqId, reqData] of txReqs.entries()) {
+                let mutated = false;
+                const updatedLines = reqData.lines.map((l) => {
+                    const matchingAllocs = allocs.filter(
+                        (a) => a.requisitionId === reqId && a.requisitionLineId === l.lineId
+                    );
+                    if (matchingAllocs.length === 0) return l;
+                    let addRec = 0;
+                    for (const alloc of matchingAllocs) {
+                        const prog = incomingByLineId.get(alloc.purchaseLineId);
+                        if (!prog || prog.incoming <= 0) continue;
+                        const pLine = inTransitLines.find((pl) => pl.purchaseLineId === alloc.purchaseLineId);
+                        const ratio =
+                            pLine && pLine.qtyPurchased > 0
+                                ? Math.min(1, prog.incoming / pLine.qtyPurchased)
+                                : 1;
+                        addRec += Number((alloc.qtyAllocated * ratio).toFixed(3));
+                    }
+                    if (addRec <= 0) return l;
+                    mutated = true;
+                    return {
+                        ...l,
+                        qtyReceived: Math.min(l.qtyRequested, Number((l.qtyReceived + addRec).toFixed(3))),
+                    };
+                });
+                if (mutated) {
+                    const nextReq: SupplyRequisition = {
+                        ...reqData,
+                        lines: updatedLines,
+                        updatedAt: now,
+                    };
+                    txReqs.set(reqId, nextReq);
+                    txAffectedReqs.push(nextReq);
+                }
+            }
+
+            const nextPurchase: SupplyPurchase = {
+                ...loaded,
+                lines: updatedPurchaseLines,
+                receptionStatus: nextStatus,
                 receivedAt: now,
                 receivedByUid: actor.actorUid,
                 updatedAt: now,
             };
-            if (tx) {
-                tx.set(ref, claimedPatch, { merge: true });
-            } else {
-                await ref.set(claimedPatch, { merge: true });
-            }
-        };
 
-        if (typeof db.runTransaction === 'function') {
-            await db.runTransaction(async (tx) => {
-                await claimReception(tx);
-            });
-        } else {
-            await claimReception();
-        }
-
-        let receivedItemCount = 0;
-
-        for (const line of purchase.lines) {
-            if (line.destination !== 'STOCK_IN_TRANSIT') continue;
-            const qtyToReceive =
-                receivedMap.has(line.purchaseLineId)
-                    ? Math.max(0, Number(receivedMap.get(line.purchaseLineId)))
-                    : line.qtyPurchased;
-
-            if (qtyToReceive > 0) {
-                receivedItemCount += 1;
-                await this.applyInventoryDelta({
-                    tenantId: params.tenantId,
-                    siteId: purchase.siteId,
-                    canonicalSkuId: line.canonicalSkuId,
-                    itemName: line.description,
-                    categoryCode: line.categoryCode,
-                    procurementBucket: line.procurementBucket,
-                    unitSi: line.unitSi,
-                    inTransitDelta: -qtyToReceive,
-                    inWarehouseDelta: qtyToReceive,
-                    unitCostClp: line.unitPriceClp,
-                    movementType: 'RECEPTION_CONFIRMED',
-                    referenceId: purchase.purchaseId,
-                    actorUid: actor.actorUid,
+            // FASE 3: TODAS LAS ESCRITURAS ATÓMICAS EN LA MISMA TRANSACCIÓN
+            tx.set(ref, nextPurchase, { merge: true });
+            for (const [invDocId, invRecord] of txUpdatedInventory.entries()) {
+                tx.set(db.collection(SUPPLY_COLLECTIONS.INVENTORY_ITEMS).doc(invDocId), invRecord, {
+                    merge: true,
                 });
             }
-        }
-
-        // Actualizar `qtyReceived` en requisiciones enlazadas mediante `supply_fulfillment_allocations`
-        const allocSnap = await db
-            .collection(SUPPLY_COLLECTIONS.FULFILLMENT_ALLOCATIONS)
-            .where('tenantId', '==', params.tenantId)
-            .where('purchaseId', '==', params.purchaseId)
-            .get();
-
-        const affectedReqIds = new Set<string>();
-        const allocs = allocSnap.docs.map((d) => d.data() as FulfillmentAllocation);
-        for (const alloc of allocs) {
-            if (alloc.requisitionId !== 'UNSOLICITED_PURCHASE') {
-                affectedReqIds.add(alloc.requisitionId);
+            for (const ledgerEntry of txStockLedgers) {
+                tx.set(db.collection(SUPPLY_COLLECTIONS.STOCK_LEDGER).doc(ledgerEntry.entryId), ledgerEntry);
             }
-        }
+            for (const reqItem of txAffectedReqs) {
+                tx.set(db.collection(SUPPLY_COLLECTIONS.REQUISITIONS).doc(reqItem.reqId), reqItem, {
+                    merge: true,
+                });
+            }
 
-        const affectedRequisitions: SupplyRequisition[] = [];
-        for (const reqId of affectedReqIds) {
-            const reqRef = db.collection(SUPPLY_COLLECTIONS.REQUISITIONS).doc(reqId);
-            const reqSnap = await reqRef.get();
-            if (!reqSnap.exists) continue;
-            const reqData = reqSnap.data() as SupplyRequisition;
-            if (reqData.tenantId !== params.tenantId) continue;
+            updatedPurchase = nextPurchase;
+            receptionOutcome = nextOutcome;
+            receivedItemCount = txReceivedItemCount;
+            affectedRequisitions = txAffectedReqs;
+        });
 
-            const updatedLines = reqData.lines.map((l) => {
-                const matchingAllocs = allocs.filter(
-                    (a) => a.requisitionId === reqId && a.requisitionLineId === l.lineId
-                );
-                if (matchingAllocs.length === 0) return l;
-                const addRec = matchingAllocs.reduce((acc, a) => acc + a.qtyAllocated, 0);
-                return {
-                    ...l,
-                    qtyReceived: Math.min(l.qtyRequested, Number((l.qtyReceived + addRec).toFixed(3))),
-                };
-            });
-
-            const updatedReq: SupplyRequisition = {
-                ...reqData,
-                lines: updatedLines,
-                updatedAt: now,
-            };
-            await reqRef.set(updatedReq, { merge: true });
-            affectedRequisitions.push(updatedReq);
-        }
-
-        const updatedPurchase: SupplyPurchase = {
-            ...purchase,
-            receptionStatus: hasDiscrepancy ? 'PARTIAL_DISCREPANCY' : 'RECEIVED',
-            receivedAt: now,
-            receivedByUid: actor.actorUid,
-            updatedAt: now,
-        };
-        await ref.set(updatedPurchase, { merge: true });
-
-        await this.recordAudit(params.tenantId, actor, 'SUPPLY_PURCHASE_RECEPTION_CONFIRMED', purchase.purchaseId, {
+        await this.recordAudit(params.tenantId, actor, 'SUPPLY_PURCHASE_RECEPTION_CONFIRMED', updatedPurchase.purchaseId, {
             hitlConfirmed: true,
             receptionStatus: updatedPurchase.receptionStatus,
+            receptionOutcome,
             receivedItemCount,
-            affectedRequisitionIds: Array.from(affectedReqIds),
+            affectedRequisitionIds: affectedRequisitions.map((r) => r.reqId),
         });
 
         return {
             purchase: updatedPurchase,
+            receptionOutcome,
             receivedItemCount,
             affectedRequisitions,
         };
@@ -1065,7 +1312,7 @@ export class SupplyRepository {
     // Inventory (`supply_inventory_items`) & Stock Ledger (`supply_stock_ledger`)
     // -----------------------------------------------------------------------
 
-    private static async applyInventoryDelta(params: {
+    public static async applyInventoryDelta(params: {
         tenantId: string;
         siteId: string;
         canonicalSkuId: string;
@@ -1083,62 +1330,24 @@ export class SupplyRepository {
         const now = new Date().toISOString();
         const docId = buildInventoryDocId(params.tenantId, params.siteId, params.canonicalSkuId);
         const ref = db.collection(SUPPLY_COLLECTIONS.INVENTORY_ITEMS).doc(docId);
-        const snap = await ref.get();
-        const existing = snap.exists ? (snap.data() as SupplyInventoryItem) : null;
+        let resultRecord!: SupplyInventoryItem;
 
-        const nextInTransit = Math.max(
-            0,
-            Number(((existing?.qtyInTransit || 0) + params.inTransitDelta).toFixed(3))
-        );
-        const nextInWarehouse = Math.max(
-            0,
-            Number(((existing?.qtyInWarehouse || 0) + params.inWarehouseDelta).toFixed(3))
-        );
+        await db.runTransaction(async (tx) => {
+            const snap = await tx.get(ref);
+            const existing = snap.exists ? (snap.data() as SupplyInventoryItem) : null;
+            const computed = this.computeNextInventoryState(existing, {
+                ...params,
+                now,
+            });
+            tx.set(ref, computed.record, { merge: true });
+            tx.set(
+                db.collection(SUPPLY_COLLECTIONS.STOCK_LEDGER).doc(computed.ledgerEntry.entryId),
+                computed.ledgerEntry
+            );
+            resultRecord = computed.record;
+        });
 
-        const prevQty = (existing?.qtyInWarehouse || 0) + (existing?.qtyInTransit || 0);
-        const addedQty = Math.max(0, params.inTransitDelta + params.inWarehouseDelta);
-        const avgUnitCostClp =
-            addedQty > 0 && params.unitCostClp > 0
-                ? Math.round(
-                      ((existing?.avgUnitCostClp || 0) * prevQty + params.unitCostClp * addedQty) /
-                          Math.max(1, prevQty + addedQty)
-                  )
-                : existing?.avgUnitCostClp || params.unitCostClp || 0;
-
-        const record: SupplyInventoryItem = {
-            inventoryKey: docId,
-            tenantId: params.tenantId,
-            siteId: params.siteId,
-            canonicalSkuId: params.canonicalSkuId,
-            itemName: existing?.itemName || params.itemName,
-            categoryCode: existing?.categoryCode || params.categoryCode,
-            procurementBucket: existing?.procurementBucket || params.procurementBucket,
-            unitSi: existing?.unitSi || params.unitSi,
-            qtyInTransit: nextInTransit,
-            qtyInWarehouse: nextInWarehouse,
-            avgUnitCostClp,
-            dailyBurnRatePerPax: existing?.dailyBurnRatePerPax,
-            updatedAt: now,
-        };
-
-        await ref.set(record, { merge: true });
-
-        const ledgerEntry: StockLedgerEntry = {
-            entryId: `stkl_${crypto.randomBytes(5).toString('hex')}`,
-            tenantId: params.tenantId,
-            siteId: params.siteId,
-            canonicalSkuId: params.canonicalSkuId,
-            movementType: params.movementType,
-            qtyDelta: params.inWarehouseDelta !== 0 ? params.inWarehouseDelta : params.inTransitDelta,
-            unitSi: params.unitSi,
-            unitCostClp: params.unitCostClp,
-            referenceId: params.referenceId,
-            actorUid: params.actorUid,
-            createdAt: now,
-        };
-        await db.collection(SUPPLY_COLLECTIONS.STOCK_LEDGER).doc(ledgerEntry.entryId).set(ledgerEntry);
-
-        return record;
+        return resultRecord;
     }
 
     public static async listInventory(tenantId: string, siteId?: string): Promise<SupplyInventoryItem[]> {
@@ -1266,6 +1475,17 @@ export class SupplyRepository {
         return list.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     }
 
+    public static async getExpenseReport(
+        tenantId: string,
+        reportId: string
+    ): Promise<SiiExpenseReport | null> {
+        const snap = await db.collection(SUPPLY_COLLECTIONS.EXPENSE_REPORTS).doc(reportId).get();
+        if (!snap.exists) return null;
+        const data = snap.data() as SiiExpenseReport;
+        if (data.tenantId !== tenantId) return null;
+        return data;
+    }
+
     public static async createExpenseReport(
         input: {
             tenantId: string;
@@ -1283,47 +1503,79 @@ export class SupplyRepository {
     ): Promise<SiiExpenseReport> {
         const now = new Date().toISOString();
         const reportId = `expr_${Date.now().toString(36)}_${crypto.randomBytes(3).toString('hex')}`;
+        const uniqueDocIds = Array.from(
+            new Set(input.siiDocumentIds.map((id) => String(id || '').trim()).filter(Boolean))
+        );
 
-        const allDocs = await this.listSiiDocuments(input.tenantId, { siteId: input.siteId });
-        const selectedDocs = allDocs.filter((d) => input.siiDocumentIds.includes(d.docId));
-        const renderedTotalClp = selectedDocs.reduce((acc, d) => acc + Number(d.totalAmountClp || 0), 0);
-        const balanceClp = Math.round(input.fundAdvanceClp - renderedTotalClp);
+        const reportRef = db.collection(SUPPLY_COLLECTIONS.EXPENSE_REPORTS).doc(reportId);
+        let createdReport!: SiiExpenseReport;
 
-        const report: SiiExpenseReport = {
-            reportId,
-            tenantId: input.tenantId,
-            siteId: input.siteId,
-            custodianUid: input.custodianUid,
-            custodianName: input.custodianName,
-            paymentMethod: input.paymentMethod,
-            title: input.title,
-            periodLabel: input.periodLabel,
-            costCenter: (input.costCenter || 'CC-CAMPAMENTO').trim() || 'CC-CAMPAMENTO',
-            fundAdvanceClp: Math.round(input.fundAdvanceClp),
-            renderedTotalClp: Math.round(renderedTotalClp),
-            balanceClp,
-            siiDocumentIds: selectedDocs.map((d) => d.docId),
-            status: 'SUBMITTED',
-            createdAt: now,
-            updatedAt: now,
-        };
+        await db.runTransaction(async (tx) => {
+            // FASE 1: LEER TODOS LOS DOCUMENTOS SII EN LA TRANSACCIÓN
+            const selectedDocs: Array<{ ref: FirebaseFirestore.DocumentReference; data: SiiDocumentRecord }> = [];
+            for (const docId of uniqueDocIds) {
+                const docRef = db.collection(SUPPLY_COLLECTIONS.SII_DOCUMENTS).doc(docId);
+                const snap = await tx.get(docRef);
+                if (!snap.exists) {
+                    throw new SupplyNotFoundError(`Documento SII ${docId} no encontrado.`);
+                }
+                const docData = snap.data() as SiiDocumentRecord;
+                if (docData.tenantId !== input.tenantId) {
+                    throw new SupplyForbiddenError(
+                        'TENANT_ACCESS_DENIED: Documento SII no pertenece a la cuenta activa.'
+                    );
+                }
+                if (docData.expenseReportId) {
+                    throw new SupplyConflictError(
+                        'SII_DOC_ALREADY_REPORTED',
+                        `El documento SII ${docId} ya fue incluido en la rendición ${docData.expenseReportId}.`
+                    );
+                }
+                selectedDocs.push({ ref: docRef, data: docData });
+            }
 
-        await db.collection(SUPPLY_COLLECTIONS.EXPENSE_REPORTS).doc(reportId).set(report);
-        for (const doc of selectedDocs) {
-            await db
-                .collection(SUPPLY_COLLECTIONS.SII_DOCUMENTS)
-                .doc(doc.docId)
-                .set({ expenseReportId: reportId, updatedAt: now }, { merge: true });
-        }
+            // FASE 2: CÁLCULO
+            const renderedTotalClp = selectedDocs.reduce(
+                (acc, item) => acc + Number(item.data.totalAmountClp || 0),
+                0
+            );
+            const balanceClp = Math.round(input.fundAdvanceClp - renderedTotalClp);
+
+            const report: SiiExpenseReport = {
+                reportId,
+                tenantId: input.tenantId,
+                siteId: input.siteId,
+                custodianUid: input.custodianUid,
+                custodianName: input.custodianName,
+                paymentMethod: input.paymentMethod,
+                title: input.title,
+                periodLabel: input.periodLabel,
+                costCenter: (input.costCenter || 'CC-CAMPAMENTO').trim() || 'CC-CAMPAMENTO',
+                fundAdvanceClp: Math.round(input.fundAdvanceClp),
+                renderedTotalClp: Math.round(renderedTotalClp),
+                balanceClp,
+                siiDocumentIds: selectedDocs.map((item) => item.data.docId),
+                status: 'SUBMITTED',
+                createdAt: now,
+                updatedAt: now,
+            };
+
+            // FASE 3: ESCRITURAS ATÓMICAS EN LA MISMA TRANSACCIÓN
+            tx.set(reportRef, report);
+            for (const item of selectedDocs) {
+                tx.set(item.ref, { expenseReportId: reportId, updatedAt: now }, { merge: true });
+            }
+            createdReport = report;
+        });
 
         await this.recordAudit(input.tenantId, actor, 'SUPPLY_EXPENSE_REPORT_CREATED', reportId, {
             hitlConfirmed: true,
-            fundAdvanceClp: report.fundAdvanceClp,
-            renderedTotalClp: report.renderedTotalClp,
-            balanceClp: report.balanceClp,
-            siiDocumentCount: selectedDocs.length,
+            fundAdvanceClp: createdReport.fundAdvanceClp,
+            renderedTotalClp: createdReport.renderedTotalClp,
+            balanceClp: createdReport.balanceClp,
+            siiDocumentCount: createdReport.siiDocumentIds.length,
         });
-        return report;
+        return createdReport;
     }
 
     public static async updateExpenseReportStatus(
@@ -1359,7 +1611,10 @@ export class SupplyRepository {
     // Demand Forecast (`supply_demand_forecasts` — DS 594 Art. 14 + EWMA)
     // -----------------------------------------------------------------------
 
-    public static async computeAndStoreForecast(tenantId: string, siteId?: string): Promise<DemandForecast[]> {
+    /**
+     * Cálculo puro de pronóstico (100% solo lectura, 0 escrituras en Firestore).
+     */
+    public static async computeForecastReadOnly(tenantId: string, siteId?: string): Promise<DemandForecast[]> {
         const sites = siteId
             ? ([await this.getSite(tenantId, siteId)].filter(Boolean) as SupplySite[])
             : await this.listSites(tenantId);
@@ -1465,7 +1720,7 @@ export class SupplyRepository {
             });
 
             const forecastId = `fcst_${safeDocIdPart(tenantId)}_${safeDocIdPart(site.siteId)}`;
-            const forecast: DemandForecast = {
+            forecasts.push({
                 forecastId,
                 tenantId,
                 siteId: site.siteId,
@@ -1481,12 +1736,20 @@ export class SupplyRepository {
                 dailyFoodOpexClpPerPax,
                 items,
                 computedAt: now,
-            };
-
-            await db.collection(SUPPLY_COLLECTIONS.DEMAND_FORECASTS).doc(forecastId).set(forecast);
-            forecasts.push(forecast);
+            });
         }
 
+        return forecasts;
+    }
+
+    /**
+     * Recalcula y persiste bajo demanda (`POST /forecast/recalculate`).
+     */
+    public static async computeAndStoreForecast(tenantId: string, siteId?: string): Promise<DemandForecast[]> {
+        const forecasts = await this.computeForecastReadOnly(tenantId, siteId);
+        for (const forecast of forecasts) {
+            await db.collection(SUPPLY_COLLECTIONS.DEMAND_FORECASTS).doc(forecast.forecastId).set(forecast);
+        }
         return forecasts;
     }
 

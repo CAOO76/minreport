@@ -4,7 +4,7 @@ import multer from 'multer';
 import { z } from 'zod';
 import { env, isDevPrivateReleaseStage } from '../../../config/env';
 import { auth, db } from '../../../config/firebase';
-import { evaluatePilotExpiration } from '../../../contracts/session.contracts';
+import { evaluatePilotExpiration, resolveEffectiveModuleAccess } from '../../../contracts/session.contracts';
 import { AuditLedger } from '../../../core/audit-ledger';
 import { CasStorageService } from '../../../core/media/CasStorageService';
 import { isDecodedDevRootToken, logThrottledAuthFailure } from '../../../middleware/auth';
@@ -13,6 +13,10 @@ import {
     extractClientIp,
     mutationRateLimiter,
 } from '../../../middleware/rateLimiter';
+import {
+    resolveModuleSessionScope,
+    type ScopedRequest,
+} from '../../../middleware/sessionScope';
 import { normalizeE164Phone } from '../../../utils/taxIdValidator';
 import { EmailAndWhatsAppNotifier } from '../adapters/EmailAndWhatsAppNotifier';
 import {
@@ -30,6 +34,7 @@ import {
     SupplyForbiddenError,
     SupplyNotFoundError,
     SupplyRepository,
+    SupplyValidationError,
 } from './SupplyRepository';
 import {
     CanonicalSupplySkuSchema,
@@ -78,6 +83,12 @@ const upload = multer({
     },
 });
 
+export type SupplyEffectiveRole = SupplyOperationalRole | 'READ_ONLY_VIEWER' | 'BILLING_ONLY';
+
+export type SupplyEffectiveProfile = Omit<SupplyMemberProfile, 'role'> & {
+    role: SupplyEffectiveRole;
+};
+
 export interface SupplySessionContext {
     tenantId: string;
     actorUid: string;
@@ -85,8 +96,11 @@ export interface SupplySessionContext {
     actorName: string;
     accountTier: 1 | 2 | 3 | 4 | 5;
     isSystemPrivileged: boolean;
+    isEduSandbox: boolean;
+    isTestPilot: boolean;
     b2bRole: string;
-    supplyProfile: SupplyMemberProfile;
+    canMutate: boolean;
+    supplyProfile: SupplyEffectiveProfile;
     phoneE164?: string;
 }
 
@@ -96,22 +110,66 @@ export interface SupplyRequest extends Request {
     supplyContext?: SupplySessionContext;
 }
 
+const READ_ONLY_SUPPLY_ROLES = new Set(['VIEWER', 'BILLING_ONLY', 'SUBSCRIPTION_ADMIN']);
+
+function asOperationalRole(role: SupplyEffectiveRole): SupplyOperationalRole {
+    if (role === 'READ_ONLY_VIEWER' || role === 'BILLING_ONLY') {
+        throw new SupplyForbiddenError('SUPPLY_RBAC_READ_ONLY: Operación no permitida en modo solo lectura.');
+    }
+    return role;
+}
+
 function isInactiveStatus(status: unknown): boolean {
     const st = String(status || 'ACTIVE').trim().toUpperCase();
     return st === 'SUSPENDED' || st === 'REVOKED' || st === 'INACTIVE' || st === 'DELETED';
+}
+
+function isReadOnlyB2bRole(role: string): boolean {
+    return READ_ONLY_SUPPLY_ROLES.has(String(role || '').trim().toUpperCase());
+}
+
+function canAuthorizeCapex(ctx: SupplySessionContext): boolean {
+    if (ctx.isSystemPrivileged) return true;
+    const isCapexRole =
+        ctx.supplyProfile.role === 'OWNER_EXEC' || ctx.supplyProfile.role === 'SITE_ADMIN';
+    return Boolean(isCapexRole && ctx.supplyProfile.allowCapex === true);
 }
 
 function buildSupplyProfileFromData(
     rawProfile: unknown,
     b2bRole: string,
     isSystemPrivileged: boolean
-): SupplyMemberProfile {
+): SupplyEffectiveProfile {
     const base = (rawProfile && typeof rawProfile === 'object' ? rawProfile : {}) as Record<string, any>;
+    const normalizedB2bRole = String(b2bRole || '').trim().toUpperCase();
+
+    // Prohibido promover VIEWER o BILLING_ONLY a CAMP_MANAGER (modo estrictamente solo lectura)
+    if (!isSystemPrivileged && isReadOnlyB2bRole(normalizedB2bRole)) {
+        const readOnlyRole: SupplyEffectiveRole =
+            normalizedB2bRole === 'BILLING_ONLY' || normalizedB2bRole === 'SUBSCRIPTION_ADMIN'
+                ? 'BILLING_ONLY'
+                : 'READ_ONLY_VIEWER';
+        const defaults = SupplyMemberProfileSchema.parse({
+            ...base,
+            role: 'WAREHOUSE_KEEPER',
+            canRecordDirectPurchase: false,
+            autoApproveDirectPurchase: false,
+            allowCapex: false,
+        });
+        return {
+            ...defaults,
+            role: readOnlyRole,
+            canRecordDirectPurchase: false,
+            autoApproveDirectPurchase: false,
+            allowCapex: false,
+        };
+    }
+
     let role: SupplyOperationalRole = base.role || 'CAMP_MANAGER';
     if (!base.role) {
-        if (isSystemPrivileged || b2bRole === 'OWNER') {
+        if (isSystemPrivileged || normalizedB2bRole === 'OWNER') {
             role = 'OWNER_EXEC';
-        } else if (b2bRole === 'ADMIN') {
+        } else if (normalizedB2bRole === 'ADMIN') {
             role = 'SITE_ADMIN';
         } else {
             role = 'CAMP_MANAGER';
@@ -137,6 +195,109 @@ function buildSupplyProfileFromData(
         canRecordDirectPurchase,
         autoApproveDirectPurchase,
         allowCapex,
+    });
+}
+
+async function invokeSupplyModuleSessionScope(
+    req: SupplyRequest
+): Promise<{ ok: true } | { ok: false; status: number; body: Record<string, any> }> {
+    return new Promise((resolve) => {
+        let settled = false;
+        const middleware = resolveModuleSessionScope('supply');
+        const captureRes: any = {
+            statusCode: 200,
+            status(code: number) {
+                this.statusCode = code;
+                return this;
+            },
+            json(payload: Record<string, any>) {
+                if (!settled) {
+                    settled = true;
+                    resolve({ ok: false, status: this.statusCode || 403, body: payload });
+                }
+                return this;
+            },
+        };
+        void Promise.resolve(
+            middleware(req as ScopedRequest, captureRes as Response, () => {
+                if (!settled) {
+                    settled = true;
+                    resolve({ ok: true });
+                }
+            })
+        ).catch(() => {
+            if (!settled) {
+                settled = true;
+                resolve({
+                    ok: false,
+                    status: 401,
+                    body: { error: 'No autorizado: Error verificando sesión.' },
+                });
+            }
+        });
+    });
+}
+
+function isAccountSupplyEntitled(
+    accountData: Record<string, any> | null,
+    globalModuleActive: boolean
+): boolean {
+    if (!accountData) return false;
+    const rawEntitlements = accountData.entitlements ?? null;
+    const hasStructuredEntitlements = Boolean(
+        rawEntitlements &&
+            (rawEntitlements.basePackage !== undefined ||
+                rawEntitlements.baseModules !== undefined ||
+                rawEntitlements.addonModules !== undefined)
+    );
+    const entitlementModulesMap =
+        rawEntitlements?.modules && typeof rawEntitlements.modules === 'object'
+            ? (rawEntitlements.modules as Record<string, boolean>)
+            : null;
+    const legacyAccountModulesMap =
+        accountData.modules && typeof accountData.modules === 'object'
+            ? (accountData.modules as Record<string, boolean>)
+            : null;
+    const hasAccountModuleConfig = Boolean(
+        hasStructuredEntitlements ||
+            entitlementModulesMap ||
+            accountData.contract?.activeModules ||
+            legacyAccountModulesMap ||
+            Array.isArray(accountData.enabledPlugins)
+    );
+    const effectiveEntitlements =
+        hasStructuredEntitlements &&
+        entitlementModulesMap &&
+        typeof entitlementModulesMap.supply === 'boolean' &&
+        rawEntitlements?.addonModules?.supply === undefined &&
+        rawEntitlements?.baseModules?.supply === undefined
+            ? {
+                  ...rawEntitlements,
+                  addonModules: {
+                      ...(rawEntitlements.addonModules || {}),
+                      supply: { active: entitlementModulesMap.supply },
+                  },
+              }
+            : hasStructuredEntitlements
+              ? rawEntitlements
+              : null;
+    const mergedLegacyActiveModules = hasAccountModuleConfig
+        ? {
+              ...(legacyAccountModulesMap || {}),
+              ...(accountData.contract?.activeModules || {}),
+              ...(entitlementModulesMap || {}),
+          }
+        : { opermaq: true, stockpile: true };
+
+    return resolveEffectiveModuleAccess({
+        moduleKey: 'supply',
+        globalModuleActive,
+        hasFullSuiteOverride: false,
+        entitlements: effectiveEntitlements,
+        legacyContractActiveModules: mergedLegacyActiveModules,
+        legacyEnabledPlugins: Array.isArray(accountData.enabledPlugins) ? accountData.enabledPlugins : null,
+        memberRole: 'VIEWER',
+        memberAllowedModules: null,
     });
 }
 
@@ -220,7 +381,10 @@ async function resolveVerifiedTestPilotSandbox(
 }
 
 /**
- * Middleware soberano de sesión y aislamiento multi-tenant para `/api/supply/*`.
+ * Middleware soberano de sesión, entitlements y aislamiento multi-tenant para `/api/supply/*`.
+ * Delega la resolución base a `resolveModuleSessionScope('supply')` (entitlements, `modules_status/supply`,
+ * `allowedModules.supply`, `accountTier`, `isEduSandbox`) preservando íntegramente las compuertas E01
+ * de hermeticidad `3º TEST-PILOT` (`test_pilots`) y `DEV_PRIVATE`, más modo solo lectura `VIEWER`/`BILLING_ONLY`.
  */
 export async function requireSupplyTenantScope(
     req: SupplyRequest,
@@ -228,32 +392,31 @@ export async function requireSupplyTenantScope(
     next: NextFunction
 ): Promise<any> {
     try {
-        const authHeader = req.headers.authorization;
-        if (!authHeader?.startsWith('Bearer ')) {
-            return res.status(401).json({ error: 'No autorizado: Token de sesión MINREPORT requerido.' });
-        }
+        const scopeResult = await invokeSupplyModuleSessionScope(req);
 
-        const token = authHeader.slice(7).trim();
-        if (!token) {
-            return res.status(401).json({ error: 'No autorizado: Token de sesión vacío.' });
+        // Si el token no fue verificado (401) o DEV_PRIVATE bloqueó, retornar inmediatamente
+        if (!scopeResult.ok && scopeResult.status === 401) {
+            return res.status(401).json(scopeResult.body);
         }
-
-        let decoded: Awaited<ReturnType<typeof auth.verifyIdToken>>;
-        try {
-            decoded = await auth.verifyIdToken(token);
-        } catch (authErr) {
-            logThrottledAuthFailure('SUPPLY-API', req, authErr);
-            return res.status(401).json({ error: 'No autorizado: Fallo al verificar sesión MINREPORT.' });
+        if (!scopeResult.ok && scopeResult.body?.code === 'RELEASE_STAGE_DEV_ONLY') {
+            return res.status(403).json(scopeResult.body);
         }
-
-        if (isDevPrivateReleaseStage() && !isDecodedDevRootToken(decoded)) {
+        if (!scopeResult.ok && scopeResult.body?.code === 'PILOT_ACCOUNT_EXPIRED') {
             return res.status(403).json({
-                error: 'RELEASE_STAGE_DEV_ONLY: Acceso restringido exclusivamente a 1º DEV.',
-                code: 'RELEASE_STAGE_DEV_ONLY',
+                error: 'Cuenta 3º TEST-PILOT expirada, revocada o sin registro activo.',
+                code: 'PILOT_EXPIRED_OR_REVOKED',
             });
         }
 
-        req.user = decoded;
+        const decoded = req.user;
+        if (!decoded?.uid) {
+            return res.status(scopeResult.ok ? 401 : scopeResult.status).json(
+                scopeResult.ok
+                    ? { error: 'No autorizado: Sesión MINREPORT inválida.' }
+                    : scopeResult.body
+            );
+        }
+
         const uid = String(decoded.uid || '').trim();
         const emailLower = String(decoded.email || '').trim().toLowerCase();
         const emailVerifiedOk = decoded.email_verified !== false;
@@ -292,6 +455,12 @@ export async function requireSupplyTenantScope(
             !isSuperAdmin &&
             (tokenRole === 'TEST_PILOT' || serverUserRole === 'TEST_PILOT');
 
+        const isSystemPrivileged = isDevRoot || isSuperAdmin;
+        const headerTenantId = String(
+            req.headers['x-active-account-id'] || req.headers['x-tenant-id'] || ''
+        ).trim();
+
+        // Compuerta E01 inquebrantable para 3º TEST-PILOT (jamás hereda hasFullSuiteOverride)
         let verifiedPilotSandbox: VerifiedSupplyTestPilotSandbox | null = null;
         if (isTestPilot) {
             if (userDisabled) {
@@ -313,14 +482,73 @@ export async function requireSupplyTenantScope(
             }
         }
 
-        // Privilegio de plataforma exclusivo de 1º DEV y 2º ADMIN (3º TEST-PILOT hermético)
-        const isSystemPrivileged = isDevRoot || isSuperAdmin;
+        // Si resolveModuleSessionScope('supply') rechazó, solo evaluar excepción de solo lectura para BILLING_ONLY
+        let billingOnlyReadOnlyFallback = false;
+        let fallbackTenantId = '';
+        let fallbackAccountData: Record<string, any> | null = null;
+        let fallbackMemberData: Record<string, any> | null = null;
 
-        const headerTenantId = String(
-            req.headers['x-active-account-id'] || req.headers['x-tenant-id'] || ''
-        ).trim();
+        if (!scopeResult.ok) {
+            const isSeatError =
+                scopeResult.status === 403 &&
+                String(scopeResult.body?.error || '').includes('MODULO_NO_AUTORIZADO_ASIENTO');
+            if (!isSeatError) {
+                return res.status(scopeResult.status).json(scopeResult.body);
+            }
 
-        let resolvedTenantId = '';
+            const candidateTenant =
+                headerTenantId ||
+                String(decoded.activeAccountId || '').trim() ||
+                String(profileData?.lastActiveAccountId || '').trim() ||
+                String(profileData?.primaryAccountId || '').trim() ||
+                String(profileData?.memberships?.[0]?.accountId || '').trim();
+
+            if (!candidateTenant || !TENANT_ID_REGEX.test(candidateTenant)) {
+                return res.status(scopeResult.status).json(scopeResult.body);
+            }
+
+            const [accSnap, memSnap] = await Promise.all([
+                db.collection('accounts').doc(candidateTenant).get().catch(() => null),
+                db
+                    .collection('accounts')
+                    .doc(candidateTenant)
+                    .collection('members')
+                    .doc(uid)
+                    .get()
+                    .catch(() => null),
+            ]);
+            const accData = accSnap?.exists ? accSnap.data() || null : null;
+            const memData = memSnap?.exists ? memSnap.data() || null : null;
+            const profMem = Array.isArray(profileData?.memberships)
+                ? profileData!.memberships.find(
+                      (m: any) => m?.accountId === candidateTenant && !isInactiveStatus(m?.status)
+                  )
+                : undefined;
+            const rawSeatRole = String(memData?.role || profMem?.role || tokenRole || '')
+                .trim()
+                .toUpperCase();
+
+            const memberStillActive =
+                (memData && !isInactiveStatus(memData.status)) || Boolean(profMem);
+            if (
+                !memberStillActive ||
+                (rawSeatRole !== 'BILLING_ONLY' && rawSeatRole !== 'SUBSCRIPTION_ADMIN') ||
+                !isAccountSupplyEntitled(accData, true)
+            ) {
+                return res.status(scopeResult.status).json(scopeResult.body);
+            }
+
+            billingOnlyReadOnlyFallback = true;
+            fallbackTenantId = candidateTenant;
+            fallbackAccountData = accData;
+            fallbackMemberData = memData;
+        }
+
+        const modCtx = (req as ScopedRequest).moduleContext;
+        let resolvedTenantId = billingOnlyReadOnlyFallback
+            ? fallbackTenantId
+            : String(modCtx?.tenantId || '').trim();
+
         if (isTestPilot && verifiedPilotSandbox) {
             const candidatePilotTenant =
                 headerTenantId ||
@@ -333,14 +561,6 @@ export async function requireSupplyTenantScope(
                 });
             }
             resolvedTenantId = candidatePilotTenant;
-        } else {
-            resolvedTenantId =
-                headerTenantId ||
-                String(decoded.activeAccountId || '').trim() ||
-                String(profileData?.lastActiveAccountId || '').trim() ||
-                String(profileData?.primaryAccountId || '').trim() ||
-                String(profileData?.memberships?.[0]?.accountId || '').trim() ||
-                (isSystemPrivileged ? 'dev-master-sandbox' : '');
         }
 
         if (!resolvedTenantId || !TENANT_ID_REGEX.test(resolvedTenantId)) {
@@ -351,35 +571,8 @@ export async function requireSupplyTenantScope(
             return res.status(403).json({ error: 'TENANT_ACCESS_DENIED' });
         }
 
-        const isVerifiedPilotOwnSandbox = Boolean(
-            isTestPilot && verifiedPilotSandbox?.allowedTenantIds.has(resolvedTenantId)
-        );
-
-        let accountData: Record<string, any> | null = null;
-        if (resolvedTenantId !== 'dev-master-sandbox') {
-            const accSnap = await db.collection('accounts').doc(resolvedTenantId).get();
-            if (accSnap.exists) {
-                accountData = accSnap.data() || null;
-            } else if (!isSystemPrivileged && !isVerifiedPilotOwnSandbox) {
-                return res.status(403).json({ error: 'TENANT_ACCESS_DENIED' });
-            }
-        }
-
-        const accountStatus = String(accountData?.status || 'ACTIVE').toUpperCase();
-        if (
-            !isSystemPrivileged &&
-            (accountStatus === 'PENDING_APPROVAL' ||
-                accountStatus === 'REJECTED' ||
-                accountStatus === 'SUSPENDED' ||
-                accountStatus === 'REVOKED')
-        ) {
-            return res.status(403).json({
-                error: `CUENTA_${accountStatus}: La cuenta organizacional no está habilitada.`,
-            });
-        }
-
-        // Comprobar estado global del módulo `supply` para cuentas no privilegiadas
-        if (!isSystemPrivileged) {
+        // Comprobar modules_status/supply también para 3º TEST-PILOT (no es privilegiado)
+        if (isTestPilot) {
             try {
                 const modSnap = await db.collection('modules_status').doc('supply').get();
                 if (modSnap.exists) {
@@ -393,25 +586,34 @@ export async function requireSupplyTenantScope(
                     }
                 }
             } catch {
-                // Fail-open ante timeout transitorio de lectura de estado
+                // Fail-open ante timeout transitorio
             }
         }
 
-        let memberData: Record<string, any> | null = null;
-        if (resolvedTenantId !== 'dev-master-sandbox') {
-            try {
-                const memberSnap = await db
-                    .collection('accounts')
-                    .doc(resolvedTenantId)
-                    .collection('members')
-                    .doc(uid)
-                    .get();
-                if (memberSnap.exists) {
-                    memberData = memberSnap.data() || null;
-                }
-            } catch {
-                memberData = null;
+        let accountData: Record<string, any> | null = fallbackAccountData;
+        if (!accountData && resolvedTenantId !== 'dev-master-sandbox') {
+            const accSnap = await db.collection('accounts').doc(resolvedTenantId).get().catch(() => null);
+            if (accSnap?.exists) {
+                accountData = accSnap.data() || null;
             }
+        }
+
+        let memberData: Record<string, any> | null = fallbackMemberData;
+        if (!memberData && resolvedTenantId !== 'dev-master-sandbox') {
+            const memberSnap = await db
+                .collection('accounts')
+                .doc(resolvedTenantId)
+                .collection('members')
+                .doc(uid)
+                .get()
+                .catch(() => null);
+            if (memberSnap?.exists) {
+                memberData = memberSnap.data() || null;
+            }
+        }
+
+        if (!isSystemPrivileged && memberData && isInactiveStatus(memberData.status)) {
+            return res.status(403).json({ error: 'TENANT_ACCESS_DENIED' });
         }
 
         const isOwner = Boolean(accountData?.ownerId && accountData.ownerId === uid);
@@ -420,17 +622,6 @@ export async function requireSupplyTenantScope(
                   (m: any) => m?.accountId === resolvedTenantId && !isInactiveStatus(m?.status)
               )
             : undefined;
-        const hasActiveMemberDoc = Boolean(memberData && !isInactiveStatus(memberData.status));
-
-        if (
-            !isSystemPrivileged &&
-            !isVerifiedPilotOwnSandbox &&
-            !isOwner &&
-            !profileMembership &&
-            !hasActiveMemberDoc
-        ) {
-            return res.status(403).json({ error: 'TENANT_ACCESS_DENIED' });
-        }
 
         const b2bRole = String(
             (isOwner ? 'OWNER' : '') ||
@@ -439,11 +630,12 @@ export async function requireSupplyTenantScope(
                 (isDevRoot ? 'DEV_ROOT' : isSuperAdmin ? 'SUPER_ADMIN' : isTestPilot ? 'TEST_PILOT' : 'OPERATOR')
         ).toUpperCase();
 
-        const isEduSandbox =
-            !isSystemPrivileged &&
-            !isTestPilot &&
-            (String(accountData?.type || '').toUpperCase() === 'EDUCATIONAL' ||
-                Boolean(accountData?.isEduSandbox));
+        const isEduSandbox = billingOnlyReadOnlyFallback
+            ? !isSystemPrivileged &&
+              !isTestPilot &&
+              (String(accountData?.type || '').toUpperCase() === 'EDUCATIONAL' ||
+                  Boolean(accountData?.isEduSandbox))
+            : Boolean(modCtx?.isEduSandbox && !isSystemPrivileged && !isTestPilot);
 
         const accountTier: 1 | 2 | 3 | 4 | 5 = isDevRoot
             ? 1
@@ -453,7 +645,9 @@ export async function requireSupplyTenantScope(
                 ? 3
                 : isEduSandbox
                   ? 5
-                  : 4;
+                  : (modCtx?.accountTier ?? 4);
+
+        const canMutate = isSystemPrivileged || !isReadOnlyB2bRole(b2bRole);
 
         const supplyProfile = buildSupplyProfileFromData(
             memberData?.supplyProfile || profileMembership?.supplyProfile,
@@ -470,7 +664,10 @@ export async function requireSupplyTenantScope(
             ).trim(),
             accountTier,
             isSystemPrivileged,
+            isEduSandbox,
+            isTestPilot,
             b2bRole,
+            canMutate,
             supplyProfile,
             phoneE164: typeof memberData?.phoneE164 === 'string' ? memberData.phoneE164 : undefined,
         };
@@ -483,6 +680,21 @@ export async function requireSupplyTenantScope(
         );
         return res.status(401).json({ error: 'No autorizado: Error verificando sesión.' });
     }
+}
+
+function requireSupplyMutationAllowed(
+    req: SupplyRequest,
+    res: Response,
+    next: NextFunction
+): any {
+    const ctx = req.supplyContext;
+    if (!ctx || !ctx.canMutate || isReadOnlyB2bRole(ctx.b2bRole)) {
+        return res.status(403).json({
+            error: 'SUPPLY_RBAC_READ_ONLY: Su perfil tiene acceso solo lectura en ABASTECIMIENTO.',
+            code: 'SUPPLY_RBAC_READ_ONLY',
+        });
+    }
+    return next();
 }
 
 // ---------------------------------------------------------------------------
@@ -694,7 +906,11 @@ const CreateExpenseReportBodySchema = z.object({
 
 const PatchExpenseReportBodySchema = z.object({
     confirmationKeyword: HitlConfirmationKeywordSchema,
-    status: SiiExpenseReportStatusSchema,
+    status: z.union([SiiExpenseReportStatusSchema, z.literal('PAID')]),
+});
+
+const RecalculateForecastBodySchema = z.object({
+    siteId: z.string().trim().min(1).max(128).optional(),
 });
 
 const RefreshMarketplaceSignalsBodySchema = z.object({
@@ -821,6 +1037,15 @@ router.post(
 // Todas las rutas siguientes exigen sesión verificada y aislamiento multi-tenant
 router.use(requireSupplyTenantScope);
 
+// Matriz RBAC solo lectura: bloquea TODA mutación para perfiles VIEWER / BILLING_ONLY
+router.use((req: SupplyRequest, res: Response, next: NextFunction) => {
+    const method = req.method.toUpperCase();
+    if (method === 'POST' || method === 'PATCH' || method === 'PUT' || method === 'DELETE') {
+        return requireSupplyMutationAllowed(req, res, next);
+    }
+    return next();
+});
+
 // ---------------------------------------------------------------------------
 // Sites (`/sites`)
 // ---------------------------------------------------------------------------
@@ -847,7 +1072,18 @@ router.post('/sites', mutationRateLimiter, async (req: SupplyRequest, res: Respo
             });
         }
         const { confirmationKeyword: _kw, ...sitePayload } = parsed.data;
-        const site = await SupplyRepository.upsertSite(ctx.tenantId, sitePayload, {
+        const isSandboxAccount =
+            ctx.isEduSandbox || ctx.accountTier === 5 || ctx.isTestPilot || ctx.accountTier === 3;
+        if (isSandboxAccount && sitePayload.marketplaceOptIn === true) {
+            return res.status(403).json({
+                error: 'MARKETPLACE_OPT_IN_FORBIDDEN_IN_SANDBOX: Las cuentas 5º EDU y 3º TEST-PILOT no pueden activar marketplaceOptIn.',
+                code: 'MARKETPLACE_OPT_IN_FORBIDDEN_IN_SANDBOX',
+            });
+        }
+        const safeSitePayload = isSandboxAccount
+            ? { ...sitePayload, marketplaceOptIn: false }
+            : sitePayload;
+        const site = await SupplyRepository.upsertSite(ctx.tenantId, safeSitePayload, {
             actorUid: ctx.actorUid,
             actorEmail: ctx.actorEmail,
             ipAddress: extractClientIp(req),
@@ -878,9 +1114,20 @@ router.patch('/sites/:siteId', mutationRateLimiter, async (req: SupplyRequest, r
             return res.status(404).json({ error: 'Sitio no encontrado en la cuenta activa.' });
         }
         const { confirmationKeyword: _kw, ...patch } = parsed.data;
+        const isSandboxAccount =
+            ctx.isEduSandbox || ctx.accountTier === 5 || ctx.isTestPilot || ctx.accountTier === 3;
+        if (isSandboxAccount && patch.marketplaceOptIn === true) {
+            return res.status(403).json({
+                error: 'MARKETPLACE_OPT_IN_FORBIDDEN_IN_SANDBOX: Las cuentas 5º EDU y 3º TEST-PILOT no pueden activar marketplaceOptIn.',
+                code: 'MARKETPLACE_OPT_IN_FORBIDDEN_IN_SANDBOX',
+            });
+        }
+        const safeMergedSite = isSandboxAccount
+            ? { ...existing, ...patch, marketplaceOptIn: false, siteId }
+            : { ...existing, ...patch, siteId };
         const site = await SupplyRepository.upsertSite(
             ctx.tenantId,
-            { ...existing, ...patch, siteId },
+            safeMergedSite,
             {
                 actorUid: ctx.actorUid,
                 actorEmail: ctx.actorEmail,
@@ -1017,9 +1264,10 @@ router.post('/requisitions', mutationRateLimiter, async (req: SupplyRequest, res
 
             const norm = normalizeSupplyItemFromText(resolvedItemName, rawLine.qtyRequested, rawLine.unitSi);
             const categoryCode = rawLine.categoryCode || norm.categoryCode;
+            const actorOpRole = asOperationalRole(ctx.supplyProfile.role);
             const flags = evaluateAtypicalFlagsForLine({
-                role: ctx.supplyProfile.role,
-                profile: ctx.supplyProfile,
+                role: actorOpRole,
+                profile: { ...ctx.supplyProfile, role: actorOpRole },
                 categoryCode,
                 isCapexAsset: norm.isCapexAsset,
                 estimatedTotalClp: rawLine.estimatedUnitClp
@@ -1070,7 +1318,7 @@ router.post('/requisitions', mutationRateLimiter, async (req: SupplyRequest, res
                 siteId: parsed.data.siteId,
                 requesterUid: ctx.actorUid,
                 requesterName: ctx.actorName,
-                requesterRole: ctx.supplyProfile.role,
+                requesterRole: asOperationalRole(ctx.supplyProfile.role),
                 requesterPhoneE164: ctx.phoneE164,
                 demandOrigin: parsed.data.demandOrigin,
                 demandNature: parsed.data.demandNature,
@@ -1398,19 +1646,14 @@ router.post('/purchases', mutationRateLimiter, async (req: SupplyRequest, res: R
 
         const data = parsed.data;
 
-        // Validar autoridad para compra directa autónoma sin requisición previa
+        // Validar autoridad explícita `canRecordDirectPurchase` para compra directa autónoma
         const canDirect =
-            ctx.isSystemPrivileged ||
-            ctx.b2bRole === 'OWNER' ||
-            ctx.b2bRole === 'ADMIN' ||
-            ctx.supplyProfile.canRecordDirectPurchase ||
-            ctx.supplyProfile.role === 'OWNER_EXEC' ||
-            ctx.supplyProfile.role === 'SITE_ADMIN' ||
-            ctx.supplyProfile.role === 'BUYER';
+            ctx.isSystemPrivileged || ctx.supplyProfile.canRecordDirectPurchase === true;
 
         if (data.purchaseMode === 'DIRECT_AUTONOMOUS' && !canDirect) {
             return res.status(403).json({
                 error: 'DIRECT_PURCHASE_FORBIDDEN: Su perfil no está autorizado para registrar compras autónomas directas.',
+                code: 'DIRECT_PURCHASE_FORBIDDEN',
             });
         }
 
@@ -1478,12 +1721,23 @@ router.post('/purchases', mutationRateLimiter, async (req: SupplyRequest, res: R
             };
         });
 
+        // Compuerta RBAC CAPEX: exige allowCapex===true + rol OWNER_EXEC / SITE_ADMIN / isSystemPrivileged
+        const hasCapexPurchaseLine = normalizedLines.some(
+            (l) => l.isCapexAsset || l.destination === 'CAPEX_ASSET'
+        );
+        if (hasCapexPurchaseLine && !canAuthorizeCapex(ctx)) {
+            return res.status(403).json({
+                error: 'CAPEX_NOT_AUTHORIZED: Su perfil no está autorizado para compras o altas de activos CAPEX.',
+                code: 'CAPEX_NOT_AUTHORIZED',
+            });
+        }
+
         const result = await SupplyRepository.createPurchaseWithReconciliation(
             {
                 tenantId: ctx.tenantId,
                 siteId: data.siteId,
                 buyerUid: ctx.actorUid,
-                buyerRole: ctx.supplyProfile.role,
+                buyerRole: asOperationalRole(ctx.supplyProfile.role),
                 purchaseMode: data.purchaseMode,
                 authorizedByAuthority,
                 supplierTaxId: data.supplierTaxId,
@@ -1575,10 +1829,14 @@ router.post(
             return res.status(200).json({
                 success: true,
                 purchase: result.purchase,
+                receptionOutcome: result.receptionOutcome,
                 receivedItemCount: result.receivedItemCount,
                 affectedRequisitionIds: result.affectedRequisitions.map((r) => r.reqId),
             });
         } catch (err: any) {
+            if (err instanceof SupplyValidationError) {
+                return res.status(400).json({ error: err.message, code: err.code });
+            }
             if (err instanceof SupplyNotFoundError) {
                 return res.status(404).json({ error: err.message });
             }
@@ -1618,6 +1876,12 @@ router.post(
     async (req: SupplyRequest, res: Response) => {
         try {
             const ctx = req.supplyContext!;
+            if (!canAuthorizeCapex(ctx)) {
+                return res.status(403).json({
+                    error: 'CAPEX_NOT_AUTHORIZED: Su perfil no está autorizado para vincular activos CAPEX con OPERMAQ.',
+                    code: 'CAPEX_NOT_AUTHORIZED',
+                });
+            }
             const assetId = String(req.params.id || '').trim();
             const parsed = LinkOpermaqBodySchema.safeParse(req.body);
             if (!parsed.success) {
@@ -1751,13 +2015,39 @@ router.get('/forecast', async (req: SupplyRequest, res: Response) => {
     try {
         const ctx = req.supplyContext!;
         const siteId = typeof req.query.siteId === 'string' ? req.query.siteId : undefined;
-        const forecasts = await SupplyRepository.computeAndStoreForecast(ctx.tenantId, siteId);
+        const forecasts = await SupplyRepository.computeForecastReadOnly(ctx.tenantId, siteId);
         return res.status(200).json({ success: true, forecasts });
     } catch (err) {
-        console.error('[SUPPLY] Error calculando forecast:', err);
+        console.error('[SUPPLY] Error calculando forecast (solo lectura):', err);
         return res.status(500).json({ error: 'Error calculando pronóstico de demanda y autonomía.' });
     }
 });
+
+router.post(
+    '/forecast/recalculate',
+    mutationRateLimiter,
+    requireSupplyMutationAllowed,
+    async (req: SupplyRequest, res: Response) => {
+        try {
+            const ctx = req.supplyContext!;
+            const parsed = RecalculateForecastBodySchema.safeParse(req.body || {});
+            if (!parsed.success) {
+                return res.status(400).json({
+                    error: 'Parámetros inválidos para recálculo de pronóstico.',
+                    details: parsed.error.flatten(),
+                });
+            }
+            const siteId =
+                parsed.data.siteId ||
+                (typeof req.query.siteId === 'string' ? req.query.siteId : undefined);
+            const forecasts = await SupplyRepository.computeAndStoreForecast(ctx.tenantId, siteId);
+            return res.status(200).json({ success: true, persisted: true, forecasts });
+        } catch (err) {
+            console.error('[SUPPLY] Error recalculando y persistiendo forecast:', err);
+            return res.status(500).json({ error: 'Error recalculando pronóstico de demanda y autonomía.' });
+        }
+    }
+);
 
 // ---------------------------------------------------------------------------
 // SII Rendiciones (`/sii/documents`, `/sii/expense-reports`, `/sii/export`)
@@ -1848,11 +2138,27 @@ router.post('/sii/expense-reports', mutationRateLimiter, async (req: SupplyReque
             }
         );
         return res.status(201).json({ success: true, report });
-    } catch (err) {
+    } catch (err: any) {
+        if (err instanceof SupplyConflictError) {
+            return res.status(409).json({ error: err.message, code: err.code });
+        }
+        if (err instanceof SupplyNotFoundError) {
+            return res.status(404).json({ error: err.message });
+        }
+        if (err instanceof SupplyForbiddenError) {
+            return res.status(403).json({ error: err.message, code: err.code });
+        }
         console.error('[SUPPLY] Error creando rendición SII:', err);
         return res.status(500).json({ error: 'Error creando sobre de rendición SII.' });
     }
 });
+
+const EXPENSE_REPORT_APPROVAL_OR_PAYMENT_STATUSES = new Set([
+    'APPROVED',
+    'PAID',
+    'REIMBURSED',
+    'SETTLED',
+]);
 
 router.patch(
     '/sii/expense-reports/:reportId',
@@ -1868,10 +2174,37 @@ router.patch(
                     details: parsed.error.flatten(),
                 });
             }
+
+            const requestedStatus = parsed.data.status;
+            if (EXPENSE_REPORT_APPROVAL_OR_PAYMENT_STATUSES.has(requestedStatus)) {
+                const isAuthorizedApprover =
+                    ctx.isSystemPrivileged ||
+                    ctx.supplyProfile.role === 'OWNER_EXEC' ||
+                    ctx.supplyProfile.role === 'SITE_ADMIN';
+                if (!isAuthorizedApprover) {
+                    return res.status(403).json({
+                        error: 'APPROVER_ROLE_REQUIRED: Solo OWNER_EXEC, SITE_ADMIN o plataforma puede aprobar o pagar rendiciones SII.',
+                        code: 'APPROVER_ROLE_REQUIRED',
+                    });
+                }
+
+                const existingReport = await SupplyRepository.getExpenseReport(ctx.tenantId, reportId);
+                if (!existingReport) {
+                    return res.status(404).json({ error: 'Rendición SII no encontrada.' });
+                }
+                if (existingReport.custodianUid === ctx.actorUid) {
+                    return res.status(403).json({
+                        error: 'SELF_APPROVAL_FORBIDDEN: Segregación de funciones ISO 27001 prohíbe auto-aprobar o pagar su propia rendición SII.',
+                        code: 'SELF_APPROVAL_FORBIDDEN',
+                    });
+                }
+            }
+
+            const persistedStatus = requestedStatus === 'PAID' ? 'REIMBURSED' : requestedStatus;
             const report = await SupplyRepository.updateExpenseReportStatus(
                 ctx.tenantId,
                 reportId,
-                parsed.data.status,
+                persistedStatus,
                 {
                     actorUid: ctx.actorUid,
                     actorEmail: ctx.actorEmail,
@@ -1998,7 +2331,7 @@ router.post('/whatsapp/simulate', aiRateLimiter, async (req: SupplyRequest, res:
         const wamid = d.wamid || `wamid.sim_${Date.now().toString(36)}_${crypto.randomBytes(3).toString('hex')}`;
 
         const simRole: SupplyOperationalRole =
-            d.simulateSenderRole || d.simulatedRole || ctx.supplyProfile.role;
+            d.simulateSenderRole || d.simulatedRole || asOperationalRole(ctx.supplyProfile.role);
         const simProfile = SupplyMemberProfileSchema.parse({
             ...ctx.supplyProfile,
             role: simRole,

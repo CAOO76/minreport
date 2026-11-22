@@ -2025,10 +2025,11 @@ async function runTests(): Promise<void> {
             const dteAliasJson: any = await dteAliasResp.json();
             assert.ok(dteAliasJson.documents.every((d: any) => d.documentType === 33));
 
+            // Segregación ISO 27001: el custodio (tok-camp) crea la rendición y un tercero aprobador (tok-owner) la reembolsa
             const exp9 = await apiFetch(`${baseUrl}/api/supply/sii/expense-reports`, {
                 method: 'POST',
                 headers: {
-                    Authorization: 'Bearer tok-owner',
+                    Authorization: 'Bearer tok-camp',
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
@@ -2046,6 +2047,23 @@ async function runTests(): Promise<void> {
             const exp9Json: any = await exp9.json();
             assert.equal(exp9Json.report.periodLabel, '2026-11');
             assert.equal(exp9Json.report.costCenter, 'CC-OPERACIONES');
+
+            // Auto-aprobación del custodio rechazada con 403
+            const expSelfPatch = await apiFetch(
+                `${baseUrl}/api/supply/sii/expense-reports/${exp9Json.report.reportId}`,
+                {
+                    method: 'PATCH',
+                    headers: {
+                        Authorization: 'Bearer tok-camp',
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        confirmationKeyword: 'ACTUALIZAR',
+                        status: 'REIMBURSED',
+                    }),
+                }
+            );
+            assert.equal(expSelfPatch.status, 403);
 
             const expPatch = await apiFetch(
                 `${baseUrl}/api/supply/sii/expense-reports/${exp9Json.report.reportId}`,

@@ -7,6 +7,25 @@ import { extractClientIp } from '../middleware/rateLimiter';
 import { x402Gatekeeper, type X402AuthenticatedRequest } from '../middleware/x402Gatekeeper';
 import { SupplyRepository } from '../modules/supply/application/SupplyRepository';
 import { SupplyCategoryCodeSchema } from '../modules/supply/application/supply.types';
+import { validateChileanRut } from '../utils/taxIdValidator';
+
+const MAX_M2M_UNIT_PRICE_NET_CLP = 1_000_000_000_000;
+const ISO_DATE_OR_DATETIME_REGEX =
+    /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(\.\d{1,3})?(Z|[+-]\d{2}:\d{2}))?$/;
+const STRICT_SUPPLIER_TAX_ID_REGEX = /^[A-Z0-9][A-Z0-9.-]{3,30}[A-Z0-9]$/;
+const CHILEAN_RUT_SHAPE_REGEX = /^\d{1,2}\.?\d{3}\.?\d{3}-[\dkK]$/;
+
+function isValidStrictSupplierTaxId(raw: string): boolean {
+    const trimmed = String(raw || '').trim();
+    if (!STRICT_SUPPLIER_TAX_ID_REGEX.test(trimmed.toUpperCase())) {
+        return false;
+    }
+    if (CHILEAN_RUT_SHAPE_REGEX.test(trimmed)) {
+        return validateChileanRut(trimmed).valid;
+    }
+    const compact = trimmed.toUpperCase().replace(/\./g, '');
+    return /^[A-Z0-9-]{5,24}$/.test(compact) && !compact.includes('--');
+}
 
 /**
  * ADAPTADOR M2M x402 DESACOPLADO PARA MINREPORT · ABASTECIMIENTO (`supply`)
@@ -28,18 +47,40 @@ export const M2mSupplyCatalogQuerySchema = z.object({
     search: z.string().trim().min(1).max(120).optional(),
 });
 
-export const M2mRfqQuoteSubmitSchema = z.object({
-    signalId: z.string().trim().min(4).max(128),
-    supplierTaxId: z.string().trim().min(5).max(32),
-    supplierName: z.string().trim().min(2).max(200),
-    deliveryDistrictCode: z.string().trim().min(2).max(64),
-    unitPriceNetClp: z.number().positive(),
-    minOrderQty: z.number().positive(),
-    maxAvailableQty: z.number().positive(),
-    leadTimeDays: z.number().int().min(1).max(120),
-    validUntilIso: z.string().trim().min(10).max(40),
-    notes: z.string().trim().max(500).optional(),
-});
+export const M2mRfqQuoteSubmitSchema = z
+    .object({
+        signalId: z.string().trim().min(4).max(128),
+        supplierTaxId: z
+            .string()
+            .trim()
+            .min(5)
+            .max(32)
+            .refine(
+                isValidStrictSupplierTaxId,
+                'supplierTaxId inválido (RUT chileno Módulo-11 o Tax ID internacional estricto requerido).'
+            ),
+        supplierName: z.string().trim().min(2).max(200),
+        deliveryDistrictCode: z.string().trim().min(2).max(64),
+        unitPriceNetClp: z.number().finite().positive().max(MAX_M2M_UNIT_PRICE_NET_CLP),
+        minOrderQty: z.number().finite().positive().max(1_000_000_000),
+        maxAvailableQty: z.number().finite().positive().max(1_000_000_000),
+        leadTimeDays: z.number().int().min(1).max(120),
+        validUntilIso: z
+            .string()
+            .trim()
+            .min(10)
+            .max(40)
+            .refine((v) => {
+                if (!ISO_DATE_OR_DATETIME_REGEX.test(v)) return false;
+                const parsedMs = Date.parse(v);
+                return Number.isFinite(parsedMs) && parsedMs > Date.now();
+            }, 'validUntilIso debe ser una fecha ISO 8601 válida estrictamente futura.'),
+        notes: z.string().trim().max(500).optional(),
+    })
+    .refine((d) => d.maxAvailableQty >= d.minOrderQty, {
+        message: 'maxAvailableQty debe ser mayor o igual a minOrderQty.',
+        path: ['maxAvailableQty'],
+    });
 
 export function registerM2mSupplyAdapterRoutes(app: express.Application): void {
     /**
@@ -198,23 +239,36 @@ export function registerM2mSupplyAdapterRoutes(app: express.Application): void {
                     createdAt: nowIso,
                 };
 
-                await db.collection('market_rfq_quotes').doc(quoteId).set(quoteDoc);
+                const quoteRef = db.collection('market_rfq_quotes').doc(quoteId);
+                await quoteRef.set(quoteDoc);
 
-                await AuditLedger.record({
-                    tenantId: req.x402Context?.tenantId || 'global',
-                    actorUid: `m2m:${agentId}`,
-                    actorEmail: `${agentId}@m2m.minreport.internal`,
-                    action: 'M2M_SUPPLY_RFQ_QUOTE_SUBMITTED',
-                    module: 'web3-m2m',
-                    targetEntity: quoteId,
-                    details: {
-                        signalId: parsed.data.signalId,
-                        districtCode: quoteDoc.districtCode,
-                        unitPriceNetClp: quoteDoc.unitPriceNetClp,
-                        leadTimeDays: quoteDoc.leadTimeDays,
-                    },
-                    ipAddress: extractClientIp(req),
-                }).catch(() => {});
+                try {
+                    await AuditLedger.record({
+                        tenantId: req.x402Context?.tenantId || 'global',
+                        actorUid: `m2m:${agentId}`,
+                        actorEmail: `${agentId}@m2m.minreport.internal`,
+                        action: 'M2M_SUPPLY_RFQ_QUOTE_SUBMITTED',
+                        module: 'web3-m2m',
+                        targetEntity: quoteId,
+                        details: {
+                            signalId: parsed.data.signalId,
+                            districtCode: quoteDoc.districtCode,
+                            unitPriceNetClp: quoteDoc.unitPriceNetClp,
+                            leadTimeDays: quoteDoc.leadTimeDays,
+                        },
+                        ipAddress: extractClientIp(req),
+                    });
+                } catch (auditErr) {
+                    await quoteRef.delete().catch(() => {});
+                    console.error(
+                        '[M2M-SUPPLY-RFQ] Error AuditLedger fail-closed; cotización revertida:',
+                        auditErr instanceof Error ? auditErr.name : 'UnknownError'
+                    );
+                    return res.status(500).json({
+                        error: 'AUDIT_LEDGER_UNAVAILABLE: No se pudo sellar trazabilidad en AuditLedger; cotización revertida.',
+                        code: 'AUDIT_LEDGER_UNAVAILABLE',
+                    });
+                }
 
                 return res.status(201).json({
                     success: true,
