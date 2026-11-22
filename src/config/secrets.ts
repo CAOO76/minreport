@@ -138,7 +138,38 @@ async function accessSecretManagerVersion(
         : '';
 }
 
-export async function getSecret(secretName: string): Promise<string | null> {
+const STRICT_E164_REGEX = /^\+[1-9]\d{6,14}$/;
+
+/**
+ * Parsea una lista CSV de teléfonos ITU-T E.164 (`+[1-9]\d{6,14}`) sin valores hardcodeados.
+ */
+export function parseE164AllowlistCsv(raw: string | null | undefined): string[] {
+    if (!raw || typeof raw !== 'string') return [];
+    const normalized = new Set<string>();
+    for (const part of raw.split(',')) {
+        const compact = part.trim().replace(/[\s().-]/g, '');
+        if (STRICT_E164_REGEX.test(compact)) {
+            normalized.add(compact);
+        }
+    }
+    return Array.from(normalized);
+}
+
+/**
+ * Indica de forma síncrona (fail-closed) si el canal WhatsApp DEV está habilitado
+ * en etapa `DEV_PRIVATE` mediante `SUPPLY_WHATSAPP_DEV_ENABLED=true` o una allowlist E.164 válida.
+ */
+export function isSupplyWhatsAppDevEnabled(): boolean {
+    if (String(process.env.SUPPLY_WHATSAPP_DEV_ENABLED || '').trim().toLowerCase() === 'true') {
+        return true;
+    }
+    return parseE164AllowlistCsv(process.env.SUPPLY_WHATSAPP_DEV_ALLOWLIST).length > 0;
+}
+
+export async function getSecret(
+    secretName: string,
+    options?: { suppressMissingWarn?: boolean }
+): Promise<string | null> {
     if (env.NODE_ENV !== 'production') {
         const hotLocal = readLocalEnvHot(secretName) || process.env[secretName]?.trim();
         if (hotLocal) {
@@ -169,14 +200,14 @@ export async function getSecret(secretName: string): Promise<string | null> {
         return null;
     }
 
-    const location = env.GCP_LOCATION || 'southamerica-west1';
+    const location = (env.GCP_LOCATION || 'southamerica-west1').trim() || 'southamerica-west1';
     const candidateLookups: Array<{ resourceName: string; regionalLocation?: string }> = [
-        {
-            resourceName: `projects/${env.GCP_PROJECT_ID}/secrets/${secretName}/versions/latest`,
-        },
         {
             resourceName: `projects/${env.GCP_PROJECT_ID}/locations/${location}/secrets/${secretName}/versions/latest`,
             regionalLocation: location,
+        },
+        {
+            resourceName: `projects/${env.GCP_PROJECT_ID}/secrets/${secretName}/versions/latest`,
         },
     ];
 
@@ -199,7 +230,7 @@ export async function getSecret(secretName: string): Promise<string | null> {
     }
 
     failedLookupAt.set(secretName, Date.now());
-    if (env.NODE_ENV === 'production') {
+    if (env.NODE_ENV === 'production' && !options?.suppressMissingWarn) {
         const errMsg = lastErr instanceof Error ? lastErr.message : String(lastErr || 'Desconocido');
         console.warn(`[SECRET-MANAGER] No se pudo hidratar ${secretName}: ${errMsg}`);
     }
@@ -212,19 +243,74 @@ export async function getSecret(secretName: string): Promise<string | null> {
  * en el arranque del servidor cuando no se ejecuta en emulador local.
  */
 export async function hydrateCoreSecrets(): Promise<void> {
-    const secretsToHydrate: readonly string[] = isDevPrivateReleaseStage()
-        ? ['GEMINI_API_KEY', 'RESEND_API_KEY', 'DEV_ROOT_PASSWORD', 'X402_HMAC_SECRET', 'FIREBASE_API_KEY']
-        : CORE_HYDRATED_SECRETS;
+    if (isDevPrivateReleaseStage()) {
+        const devBaseSecrets = [
+            'GEMINI_API_KEY',
+            'RESEND_API_KEY',
+            'DEV_ROOT_PASSWORD',
+            'X402_HMAC_SECRET',
+            'FIREBASE_API_KEY',
+        ] as const;
+
+        if (isRunningAgainstLocalEmulator()) {
+            for (const name of devBaseSecrets) {
+                readLocalEnvHot(name);
+            }
+            const devEnabled =
+                String(
+                    process.env.SUPPLY_WHATSAPP_DEV_ENABLED ||
+                        readLocalEnvHot('SUPPLY_WHATSAPP_DEV_ENABLED') ||
+                        ''
+                )
+                    .trim()
+                    .toLowerCase() === 'true';
+            const devAllowlistRaw =
+                process.env.SUPPLY_WHATSAPP_DEV_ALLOWLIST?.trim() ||
+                readLocalEnvHot('SUPPLY_WHATSAPP_DEV_ALLOWLIST') ||
+                '';
+            if (devEnabled || parseE164AllowlistCsv(devAllowlistRaw).length > 0) {
+                readLocalEnvHot('SUPPLY_WHATSAPP_DEV_ALLOWLIST');
+                for (const name of WHATSAPP_CLOUD_SECRETS) {
+                    readLocalEnvHot(name);
+                }
+            }
+            return;
+        }
+
+        const [, devAllowlistRaw] = await Promise.all([
+            Promise.all(
+                devBaseSecrets.map(async (secretName) => {
+                    await getSecret(secretName);
+                })
+            ),
+            getSecret('SUPPLY_WHATSAPP_DEV_ALLOWLIST', { suppressMissingWarn: true }).catch(
+                () => null
+            ),
+        ]);
+
+        const devEnabled =
+            String(process.env.SUPPLY_WHATSAPP_DEV_ENABLED || '')
+                .trim()
+                .toLowerCase() === 'true';
+        if (devEnabled || parseE164AllowlistCsv(devAllowlistRaw).length > 0) {
+            await Promise.all(
+                WHATSAPP_CLOUD_SECRETS.map(async (secretName) => {
+                    await getSecret(secretName, { suppressMissingWarn: true }).catch(() => null);
+                })
+            );
+        }
+        return;
+    }
 
     if (isRunningAgainstLocalEmulator()) {
-        for (const name of secretsToHydrate) {
+        for (const name of CORE_HYDRATED_SECRETS) {
             readLocalEnvHot(name);
         }
         return;
     }
 
     await Promise.all(
-        secretsToHydrate.map(async (secretName) => {
+        CORE_HYDRATED_SECRETS.map(async (secretName) => {
             await getSecret(secretName);
         })
     );
@@ -333,4 +419,37 @@ export async function resolveWhatsAppCloudSecrets(): Promise<WhatsAppCloudSecret
         phoneNumberId,
         configured: Boolean(accessToken && appSecret && verifyToken && phoneNumberId),
     };
+}
+
+/**
+ * Resuelve la lista blanca CSV de teléfonos E.164 autorizados para pruebas WhatsApp DEV
+ * desde Cloud Secret Manager (`southamerica-west1`) o env local, retornando `[]` si no existe.
+ * Nunca hardcodea números telefónicos.
+ */
+export async function resolveSupplyWhatsAppDevAllowlist(): Promise<string[]> {
+    const raw = await getSecret('SUPPLY_WHATSAPP_DEV_ALLOWLIST', { suppressMissingWarn: true });
+    return parseE164AllowlistCsv(raw);
+}
+
+export async function resolveWhatsAppBusinessAccountId(): Promise<string | null> {
+    return getSecret('WHATSAPP_BUSINESS_ACCOUNT_ID', { suppressMissingWarn: true });
+}
+
+/**
+ * Llave privada RSA PEM para WhatsApp Flows v3.0 (preparado para Etapa E09).
+ */
+export async function resolveWhatsAppFlowsPrivateKey(): Promise<string | null> {
+    const raw = await getSecret('WHATSAPP_FLOWS_PRIVATE_KEY', { suppressMissingWarn: true });
+    if (!raw) return null;
+    const normalized = raw.replace(/\\n/g, '\n').trim();
+    return normalized || null;
+}
+
+/**
+ * Passphrase opcional de la llave privada RSA para WhatsApp Flows v3.0 (preparado para Etapa E09).
+ */
+export async function resolveWhatsAppFlowsPassphrase(): Promise<string | null> {
+    const raw = await getSecret('WHATSAPP_FLOWS_PASSPHRASE', { suppressMissingWarn: true });
+    const trimmed = raw ? raw.trim() : '';
+    return trimmed || null;
 }

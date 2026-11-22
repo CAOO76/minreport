@@ -4,7 +4,7 @@ import helmet from 'helmet';
 import { z } from 'zod';
 import { db } from './config/firebase';
 import { env, isDevPrivateReleaseStage } from './config/env';
-import { hydrateCoreSecrets } from './config/secrets';
+import { hydrateCoreSecrets, isSupplyWhatsAppDevEnabled } from './config/secrets';
 import { x402Gatekeeper, X402AuthenticatedRequest } from './middleware/x402Gatekeeper';
 import { authRateLimiter, aiRateLimiter, mutationRateLimiter, m2mRateLimiter, extractClientIp } from './middleware/rateLimiter';
 import { ResilientAIClient, AISwarmUnavailableError } from './core/resilient-ai-client';
@@ -293,14 +293,20 @@ const DEV_PRIVATE_BLOCKED_PREFIXES = [
     '/api/equipment-onboarding',
 ];
 
+const DEV_PRIVATE_SUPPLY_WHATSAPP_WEBHOOK_PREFIX = '/api/supply/whatsapp/webhook';
+
 app.use((req, res, next) => {
     if (isDevPrivateReleaseStage()) {
-        const reqPath = (req.path || '').toLowerCase();
-        if (
-            DEV_PRIVATE_BLOCKED_PREFIXES.some(
-                (prefix) => reqPath === prefix || reqPath.startsWith(`${prefix}/`)
-            )
-        ) {
+        const reqPath = (req.path || '').replace(/\/{2,}/g, '/').toLowerCase();
+        const isBlockedCommercialRoute = DEV_PRIVATE_BLOCKED_PREFIXES.some(
+            (prefix) => reqPath === prefix || reqPath.startsWith(`${prefix}/`)
+        );
+        const isBlockedDevWhatsAppWebhook =
+            (reqPath === DEV_PRIVATE_SUPPLY_WHATSAPP_WEBHOOK_PREFIX ||
+                reqPath.startsWith(`${DEV_PRIVATE_SUPPLY_WHATSAPP_WEBHOOK_PREFIX}/`)) &&
+            !isSupplyWhatsAppDevEnabled();
+
+        if (isBlockedCommercialRoute || isBlockedDevWhatsAppWebhook) {
             return res.status(403).json({
                 error: 'RELEASE_STAGE_DEV_ONLY: Funcionalidad comercial no habilitada en etapa privada DEV.',
                 code: 'RELEASE_STAGE_DEV_ONLY',
