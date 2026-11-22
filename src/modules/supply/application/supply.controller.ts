@@ -18,11 +18,17 @@ import {
     type ScopedRequest,
 } from '../../../middleware/sessionScope';
 import { normalizeE164Phone } from '../../../utils/taxIdValidator';
+import { SSRFBlockedError } from '../../../utils/ssrfGuard';
 import { EmailAndWhatsAppNotifier } from '../adapters/EmailAndWhatsAppNotifier';
+import { InternationalAccountingExporter } from '../adapters/InternationalAccountingExporter';
 import {
     type InboundWhatsAppMessage,
     MetaWhatsAppCloudAdapter,
 } from '../adapters/MetaWhatsAppCloudAdapter';
+import {
+    ErpWebhookEventSchema,
+    SignedErpWebhookDispatcher,
+} from '../adapters/SignedErpWebhookDispatcher';
 import {
     WhatsAppFlowCryptoError,
     WhatsAppFlowsCrypto,
@@ -30,6 +36,10 @@ import {
 } from '../adapters/WhatsAppFlowsCrypto';
 import { CampChannel, type ResolvedWhatsAppMember } from '../channels/camp.channel';
 import { SupplyFlowsHandler } from '../channels/supply.flows';
+import {
+    AccountingExportFormatSchema,
+    AccountingExportProfileSchema,
+} from '../ports/IAccountingExportAdapter';
 import {
     DEFAULT_ROLE_PROFILES,
     matchCanonicalSkuByText as matchDomainCanonicalSkuByText,
@@ -2687,22 +2697,299 @@ router.patch(
     }
 );
 
-router.get('/sii/export', async (req: SupplyRequest, res: Response) => {
-    try {
-        const ctx = req.supplyContext!;
-        const siteId = typeof req.query.siteId === 'string' ? req.query.siteId : undefined;
+const CreateErpWebhookBodySchema = z.object({
+    confirmationKeyword: HitlConfirmationKeywordSchema,
+    name: z.string().trim().min(2).max(120),
+    targetUrl: z.string().trim().url().max(512),
+    events: z.array(ErpWebhookEventSchema).min(1).max(10),
+    secret: z.string().trim().min(16).max(256).optional(),
+    active: z.boolean().optional().default(true),
+});
+
+const DeleteErpWebhookBodySchema = z.object({
+    confirmationKeyword: HitlConfirmationKeywordSchema,
+});
+
+function canManageErpWebhooks(ctx: SupplySessionContext): boolean {
+    if (ctx.isSystemPrivileged) return true;
+    if (!ctx.canMutate || isReadOnlyB2bRole(ctx.b2bRole)) return false;
+    return ctx.supplyProfile.role === 'OWNER_EXEC' || ctx.supplyProfile.role === 'SITE_ADMIN';
+}
+
+async function buildAndSendAccountingExport(
+    req: SupplyRequest,
+    res: Response,
+    options: { legacySiiDefault?: boolean }
+): Promise<any> {
+    const ctx = req.supplyContext!;
+    const siteId = typeof req.query.siteId === 'string' ? req.query.siteId : undefined;
+    const rawFormat = typeof req.query.format === 'string' ? req.query.format.trim().toUpperCase() : '';
+    const rawProfile =
+        typeof req.query.profile === 'string' ? req.query.profile.trim().toUpperCase() : '';
+    const rawCurrency =
+        typeof req.query.currencyCode === 'string'
+            ? req.query.currencyCode.trim().toUpperCase()
+            : 'CLP';
+
+    // Retrocompatibilidad estricta de `/sii/export` cuando no se solicita formato/perfil nuevo
+    if (options.legacySiiDefault && !rawFormat && !rawProfile) {
         const docs = await SupplyRepository.listSiiDocuments(ctx.tenantId, { siteId });
         const csv = exportSiiDocumentsToCsv(docs);
         const dateTag = new Date().toISOString().slice(0, 10);
+        const sha256 = crypto.createHash('sha256').update(csv, 'utf8').digest('hex');
 
         res.setHeader('Content-Type', 'text/csv; charset=utf-8');
         res.setHeader('Content-Disposition', `attachment; filename="minreport-sii-rcv-${dateTag}.csv"`);
+        res.setHeader('X-Minreport-Export-Sha256', sha256);
         return res.status(200).send(csv);
+    }
+
+    const parsedFormat = AccountingExportFormatSchema.safeParse(rawFormat || 'CSV_RFC4180');
+    if (!parsedFormat.success) {
+        return res.status(400).json({
+            error: 'INVALID_ACCOUNTING_EXPORT_FORMAT',
+            details: parsedFormat.error.flatten(),
+        });
+    }
+
+    const parsedProfile = AccountingExportProfileSchema.safeParse(rawProfile || 'CL_SII_RCV');
+    if (!parsedProfile.success) {
+        return res.status(400).json({
+            error: 'INVALID_ACCOUNTING_EXPORT_PROFILE',
+            details: parsedProfile.error.flatten(),
+        });
+    }
+
+    const currencyCode = /^[A-Z]{3}$/.test(rawCurrency) ? rawCurrency : 'CLP';
+
+    const [accountSnap, docs, purchases, expenseReports, catalogList] = await Promise.all([
+        db.collection('accounts').doc(ctx.tenantId).get().catch(() => null),
+        SupplyRepository.listSiiDocuments(ctx.tenantId, { siteId }),
+        SupplyRepository.listPurchases(ctx.tenantId, siteId),
+        SupplyRepository.listExpenseReports(ctx.tenantId, siteId),
+        SupplyRepository.listCatalog({ tenantId: ctx.tenantId }).catch(() => []),
+    ]);
+
+    const accountData = accountSnap?.exists ? (accountSnap.data() as Record<string, any>) : null;
+    const catalogBySkuId: Record<string, (typeof catalogList)[number]> = {};
+    for (const sku of catalogList) {
+        catalogBySkuId[sku.canonicalSkuId] = sku;
+    }
+
+    const exported = InternationalAccountingExporter.exportAccountingPackage({
+        tenantId: ctx.tenantId,
+        tenantName:
+            typeof accountData?.name === 'string' && accountData.name.trim()
+                ? accountData.name.trim()
+                : ctx.tenantId,
+        tenantTaxId:
+            typeof accountData?.taxId === 'string' && accountData.taxId.trim()
+                ? accountData.taxId.trim()
+                : typeof accountData?.rut === 'string' && accountData.rut.trim()
+                  ? accountData.rut.trim()
+                  : undefined,
+        tenantCountryCode:
+            typeof accountData?.countryCode === 'string' && accountData.countryCode.trim()
+                ? accountData.countryCode.trim()
+                : 'CL',
+        currencyCode,
+        siteId,
+        format: parsedFormat.data,
+        profile: parsedProfile.data,
+        documents: docs,
+        purchases,
+        expenseReports,
+        catalogBySkuId,
+    });
+
+    res.setHeader('Content-Type', exported.mimeType);
+    res.setHeader('Content-Disposition', `attachment; filename="${exported.filename}"`);
+    res.setHeader('X-Minreport-Export-Sha256', exported.sha256);
+    res.setHeader('X-Minreport-Export-Format', exported.format);
+    res.setHeader('X-Minreport-Export-Profile', exported.profile);
+    res.setHeader('X-Minreport-Schema-Version', exported.schemaVersion);
+    return res.status(200).send(exported.content);
+}
+
+router.get('/exports/accounting', async (req: SupplyRequest, res: Response) => {
+    try {
+        return await buildAndSendAccountingExport(req, res, { legacySiiDefault: false });
     } catch (err) {
-        console.error('[SUPPLY] Error exportando CSV SII:', err);
-        return res.status(500).json({ error: 'Error generando exportación CSV contable SII.' });
+        console.error('[SUPPLY] Error generando exportación contable internacional:', err);
+        return res.status(500).json({ error: 'Error generando exportación contable internacional.' });
     }
 });
+
+router.get('/sii/export', async (req: SupplyRequest, res: Response) => {
+    try {
+        return await buildAndSendAccountingExport(req, res, { legacySiiDefault: true });
+    } catch (err) {
+        console.error('[SUPPLY] Error exportando CSV SII:', err);
+        return res.status(500).json({ error: 'Error generando exportación contable SII.' });
+    }
+});
+
+// ---------------------------------------------------------------------------
+// Signed ERP Outbound Webhooks (`/erp-webhooks` — OWNER_EXEC / SITE_ADMIN)
+// ---------------------------------------------------------------------------
+
+router.get('/erp-webhooks', async (req: SupplyRequest, res: Response) => {
+    try {
+        const ctx = req.supplyContext!;
+        if (!canManageErpWebhooks(ctx)) {
+            return res.status(403).json({
+                error: 'ERP_WEBHOOK_ADMIN_REQUIRED: Solo OWNER_EXEC, SITE_ADMIN o plataforma puede consultar webhooks ERP.',
+                code: 'ERP_WEBHOOK_ADMIN_REQUIRED',
+            });
+        }
+        const webhooks = await SignedErpWebhookDispatcher.listWebhooks(ctx.tenantId);
+        return res.status(200).json({
+            success: true,
+            count: webhooks.length,
+            webhooks,
+        });
+    } catch (err) {
+        console.error('[SUPPLY] Error listando webhooks ERP:', err);
+        return res.status(500).json({ error: 'Error consultando webhooks ERP.' });
+    }
+});
+
+router.post('/erp-webhooks', mutationRateLimiter, async (req: SupplyRequest, res: Response) => {
+    try {
+        const ctx = req.supplyContext!;
+        if (!canManageErpWebhooks(ctx)) {
+            return res.status(403).json({
+                error: 'ERP_WEBHOOK_ADMIN_REQUIRED: Solo OWNER_EXEC, SITE_ADMIN o plataforma puede registrar webhooks ERP.',
+                code: 'ERP_WEBHOOK_ADMIN_REQUIRED',
+            });
+        }
+        const parsed = CreateErpWebhookBodySchema.safeParse(req.body || {});
+        if (!parsed.success) {
+            return res.status(400).json({
+                error: 'Registro de webhook ERP exige confirmationKeyword="ACTUALIZAR", targetUrl HTTPS y eventos válidos.',
+                details: parsed.error.flatten(),
+            });
+        }
+
+        const created = await SignedErpWebhookDispatcher.createWebhook(
+            {
+                tenantId: ctx.tenantId,
+                name: parsed.data.name,
+                targetUrl: parsed.data.targetUrl,
+                events: parsed.data.events,
+                secret: parsed.data.secret,
+                active: parsed.data.active,
+            },
+            {
+                actorUid: ctx.actorUid,
+                actorEmail: ctx.actorEmail,
+                ipAddress: extractClientIp(req),
+            }
+        );
+
+        return res.status(201).json({
+            success: true,
+            webhook: created.webhook,
+            signingSecretOnce: created.signingSecretOnce,
+        });
+    } catch (err: any) {
+        if (err instanceof SSRFBlockedError) {
+            return res.status(403).json({
+                error: err.message,
+                code: err.code,
+            });
+        }
+        console.error('[SUPPLY] Error registrando webhook ERP:', err);
+        return res.status(500).json({ error: 'Error registrando webhook ERP.' });
+    }
+});
+
+router.delete(
+    '/erp-webhooks/:webhookId',
+    mutationRateLimiter,
+    async (req: SupplyRequest, res: Response) => {
+        try {
+            const ctx = req.supplyContext!;
+            if (!canManageErpWebhooks(ctx)) {
+                return res.status(403).json({
+                    error: 'ERP_WEBHOOK_ADMIN_REQUIRED: Solo OWNER_EXEC, SITE_ADMIN o plataforma puede eliminar webhooks ERP.',
+                    code: 'ERP_WEBHOOK_ADMIN_REQUIRED',
+                });
+            }
+            const candidateKeyword =
+                req.body?.confirmationKeyword ??
+                (typeof req.query.confirmationKeyword === 'string'
+                    ? req.query.confirmationKeyword
+                    : undefined);
+            const parsed = DeleteErpWebhookBodySchema.safeParse({
+                confirmationKeyword: candidateKeyword,
+            });
+            if (!parsed.success) {
+                return res.status(400).json({
+                    error: 'Eliminación de webhook ERP exige confirmationKeyword="ACTUALIZAR".',
+                    details: parsed.error.flatten(),
+                });
+            }
+
+            const webhookId = String(req.params.webhookId || '').trim();
+            const result = await SignedErpWebhookDispatcher.deleteWebhook(
+                ctx.tenantId,
+                webhookId,
+                {
+                    actorUid: ctx.actorUid,
+                    actorEmail: ctx.actorEmail,
+                    ipAddress: extractClientIp(req),
+                }
+            );
+            return res.status(200).json({ success: true, ...result });
+        } catch (err: any) {
+            if (err instanceof SupplyNotFoundError) {
+                return res.status(404).json({ error: err.message });
+            }
+            console.error('[SUPPLY] Error eliminando webhook ERP:', err);
+            return res.status(500).json({ error: 'Error eliminando webhook ERP.' });
+        }
+    }
+);
+
+router.post(
+    '/erp-webhooks/:webhookId/test',
+    mutationRateLimiter,
+    async (req: SupplyRequest, res: Response) => {
+        try {
+            const ctx = req.supplyContext!;
+            if (!canManageErpWebhooks(ctx)) {
+                return res.status(403).json({
+                    error: 'ERP_WEBHOOK_ADMIN_REQUIRED: Solo OWNER_EXEC, SITE_ADMIN o plataforma puede probar webhooks ERP.',
+                    code: 'ERP_WEBHOOK_ADMIN_REQUIRED',
+                });
+            }
+            const webhookId = String(req.params.webhookId || '').trim();
+            const delivery = await SignedErpWebhookDispatcher.sendTestWebhook(
+                ctx.tenantId,
+                webhookId,
+                {
+                    actorUid: ctx.actorUid,
+                    actorEmail: ctx.actorEmail,
+                    ipAddress: extractClientIp(req),
+                }
+            );
+            return res.status(200).json({
+                success: delivery.status === 'DELIVERED',
+                delivery,
+            });
+        } catch (err: any) {
+            if (err instanceof SupplyNotFoundError) {
+                return res.status(404).json({ error: err.message });
+            }
+            if (err instanceof SSRFBlockedError) {
+                return res.status(403).json({ error: err.message, code: err.code });
+            }
+            console.error('[SUPPLY] Error probando webhook ERP:', err);
+            return res.status(500).json({ error: 'Error enviando evento de prueba ERP.' });
+        }
+    }
+);
 
 // ---------------------------------------------------------------------------
 // Anonymous Marketplace Demand Signals (`/marketplace-signals` — k >= 5 B2B)
