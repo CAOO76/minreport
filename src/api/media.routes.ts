@@ -164,7 +164,16 @@ mediaRouter.get(
             }
         }
 
-        const blobStream = await CasStorageService.openCasBlobStream(entry.storagePath);
+        const blobStream = await CasStorageService.openCasBlobStream(
+            entry.storagePath,
+            isPrivateScope
+                ? {
+                      scope: 'TENANT_PRIVATE',
+                      tenantId: entry.tenantId || ctx?.tenantId,
+                      allowCrossTenantAudit: isSovereignAuditor,
+                  }
+                : { scope: entry.scope }
+        );
         if (!blobStream) {
             return res.status(404).json({ error: 'Binario CAS no encontrado en almacenamiento.' });
         }
@@ -250,7 +259,11 @@ mediaRouter.get(
             parsed.ext,
             requestedTenant
         );
-        const blobStream = await CasStorageService.openCasBlobStream(storagePath);
+        const blobStream = await CasStorageService.openCasBlobStream(storagePath, {
+            scope: 'TENANT_PRIVATE',
+            tenantId: requestedTenant,
+            allowCrossTenantAudit: isSovereignAuditor,
+        });
         if (!blobStream) {
             return res.status(404).json({ error: 'Evidencia CAS no encontrada.' });
         }

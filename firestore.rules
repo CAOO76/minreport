@@ -5,9 +5,9 @@ rules_version = '2';
 // Jerarquía Soberana de 5 Tipos de Cuenta:
 //   1º DEV          (isDevRoot        — DEV_ROOT / dev@minreport.com verificado)
 //   2º ADMIN        (isSuperAdmin     — SUPER_ADMIN / admin@minreport.com verificado)
-//   3º TEST-PILOT   (isTestPilot      — TEST_PILOT con control de caducidad pilotExpiresAt)
-//   4º CLIENTES B2B (isAccountMember  — Aislamiento estricto por accountId/tenantId)
-//   5º EDU          (isAccountMember  — Sandbox académico sin alta interna no autorizada)
+//   3º TEST-PILOT   (isTestPilot      — TEST_PILOT hermético: caducidad token + /users/{uid} + /test_pilots/{pilotAccountId}|{uid} ACTIVE, confinado a su propio sandbox pilot-*)
+//   4º CLIENTES B2B (isAccountMember  — Aislamiento estricto por accountId/tenantId con membresía ACTIVA)
+//   5º EDU          (isAccountMember  — Sandbox académico con membresía ACTIVA sin alta interna no autorizada)
 //
 // Assumed Data Model (Resumen Estructural):
 //   - /user_directory/{run}: { uid, email, run, updatedAt } — Exclusivo Admin/Backend
@@ -53,13 +53,13 @@ rules_version = '2';
 //   - /supplier_channel_rules/{ruleId}: Legado sellado tras unificación en /global_suppliers.representations[] (read/write == false).
 //   - /supplier_contact_contributions/{contributionId}: { contributionId, manufacturerKey, distributorName, channelType, countryIso2, cityRegion, roleEmail, phone, portalUrl, sanitizedNotes, piiPurgedTypes, piiPurgedCount, status, submittedByTenantHash, createdAt, reviewedAt, reviewedByUid, ttlExpiresAt } — Cola de aportes comunitarios moderados Ley N° 19.628 / N° 21.719; lectura exclusiva 1º DEV / 2º ADMIN (isAdmin), escritura exclusiva Admin SDK (ConfidentialityAirlockService + bloqueo 5º EDU).
 //   - MINREPORT · ABASTECIMIENTO (`moduleId: 'supply'` — Base Única `southamerica-west1`, mutaciones server-authoritative vía `/api/supply/*` Admin SDK + Zod + CAS + SII + HITL "ACTUALIZAR" + AuditLedger):
-//     * /global_supply_catalog/{skuId}: Catálogo maestro común sin tenantId ni PII — Lectura autenticada, escritura/borrado exclusivo 1º DEV / 2º ADMIN con validador de dominio y campos inmutables.
-//     * /global_supply_policy_presets/{roleId}: Presets globales de políticas y topes de aprobación por rol — Lectura autenticada, escritura/borrado exclusivo 1º DEV / 2º ADMIN con validador de dominio y campos inmutables.
+//     * /global_supply_catalog/{skuId}: Catálogo maestro común sin tenantId ni PII — Docs globales públicos legibles por usuarios activos no suspendidos/revocados; docs con tenantId no vacío o scope=='TENANT_PRIVATE' legibles únicamente por 1º DEV / 2º ADMIN o miembros activos del mismo tenantId; escritura/borrado exclusivo 1º DEV / 2º ADMIN con validador anti-PII y sin tenantId no controlado.
+//     * /global_supply_policy_presets/{roleId}: Presets globales de políticas y topes de aprobación por rol — Lectura autenticada activa (excluyendo suspendidos/revocados/pilotos expirados), escritura/borrado exclusivo 1º DEV / 2º ADMIN con validador de dominio y campos inmutables.
 //     * /global_suppliers/{supplierId}: Ya gobernado en §8.1 (`allow read: if isAuthenticated(); allow write: if false;`).
 //     * /supply_whatsapp_sessions/{sessionId}, /supply_whatsapp_wamids/{wamid}: Secretos/estado conversacional efímero WhatsApp y guardia atómica de idempotencia (Ley N° 21.719) — Bloqueo total cliente (`read/write == false`).
-//     * /supply_policy_audit/{eventId}: Auditoría de políticas de abastecimiento — Lectura tenant-scoped exclusiva OWNER/ADMIN del tenant auditable o 1º DEV / 2º ADMIN; escritura cliente denegada (`write == false`).
-//     * /market_demand_signals/{signalId}: Señales anónimas de demanda agregadas k>=3 (Ley N° 21.719, sin tenantId ni GPS) — Lectura autenticada, escritura exclusiva Admin SDK (`write == false`).
-//     * Colecciones operativas y ledgers multi-tenant (`tenant_suppliers`, `supply_sites`, `supply_warehouses`, `supply_inventory_items`, `supply_requisitions` + subcolección `lines`, `supply_requisition_lines`, `supply_purchases` + subcolección `lines`, `supply_purchase_lines`, `supply_fulfillment_allocations`, `supply_assets`, `supply_stock_ledger`, `supply_cash_ledger`, `supply_sii_documents`, `supply_expense_reports`, `supply_demand_forecasts`): Todas portan `tenantId`; lectura estrictamente aislada por `tenantId` (miembro directo B2B/EDU, 1º DEV / 2º ADMIN, o 3º TEST-PILOT hermético exclusivamente a su propio sandbox `pilot-*`); toda escritura cliente denegada (`create, update, delete == false`).
+//     * /supply_policy_audit/{eventId}: Auditoría de políticas de abastecimiento — Lectura tenant-scoped exclusiva OWNER/ADMIN ACTIVO del tenant auditable o 1º DEV / 2º ADMIN (sin bypass por claim obsoleto ni TEST_PILOT); escritura cliente denegada (`write == false`).
+//     * /market_demand_signals/{signalId}: Señales anónimas de demanda agregadas k>=3 (Ley N° 21.719, sin tenantId ni GPS) — Lectura autenticada activa, escritura exclusiva Admin SDK (`write == false`).
+//     * Colecciones operativas y ledgers multi-tenant (`tenant_suppliers`, `supply_sites`, `supply_warehouses`, `supply_inventory_items`, `supply_requisitions` + subcolección `lines`, `supply_requisition_lines`, `supply_purchases` + subcolección `lines`, `supply_purchase_lines`, `supply_fulfillment_allocations`, `supply_assets`, `supply_stock_ledger`, `supply_cash_ledger`, `supply_sii_documents`, `supply_expense_reports`, `supply_demand_forecasts`): Todas portan `tenantId`; lectura estrictamente aislada por `tenantId` (miembro directo ACTIVO B2B/EDU, 1º DEV / 2º ADMIN, o 3º TEST-PILOT hermético verificado en `/test_pilots/{uid}` confinado estrictamente a `pilot-{uid}` o `pilotAccountId`); toda escritura cliente denegada (`create, update, delete == false`).
 // ===============================================================
 
 service cloud.firestore {
@@ -123,22 +123,113 @@ service cloud.firestore {
       );
     }
 
-    // Verifica estado vivo en servidor (/users/{uid}) para revocación inmediata de 3º TEST-PILOT
-    function isNotRevokedPilotUser() {
-      let u = get(/databases/$(database)/documents/users/$(request.auth.uid));
-      return u != null &&
-        u.data != null &&
-        ('role' in u.data && u.data.role == 'TEST_PILOT') &&
-        (!('status' in u.data) || !(u.data.status in ['REVOKED', 'SUSPENDED']));
+    // Verifica que el perfil /users/{uid} (si existe) no esté revocado, suspendido ni deshabilitado
+    function isNotRevokedUser() {
+      return !exists(/databases/$(database)/documents/users/$(request.auth.uid)) ||
+        !(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('status', 'ACTIVE') in ['REVOKED', 'SUSPENDED', 'INACTIVE', 'REMOVED', 'DISABLED']);
     }
 
-    // 3º Jerarquía Soberana — TEST-PILOT (Rol único TEST_PILOT con control de caducidad obligatorio y revocación inmediata)
+    // Identifica si el solicitante porta identidad o perfil de 3º TEST-PILOT (aunque esté expirado o revocado)
+    function isPilotIdentity() {
+      return request.auth != null && (
+        'pilotExpiresAt' in request.auth.token ||
+        request.auth.token.get('role', '') == 'TEST_PILOT' ||
+        (
+          exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'TEST_PILOT'
+        )
+      );
+    }
+
+    // Valida formato estricto de sandbox 3º TEST-PILOT (`pilot-*`, sin saltos de segmento)
+    function isPilotAccountIdFormat(accountId) {
+      return accountId is string &&
+        accountId.size() > 6 &&
+        accountId.size() <= 128 &&
+        accountId.matches('^pilot-.*') &&
+        !accountId.matches('.*/.*');
+    }
+
+    // Valida expiración de 3º TEST-PILOT soportando Firestore Timestamp y epoch ms numérico (int/float), fail-closed
+    function isValidPilotExpiresAt(expiresAt) {
+      return expiresAt == null ||
+        (expiresAt is timestamp && request.time < expiresAt) ||
+        ((expiresAt is int || expiresAt is float) && request.time.toMillis() < expiresAt);
+    }
+
+    // Valida datos de registro vivo en /test_pilots/{docId}: lista blanca estricta status == 'ACTIVE' y expiración vigente
+    function isActiveTestPilotDocData(pilotData) {
+      return pilotData is map &&
+        pilotData.get('status', 'ACTIVE') == 'ACTIVE' &&
+        (!('expiresAt' in pilotData) || isValidPilotExpiresAt(pilotData.expiresAt));
+    }
+
+    // Layout A (real dev.controller.ts): /test_pilots/{pilotAccountId} con prefijo pilot-, userId == uid y status == 'ACTIVE'
+    function isValidAccountKeyedTestPilotDoc(pilotAccountId) {
+      return isPilotAccountIdFormat(pilotAccountId) &&
+        exists(/databases/$(database)/documents/test_pilots/$(pilotAccountId)) &&
+        get(/databases/$(database)/documents/test_pilots/$(pilotAccountId)).data is map &&
+        get(/databases/$(database)/documents/test_pilots/$(pilotAccountId)).data.get('userId', '') == request.auth.uid &&
+        isActiveTestPilotDocData(get(/databases/$(database)/documents/test_pilots/$(pilotAccountId)).data);
+    }
+
+    // Layout B (fallback legacy / tests): /test_pilots/{uid} con status == 'ACTIVE' y expiración vigente
+    function isValidUidKeyedTestPilotDoc() {
+      return exists(/databases/$(database)/documents/test_pilots/$(request.auth.uid)) &&
+        isActiveTestPilotDocData(get(/databases/$(database)/documents/test_pilots/$(request.auth.uid)).data) &&
+        (
+          !('userId' in get(/databases/$(database)/documents/test_pilots/$(request.auth.uid)).data) ||
+          get(/databases/$(database)/documents/test_pilots/$(request.auth.uid)).data.userId == request.auth.uid
+        );
+    }
+
+    // Resuelve candidato pilotAccountId desde token (`activeAccountId`/`tenantId`) o `/users/{uid}.primaryAccountId`
+    function hasValidTokenOrProfilePilotAccountDoc() {
+      let tokenActiveAcc = request.auth.token.get('activeAccountId', '');
+      let tokenTenantId = request.auth.token.get('tenantId', '');
+      return isValidAccountKeyedTestPilotDoc(tokenActiveAcc) ||
+        isValidAccountKeyedTestPilotDoc(tokenTenantId) ||
+        (
+          exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+          isValidAccountKeyedTestPilotDoc(
+            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('primaryAccountId', '')
+          )
+        );
+    }
+
+    // Exige verificación real y vigente en /test_pilots/ soportando Layout A (/test_pilots/{pilotAccountId}) y Layout B (/test_pilots/{uid})
+    function hasValidTestPilotDoc() {
+      return hasValidTokenOrProfilePilotAccountDoc() || isValidUidKeyedTestPilotDoc();
+    }
+
+    function isNotRevokedPilotUserData(uData) {
+      return uData is map &&
+        uData.get('role', '') == 'TEST_PILOT' &&
+        !(uData.get('status', 'ACTIVE') in ['REVOKED', 'SUSPENDED', 'INACTIVE', 'REMOVED', 'DISABLED']);
+    }
+
+    // Verifica estado vivo en servidor (/users/{uid}) para revocación inmediata de 3º TEST-PILOT
+    function isNotRevokedPilotUser() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        isNotRevokedPilotUserData(get(/databases/$(database)/documents/users/$(request.auth.uid)).data);
+    }
+
+    // 3º Jerarquía Soberana — TEST-PILOT hermético: validación token + /users/{uid} vivo + registro /test_pilots/{uid} vigente
     function isTestPilot() {
       return request.auth != null &&
+        (!('role' in request.auth.token) || request.auth.token.role == 'TEST_PILOT') &&
         'pilotExpiresAt' in request.auth.token &&
         request.auth.token.pilotExpiresAt is number &&
         request.time.toMillis() < request.auth.token.pilotExpiresAt &&
-        isNotRevokedPilotUser();
+        isNotRevokedPilotUser() &&
+        hasValidTestPilotDoc();
+    }
+
+    // Usuario autenticado vigente (excluye cuentas suspendidas/revocadas y pilotos expirados/revocados)
+    function isActiveAuthenticatedUser() {
+      return isAuthenticated() &&
+        isNotRevokedUser() &&
+        (!isPilotIdentity() || isTestPilot());
     }
 
     // Gobierno Administrativo Superior (1º DEV + 2º ADMIN)
@@ -146,7 +237,7 @@ service cloud.firestore {
       return isDevRoot() || isSuperAdmin();
     }
 
-    // Privilegio Transversal de Sistema (1º DEV + 2º ADMIN + 3º TEST-PILOT)
+    // Privilegio Transversal de Sistema (EXCLUSIVO 1º DEV + 2º ADMIN; 3º TEST-PILOT hermético a su propio sandbox pilot-*)
     function isSystemPrivileged() {
       return request.auth != null && (
         request.auth.uid in ['dev-master-root-uid', 'super-admin-uid'] ||
@@ -157,28 +248,48 @@ service cloud.firestore {
           request.auth.token.get('email_verified', false) == true &&
           request.auth.token.get('email', '') in ['dev@minreport.com', 'admin@minreport.com']
         ) ||
-        isTestPilot() ||
         hasServerAssignedRole(['DEV_ROOT', 'SUPER_ADMIN'])
       );
     }
 
-    // Curación Técnica de Ingeniería OPERMAQ (1º DEV + 3º TEST-PILOT; excluye mutación directa de 2º ADMIN)
+    // Curación Técnica de Ingeniería OPERMAQ (exclusiva 1º DEV; 2º ADMIN solo lectura comercial, 3º TEST-PILOT sin curación de catálogo maestro)
     function canCurateOpermaq() {
-      return isDevRoot() || isTestPilot();
+      return isDevRoot();
     }
 
-    // Pertenencia directa B2B / EDU sin doble evaluación de isSystemPrivileged ni bypass TEST_PILOT revocado
+    // Valida que la membresía en /accounts/{accountId}/members/{uid} esté ACTIVA
+    // (compatibilidad retroactiva: documentos legacy sin campo `status` se tratan como ACTIVE;
+    // cualquier status distinto de 'ACTIVE' —ej. 'SUSPENDED', 'REVOKED', 'INACTIVE', 'REMOVED', 'PENDING_APPROVAL'— es RECHAZADO)
+    function isActiveMemberData(memberData) {
+      return memberData is map &&
+        (!('status' in memberData) || memberData.status == 'ACTIVE');
+    }
+
+    // Bloquea bypass por claims obsoletos (`activeAccountId`/`tenantId`) cuando el documento de membresía existe y NO está ACTIVE
+    function isNotSuspendedOrRevokedMember(accountId) {
+      return !exists(/databases/$(database)/documents/accounts/$(accountId)/members/$(request.auth.uid)) ||
+        isActiveMemberData(get(/databases/$(database)/documents/accounts/$(accountId)/members/$(request.auth.uid)).data);
+    }
+
+    // Verifica existencia de documento de membresía ACTIVA en /accounts/{accountId}/members/{uid}
+    function hasActiveAccountMemberDoc(accountId) {
+      return exists(/databases/$(database)/documents/accounts/$(accountId)/members/$(request.auth.uid)) &&
+        isActiveMemberData(get(/databases/$(database)/documents/accounts/$(accountId)/members/$(request.auth.uid)).data);
+    }
+
+    // Pertenencia directa B2B / EDU con verificación de membresía ACTIVA (bloquea suspendidos/revocados, claims obsoletos y TEST_PILOT)
     function isDirectAccountMember(accountId) {
       return request.auth != null &&
         accountId is string &&
         accountId.size() > 0 &&
         accountId.size() <= 128 &&
-        !('pilotExpiresAt' in request.auth.token) &&
-        request.auth.token.get('role', '') != 'TEST_PILOT' &&
+        !isPilotIdentity() &&
+        isNotRevokedUser() &&
+        isNotSuspendedOrRevokedMember(accountId) &&
         (
+          hasActiveAccountMemberDoc(accountId) ||
           request.auth.token.get('activeAccountId', '') == accountId ||
           request.auth.token.get('tenantId', '') == accountId ||
-          exists(/databases/$(database)/documents/accounts/$(accountId)/members/$(request.auth.uid)) ||
           (
             exists(/databases/$(database)/documents/accounts/$(accountId)) &&
             get(/databases/$(database)/documents/accounts/$(accountId)).data.get('ownerId', '') == request.auth.uid
@@ -186,15 +297,15 @@ service cloud.firestore {
         );
     }
 
-    // 4º y 5º Jerarquía Soberana — Pertenencia estricta a cuenta B2B / EDU (Aislamiento Multi-Tenant puro)
+    // 4º y 5º Jerarquía Soberana — Pertenencia estricta a cuenta B2B / EDU, sandbox propio 3º TEST-PILOT o Gobierno 1º DEV / 2º ADMIN
     function isAccountMember(accountId) {
       return accountId is string &&
         accountId.size() > 0 &&
         accountId.size() <= 128 &&
-        (isDirectAccountMember(accountId) || isSystemPrivileged());
+        (isDirectAccountMember(accountId) || isMatchingTestPilotSandbox(accountId) || isSystemPrivileged());
     }
 
-    // Administración Interna de Cuenta / Tenant (Global Admin, Titular ownerId, o Miembro/Claim con rol OWNER/ADMIN)
+    // Administración Interna de Cuenta / Tenant (Global Admin, Titular ownerId, o Miembro ACTIVO/Claim vigente con rol OWNER/ADMIN; excluye TEST_PILOT y suspendidos/revocados)
     function isTenantAdminOrOwner(tenantId) {
       return request.auth != null &&
         tenantId is string &&
@@ -203,22 +314,27 @@ service cloud.firestore {
         (
           isAdmin() ||
           (
+            !isPilotIdentity() &&
+            isNotRevokedUser() &&
+            isNotSuspendedOrRevokedMember(tenantId) &&
             (
-              ('activeAccountId' in request.auth.token && request.auth.token.activeAccountId == tenantId) ||
-              ('tenantId' in request.auth.token && request.auth.token.tenantId == tenantId)
-            ) &&
-            'role' in request.auth.token &&
-            request.auth.token.role in ['OWNER', 'ADMIN']
-          ) ||
-          (
-            exists(/databases/$(database)/documents/accounts/$(tenantId)) &&
-            'ownerId' in get(/databases/$(database)/documents/accounts/$(tenantId)).data &&
-            get(/databases/$(database)/documents/accounts/$(tenantId)).data.ownerId == request.auth.uid
-          ) ||
-          (
-            exists(/databases/$(database)/documents/accounts/$(tenantId)/members/$(request.auth.uid)) &&
-            'role' in get(/databases/$(database)/documents/accounts/$(tenantId)/members/$(request.auth.uid)).data &&
-            get(/databases/$(database)/documents/accounts/$(tenantId)/members/$(request.auth.uid)).data.role in ['OWNER', 'ADMIN']
+              (
+                hasActiveAccountMemberDoc(tenantId) &&
+                get(/databases/$(database)/documents/accounts/$(tenantId)/members/$(request.auth.uid)).data.get('role', '') in ['OWNER', 'ADMIN']
+              ) ||
+              (
+                exists(/databases/$(database)/documents/accounts/$(tenantId)) &&
+                get(/databases/$(database)/documents/accounts/$(tenantId)).data.get('ownerId', '') == request.auth.uid
+              ) ||
+              (
+                !exists(/databases/$(database)/documents/accounts/$(tenantId)/members/$(request.auth.uid)) &&
+                (
+                  request.auth.token.get('activeAccountId', '') == tenantId ||
+                  request.auth.token.get('tenantId', '') == tenantId
+                ) &&
+                request.auth.token.get('role', '') in ['OWNER', 'ADMIN']
+              )
+            )
           )
         );
     }
@@ -287,24 +403,24 @@ service cloud.firestore {
         (tidS == null || aid == null || tidS == aid);
     }
 
-    // Evalúa pertenencia e inmutabilidad multi-tenant evaluando docTenantId y membresía directa una sola vez
+    // Evalúa pertenencia e inmutabilidad multi-tenant evaluando docTenantId y membresía directa (o sandbox propio TEST-PILOT) una sola vez
     // (evita re-evaluar isSystemPrivileged cuando la regla llamante ya lo comprobó antes)
     function isTenantMatchCreate(newData) {
       let tid = docTenantId(newData);
-      return tid is string && isDirectAccountMember(tid);
+      return tid is string && (isDirectAccountMember(tid) || isMatchingTestPilotSandbox(tid));
     }
 
     function isTenantMatchUpdate(oldData, newData) {
       let oldTid = docTenantId(oldData);
       return oldTid is string &&
-        isDirectAccountMember(oldTid) &&
+        (isDirectAccountMember(oldTid) || isMatchingTestPilotSandbox(oldTid)) &&
         docTenantId(newData) == oldTid;
     }
 
     function isMeasurementCreateTenantValid(stkId, newData) {
       let tid = docTenantId(newData);
       return tid is string &&
-        isDirectAccountMember(tid) &&
+        (isDirectAccountMember(tid) || isMatchingTestPilotSandbox(tid)) &&
         (
           !exists(/databases/$(database)/documents/stockpiles/$(stkId)) ||
           tid == docTenantId(get(/databases/$(database)/documents/stockpiles/$(stkId)).data)
@@ -638,33 +754,63 @@ service cloud.firestore {
     // Helpers y Validadores de Dominio — MINREPORT · ABASTECIMIENTO (`supply`)
     // ---------------------------------------------------------------
 
-    // Verifica pertenencia hermética de 3º TEST-PILOT exclusivamente a su propio sandbox `pilot-*`
-    // (impide cruce desde TEST_PILOT hacia datos B2B/EDU o hacia sandboxes `pilot-*` de terceros)
-    function isMatchingTestPilotSandbox(tenantId) {
-      return isTestPilot() &&
-        tenantId is string &&
-        tenantId.size() > 6 &&
-        tenantId.size() <= 128 &&
-        tenantId[0:6] == 'pilot-' &&
+    // Layout B: verifica si `tenantId` corresponde al sandbox propio declarado en /test_pilots/{uid}
+    // (`pilot-{uid}` o `pilotAccountId`/`accountId` registrado bajo prefijo `pilot-`)
+    function matchesUidKeyedPilotSandboxData(pilotData, tenantId) {
+      return pilotData is map &&
         (
-          request.auth.token.get('activeAccountId', '') == tenantId ||
-          request.auth.token.get('tenantId', '') == tenantId ||
+          tenantId == ('pilot-' + request.auth.uid) ||
           (
-            exists(/databases/$(database)/documents/accounts/$(tenantId)/members/$(request.auth.uid)) &&
-            !(get(/databases/$(database)/documents/accounts/$(tenantId)/members/$(request.auth.uid)).data.get('status', '') in ['REVOKED', 'SUSPENDED'])
+            'pilotAccountId' in pilotData &&
+            isPilotAccountIdFormat(pilotData.pilotAccountId) &&
+            tenantId == pilotData.pilotAccountId
           ) ||
           (
-            exists(/databases/$(database)/documents/accounts/$(tenantId)) &&
-            get(/databases/$(database)/documents/accounts/$(tenantId)).data.get('ownerId', '') == request.auth.uid
+            'accountId' in pilotData &&
+            isPilotAccountIdFormat(pilotData.accountId) &&
+            tenantId == pilotData.accountId
           )
         );
     }
 
+    function matchesUidKeyedPilotSandbox(tenantId) {
+      return isValidUidKeyedTestPilotDoc() &&
+        matchesUidKeyedPilotSandboxData(
+          get(/databases/$(database)/documents/test_pilots/$(request.auth.uid)).data,
+          tenantId
+        );
+    }
+
+    // Verifica pertenencia hermética de 3º TEST-PILOT exclusivamente a su propio sandbox `pilot-*`
+    // Soporta Layout A real (`dev.controller.ts`: `/test_pilots/{tenantId}` con `userId == uid` y `status == 'ACTIVE'`)
+    // y Layout B legacy/tests (`/test_pilots/{uid}` con `tenantId == 'pilot-' + uid` o `pilotAccountId`/`accountId` registrado)
+    // (impide cruce hacia datos B2B/EDU, hacia sandboxes `pilot-*` de terceros o con membresía suspendida/revocada)
+    function isMatchingTestPilotSandbox(tenantId) {
+      return isTestPilot() &&
+        isPilotAccountIdFormat(tenantId) &&
+        isNotSuspendedOrRevokedMember(tenantId) &&
+        (
+          isValidAccountKeyedTestPilotDoc(tenantId) ||
+          matchesUidKeyedPilotSandbox(tenantId)
+        );
+    }
+
+    // Determina si un SKU de /global_supply_catalog/{skuId} es público global
+    // (sin tenantId/tenant_id/accountId no vacío y sin marca privada TENANT_PRIVATE/TENANT)
+    function isGlobalSupplyCatalogPublicDoc(data) {
+      return data is map &&
+        !(data.get('scope', '') in ['TENANT_PRIVATE', 'TENANT']) &&
+        (!('tenantId' in data) || data.tenantId == null || data.tenantId == '') &&
+        (!('tenant_id' in data) || data.tenant_id == null || data.tenant_id == '') &&
+        (!('accountId' in data) || data.accountId == null || data.accountId == '');
+    }
+
     // Lectura multi-tenant hermética para colecciones operativas de ABASTECIMIENTO (`tenantId` obligatorio)
-    // Permite miembro directo B2B/EDU del tenant o TEST_PILOT exclusivamente en su propio sandbox `pilot-*`
+    // Permite miembro directo ACTIVO B2B/EDU del tenant o 3º TEST-PILOT hermético exclusivamente en su propio sandbox `pilot-*`
     // (1º DEV / 2º ADMIN se evalúan antes mediante isAdmin() para soportar get sobre docs inexistentes)
     function canReadSupplyTenantDoc(data) {
-      return 'tenantId' in data &&
+      return data is map &&
+        'tenantId' in data &&
         data.tenantId is string &&
         data.tenantId.size() > 0 &&
         data.tenantId.size() <= 128 &&
@@ -674,12 +820,12 @@ service cloud.firestore {
         );
     }
 
-    // Lectura tenant-scoped de auditoría de políticas ABASTECIMIENTO exclusiva OWNER/ADMIN (sin cruce ni TEST_PILOT)
+    // Lectura tenant-scoped de auditoría de políticas ABASTECIMIENTO exclusiva OWNER/ADMIN ACTIVO (sin cruce ni TEST_PILOT)
     function canReadSupplyPolicyAuditDoc(data) {
-      return 'tenantId' in data &&
+      return data is map &&
+        'tenantId' in data &&
         isAuditableTenantId(data.tenantId) &&
-        !('pilotExpiresAt' in request.auth.token) &&
-        request.auth.token.get('role', '') != 'TEST_PILOT' &&
+        !isPilotIdentity() &&
         isTenantAdminOrOwner(data.tenantId);
     }
 
@@ -691,22 +837,51 @@ service cloud.firestore {
         (v is string && v.size() > 0 && v.size() <= 64);
     }
 
-    // Validador de dominio para catálogo maestro global /global_supply_catalog/{skuId} (Create & Update)
-    // Bloquea tenantId/PII (Ley N° 21.719), data: Base64 y payloads sin cota (Anti-DoS)
-    function isValidGlobalSupplyCatalogPayload(data, skuId) {
-      return data is map &&
-        data.keys().size() > 0 &&
-        data.keys().size() <= 80 &&
-        !('tenantId' in data) &&
-        !('tenant_id' in data) &&
-        !('accountId' in data) &&
-        !('rut' in data) &&
-        !('phone' in data) &&
-        !('email' in data) &&
-        !('gps' in data) &&
-        !('geoFix' in data) &&
-        (!('id' in data) || (data.id is string && data.id.size() > 0 && data.id.size() <= 128 && data.id == skuId)) &&
+    // Bloquea tenantId/scope privado no controlado y campos PII (Ley N° 19.628 y N° 21.719) en catálogo maestro global
+    function hasNoGlobalCatalogForbiddenKeys(data) {
+      return !data.keys().hasAny([
+        'tenantId',
+        'tenant_id',
+        'accountId',
+        'account_id',
+        'ownerTenantId',
+        'organizationId',
+        'rut',
+        'run',
+        'taxId',
+        'supplierTaxId',
+        'rutProveedor',
+        'phone',
+        'phoneE164',
+        'telefono',
+        'mobile',
+        'whatsapp',
+        'email',
+        'contactEmail',
+        'actorEmail',
+        'correo',
+        'ppu',
+        'patente',
+        'licensePlate',
+        'gps',
+        'geoFix',
+        'lat',
+        'lng',
+        'latitude',
+        'longitude',
+        'coordinates',
+        'address',
+        'direccion',
+        'ipAddress',
+        'contractNumber',
+        'purchaseOrderNumber'
+      ]) && (!('scope' in data) || data.scope == null || data.scope in ['GLOBAL', 'GLOBAL_COMMONS']);
+    }
+
+    function hasValidGlobalCatalogTextFields(data, skuId) {
+      return (!('id' in data) || (data.id is string && data.id.size() > 0 && data.id.size() <= 128 && data.id == skuId)) &&
         (!('skuId' in data) || (data.skuId is string && data.skuId.size() > 0 && data.skuId.size() <= 128 && data.skuId == skuId)) &&
+        (!('canonicalSkuId' in data) || (data.canonicalSkuId is string && data.canonicalSkuId.size() > 0 && data.canonicalSkuId.size() <= 128)) &&
         isOptCalStr(data, 'sku', 128) &&
         isOptCalStr(data, 'skuCode', 128) &&
         isOptCalStr(data, 'name', 240) &&
@@ -723,11 +898,16 @@ service cloud.firestore {
         ) &&
         isOptCalStr(data, 'description', 2000) &&
         isOptCalStr(data, 'category', 120) &&
+        isOptCalStr(data, 'categoryCode', 64) &&
+        isOptCalStr(data, 'procurementBucket', 64) &&
         isOptCalStr(data, 'subcategory', 120) &&
         isOptCalStr(data, 'family', 120) &&
         isOptCalStr(data, 'unit', 32) &&
         isOptCalStr(data, 'uom', 32) &&
         isOptCalStr(data, 'unitOfMeasure', 32) &&
+        isOptCalStr(data, 'baseUnitSi', 32) &&
+        isOptCalStr(data, 'defaultCostCenter', 64) &&
+        isOptCalStr(data, 'slotQuestionTemplate', 500) &&
         isOptCalStr(data, 'unspscCode', 32) &&
         isOptCalStr(data, 'partNumber', 120) &&
         isOptCalStr(data, 'oemPartNumber', 120) &&
@@ -737,25 +917,50 @@ service cloud.firestore {
         isOptCalStr(data, 'currency', 16) &&
         isOptCalStr(data, 'status', 32) &&
         isOptCalStr(data, 'notes', 2000) &&
-        isOptCalStr(data, 'observations', 2000) &&
-        isSafeUrlField(data, 'imageUrl') &&
+        isOptCalStr(data, 'observations', 2000);
+    }
+
+    function hasValidGlobalCatalogNumericAndMetaFields(data) {
+      return isSafeUrlField(data, 'imageUrl') &&
         isSafeUrlField(data, 'thumbnailUrl') &&
         isSafeUrlField(data, 'datasheetUrl') &&
         isOptNonNegNum(data, 'referencePriceClp') &&
         isOptNonNegNum(data, 'referencePriceUsd') &&
+        isOptNonNegNum(data, 'referenceUnitPriceClp') &&
+        isOptNonNegNum(data, 'estimatedUnitPriceClp') &&
+        isOptNonNegNum(data, 'perPaxDailyBaseline') &&
+        isOptNonNegNum(data, 'expectedDailyPerPaxSi') &&
         isOptNonNegNum(data, 'unitCost') &&
         isOptNonNegNum(data, 'unitWeightKg') &&
         isOptNonNegNum(data, 'leadTimeDays') &&
+        (data.get('requiredSlots', null) == null || (data.requiredSlots is list && data.requiredSlots.size() <= 32)) &&
+        (data.get('defaultPackToSi', null) == null ||
+          (data.defaultPackToSi is number && data.defaultPackToSi > 0) ||
+          (data.defaultPackToSi is map && data.defaultPackToSi.keys().size() <= 6)) &&
         (data.get('aliases', null) == null || (data.aliases is list && data.aliases.size() <= 50)) &&
         (data.get('tags', null) == null || (data.tags is list && data.tags.size() <= 50)) &&
         (data.get('searchTokens', null) == null || (data.searchTokens is list && data.searchTokens.size() <= 100)) &&
         (data.get('compatibleModels', null) == null || (data.compatibleModels is list && data.compatibleModels.size() <= 100)) &&
         (data.get('compatibleArchetypes', null) == null || (data.compatibleArchetypes is list && data.compatibleArchetypes.size() <= 32)) &&
         (data.get('specs', null) == null || (data.specs is map && data.specs.keys().size() <= 60)) &&
+        (data.get('isCapexAsset', null) == null || data.isCapexAsset is bool) &&
+        (data.get('isControlled', null) == null || data.isControlled is bool) &&
+        (data.get('leySaco25kgApplied', null) == null || data.leySaco25kgApplied is bool) &&
         (data.get('active', null) == null || data.active is bool) &&
         (data.get('isActive', null) == null || data.isActive is bool) &&
         isOptValidSupplyTimestamp(data, 'createdAt') &&
         isOptValidSupplyTimestamp(data, 'updatedAt');
+    }
+
+    // Validador de dominio para catálogo maestro global /global_supply_catalog/{skuId} (Create & Update)
+    // Bloquea tenantId/scope privado no controlado, PII chilena/estándar (Ley N° 19.628 y N° 21.719), data: Base64 y payloads sin cota (Anti-DoS)
+    function isValidGlobalSupplyCatalogPayload(data, skuId) {
+      return data is map &&
+        data.keys().size() > 0 &&
+        data.keys().size() <= 80 &&
+        hasNoGlobalCatalogForbiddenKeys(data) &&
+        hasValidGlobalCatalogTextFields(data, skuId) &&
+        hasValidGlobalCatalogNumericAndMetaFields(data);
     }
 
     // Validador de dominio para presets globales de políticas /global_supply_policy_presets/{roleId} (Create & Update)
@@ -1146,10 +1351,14 @@ service cloud.firestore {
         isAuthenticated() &&
         resource != null &&
         (
-          ('userId' in resource.data && resource.data.userId == request.auth.uid) ||
-          ('collaboratorEmail' in resource.data &&
+          resource.data.get('userId', '') == request.auth.uid ||
+          (pilotId == request.auth.uid && (!('userId' in resource.data) || resource.data.userId == request.auth.uid)) ||
+          (
+            'collaboratorEmail' in resource.data &&
+            request.auth.token.get('email_verified', false) == true &&
             'email' in request.auth.token &&
-            resource.data.collaboratorEmail == request.auth.token.email)
+            resource.data.collaboratorEmail == request.auth.token.email
+          )
         )
       );
       allow create, delete: if isAdmin();
@@ -1157,8 +1366,10 @@ service cloud.firestore {
         isAdmin() ||
         (
           isAuthenticated() &&
-          'userId' in resource.data &&
-          resource.data.userId == request.auth.uid &&
+          (
+            resource.data.get('userId', '') == request.auth.uid ||
+            (pilotId == request.auth.uid && (!('userId' in resource.data) || resource.data.userId == request.auth.uid))
+          ) &&
           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['telemetry', 'lastActivity'])
         )
       );
@@ -1171,7 +1382,7 @@ service cloud.firestore {
         'authorUid' in resource.data &&
         resource.data.authorUid == request.auth.uid
       );
-      allow create: if isSystemPrivileged() &&
+      allow create: if (isSystemPrivileged() || isTestPilot()) &&
         'authorUid' in request.resource.data &&
         request.resource.data.authorUid == request.auth.uid &&
         'status' in request.resource.data &&
@@ -1671,21 +1882,21 @@ service cloud.firestore {
 
     match /global_asset_catalog/{assetId} {
       allow read: if isAuthenticated();
-      // Segregación estricta GEMINI.md §1.1: 2º ADMIN mantiene lectura comercial; mutación directa cliente OEM exclusiva 1º DEV y 3º TEST-PILOT
-      allow create, update: if (isDevRoot() || isTestPilot()) && isValidOpermaqPayload(request.resource.data);
+      // Segregación estricta GEMINI.md §1.1: 2º ADMIN solo lectura comercial; 3º TEST-PILOT hermético sin curación de catálogo maestro; mutación cliente OEM exclusiva 1º DEV
+      allow create, update: if isDevRoot() && isValidOpermaqPayload(request.resource.data);
       allow delete: if isDevRoot();
 
       // Particionamiento Anti-1MiB OPERMAQ v3.0: Pilares técnicos del activo OEM
       match /pillars/{pillarId} {
         allow read: if isAuthenticated();
-        allow create, update: if (isDevRoot() || isTestPilot()) && isValidOpermaqPayload(request.resource.data);
+        allow create, update: if isDevRoot() && isValidOpermaqPayload(request.resource.data);
         allow delete: if isDevRoot();
       }
 
       // Particionamiento Anti-1MiB OPERMAQ v3.0: Historial inmutable append-only de versiones de capítulos
       match /item_revisions/{revId} {
         allow read: if isSystemPrivileged();
-        allow create: if (isDevRoot() || isTestPilot()) && isValidOpermaqPayload(request.resource.data);
+        allow create: if isDevRoot() && isValidOpermaqPayload(request.resource.data);
         allow update, delete: if false;
       }
 
@@ -1908,21 +2119,32 @@ service cloud.firestore {
 
     // --- 8.2.1 Global Commons / Catálogo Maestro y Presets de Políticas ---
 
-    // Catálogo maestro global de SKUs de abastecimiento (sin tenantId ni PII; escritura exclusiva 1º DEV / 2º ADMIN con validador de dominio)
+    // Catálogo maestro global de SKUs de abastecimiento (aislamiento estricto de SKUs privados con tenantId o scope=='TENANT_PRIVATE';
+    // docs globales públicos legibles por cuentas activas; docs privados exclusivos isAdmin o miembros activos del mismo tenantId;
+    // escritura exclusiva 1º DEV / 2º ADMIN con validador anti-PII y sin tenantId no controlado)
     match /global_supply_catalog/{skuId} {
-      allow read: if isAuthenticated();
+      allow read: if isAdmin() || (
+        isActiveAuthenticatedUser() &&
+        resource != null &&
+        (
+          isGlobalSupplyCatalogPublicDoc(resource.data) ||
+          canReadSupplyTenantDoc(resource.data)
+        )
+      );
       allow create: if (isDevRoot() || isSuperAdmin()) &&
         isValidGlobalSupplyCatalogPayload(request.resource.data, skuId);
       allow update: if (isDevRoot() || isSuperAdmin()) &&
+        isGlobalSupplyCatalogPublicDoc(resource.data) &&
         isValidGlobalSupplyCatalogPayload(request.resource.data, skuId) &&
         (!('createdAt' in resource.data) || !('createdAt' in request.resource.data) || request.resource.data.createdAt == resource.data.createdAt) &&
-        (!('skuId' in resource.data) || !('skuId' in request.resource.data) || request.resource.data.skuId == resource.data.skuId);
+        (!('skuId' in resource.data) || !('skuId' in request.resource.data) || request.resource.data.skuId == resource.data.skuId) &&
+        (!('canonicalSkuId' in resource.data) || !('canonicalSkuId' in request.resource.data) || request.resource.data.canonicalSkuId == resource.data.canonicalSkuId);
       allow delete: if isDevRoot() || isSuperAdmin();
     }
 
-    // Presets globales de políticas y topes de aprobación por rol (lectura autenticada; escritura exclusiva 1º DEV / 2º ADMIN con validador)
+    // Presets globales de políticas y topes de aprobación por rol (lectura autenticada activa; escritura exclusiva 1º DEV / 2º ADMIN con validador)
     match /global_supply_policy_presets/{roleId} {
-      allow read: if isAuthenticated();
+      allow read: if isAdmin() || isActiveAuthenticatedUser();
       allow create: if (isDevRoot() || isSuperAdmin()) &&
         isValidGlobalSupplyPolicyPresetPayload(request.resource.data, roleId);
       allow update: if (isDevRoot() || isSuperAdmin()) &&
@@ -1944,9 +2166,9 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // Auditoría de políticas de abastecimiento (lectura tenant-scoped exclusiva OWNER/ADMIN o DEV_ROOT/SUPER_ADMIN; escritura exclusiva Admin SDK)
+    // Auditoría de políticas de abastecimiento (lectura tenant-scoped exclusiva OWNER/ADMIN ACTIVO o DEV_ROOT/SUPER_ADMIN; escritura exclusiva Admin SDK)
     match /supply_policy_audit/{eventId} {
-      allow read: if isAdmin() || (isAuthenticated() && resource != null && canReadSupplyPolicyAuditDoc(resource.data));
+      allow read: if isAdmin() || (isActiveAuthenticatedUser() && resource != null && canReadSupplyPolicyAuditDoc(resource.data));
       allow write: if false;
     }
 
@@ -1954,7 +2176,7 @@ service cloud.firestore {
 
     // Señales agregadas anónimas generadas exclusivamente por backend Admin SDK tras agregación k>=3 (sin tenantId ni GPS)
     match /market_demand_signals/{signalId} {
-      allow read: if isAuthenticated();
+      allow read: if isAdmin() || isActiveAuthenticatedUser();
       allow write: if false;
     }
 

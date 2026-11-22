@@ -6,6 +6,7 @@ import { env, isDevPrivateReleaseStage } from '../../../config/env';
 import { auth, db } from '../../../config/firebase';
 import { evaluatePilotExpiration } from '../../../contracts/session.contracts';
 import { AuditLedger } from '../../../core/audit-ledger';
+import { CasStorageService } from '../../../core/media/CasStorageService';
 import { isDecodedDevRootToken, logThrottledAuthFailure } from '../../../middleware/auth';
 import {
     aiRateLimiter,
@@ -19,7 +20,10 @@ import {
     MetaWhatsAppCloudAdapter,
 } from '../adapters/MetaWhatsAppCloudAdapter';
 import { CampChannel, type ResolvedWhatsAppMember } from '../channels/camp.channel';
-import { ReceiptIntelligencePipeline } from './ReceiptIntelligencePipeline';
+import {
+    ReceiptCasAccessDeniedError,
+    ReceiptIntelligencePipeline,
+} from './ReceiptIntelligencePipeline';
 import {
     SupplyConflictError,
     SupplyDuplicateSiiDocumentError,
@@ -136,6 +140,85 @@ function buildSupplyProfileFromData(
     });
 }
 
+interface VerifiedSupplyTestPilotSandbox {
+    valid: boolean;
+    allowedTenantIds: Set<string>;
+    primaryPilotTenantId: string | null;
+}
+
+async function resolveVerifiedTestPilotSandbox(
+    uid: string,
+    tokenPilotExpiresAt?: unknown,
+    profilePilotExpiresAt?: unknown
+): Promise<VerifiedSupplyTestPilotSandbox> {
+    if (
+        !uid ||
+        evaluatePilotExpiration(tokenPilotExpiresAt) ||
+        evaluatePilotExpiration(profilePilotExpiresAt)
+    ) {
+        return { valid: false, allowedTenantIds: new Set(), primaryPilotTenantId: null };
+    }
+
+    const candidateDocs: Array<{ docId: string; data: Record<string, any> }> = [];
+    const directSnap = await db.collection('test_pilots').doc(uid).get().catch(() => null);
+    if (directSnap?.exists) {
+        candidateDocs.push({ docId: directSnap.id, data: directSnap.data() || {} });
+    }
+
+    const querySnap = await db
+        .collection('test_pilots')
+        .where('userId', '==', uid)
+        .get()
+        .catch(() => null);
+    if (querySnap && !querySnap.empty) {
+        for (const doc of querySnap.docs) {
+            if (!candidateDocs.some((entry) => entry.docId === doc.id)) {
+                candidateDocs.push({ docId: doc.id, data: doc.data() || {} });
+            }
+        }
+    }
+
+    // Fail-closed: debe existir un registro ACTIVE y no expirado en `test_pilots`
+    const validActiveDocs = candidateDocs.filter((entry) => {
+        const st = String(entry.data.status || '').trim().toUpperCase();
+        return (
+            st === 'ACTIVE' &&
+            !evaluatePilotExpiration(entry.data.expiresAt ?? entry.data.pilotExpiresAt)
+        );
+    });
+
+    if (validActiveDocs.length === 0) {
+        return { valid: false, allowedTenantIds: new Set(), primaryPilotTenantId: null };
+    }
+
+    const allowedTenantIds = new Set<string>();
+    const canonicalSandbox = `pilot-${uid}`;
+    for (const entry of validActiveDocs) {
+        const explicitAccountId = String(
+            entry.data.pilotAccountId || entry.data.accountId || ''
+        ).trim();
+        if (explicitAccountId && explicitAccountId.startsWith('pilot-')) {
+            allowedTenantIds.add(explicitAccountId);
+        }
+        if (entry.docId.startsWith('pilot-')) {
+            allowedTenantIds.add(entry.docId);
+        }
+        if (entry.docId === uid) {
+            allowedTenantIds.add(canonicalSandbox);
+        }
+    }
+    if (allowedTenantIds.size === 0) {
+        allowedTenantIds.add(canonicalSandbox);
+    }
+
+    const primaryPilotTenantId = Array.from(allowedTenantIds)[0] || canonicalSandbox;
+    return {
+        valid: true,
+        allowedTenantIds,
+        primaryPilotTenantId,
+    };
+}
+
 /**
  * Middleware soberano de sesión y aislamiento multi-tenant para `/api/supply/*`.
  */
@@ -207,32 +290,58 @@ export async function requireSupplyTenantScope(
         const isTestPilot =
             !isDevRoot &&
             !isSuperAdmin &&
-            !userDisabled &&
             (tokenRole === 'TEST_PILOT' || serverUserRole === 'TEST_PILOT');
 
+        let verifiedPilotSandbox: VerifiedSupplyTestPilotSandbox | null = null;
         if (isTestPilot) {
-            const candidateExpiry = decoded.pilotExpiresAt ?? profileData?.pilotExpiresAt;
-            if (evaluatePilotExpiration(candidateExpiry)) {
+            if (userDisabled) {
                 return res.status(403).json({
-                    error: 'Cuenta 3º TEST-PILOT expirada.',
-                    code: 'PILOT_ACCOUNT_EXPIRED',
+                    error: 'Cuenta 3º TEST-PILOT revocada o suspendida.',
+                    code: 'PILOT_EXPIRED_OR_REVOKED',
+                });
+            }
+            verifiedPilotSandbox = await resolveVerifiedTestPilotSandbox(
+                uid,
+                decoded.pilotExpiresAt,
+                profileData?.pilotExpiresAt
+            );
+            if (!verifiedPilotSandbox.valid || !verifiedPilotSandbox.primaryPilotTenantId) {
+                return res.status(403).json({
+                    error: 'Cuenta 3º TEST-PILOT expirada, revocada o sin registro activo.',
+                    code: 'PILOT_EXPIRED_OR_REVOKED',
                 });
             }
         }
 
-        const isSystemPrivileged = isDevRoot || isSuperAdmin || isTestPilot;
+        // Privilegio de plataforma exclusivo de 1º DEV y 2º ADMIN (3º TEST-PILOT hermético)
+        const isSystemPrivileged = isDevRoot || isSuperAdmin;
 
         const headerTenantId = String(
             req.headers['x-active-account-id'] || req.headers['x-tenant-id'] || ''
         ).trim();
 
-        const resolvedTenantId =
-            headerTenantId ||
-            String(decoded.activeAccountId || '').trim() ||
-            String(profileData?.lastActiveAccountId || '').trim() ||
-            String(profileData?.primaryAccountId || '').trim() ||
-            String(profileData?.memberships?.[0]?.accountId || '').trim() ||
-            (isSystemPrivileged ? 'dev-master-sandbox' : '');
+        let resolvedTenantId = '';
+        if (isTestPilot && verifiedPilotSandbox) {
+            const candidatePilotTenant =
+                headerTenantId ||
+                String(decoded.activeAccountId || '').trim() ||
+                verifiedPilotSandbox.primaryPilotTenantId!;
+            if (!verifiedPilotSandbox.allowedTenantIds.has(candidatePilotTenant)) {
+                return res.status(403).json({
+                    error: 'TENANT_ACCESS_DENIED: Cuenta 3º TEST-PILOT confinada exclusivamente a su sandbox autorizado.',
+                    code: 'TENANT_ACCESS_DENIED',
+                });
+            }
+            resolvedTenantId = candidatePilotTenant;
+        } else {
+            resolvedTenantId =
+                headerTenantId ||
+                String(decoded.activeAccountId || '').trim() ||
+                String(profileData?.lastActiveAccountId || '').trim() ||
+                String(profileData?.primaryAccountId || '').trim() ||
+                String(profileData?.memberships?.[0]?.accountId || '').trim() ||
+                (isSystemPrivileged ? 'dev-master-sandbox' : '');
+        }
 
         if (!resolvedTenantId || !TENANT_ID_REGEX.test(resolvedTenantId)) {
             return res.status(403).json({ error: 'TENANT_ACCESS_DENIED: tenantId inválido o ausente.' });
@@ -242,12 +351,16 @@ export async function requireSupplyTenantScope(
             return res.status(403).json({ error: 'TENANT_ACCESS_DENIED' });
         }
 
+        const isVerifiedPilotOwnSandbox = Boolean(
+            isTestPilot && verifiedPilotSandbox?.allowedTenantIds.has(resolvedTenantId)
+        );
+
         let accountData: Record<string, any> | null = null;
         if (resolvedTenantId !== 'dev-master-sandbox') {
             const accSnap = await db.collection('accounts').doc(resolvedTenantId).get();
             if (accSnap.exists) {
                 accountData = accSnap.data() || null;
-            } else if (!isSystemPrivileged) {
+            } else if (!isSystemPrivileged && !isVerifiedPilotOwnSandbox) {
                 return res.status(403).json({ error: 'TENANT_ACCESS_DENIED' });
             }
         }
@@ -257,7 +370,8 @@ export async function requireSupplyTenantScope(
             !isSystemPrivileged &&
             (accountStatus === 'PENDING_APPROVAL' ||
                 accountStatus === 'REJECTED' ||
-                accountStatus === 'SUSPENDED')
+                accountStatus === 'SUSPENDED' ||
+                accountStatus === 'REVOKED')
         ) {
             return res.status(403).json({
                 error: `CUENTA_${accountStatus}: La cuenta organizacional no está habilitada.`,
@@ -308,7 +422,13 @@ export async function requireSupplyTenantScope(
             : undefined;
         const hasActiveMemberDoc = Boolean(memberData && !isInactiveStatus(memberData.status));
 
-        if (!isSystemPrivileged && !isOwner && !profileMembership && !hasActiveMemberDoc) {
+        if (
+            !isSystemPrivileged &&
+            !isVerifiedPilotOwnSandbox &&
+            !isOwner &&
+            !profileMembership &&
+            !hasActiveMemberDoc
+        ) {
             return res.status(403).json({ error: 'TENANT_ACCESS_DENIED' });
         }
 
@@ -321,6 +441,7 @@ export async function requireSupplyTenantScope(
 
         const isEduSandbox =
             !isSystemPrivileged &&
+            !isTestPilot &&
             (String(accountData?.type || '').toUpperCase() === 'EDUCATIONAL' ||
                 Boolean(accountData?.isEduSandbox));
 
@@ -356,7 +477,10 @@ export async function requireSupplyTenantScope(
 
         return next();
     } catch (err) {
-        console.error('[SUPPLY-CONTROLLER] Error resolviendo sesión supply:', err);
+        console.error(
+            '[SUPPLY-CONTROLLER] Error resolviendo sesión supply:',
+            err instanceof Error ? err.name : 'UnknownError'
+        );
         return res.status(401).json({ error: 'No autorizado: Error verificando sesión.' });
     }
 }
@@ -1023,6 +1147,54 @@ router.get('/shopping-lists/consolidated', async (req: SupplyRequest, res: Respo
 // Receipt Intelligence Pipeline (`/receipts/analyze`)
 // ---------------------------------------------------------------------------
 
+const MAX_RECEIPT_BASE64_CHARS = 20 * 1024 * 1024; // 20 MB base64
+const MAX_RECEIPT_DECODED_BYTES = 15 * 1024 * 1024; // 15 MB decodificados
+const MAX_RECEIPT_XML_CHARS = 2 * 1024 * 1024; // 2 MB XML / TED
+
+const AnalyzeReceiptEvidenceCasRefSchema = z.object({
+    sha256: z.string().trim().regex(/^[a-f0-9]{64}$/i, 'sha256 CAS inválido.'),
+    storagePath: z.string().trim().min(1).max(512).optional(),
+    downloadUrl: z
+        .string()
+        .trim()
+        .min(1)
+        .max(1024)
+        .refine(
+            (val) => !val.toLowerCase().includes('data:') && !val.toLowerCase().includes(';base64,'),
+            'Prohibido Base64 inline en evidenceCasRef.downloadUrl'
+        )
+        .optional(),
+    phashHex: z.string().trim().regex(/^[a-f0-9]{16}$/i).optional(),
+    mimeType: z.string().trim().min(3).max(120).optional(),
+    extension: z.string().trim().min(1).max(16).optional(),
+    profile: z.string().trim().max(64).optional(),
+    originalBytes: z.number().int().nonnegative().optional(),
+    optimizedBytes: z.number().int().nonnegative().optional(),
+    savingsRatio: z.number().min(0).max(1).optional(),
+    savingsPct: z.number().min(0).max(100).optional(),
+    originalFilename: z.string().trim().max(240).optional(),
+    createdAt: z.string().trim().max(64).optional(),
+    capturedAt: z.string().trim().max(64).optional(),
+    deduplicatedHit: z.boolean().optional(),
+});
+
+const AnalyzeReceiptBodySchema = z.object({
+    siteId: z.string().trim().max(128).optional(),
+    purchaseMode: PurchaseModeSchema.optional(),
+    locale: z.string().trim().max(16).optional(),
+    fileBase64: z.string().max(MAX_RECEIPT_BASE64_CHARS).optional(),
+    mimeType: z.string().trim().max(120).optional(),
+    originalFilename: z.string().trim().max(240).optional(),
+    clientOriginalBytes: z.coerce.number().int().nonnegative().max(100 * 1024 * 1024).optional(),
+    xmlDteContent: z.string().max(MAX_RECEIPT_XML_CHARS).optional(),
+    xmlContent: z.string().max(MAX_RECEIPT_XML_CHARS).optional(),
+    tedRawXml: z.string().max(MAX_RECEIPT_XML_CHARS).optional(),
+    contextCaption: z.string().max(2000).optional(),
+    defaultDestination: PurchaseLineDestinationSchema.optional(),
+    defaultCostCenter: z.string().trim().max(120).optional(),
+    evidenceCasRef: z.union([AnalyzeReceiptEvidenceCasRefSchema, z.null()]).optional(),
+});
+
 router.post(
     '/receipts/analyze',
     aiRateLimiter,
@@ -1030,7 +1202,9 @@ router.post(
         if (req.is('multipart/form-data')) {
             return upload.single('file')(req, res, (err: any) => {
                 if (err) {
-                    return res.status(400).json({ error: `Error cargando comprobante: ${err.message}` });
+                    return res.status(400).json({
+                        error: 'Error cargando archivo de comprobante o límite de tamaño excedido.',
+                    });
                 }
                 return next();
             });
@@ -1041,33 +1215,114 @@ router.post(
         try {
             const ctx = req.supplyContext!;
             const uploadedFile = (req as any).file as Express.Multer.File | undefined;
-            const body = (req.body || {}) as Record<string, any>;
 
+            const rawBodyInput: Record<string, unknown> = { ...(req.body || {}) };
+            if (typeof rawBodyInput.evidenceCasRef === 'string' && rawBodyInput.evidenceCasRef.trim()) {
+                try {
+                    rawBodyInput.evidenceCasRef = JSON.parse(rawBodyInput.evidenceCasRef);
+                } catch {
+                    return res.status(400).json({
+                        error: 'Referencia evidenceCasRef malformada.',
+                    });
+                }
+            }
+
+            const parsedBody = AnalyzeReceiptBodySchema.safeParse(rawBodyInput);
+            if (!parsedBody.success) {
+                return res.status(400).json({
+                    error: 'Payload inválido para análisis de comprobante.',
+                    details: parsedBody.error.flatten(),
+                });
+            }
+
+            const body = parsedBody.data;
             let rawBuffer: Buffer | undefined = uploadedFile?.buffer;
-            let mimeType: string | undefined = uploadedFile?.mimetype || body.mimeType;
+            const mimeType: string | undefined = uploadedFile?.mimetype || body.mimeType;
             const originalFilename: string | undefined =
                 uploadedFile?.originalname || body.originalFilename;
 
-            if (!rawBuffer && typeof body.fileBase64 === 'string' && body.fileBase64.trim().length > 0) {
-                const stripped = body.fileBase64.replace(/^data:[^;]+;base64,/, '');
-                rawBuffer = Buffer.from(stripped, 'base64');
+            if (rawBuffer && rawBuffer.length > MAX_RECEIPT_DECODED_BYTES) {
+                return res.status(400).json({
+                    error: 'Archivo de comprobante excede el máximo de 15 MB permitidos.',
+                });
+            }
+
+            if (!rawBuffer && body.fileBase64 && body.fileBase64.trim().length > 0) {
+                const stripped = body.fileBase64.replace(/^data:[^;]+;base64,/, '').trim();
+                const decodedBuf = Buffer.from(stripped, 'base64');
+                if (decodedBuf.length > MAX_RECEIPT_DECODED_BYTES) {
+                    return res.status(400).json({
+                        error: 'Archivo base64 decodificado excede el máximo de 15 MB permitidos.',
+                    });
+                }
+                if (decodedBuf.length > 0) {
+                    rawBuffer = decodedBuf;
+                }
             }
 
             const xmlContent =
-                typeof body.xmlDteContent === 'string' && body.xmlDteContent.trim()
+                body.xmlDteContent && body.xmlDteContent.trim()
                     ? body.xmlDteContent
-                    : typeof body.xmlContent === 'string' && body.xmlContent.trim()
+                    : body.xmlContent && body.xmlContent.trim()
                       ? body.xmlContent
                       : undefined;
-            const tedRawXml =
-                typeof body.tedRawXml === 'string' && body.tedRawXml.trim()
-                    ? body.tedRawXml
-                    : undefined;
+            const tedRawXml = body.tedRawXml && body.tedRawXml.trim() ? body.tedRawXml : undefined;
 
-            const parsedCasRef = body.evidenceCasRef
-                ? EvidenceCasRefSchema.safeParse(body.evidenceCasRef)
-                : null;
-            const existingEvidenceCasRef = parsedCasRef?.success ? parsedCasRef.data : undefined;
+            let existingEvidenceCasRef:
+                | z.infer<typeof EvidenceCasRefSchema>
+                | undefined;
+
+            if (body.evidenceCasRef) {
+                // Fail-closed anti-IDOR: jamás confiar en storagePath del cliente
+                if (
+                    body.evidenceCasRef.storagePath &&
+                    !CasStorageService.isTenantPrivateStoragePath(
+                        body.evidenceCasRef.storagePath,
+                        ctx.tenantId
+                    )
+                ) {
+                    return res.status(403).json({
+                        error: 'Acceso denegado a referencia CAS de otra cuenta.',
+                        code: 'CAS_TENANT_ACCESS_DENIED',
+                    });
+                }
+
+                const cleanSha = body.evidenceCasRef.sha256.toLowerCase();
+                const registryEntry = await CasStorageService.resolveRegistryEntryBySha256(cleanSha, {
+                    scope: 'TENANT_PRIVATE',
+                    tenantId: ctx.tenantId,
+                });
+
+                if (
+                    !registryEntry ||
+                    !registryEntry.storagePath ||
+                    !CasStorageService.isTenantPrivateStoragePath(registryEntry.storagePath, ctx.tenantId)
+                ) {
+                    return res.status(403).json({
+                        error: 'Acceso denegado: referencia CAS no registrada para la cuenta activa.',
+                        code: 'CAS_TENANT_ACCESS_DENIED',
+                    });
+                }
+
+                existingEvidenceCasRef = {
+                    sha256: registryEntry.sha256,
+                    phashHex: registryEntry.phashHex,
+                    storagePath: registryEntry.storagePath,
+                    downloadUrl: registryEntry.downloadUrl,
+                    mimeType: registryEntry.mimeType,
+                    extension: registryEntry.extension,
+                    profile: registryEntry.profile,
+                    originalBytes: registryEntry.originalBytes,
+                    optimizedBytes: registryEntry.optimizedBytes,
+                    savingsRatio: registryEntry.savingsRatio,
+                    savingsPct:
+                        typeof registryEntry.savingsPct === 'number'
+                            ? registryEntry.savingsPct
+                            : Number((registryEntry.savingsRatio * 100).toFixed(1)),
+                    originalFilename: registryEntry.originalFilename,
+                    createdAt: registryEntry.createdAt,
+                };
+            }
 
             if (!rawBuffer && !xmlContent && !tedRawXml && !existingEvidenceCasRef) {
                 return res.status(400).json({
@@ -1075,29 +1330,19 @@ router.post(
                 });
             }
 
-            const clientOriginalBytes =
-                body.clientOriginalBytes !== undefined ? Number(body.clientOriginalBytes) : undefined;
-            const parsedDest = PurchaseLineDestinationSchema.safeParse(body.defaultDestination);
-
             const analysis = await ReceiptIntelligencePipeline.analyze({
                 tenantId: ctx.tenantId,
                 actorUid: ctx.actorUid,
                 rawBuffer,
                 mimeType,
                 originalFilename,
-                clientOriginalBytes:
-                    typeof clientOriginalBytes === 'number' && Number.isFinite(clientOriginalBytes)
-                        ? clientOriginalBytes
-                        : undefined,
+                clientOriginalBytes: body.clientOriginalBytes,
                 existingEvidenceCasRef,
                 xmlContent,
                 tedRawXml,
-                contextCaption: typeof body.contextCaption === 'string' ? body.contextCaption : undefined,
-                defaultDestination: parsedDest.success ? parsedDest.data : 'STOCK_IN_TRANSIT',
-                defaultCostCenter:
-                    typeof body.defaultCostCenter === 'string'
-                        ? body.defaultCostCenter
-                        : ctx.supplyProfile.defaultCostCenter,
+                contextCaption: body.contextCaption,
+                defaultDestination: body.defaultDestination || 'STOCK_IN_TRANSIT',
+                defaultCostCenter: body.defaultCostCenter || ctx.supplyProfile.defaultCostCenter,
                 checkDuplicateDedupeKey: (dedupeKey) =>
                     SupplyRepository.existsSiiDocument(ctx.tenantId, dedupeKey),
             });
@@ -1107,9 +1352,18 @@ router.post(
                 analysis,
             });
         } catch (err: any) {
-            console.error('[SUPPLY] Error en ReceiptIntelligencePipeline:', err);
+            if (err instanceof ReceiptCasAccessDeniedError) {
+                return res.status(403).json({
+                    error: 'Acceso denegado a referencia CAS fuera del ámbito de la cuenta activa.',
+                    code: err.code,
+                });
+            }
+            console.error(
+                '[SUPPLY] Error en ReceiptIntelligencePipeline:',
+                err instanceof Error ? err.name : 'UnknownError'
+            );
             return res.status(500).json({
-                error: err?.message || 'Error analizando comprobante de compra.',
+                error: 'Error interno analizando comprobante de compra.',
             });
         }
     }

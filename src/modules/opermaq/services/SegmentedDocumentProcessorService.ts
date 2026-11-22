@@ -1816,7 +1816,10 @@ Responde ESTRICTAMENTE en JSON puro:
                             'webp',
                             originTenantId
                         );
-                        const blob = await CasStorageService.readCasBlob(privPath);
+                        const blob = await CasStorageService.readCasBlob(privPath, {
+                            scope: 'TENANT_PRIVATE',
+                            tenantId: originTenantId,
+                        });
                         if (!blob) continue;
 
                         const sanitized = await ConfidentialityAirlockService.sanitizeImageForCommons(

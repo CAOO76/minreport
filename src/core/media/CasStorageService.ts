@@ -170,6 +170,83 @@ export class CasStorageService {
         return { docId: cleanHash, data: legacyData, isLegacyFallback: true };
     }
 
+    public static sanitizeTenantIdForPath(tenantId: string): string {
+        return String(tenantId || '')
+            .trim()
+            .replace(/[^a-zA-Z0-9_-]/g, '_');
+    }
+
+    public static normalizeAndValidateStoragePath(rawPath: string): string | null {
+        const trimmed = String(rawPath || '').trim();
+        if (!trimmed) return null;
+        if (
+            trimmed.includes('\0') ||
+            trimmed.includes('\\') ||
+            trimmed.startsWith('/') ||
+            trimmed.includes('..') ||
+            /[\r\n]/.test(trimmed) ||
+            /%(2e|2f|5c|00)/i.test(trimmed)
+        ) {
+            return null;
+        }
+        const segments = trimmed.split('/');
+        if (segments.some((seg) => seg.length === 0 || seg === '.' || seg === '..')) {
+            return null;
+        }
+        return segments.join('/');
+    }
+
+    public static isTenantPrivateStoragePath(storagePath: string, tenantId: string): boolean {
+        const cleanPath = this.normalizeAndValidateStoragePath(storagePath);
+        if (!cleanPath) return false;
+        const safeTenant = this.sanitizeTenantIdForPath(tenantId);
+        if (!safeTenant) return false;
+        return cleanPath.startsWith(`cas_blobs/tenants/${safeTenant}/`);
+    }
+
+    private static isAllowedPathForOptions(
+        cleanPath: string,
+        options?: {
+            scope?: CasStorageScope | string;
+            tenantId?: string;
+            allowCrossTenantAudit?: boolean;
+        }
+    ): boolean {
+        const normalizedScope = options?.scope ? String(options.scope).trim().toUpperCase() : '';
+        const allowAudit = Boolean(options?.allowCrossTenantAudit);
+        const rawTenant = options?.tenantId?.trim() || '';
+        const safeTenant = rawTenant ? this.sanitizeTenantIdForPath(rawTenant) : '';
+
+        if (normalizedScope === 'TENANT_PRIVATE' || rawTenant) {
+            if (allowAudit) {
+                return cleanPath.startsWith('cas_blobs/tenants/');
+            }
+            if (!safeTenant) {
+                return false;
+            }
+            return cleanPath.startsWith(`cas_blobs/tenants/${safeTenant}/`);
+        }
+
+        if (cleanPath.startsWith('cas_blobs/tenants/')) {
+            return allowAudit;
+        }
+
+        if (normalizedScope === 'GLOBAL_OEM') {
+            return cleanPath.startsWith('cas_blobs/global_oem/');
+        }
+        if (normalizedScope === 'PUBLIC_SYMBOLOGY') {
+            return cleanPath.startsWith('cas_blobs/symbology/');
+        }
+        if (normalizedScope === 'SYMBOLOGY_MASTER') {
+            return (
+                cleanPath.startsWith('assets/symbology/') ||
+                cleanPath.startsWith('cas_blobs/symbology/')
+            );
+        }
+
+        return true;
+    }
+
     public static buildStoragePath(
         scope: CasStorageScope,
         sha256: string,
@@ -186,7 +263,7 @@ export class CasStorageService {
         if (!tenantId || !tenantId.trim()) {
             throw new Error('tenantId es obligatorio para blobs TENANT_PRIVATE en CAS.');
         }
-        const safeTenant = tenantId.trim().replace(/[^a-zA-Z0-9_-]/g, '_');
+        const safeTenant = this.sanitizeTenantIdForPath(tenantId);
         return `cas_blobs/tenants/${safeTenant}/${sha256}.${cleanExt}`;
     }
 
@@ -537,11 +614,25 @@ export class CasStorageService {
     ): Promise<string | null> {
         const trimmed = String(storagePathOrSha256 || '').trim();
         if (!trimmed) return null;
-        if (!trimmed.includes('/') && /^[a-f0-9]{64}$/i.test(trimmed)) {
+
+        let candidatePath: string | null = null;
+        if (!trimmed.includes('/') && !trimmed.includes('\\') && /^[a-f0-9]{64}$/i.test(trimmed)) {
             const entry = await this.resolveRegistryEntryBySha256(trimmed, options);
-            return entry?.storagePath || null;
+            candidatePath = entry?.storagePath || null;
+        } else {
+            candidatePath = trimmed;
         }
-        return trimmed;
+
+        if (!candidatePath) return null;
+
+        const cleanPath = this.normalizeAndValidateStoragePath(candidatePath);
+        if (!cleanPath) return null;
+
+        if (!this.isAllowedPathForOptions(cleanPath, options)) {
+            return null;
+        }
+
+        return cleanPath;
     }
 
     /**

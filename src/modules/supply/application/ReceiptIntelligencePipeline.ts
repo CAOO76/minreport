@@ -119,6 +119,17 @@ function resolveDigestionProfile(mimeType: string): MediaDigestionProfile {
     return 'VIDEO_FIELD_COMPACT';
 }
 
+export class ReceiptCasAccessDeniedError extends Error {
+    public readonly code = 'CAS_TENANT_ACCESS_DENIED' as const;
+
+    constructor(
+        message: string = 'CAS_TENANT_ACCESS_DENIED: Referencia CAS fuera del ámbito de la cuenta activa.'
+    ) {
+        super(message);
+        this.name = 'ReceiptCasAccessDeniedError';
+    }
+}
+
 export class ReceiptIntelligencePipeline {
     /**
      * Analiza una boleta, factura, PDF o XML DTE cumpliendo CAS + Ley 21.719 + ResilientAIClient.
@@ -151,21 +162,67 @@ export class ReceiptIntelligencePipeline {
         let aiMediaBuffer: Buffer | undefined;
         let aiMediaMimeType: string | undefined;
 
-        if (!rawBuf && evidenceCasRef) {
-            // Reutilizar binario pre-digerido desde MediaDigestorClient (`TENANT_PRIVATE` scoping estricto)
-            const blob = await CasStorageService.readCasBlob(
-                evidenceCasRef.storagePath || evidenceCasRef.sha256,
-                {
+        if (evidenceCasRef) {
+            // Fail-closed: nunca confiar en `storagePath` provisto por cliente; validar pertenencia + resolver solo por `sha256`
+            if (
+                evidenceCasRef.storagePath &&
+                !CasStorageService.isTenantPrivateStoragePath(evidenceCasRef.storagePath, input.tenantId)
+            ) {
+                throw new ReceiptCasAccessDeniedError();
+            }
+
+            const cleanSha = String(evidenceCasRef.sha256 || '').trim().toLowerCase();
+            if (!/^[a-f0-9]{64}$/.test(cleanSha)) {
+                throw new ReceiptCasAccessDeniedError();
+            }
+
+            const verifiedEntry = await CasStorageService.resolveRegistryEntryBySha256(cleanSha, {
+                scope: 'TENANT_PRIVATE',
+                tenantId: input.tenantId,
+            });
+            if (
+                !verifiedEntry ||
+                !verifiedEntry.storagePath ||
+                !CasStorageService.isTenantPrivateStoragePath(verifiedEntry.storagePath, input.tenantId)
+            ) {
+                throw new ReceiptCasAccessDeniedError();
+            }
+
+            evidenceCasRef = {
+                sha256: verifiedEntry.sha256,
+                phashHex: verifiedEntry.phashHex,
+                storagePath: verifiedEntry.storagePath,
+                downloadUrl: verifiedEntry.downloadUrl,
+                mimeType: verifiedEntry.mimeType,
+                extension: verifiedEntry.extension,
+                profile: verifiedEntry.profile,
+                originalBytes: verifiedEntry.originalBytes,
+                optimizedBytes: verifiedEntry.optimizedBytes,
+                savingsRatio: verifiedEntry.savingsRatio,
+                savingsPct:
+                    typeof verifiedEntry.savingsPct === 'number'
+                        ? verifiedEntry.savingsPct
+                        : Number((verifiedEntry.savingsRatio * 100).toFixed(1)),
+                originalFilename: verifiedEntry.originalFilename,
+                createdAt: verifiedEntry.createdAt,
+            };
+
+            if (!rawBuf) {
+                // Reutilizar binario pre-digerido exclusivamente vía `sha256` + scope `TENANT_PRIVATE`
+                const blob = await CasStorageService.readCasBlob(verifiedEntry.sha256, {
                     scope: 'TENANT_PRIVATE',
                     tenantId: input.tenantId,
-                }
-            );
-            if (blob) {
-                if (blob.contentType.includes('xml') && !xmlCandidate) {
-                    xmlCandidate = blob.buffer.toString('utf8').trim();
-                } else if (blob.contentType.startsWith('image/') || blob.contentType === 'application/pdf') {
-                    aiMediaBuffer = blob.buffer;
-                    aiMediaMimeType = blob.contentType;
+                });
+                if (blob) {
+                    if (blob.contentType.includes('xml') && !xmlCandidate) {
+                        xmlCandidate = blob.buffer.toString('utf8').trim();
+                    } else if (
+                        blob.contentType.startsWith('image/') ||
+                        blob.contentType === 'application/pdf'
+                    ) {
+                        aiMediaBuffer = blob.buffer;
+                        aiMediaMimeType = blob.contentType;
+                    }
                 }
             }
         }

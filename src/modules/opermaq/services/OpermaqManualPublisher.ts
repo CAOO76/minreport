@@ -233,21 +233,27 @@ async function resolveStorageUrlToPngBuffer(storageUrl: string, svgInline?: stri
         }
 
         let storagePath: string | null = null;
+        let readOptions:
+            | { scope: 'GLOBAL_OEM' | 'SYMBOLOGY_MASTER' | 'TENANT_PRIVATE'; tenantId?: string }
+            | undefined;
         if (storageUrl.startsWith('/api/media/blob/global_oem/')) {
             const fname = storageUrl.split('/').pop() || '';
             storagePath = `cas_blobs/global_oem/${fname}`;
+            readOptions = { scope: 'GLOBAL_OEM' };
         } else if (storageUrl.startsWith('/api/media/blob/symbology/')) {
             const fname = storageUrl.split('/').pop() || '';
             storagePath = `assets/symbology/cas/${fname}`;
+            readOptions = { scope: 'SYMBOLOGY_MASTER' };
         } else if (storageUrl.startsWith('/api/media/blob/tenant/')) {
             const parts = storageUrl.split('/');
             const fname = parts.pop() || '';
             const tenant = decodeURIComponent(parts.pop() || '');
             storagePath = `cas_blobs/tenants/${tenant}/${fname}`;
+            readOptions = { scope: 'TENANT_PRIVATE', tenantId: tenant };
         }
 
         if (!storagePath) return null;
-        const blob = await CasStorageService.readCasBlob(storagePath);
+        const blob = await CasStorageService.readCasBlob(storagePath, readOptions);
         if (!blob) return null;
 
         return await sharp(blob.buffer)

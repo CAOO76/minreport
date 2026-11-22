@@ -7,29 +7,127 @@ service firebase.storage {
 
     function isDevRoot() {
       return isAuthenticated() && (
-        request.auth.token.role == 'DEV_ROOT' ||
-        request.auth.token.isMasterDev == true ||
+        ('role' in request.auth.token && request.auth.token.role == 'DEV_ROOT') ||
+        ('isMasterDev' in request.auth.token && request.auth.token.isMasterDev == true) ||
         request.auth.uid == 'dev-master-root-uid' ||
-        (request.auth.token.email == 'dev@minreport.com' && request.auth.token.email_verified == true)
+        (
+          'email' in request.auth.token &&
+          request.auth.token.email == 'dev@minreport.com' &&
+          'email_verified' in request.auth.token &&
+          request.auth.token.email_verified == true
+        )
       );
     }
 
     function isSuperAdmin() {
       return isAuthenticated() && (
-        request.auth.token.role == 'SUPER_ADMIN' ||
-        request.auth.token.admin == true ||
+        ('role' in request.auth.token && request.auth.token.role == 'SUPER_ADMIN') ||
+        ('admin' in request.auth.token && request.auth.token.admin == true) ||
         request.auth.uid == 'super-admin-uid' ||
-        (request.auth.token.email == 'admin@minreport.com' && request.auth.token.email_verified == true)
+        (
+          'email' in request.auth.token &&
+          request.auth.token.email == 'admin@minreport.com' &&
+          'email_verified' in request.auth.token &&
+          request.auth.token.email_verified == true
+        )
       );
+    }
+
+    // Fail-closed: soporta timestamp Firestore y epoch ms (int/float); cualquier otro tipo no nulo retorna false
+    function isNotExpiredValue(val) {
+      return val == null ||
+        (val is timestamp && request.time < val) ||
+        ((val is int || val is float) && request.time.toMillis() < val);
+    }
+
+    function hasValidPilotTokenExpiry() {
+      return !('pilotExpiresAt' in request.auth.token) ||
+        isNotExpiredValue(request.auth.token.pilotExpiresAt);
+    }
+
+    function isValidPilotRecord(pilotData) {
+      return pilotData != null &&
+        (!('status' in pilotData) || pilotData.status == 'ACTIVE') &&
+        (!('expiresAt' in pilotData) || isNotExpiredValue(pilotData.expiresAt)) &&
+        (!('pilotExpiresAt' in pilotData) || isNotExpiredValue(pilotData.pilotExpiresAt));
+    }
+
+    function isActiveMemberRecord(m) {
+      return m != null && (!('status' in m) || m.status == 'ACTIVE');
+    }
+
+    function isActiveMemberDoc(tenantId) {
+      return firestore.exists(/databases/(default)/documents/accounts/$(tenantId)/members/$(request.auth.uid)) &&
+        isActiveMemberRecord(firestore.get(/databases/(default)/documents/accounts/$(tenantId)/members/$(request.auth.uid)).data);
+    }
+
+    // Bloquea miembros SUSPENDED/REVOKED aunque el JWT aún conserve activeAccountId/tenantId
+    function isNotSuspendedOrRevokedMember(tenantId) {
+      return !firestore.exists(/databases/(default)/documents/accounts/$(tenantId)/members/$(request.auth.uid)) ||
+        isActiveMemberRecord(firestore.get(/databases/(default)/documents/accounts/$(tenantId)/members/$(request.auth.uid)).data);
+    }
+
+    // Esquema real dev.controller.ts: /test_pilots/{pilotAccountId} con userId == request.auth.uid
+    function matchesPilotDocByAccountId(tenantId) {
+      return tenantId is string &&
+        tenantId.matches('^pilot-.*') &&
+        firestore.exists(/databases/(default)/documents/test_pilots/$(tenantId)) &&
+        'userId' in firestore.get(/databases/(default)/documents/test_pilots/$(tenantId)).data &&
+        firestore.get(/databases/(default)/documents/test_pilots/$(tenantId)).data.userId == request.auth.uid &&
+        isValidPilotRecord(firestore.get(/databases/(default)/documents/test_pilots/$(tenantId)).data);
+    }
+
+    // Esquema directo /test_pilots/{uid} con sandbox pilot-{uid}, pilotAccountId o accountId
+    function matchesPilotDocByUid(tenantId) {
+      return tenantId is string &&
+        tenantId.matches('^pilot-.*') &&
+        firestore.exists(/databases/(default)/documents/test_pilots/$(request.auth.uid)) &&
+        isValidPilotRecord(firestore.get(/databases/(default)/documents/test_pilots/$(request.auth.uid)).data) && (
+          tenantId == ('pilot-' + request.auth.uid) ||
+          (
+            'pilotAccountId' in firestore.get(/databases/(default)/documents/test_pilots/$(request.auth.uid)).data &&
+            firestore.get(/databases/(default)/documents/test_pilots/$(request.auth.uid)).data.pilotAccountId == tenantId
+          ) ||
+          (
+            'accountId' in firestore.get(/databases/(default)/documents/test_pilots/$(request.auth.uid)).data &&
+            firestore.get(/databases/(default)/documents/test_pilots/$(request.auth.uid)).data.accountId == tenantId
+          )
+        );
     }
 
     function isTestPilot() {
       return isAuthenticated() &&
+        'role' in request.auth.token &&
         request.auth.token.role == 'TEST_PILOT' &&
-        (
-          !('pilotExpiresAt' in request.auth.token) ||
-          !(request.auth.token.pilotExpiresAt is int) ||
-          request.time.toMillis() < request.auth.token.pilotExpiresAt
+        hasValidPilotTokenExpiry() && (
+          (
+            firestore.exists(/databases/(default)/documents/test_pilots/$(request.auth.uid)) &&
+            isValidPilotRecord(firestore.get(/databases/(default)/documents/test_pilots/$(request.auth.uid)).data)
+          ) ||
+          (
+            'activeAccountId' in request.auth.token &&
+            matchesPilotDocByAccountId(request.auth.token.activeAccountId)
+          )
+        );
+    }
+
+    function isTestPilotToken() {
+      return isAuthenticated() && (
+        ('role' in request.auth.token && request.auth.token.role == 'TEST_PILOT') ||
+        ('pilotExpiresAt' in request.auth.token)
+      );
+    }
+
+    function isTestPilotOwnSandbox(tenantId) {
+      return isAuthenticated() &&
+        'role' in request.auth.token &&
+        request.auth.token.role == 'TEST_PILOT' &&
+        hasValidPilotTokenExpiry() &&
+        tenantId is string &&
+        tenantId.matches('^pilot-.*') &&
+        isNotSuspendedOrRevokedMember(tenantId) && (
+          matchesPilotDocByAccountId(tenantId) ||
+          matchesPilotDocByUid(tenantId)
         );
     }
 
@@ -38,7 +136,20 @@ service firebase.storage {
     }
 
     function isSystemPrivileged() {
-      return isDevRoot() || isSuperAdmin() || isTestPilot();
+      return isDevRoot() || isSuperAdmin();
+    }
+
+    function hasTenantTokenClaim(tenantId) {
+      return (
+        ('activeAccountId' in request.auth.token && request.auth.token.activeAccountId == tenantId) ||
+        ('tenantId' in request.auth.token && request.auth.token.tenantId == tenantId)
+      );
+    }
+
+    function isAccountOwner(tenantId) {
+      return firestore.exists(/databases/(default)/documents/accounts/$(tenantId)) &&
+        'ownerId' in firestore.get(/databases/(default)/documents/accounts/$(tenantId)).data &&
+        firestore.get(/databases/(default)/documents/accounts/$(tenantId)).data.ownerId == request.auth.uid;
     }
 
     function isTenantMemberOrAdmin(tenantId) {
@@ -46,12 +157,14 @@ service firebase.storage {
         tenantId is string &&
         tenantId.size() > 0 && (
           isAdmin() ||
-          request.auth.token.activeAccountId == tenantId ||
-          request.auth.token.tenantId == tenantId ||
-          firestore.exists(/databases/(default)/documents/accounts/$(tenantId)/members/$(request.auth.uid)) ||
+          isTestPilotOwnSandbox(tenantId) ||
           (
-            firestore.exists(/databases/(default)/documents/accounts/$(tenantId)) &&
-            firestore.get(/databases/(default)/documents/accounts/$(tenantId)).data.ownerId == request.auth.uid
+            !isTestPilotToken() &&
+            isNotSuspendedOrRevokedMember(tenantId) && (
+              hasTenantTokenClaim(tenantId) ||
+              isActiveMemberDoc(tenantId) ||
+              isAccountOwner(tenantId)
+            )
           )
         );
     }
@@ -61,12 +174,14 @@ service firebase.storage {
         tenantId is string &&
         tenantId.size() > 0 && (
           isSystemPrivileged() ||
-          request.auth.token.activeAccountId == tenantId ||
-          request.auth.token.tenantId == tenantId ||
-          firestore.exists(/databases/(default)/documents/accounts/$(tenantId)/members/$(request.auth.uid)) ||
+          isTestPilotOwnSandbox(tenantId) ||
           (
-            firestore.exists(/databases/(default)/documents/accounts/$(tenantId)) &&
-            firestore.get(/databases/(default)/documents/accounts/$(tenantId)).data.ownerId == request.auth.uid
+            !isTestPilotToken() &&
+            isNotSuspendedOrRevokedMember(tenantId) && (
+              hasTenantTokenClaim(tenantId) ||
+              isActiveMemberDoc(tenantId) ||
+              isAccountOwner(tenantId)
+            )
           )
         );
     }

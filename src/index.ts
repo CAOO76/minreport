@@ -403,7 +403,7 @@ const AIInferencePayloadSchema = z.object({
         .optional(),
 });
 
-async function resolveAuthorizedAiTenantContext(req: express.Request): Promise<{
+export async function resolveAuthorizedAiTenantContext(req: express.Request): Promise<{
     authorized: boolean;
     tenantId: string;
     isEduSandbox: boolean;
@@ -421,7 +421,6 @@ async function resolveAuthorizedAiTenantContext(req: express.Request): Promise<{
     const isSystemPrivileged =
         user.role === 'DEV_ROOT' ||
         user.role === 'SUPER_ADMIN' ||
-        user.role === 'TEST_PILOT' ||
         user.isMasterDev === true ||
         user.admin === true ||
         uid === 'dev-master-root-uid' ||
@@ -434,6 +433,101 @@ async function resolveAuthorizedAiTenantContext(req: express.Request): Promise<{
     ).trim();
     const tokenAccountId = String(user.activeAccountId || user.tenantId || '').trim();
     const candidateAccountId = headerAccountId || tokenAccountId;
+
+    // 3º TEST-PILOT: hermeticidad absoluta confinada a su sandbox `pilot-*` verificado y vigente en `test_pilots`
+    let userProfileData: Record<string, any> | null = null;
+    if (!isSystemPrivileged && uid) {
+        const userSnap = await db.collection('users').doc(uid).get().catch(() => null);
+        if (userSnap?.exists) {
+            userProfileData = userSnap.data() || null;
+        }
+    }
+    const serverRoleUpper = String(userProfileData?.role || '').trim().toUpperCase();
+    const userStatusUpper = String(userProfileData?.status || 'ACTIVE').trim().toUpperCase();
+    const isUserDisabled =
+        userStatusUpper === 'REVOKED' ||
+        userStatusUpper === 'SUSPENDED' ||
+        userStatusUpper === 'INACTIVE' ||
+        userStatusUpper === 'DELETED';
+
+    const isTestPilot =
+        !isSystemPrivileged && (roleUpper === 'TEST_PILOT' || serverRoleUpper === 'TEST_PILOT');
+
+    if (isTestPilot) {
+        if (
+            !uid ||
+            isUserDisabled ||
+            evaluatePilotExpiration(user.pilotExpiresAt) ||
+            evaluatePilotExpiration(userProfileData?.pilotExpiresAt)
+        ) {
+            return { authorized: false, tenantId: '', isEduSandbox: false };
+        }
+
+        const pilotDocs: Array<{ docId: string; data: Record<string, any> }> = [];
+        const directPilotSnap = await db.collection('test_pilots').doc(uid).get().catch(() => null);
+        if (directPilotSnap?.exists) {
+            pilotDocs.push({ docId: directPilotSnap.id, data: directPilotSnap.data() || {} });
+        }
+        const queryPilotSnap = await db
+            .collection('test_pilots')
+            .where('userId', '==', uid)
+            .get()
+            .catch(() => null);
+        if (queryPilotSnap && !queryPilotSnap.empty) {
+            for (const doc of queryPilotSnap.docs) {
+                if (!pilotDocs.some((d) => d.docId === doc.id)) {
+                    pilotDocs.push({ docId: doc.id, data: doc.data() || {} });
+                }
+            }
+        }
+
+        const validPilotDocs = pilotDocs.filter((entry) => {
+            const st = String(entry.data.status || '').trim().toUpperCase();
+            return (
+                st === 'ACTIVE' &&
+                !evaluatePilotExpiration(entry.data.expiresAt ?? entry.data.pilotExpiresAt)
+            );
+        });
+
+        if (validPilotDocs.length === 0) {
+            return { authorized: false, tenantId: '', isEduSandbox: false };
+        }
+
+        const allowedPilotTenants = new Set<string>();
+        const canonicalPilotSandbox = `pilot-${uid}`;
+        for (const entry of validPilotDocs) {
+            const explicitAcc = String(
+                entry.data.pilotAccountId || entry.data.accountId || ''
+            ).trim();
+            if (explicitAcc && explicitAcc.startsWith('pilot-')) {
+                allowedPilotTenants.add(explicitAcc);
+            }
+            if (entry.docId.startsWith('pilot-')) {
+                allowedPilotTenants.add(entry.docId);
+            }
+            if (entry.docId === uid) {
+                allowedPilotTenants.add(canonicalPilotSandbox);
+            }
+        }
+        if (allowedPilotTenants.size === 0) {
+            allowedPilotTenants.add(canonicalPilotSandbox);
+        }
+
+        const resolvedPilotTenantId =
+            candidateAccountId || Array.from(allowedPilotTenants)[0] || canonicalPilotSandbox;
+        if (
+            !/^[A-Za-z0-9_-]{1,128}$/.test(resolvedPilotTenantId) ||
+            !allowedPilotTenants.has(resolvedPilotTenantId)
+        ) {
+            return { authorized: false, tenantId: '', isEduSandbox: false };
+        }
+
+        return {
+            authorized: true,
+            tenantId: resolvedPilotTenantId,
+            isEduSandbox: false,
+        };
+    }
 
     if (!candidateAccountId) {
         return {
@@ -496,17 +590,14 @@ async function resolveAuthorizedAiTenantContext(req: express.Request): Promise<{
         }
     }
 
-    if (!isMember && uid) {
-        const userSnap = await db.collection('users').doc(uid).get();
-        if (userSnap.exists) {
-            const memberships = userSnap.data()?.memberships;
-            if (Array.isArray(memberships)) {
-                isMember = memberships.some((m: any) => {
-                    if (m?.accountId !== candidateAccountId) return false;
-                    const st = String(m?.status || 'ACTIVE').toUpperCase();
-                    return st !== 'SUSPENDED' && st !== 'REVOKED' && st !== 'INACTIVE';
-                });
-            }
+    if (!isMember && uid && userProfileData) {
+        const memberships = userProfileData.memberships;
+        if (Array.isArray(memberships)) {
+            isMember = memberships.some((m: any) => {
+                if (m?.accountId !== candidateAccountId) return false;
+                const st = String(m?.status || 'ACTIVE').toUpperCase();
+                return st !== 'SUSPENDED' && st !== 'REVOKED' && st !== 'INACTIVE';
+            });
         }
     }
 

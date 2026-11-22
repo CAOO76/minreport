@@ -3,6 +3,7 @@ import { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { auth, db } from '../config/firebase';
 import { env } from '../config/env';
+import { evaluatePilotExpiration } from '../contracts/session.contracts';
 import { resolveX402HmacSecret } from '../config/secrets';
 import { constantTimeEqualStrings } from '../utils/security';
 import { extractClientIp } from './rateLimiter';
@@ -115,7 +116,7 @@ function verifyEd25519Signature(
     }
 }
 
-async function verifyCorporateContractAccess(
+export async function verifyCorporateContractAccess(
     req: X402AuthenticatedRequest
 ): Promise<{ authorized: boolean; tenantId?: string; uid?: string; email?: string }> {
     const authHeader = req.headers.authorization;
@@ -135,13 +136,17 @@ async function verifyCorporateContractAccess(
 
         let serverRoleUpper = '';
         let serverAccountDisabled = false;
-        if (!tokenRole) {
+        let serverPilotExpiresAt: unknown = undefined;
+        let userProfileData: Record<string, any> | null = null;
+        if (!tokenRole || tokenRole === 'TEST_PILOT') {
             const uSnap = await db.collection('users').doc(uid).get().catch(() => null);
             if (uSnap?.exists) {
-                const uData = uSnap.data() || {};
-                serverRoleUpper = String(uData.role || '').toUpperCase();
-                const st = String(uData.status || '').toUpperCase();
-                serverAccountDisabled = st === 'SUSPENDED' || st === 'REVOKED';
+                userProfileData = uSnap.data() || {};
+                serverRoleUpper = String(userProfileData.role || '').toUpperCase();
+                const st = String(userProfileData.status || '').toUpperCase();
+                serverAccountDisabled =
+                    st === 'SUSPENDED' || st === 'REVOKED' || st === 'INACTIVE' || st === 'DELETED';
+                serverPilotExpiresAt = userProfileData.pilotExpiresAt;
             }
         }
         const effectiveRole = tokenRole || serverRoleUpper;
@@ -152,7 +157,6 @@ async function verifyCorporateContractAccess(
                 decoded.admin === true ||
                 effectiveRole === 'DEV_ROOT' ||
                 effectiveRole === 'SUPER_ADMIN' ||
-                effectiveRole === 'TEST_PILOT' ||
                 uid === 'dev-master-root-uid' ||
                 uid === 'super-admin-uid' ||
                 (emailVerifiedOk &&
@@ -160,12 +164,104 @@ async function verifyCorporateContractAccess(
                         emailLower === 'admin@minreport.com' ||
                         emailLower === env.SUPER_ADMIN_EMAIL.toLowerCase())));
 
+        const isTestPilot =
+            !isGlobalSovereign &&
+            (effectiveRole === 'TEST_PILOT' || serverRoleUpper === 'TEST_PILOT');
+
         const requestedTenantId = (
             (req.headers['x-tenant-id'] as string) ||
             (req.headers['x-active-account-id'] as string) ||
             (typeof req.query.tenantId === 'string' ? req.query.tenantId : '') ||
             String(decoded.activeAccountId || '')
         ).trim();
+
+        // 3º TEST-PILOT: sin privilegio soberano global; confinado estrictamente a su sandbox `pilot-*` activo y vigente
+        if (isTestPilot) {
+            if (
+                !uid ||
+                serverAccountDisabled ||
+                evaluatePilotExpiration(decoded.pilotExpiresAt) ||
+                evaluatePilotExpiration(serverPilotExpiresAt)
+            ) {
+                return { authorized: false };
+            }
+
+            const pilotDocs: Array<{ docId: string; data: Record<string, any> }> = [];
+            const directPilotSnap = await db.collection('test_pilots').doc(uid).get().catch(() => null);
+            if (directPilotSnap?.exists) {
+                pilotDocs.push({ docId: directPilotSnap.id, data: directPilotSnap.data() || {} });
+            }
+            const queryPilotSnap = await db
+                .collection('test_pilots')
+                .where('userId', '==', uid)
+                .get()
+                .catch(() => null);
+            if (queryPilotSnap && !queryPilotSnap.empty) {
+                for (const doc of queryPilotSnap.docs) {
+                    if (!pilotDocs.some((d) => d.docId === doc.id)) {
+                        pilotDocs.push({ docId: doc.id, data: doc.data() || {} });
+                    }
+                }
+            }
+
+            const validPilotDocs = pilotDocs.filter((entry) => {
+                const st = String(entry.data.status || '').trim().toUpperCase();
+                return (
+                    st === 'ACTIVE' &&
+                    !evaluatePilotExpiration(entry.data.expiresAt ?? entry.data.pilotExpiresAt)
+                );
+            });
+            if (validPilotDocs.length === 0) {
+                return { authorized: false };
+            }
+
+            const allowedPilotTenants = new Set<string>();
+            const canonicalPilotSandbox = `pilot-${uid}`;
+            for (const entry of validPilotDocs) {
+                const explicitAcc = String(
+                    entry.data.pilotAccountId || entry.data.accountId || ''
+                ).trim();
+                if (explicitAcc && explicitAcc.startsWith('pilot-')) {
+                    allowedPilotTenants.add(explicitAcc);
+                }
+                if (entry.docId.startsWith('pilot-')) {
+                    allowedPilotTenants.add(entry.docId);
+                }
+                if (entry.docId === uid) {
+                    allowedPilotTenants.add(canonicalPilotSandbox);
+                }
+            }
+            if (allowedPilotTenants.size === 0) {
+                allowedPilotTenants.add(canonicalPilotSandbox);
+            }
+
+            const effectivePilotTenant =
+                requestedTenantId || Array.from(allowedPilotTenants)[0] || canonicalPilotSandbox;
+            if (!allowedPilotTenants.has(effectivePilotTenant)) {
+                return { authorized: false };
+            }
+
+            const pilotAccountSnap = await db
+                .collection('accounts')
+                .doc(effectivePilotTenant)
+                .get()
+                .catch(() => null);
+            if (pilotAccountSnap?.exists) {
+                const pAccData = pilotAccountSnap.data() || {};
+                const accSt = String(pAccData.status || 'ACTIVE').toUpperCase();
+                const contractSt = String(pAccData?.contract?.status || 'ACTIVE').toUpperCase();
+                if (accSt !== 'ACTIVE' || contractSt !== 'ACTIVE') {
+                    return { authorized: false };
+                }
+            }
+
+            return {
+                authorized: true,
+                tenantId: effectivePilotTenant,
+                uid,
+                email: emailLower,
+            };
+        }
 
         if (!requestedTenantId) {
             if (isGlobalSovereign) {
@@ -196,7 +292,9 @@ async function verifyCorporateContractAccess(
         let isMember = accountData.ownerId === uid;
 
         if (!isMember) {
-            const userSnap = await db.collection('users').doc(uid).get();
+            const userSnap = userProfileData
+                ? { exists: true, data: () => userProfileData }
+                : await db.collection('users').doc(uid).get();
             if (userSnap.exists) {
                 const memberships = userSnap.data()?.memberships;
                 if (Array.isArray(memberships)) {
