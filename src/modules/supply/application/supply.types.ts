@@ -11,8 +11,8 @@ import { validateChileanRut } from '../../../utils/taxIdValidator';
  * compiles and executes standalone prior to final branch landing.
  */
 
-export const SUPPLY_AI_MODULE = 'supply' as unknown as AIModuleScope;
-export const SUPPLY_AUDIT_MODULE = 'supply' as unknown as AuditLedgerModule;
+export const SUPPLY_AI_MODULE: AIModuleScope = 'supply';
+export const SUPPLY_AUDIT_MODULE: AuditLedgerModule = 'supply';
 
 // ---------------------------------------------------------------------------
 // Canonical Enums (1:1 parity with supply.contracts.ts)

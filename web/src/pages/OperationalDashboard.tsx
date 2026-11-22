@@ -75,7 +75,13 @@ export const OperationalDashboard: React.FC = () => {
                         </p>
                     </div>
                 ) : (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-fib-21">
+                    <div
+                        className={
+                            activeModules.length >= 3
+                                ? 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-fib-21'
+                                : 'grid grid-cols-1 sm:grid-cols-2 gap-fib-21'
+                        }
+                    >
                         {activeModules.map((module) => (
                             <div
                                 key={module.id}

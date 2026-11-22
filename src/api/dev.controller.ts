@@ -150,10 +150,11 @@ export const createTestPilotAccount = async (req: DevRequest, res: Response) => 
                 expiresAt,
                 activeModules: {
                     opermaq: true,
-                    stockpile: true
+                    stockpile: true,
+                    supply: true,
                 }
             },
-            enabledPlugins: ['opermaq', 'stockpile'],
+            enabledPlugins: ['opermaq', 'stockpile', 'supply'],
             createdAt: Date.now(),
             updatedAt: Date.now()
         };
@@ -578,7 +579,7 @@ export const syncDevFirebaseSession = async (_req: DevRequest, res: Response) =>
 };
 
 const listDevPilotFeedbackQuerySchema = z.object({
-    module: z.enum(['core', 'opermaq', 'stockpile']).optional(),
+    module: z.enum(['core', 'opermaq', 'stockpile', 'supply']).optional(),
     status: z.enum(['OPEN', 'IN_REVIEW', 'APPLIED_TO_AI', 'RESOLVED']).optional(),
 });
 

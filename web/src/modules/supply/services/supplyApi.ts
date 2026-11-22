@@ -550,7 +550,7 @@ export const supplyApi = {
         };
 
         if (!syncQueueEngine.isOnlineNow()) {
-            await syncQueueEngine.enqueueApiMutation(
+            await syncQueueEngine.enqueueSupplyApiMutation(
                 `${SUPPLY_API_BASE}/requisitions`,
                 { ...payload, tenantId },
                 'supply:requisition-synced',
@@ -797,14 +797,16 @@ export const supplyApi = {
                     filename: req.draft.evidenceCasRef.originalFilename,
                 });
             }
-            // Stage 2: Drain purchase mutation via authenticated core queue
-            await syncQueueEngine.enqueueApiMutation(
-                `${SUPPLY_API_BASE}/purchases`,
-                { ...body, tenantId },
-                'supply:purchase-synced',
+            // Stage 2: Drain purchase mutation via dedicated SUPPLY_PURCHASE_RECEIPT queue (CAS URL rewrite aware)
+            await syncQueueEngine.enqueueSupplyPurchaseReceipt({
+                endpoint: `${SUPPLY_API_BASE}/purchases`,
+                method: 'POST',
+                body: { ...body, tenantId },
                 tenantId,
-                'POST'
-            );
+                siteId: req.draft.siteId,
+                sha256: req.draft.evidenceCasRef?.sha256,
+                eventName: 'supply:purchase-synced',
+            });
             return { queuedOffline: true };
         }
 
@@ -835,7 +837,7 @@ export const supplyApi = {
             confirmationKeyword,
         };
         if (!syncQueueEngine.isOnlineNow()) {
-            await syncQueueEngine.enqueueApiMutation(
+            await syncQueueEngine.enqueueSupplyApiMutation(
                 endpoint,
                 { ...payload, tenantId },
                 'supply:reception-synced',

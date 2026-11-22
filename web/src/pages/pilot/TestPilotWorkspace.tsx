@@ -22,6 +22,7 @@ type PilotView =
     | 'OPERMAQ_MANUFACTURERS'
     | 'OPERMAQ_SUPPLIERS'
     | 'GEOLAPP_STOCKPILE'
+    | 'SUPPLY_WORKSPACE'
     | 'PILOT_AI_STUDIO';
 
 function resolvePilotGeolappDomain(view: PilotView): GeolappDomainMode | null {
@@ -38,6 +39,7 @@ export const TestPilotWorkspace: React.FC = () => {
     const [aiContextModule, setAiContextModule] = useState<PilotAiContextModule>('core');
     const [fleetCount, setFleetCount] = useState<number | null>(null);
     const [stockpileCount, setStockpileCount] = useState<number | null>(null);
+    const [supplyRequisitionCount, setSupplyRequisitionCount] = useState<number | null>(null);
     const [syncState, setSyncState] = useState<SyncState>(() => syncQueueEngine.getState());
 
     const handleSelectView = (view: PilotView) => {
@@ -45,6 +47,8 @@ export const TestPilotWorkspace: React.FC = () => {
             setAiContextModule('geolapp');
         } else if (view.startsWith('OPERMAQ_')) {
             setAiContextModule('opermaq');
+        } else if (view === 'SUPPLY_WORKSPACE') {
+            setAiContextModule('supply');
         } else if (view === 'DASHBOARD') {
             setAiContextModule('core');
         }
@@ -70,17 +74,22 @@ export const TestPilotWorkspace: React.FC = () => {
                 return;
             }
             try {
-                const [fleetSnap, stockpileSnap] = await Promise.all([
+                const [fleetSnap, stockpileSnap, supplyReqSnap] = await Promise.allSettled([
                     getCountFromServer(query(collection(db, 'tenant_assets'), where('tenantId', '==', sandboxTenantId))),
                     getCountFromServer(query(collection(db, 'stockpiles'), where('tenantId', '==', sandboxTenantId))),
+                    getCountFromServer(query(collection(db, 'supply_requisitions'), where('tenantId', '==', sandboxTenantId))),
                 ]);
                 if (!active) return;
-                setFleetCount(fleetSnap.data().count);
-                setStockpileCount(stockpileSnap.data().count);
+                setFleetCount(fleetSnap.status === 'fulfilled' ? fleetSnap.value.data().count : null);
+                setStockpileCount(stockpileSnap.status === 'fulfilled' ? stockpileSnap.value.data().count : null);
+                setSupplyRequisitionCount(
+                    supplyReqSnap.status === 'fulfilled' ? supplyReqSnap.value.data().count : null
+                );
             } catch {
                 if (!active) return;
                 setFleetCount(null);
                 setStockpileCount(null);
+                setSupplyRequisitionCount(null);
             }
         };
 
@@ -170,6 +179,7 @@ export const TestPilotWorkspace: React.FC = () => {
         { id: 'OPERMAQ_MANUFACTURERS', icon: 'factory', label: t('core_pilot_ws.nav.manufacturers') },
         { id: 'OPERMAQ_SUPPLIERS', icon: 'storefront', label: t('core_pilot_ws.nav.suppliers') },
         { id: 'GEOLAPP_STOCKPILE', icon: 'layers', label: t('core_pilot_ws.nav.geolapp_stockpile') },
+        { id: 'SUPPLY_WORKSPACE', icon: 'inventory_2', label: t('core_pilot_ws.nav.supply') },
         { id: 'PILOT_AI_STUDIO', icon: 'psychology', label: t('core_pilot_ws.nav.ai_studio') },
     ];
 
@@ -351,6 +361,37 @@ export const TestPilotWorkspace: React.FC = () => {
                                                 </button>
                                             </div>
                                         </div>
+
+                                        <button
+                                            type="button"
+                                            onClick={() => handleSelectView('SUPPLY_WORKSPACE')}
+                                            className="md:col-span-2 text-left border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] dark:hover:border-[#C68346] bg-[#F8FAFC] dark:bg-[#07090D] p-fib-21 rounded-none shadow-none cursor-pointer transition-colors space-y-fib-13"
+                                        >
+                                            <div className="flex items-center justify-between">
+                                                <span className="text-microcopy font-mono uppercase text-[#C68346]">
+                                                    {t('core_shell.modules.supply.name')}
+                                                </span>
+                                                <span className="material-symbols-outlined text-[22px] text-[#00AEEF]">
+                                                    inventory_2
+                                                </span>
+                                            </div>
+                                            <h2 className="text-h2-section font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
+                                                {t('core_pilot_ws.cards.supply_title')}
+                                            </h2>
+                                            <p className="text-data-dense font-sans text-[#475569] dark:text-[#8A93A6]">
+                                                {t('core_pilot_ws.cards.supply_desc')}
+                                            </p>
+                                            <div className="pt-fib-13 border-t border-[#E2E8F0] dark:border-[#12151C] flex items-baseline justify-between">
+                                                <span className="text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6]">
+                                                    {t('core_pilot_ws.cards.registered_requisitions')}
+                                                </span>
+                                                <span className="text-kpi-display font-mono tabular-nums font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                                                    {supplyRequisitionCount !== null
+                                                        ? supplyRequisitionCount
+                                                        : t('core_pilot_ws.pending_record')}
+                                                </span>
+                                            </div>
+                                        </button>
                                     </div>
 
                                     {/* Accesos transversales OPERMAQ en modo cliente */}
@@ -473,6 +514,16 @@ export const TestPilotWorkspace: React.FC = () => {
                             moduleId="stockpile"
                             embedded={true}
                             domainMode={activeGeolappDomain}
+                            hostScope="TEST_PILOT"
+                            enforceEntitlement={false}
+                        />
+                    )}
+                    {activeView === 'SUPPLY_WORKSPACE' && (
+                        <ModuleHost
+                            key="pilot-supply"
+                            moduleId="supply"
+                            embedded={true}
+                            domainMode="DEMAND"
                             hostScope="TEST_PILOT"
                             enforceEntitlement={false}
                         />

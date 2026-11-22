@@ -13,7 +13,7 @@ export interface EphemeralVoiceAudioPayload {
 export interface SovereignVoiceInputProps {
     onTranscript: (text: string) => void;
     onAudioCaptured?: (audio: EphemeralVoiceAudioPayload) => Promise<void> | void;
-    module?: 'core' | 'opermaq' | 'stockpile';
+    module?: 'core' | 'opermaq' | 'stockpile' | 'supply';
     contextPath?: string;
     compact?: boolean;
     disabled?: boolean;

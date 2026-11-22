@@ -52,6 +52,14 @@ rules_version = '2';
 //   - /global_suppliers/{supplierId}: { supplierKey, tradeName, legalName, countryIso2, supplierTaxId, officialWebsiteUrl, x402SellerWalletId, manufacturerKeys, representations, createdAt, updatedAt } — Entidad comercial única multimarca unificada (distribuidores, arriendo, Reman, especialistas y semilla KYB/x402 Marketplace); lectura autenticada, escritura exclusiva Admin SDK (HITL "ACTUALIZAR").
 //   - /supplier_channel_rules/{ruleId}: Legado sellado tras unificación en /global_suppliers.representations[] (read/write == false).
 //   - /supplier_contact_contributions/{contributionId}: { contributionId, manufacturerKey, distributorName, channelType, countryIso2, cityRegion, roleEmail, phone, portalUrl, sanitizedNotes, piiPurgedTypes, piiPurgedCount, status, submittedByTenantHash, createdAt, reviewedAt, reviewedByUid, ttlExpiresAt } — Cola de aportes comunitarios moderados Ley N° 19.628 / N° 21.719; lectura exclusiva 1º DEV / 2º ADMIN (isAdmin), escritura exclusiva Admin SDK (ConfidentialityAirlockService + bloqueo 5º EDU).
+//   - MINREPORT · ABASTECIMIENTO (`moduleId: 'supply'` — Base Única `southamerica-west1`, mutaciones server-authoritative vía `/api/supply/*` Admin SDK + Zod + CAS + SII + HITL "ACTUALIZAR" + AuditLedger):
+//     * /global_supply_catalog/{skuId}: Catálogo maestro común sin tenantId ni PII — Lectura autenticada, escritura/borrado exclusivo 1º DEV / 2º ADMIN con validador de dominio y campos inmutables.
+//     * /global_supply_policy_presets/{roleId}: Presets globales de políticas y topes de aprobación por rol — Lectura autenticada, escritura/borrado exclusivo 1º DEV / 2º ADMIN con validador de dominio y campos inmutables.
+//     * /global_suppliers/{supplierId}: Ya gobernado en §8.1 (`allow read: if isAuthenticated(); allow write: if false;`).
+//     * /supply_whatsapp_sessions/{sessionId}, /supply_whatsapp_wamids/{wamid}: Secretos/estado conversacional efímero WhatsApp y guardia atómica de idempotencia (Ley N° 21.719) — Bloqueo total cliente (`read/write == false`).
+//     * /supply_policy_audit/{eventId}: Auditoría de políticas de abastecimiento — Lectura tenant-scoped exclusiva OWNER/ADMIN del tenant auditable o 1º DEV / 2º ADMIN; escritura cliente denegada (`write == false`).
+//     * /market_demand_signals/{signalId}: Señales anónimas de demanda agregadas k>=3 (Ley N° 21.719, sin tenantId ni GPS) — Lectura autenticada, escritura exclusiva Admin SDK (`write == false`).
+//     * Colecciones operativas y ledgers multi-tenant (`tenant_suppliers`, `supply_sites`, `supply_warehouses`, `supply_inventory_items`, `supply_requisitions` + subcolección `lines`, `supply_requisition_lines`, `supply_purchases` + subcolección `lines`, `supply_purchase_lines`, `supply_fulfillment_allocations`, `supply_assets`, `supply_stock_ledger`, `supply_cash_ledger`, `supply_sii_documents`, `supply_expense_reports`, `supply_demand_forecasts`): Todas portan `tenantId`; lectura estrictamente aislada por `tenantId` (miembro directo B2B/EDU, 1º DEV / 2º ADMIN, o 3º TEST-PILOT hermético exclusivamente a su propio sandbox `pilot-*`); toda escritura cliente denegada (`create, update, delete == false`).
 // ===============================================================
 
 service cloud.firestore {
@@ -624,6 +632,174 @@ service cloud.firestore {
         (data.get('imuPitchOffsetDeg', null) == null || (data.imuPitchOffsetDeg is number && data.imuPitchOffsetDeg >= -180 && data.imuPitchOffsetDeg <= 180)) &&
         (data.get('imuRollOffsetDeg', null) == null || (data.imuRollOffsetDeg is number && data.imuRollOffsetDeg >= -180 && data.imuRollOffsetDeg <= 180)) &&
         (data.get('createdAt', null) == null || data.createdAt is timestamp || (data.createdAt is number && data.createdAt >= 0));
+    }
+
+    // ---------------------------------------------------------------
+    // Helpers y Validadores de Dominio — MINREPORT · ABASTECIMIENTO (`supply`)
+    // ---------------------------------------------------------------
+
+    // Verifica pertenencia hermética de 3º TEST-PILOT exclusivamente a su propio sandbox `pilot-*`
+    // (impide cruce desde TEST_PILOT hacia datos B2B/EDU o hacia sandboxes `pilot-*` de terceros)
+    function isMatchingTestPilotSandbox(tenantId) {
+      return isTestPilot() &&
+        tenantId is string &&
+        tenantId.size() > 6 &&
+        tenantId.size() <= 128 &&
+        tenantId[0:6] == 'pilot-' &&
+        (
+          request.auth.token.get('activeAccountId', '') == tenantId ||
+          request.auth.token.get('tenantId', '') == tenantId ||
+          (
+            exists(/databases/$(database)/documents/accounts/$(tenantId)/members/$(request.auth.uid)) &&
+            !(get(/databases/$(database)/documents/accounts/$(tenantId)/members/$(request.auth.uid)).data.get('status', '') in ['REVOKED', 'SUSPENDED'])
+          ) ||
+          (
+            exists(/databases/$(database)/documents/accounts/$(tenantId)) &&
+            get(/databases/$(database)/documents/accounts/$(tenantId)).data.get('ownerId', '') == request.auth.uid
+          )
+        );
+    }
+
+    // Lectura multi-tenant hermética para colecciones operativas de ABASTECIMIENTO (`tenantId` obligatorio)
+    // Permite miembro directo B2B/EDU del tenant o TEST_PILOT exclusivamente en su propio sandbox `pilot-*`
+    // (1º DEV / 2º ADMIN se evalúan antes mediante isAdmin() para soportar get sobre docs inexistentes)
+    function canReadSupplyTenantDoc(data) {
+      return 'tenantId' in data &&
+        data.tenantId is string &&
+        data.tenantId.size() > 0 &&
+        data.tenantId.size() <= 128 &&
+        (
+          isDirectAccountMember(data.tenantId) ||
+          isMatchingTestPilotSandbox(data.tenantId)
+        );
+    }
+
+    // Lectura tenant-scoped de auditoría de políticas ABASTECIMIENTO exclusiva OWNER/ADMIN (sin cruce ni TEST_PILOT)
+    function canReadSupplyPolicyAuditDoc(data) {
+      return 'tenantId' in data &&
+        isAuditableTenantId(data.tenantId) &&
+        !('pilotExpiresAt' in request.auth.token) &&
+        request.auth.token.get('role', '') != 'TEST_PILOT' &&
+        isTenantAdminOrOwner(data.tenantId);
+    }
+
+    function isOptValidSupplyTimestamp(d, k) {
+      let v = d.get(k, null);
+      return v == null ||
+        v is timestamp ||
+        (v is number && v >= 0) ||
+        (v is string && v.size() > 0 && v.size() <= 64);
+    }
+
+    // Validador de dominio para catálogo maestro global /global_supply_catalog/{skuId} (Create & Update)
+    // Bloquea tenantId/PII (Ley N° 21.719), data: Base64 y payloads sin cota (Anti-DoS)
+    function isValidGlobalSupplyCatalogPayload(data, skuId) {
+      return data is map &&
+        data.keys().size() > 0 &&
+        data.keys().size() <= 80 &&
+        !('tenantId' in data) &&
+        !('tenant_id' in data) &&
+        !('accountId' in data) &&
+        !('rut' in data) &&
+        !('phone' in data) &&
+        !('email' in data) &&
+        !('gps' in data) &&
+        !('geoFix' in data) &&
+        (!('id' in data) || (data.id is string && data.id.size() > 0 && data.id.size() <= 128 && data.id == skuId)) &&
+        (!('skuId' in data) || (data.skuId is string && data.skuId.size() > 0 && data.skuId.size() <= 128 && data.skuId == skuId)) &&
+        isOptCalStr(data, 'sku', 128) &&
+        isOptCalStr(data, 'skuCode', 128) &&
+        isOptCalStr(data, 'name', 240) &&
+        isOptCalStr(data, 'nameEs', 240) &&
+        isOptCalStr(data, 'canonicalName', 240) &&
+        isOptCalStr(data, 'canonicalNameEs', 240) &&
+        isOptCalStr(data, 'title', 240) &&
+        (
+          (data.get('name', null) is string && data.name.size() > 0) ||
+          (data.get('nameEs', null) is string && data.nameEs.size() > 0) ||
+          (data.get('canonicalName', null) is string && data.canonicalName.size() > 0) ||
+          (data.get('canonicalNameEs', null) is string && data.canonicalNameEs.size() > 0) ||
+          (data.get('title', null) is string && data.title.size() > 0)
+        ) &&
+        isOptCalStr(data, 'description', 2000) &&
+        isOptCalStr(data, 'category', 120) &&
+        isOptCalStr(data, 'subcategory', 120) &&
+        isOptCalStr(data, 'family', 120) &&
+        isOptCalStr(data, 'unit', 32) &&
+        isOptCalStr(data, 'uom', 32) &&
+        isOptCalStr(data, 'unitOfMeasure', 32) &&
+        isOptCalStr(data, 'unspscCode', 32) &&
+        isOptCalStr(data, 'partNumber', 120) &&
+        isOptCalStr(data, 'oemPartNumber', 120) &&
+        isOptCalStr(data, 'manufacturer', 180) &&
+        isOptCalStr(data, 'manufacturerKey', 120) &&
+        isOptCalStr(data, 'brand', 120) &&
+        isOptCalStr(data, 'currency', 16) &&
+        isOptCalStr(data, 'status', 32) &&
+        isOptCalStr(data, 'notes', 2000) &&
+        isOptCalStr(data, 'observations', 2000) &&
+        isSafeUrlField(data, 'imageUrl') &&
+        isSafeUrlField(data, 'thumbnailUrl') &&
+        isSafeUrlField(data, 'datasheetUrl') &&
+        isOptNonNegNum(data, 'referencePriceClp') &&
+        isOptNonNegNum(data, 'referencePriceUsd') &&
+        isOptNonNegNum(data, 'unitCost') &&
+        isOptNonNegNum(data, 'unitWeightKg') &&
+        isOptNonNegNum(data, 'leadTimeDays') &&
+        (data.get('aliases', null) == null || (data.aliases is list && data.aliases.size() <= 50)) &&
+        (data.get('tags', null) == null || (data.tags is list && data.tags.size() <= 50)) &&
+        (data.get('searchTokens', null) == null || (data.searchTokens is list && data.searchTokens.size() <= 100)) &&
+        (data.get('compatibleModels', null) == null || (data.compatibleModels is list && data.compatibleModels.size() <= 100)) &&
+        (data.get('compatibleArchetypes', null) == null || (data.compatibleArchetypes is list && data.compatibleArchetypes.size() <= 32)) &&
+        (data.get('specs', null) == null || (data.specs is map && data.specs.keys().size() <= 60)) &&
+        (data.get('active', null) == null || data.active is bool) &&
+        (data.get('isActive', null) == null || data.isActive is bool) &&
+        isOptValidSupplyTimestamp(data, 'createdAt') &&
+        isOptValidSupplyTimestamp(data, 'updatedAt');
+    }
+
+    // Validador de dominio para presets globales de políticas /global_supply_policy_presets/{roleId} (Create & Update)
+    function isValidGlobalSupplyPolicyPresetPayload(data, roleId) {
+      return data is map &&
+        data.keys().size() > 0 &&
+        data.keys().size() <= 60 &&
+        !('tenantId' in data) &&
+        !('tenant_id' in data) &&
+        !('accountId' in data) &&
+        !('rut' in data) &&
+        !('phone' in data) &&
+        !('email' in data) &&
+        !('gps' in data) &&
+        !('geoFix' in data) &&
+        (!('id' in data) || (data.id is string && data.id.size() > 0 && data.id.size() <= 64 && data.id == roleId)) &&
+        (!('roleId' in data) || (data.roleId is string && data.roleId.size() > 0 && data.roleId.size() <= 64 && data.roleId == roleId)) &&
+        isOptCalStr(data, 'role', 64) &&
+        isOptCalStr(data, 'roleName', 120) &&
+        isOptCalStr(data, 'label', 120) &&
+        isOptCalStr(data, 'name', 120) &&
+        isOptCalStr(data, 'description', 1000) &&
+        isOptCalStr(data, 'currency', 16) &&
+        isOptCalStr(data, 'notes', 2000) &&
+        isOptNonNegNum(data, 'maxApprovalAmountClp') &&
+        isOptNonNegNum(data, 'maxApprovalAmountUsd') &&
+        isOptNonNegNum(data, 'maxAutoApproveClp') &&
+        isOptNonNegNum(data, 'maxSinglePurchaseClp') &&
+        isOptNonNegNum(data, 'monthlyBudgetLimitClp') &&
+        isOptNonNegNum(data, 'version') &&
+        (data.get('permissions', null) == null ||
+          (data.permissions is list && data.permissions.size() <= 100) ||
+          (data.permissions is map && data.permissions.keys().size() <= 100)) &&
+        (data.get('allowedActions', null) == null || (data.allowedActions is list && data.allowedActions.size() <= 100)) &&
+        (data.get('rules', null) == null ||
+          (data.rules is map && data.rules.keys().size() <= 60) ||
+          (data.rules is list && data.rules.size() <= 60)) &&
+        (data.get('limits', null) == null || (data.limits is map && data.limits.keys().size() <= 40)) &&
+        (data.get('requiresHitlApproval', null) == null || data.requiresHitlApproval is bool) &&
+        (data.get('isDefault', null) == null || data.isDefault is bool) &&
+        (data.get('active', null) == null || data.active is bool) &&
+        (data.get('isActive', null) == null || data.isActive is bool) &&
+        isOptValidSupplyTimestamp(data, 'createdAt') &&
+        isOptValidSupplyTimestamp(data, 'updatedAt');
     }
 
     // ===============================================================
@@ -1722,6 +1898,170 @@ service cloud.firestore {
     match /supplier_contact_contributions/{contributionId} {
       allow read: if isAdmin();
       allow write: if false;
+    }
+
+    // ===============================================================
+    // 8.2 MINREPORT · ABASTECIMIENTO (`moduleId: 'supply'` — Base Única southamerica-west1)
+    // ===============================================================
+    // Nota: `/global_suppliers/{supplierId}` ya está protegido en §8.1 (`allow read: if isAuthenticated(); allow write: if false;`)
+    // y `/modules_status/{moduleId}` en §4 soporta `modules_status/supply` de forma nativa.
+
+    // --- 8.2.1 Global Commons / Catálogo Maestro y Presets de Políticas ---
+
+    // Catálogo maestro global de SKUs de abastecimiento (sin tenantId ni PII; escritura exclusiva 1º DEV / 2º ADMIN con validador de dominio)
+    match /global_supply_catalog/{skuId} {
+      allow read: if isAuthenticated();
+      allow create: if (isDevRoot() || isSuperAdmin()) &&
+        isValidGlobalSupplyCatalogPayload(request.resource.data, skuId);
+      allow update: if (isDevRoot() || isSuperAdmin()) &&
+        isValidGlobalSupplyCatalogPayload(request.resource.data, skuId) &&
+        (!('createdAt' in resource.data) || !('createdAt' in request.resource.data) || request.resource.data.createdAt == resource.data.createdAt) &&
+        (!('skuId' in resource.data) || !('skuId' in request.resource.data) || request.resource.data.skuId == resource.data.skuId);
+      allow delete: if isDevRoot() || isSuperAdmin();
+    }
+
+    // Presets globales de políticas y topes de aprobación por rol (lectura autenticada; escritura exclusiva 1º DEV / 2º ADMIN con validador)
+    match /global_supply_policy_presets/{roleId} {
+      allow read: if isAuthenticated();
+      allow create: if (isDevRoot() || isSuperAdmin()) &&
+        isValidGlobalSupplyPolicyPresetPayload(request.resource.data, roleId);
+      allow update: if (isDevRoot() || isSuperAdmin()) &&
+        isValidGlobalSupplyPolicyPresetPayload(request.resource.data, roleId) &&
+        (!('createdAt' in resource.data) || !('createdAt' in request.resource.data) || request.resource.data.createdAt == resource.data.createdAt) &&
+        (!('roleId' in resource.data) || !('roleId' in request.resource.data) || request.resource.data.roleId == resource.data.roleId);
+      allow delete: if isDevRoot() || isSuperAdmin();
+    }
+
+    // --- 8.2.2 Colecciones Sensibles / Privacidad Ley N° 21.719 / Auditoría de Políticas ---
+
+    // Sesiones conversacionales WhatsApp (hashes telefónicos y estado efímero — Ley N° 21.719; exclusivo Admin SDK)
+    match /supply_whatsapp_sessions/{sessionId} {
+      allow read, write: if false;
+    }
+
+    // Guardia atómica de idempotencia WhatsApp WAMID (exclusivo Admin SDK)
+    match /supply_whatsapp_wamids/{wamid} {
+      allow read, write: if false;
+    }
+
+    // Auditoría de políticas de abastecimiento (lectura tenant-scoped exclusiva OWNER/ADMIN o DEV_ROOT/SUPER_ADMIN; escritura exclusiva Admin SDK)
+    match /supply_policy_audit/{eventId} {
+      allow read: if isAdmin() || (isAuthenticated() && resource != null && canReadSupplyPolicyAuditDoc(resource.data));
+      allow write: if false;
+    }
+
+    // --- 8.2.3 Señales Anónimas de Demanda Marketplace (Ley N° 21.719 k>=3) ---
+
+    // Señales agregadas anónimas generadas exclusivamente por backend Admin SDK tras agregación k>=3 (sin tenantId ni GPS)
+    match /market_demand_signals/{signalId} {
+      allow read: if isAuthenticated();
+      allow write: if false;
+    }
+
+    // --- 8.2.4 Colecciones Operativas y Ledgers Multi-Tenant (Server-Authoritative vía `/api/supply/*` Admin SDK) ---
+    // Todas portan `tenantId`: lectura aislada por tenant (miembro directo B2B/EDU, 1º DEV / 2º ADMIN, o 3º TEST-PILOT
+    // hermético a su propio sandbox `pilot-*`); toda mutación cliente bloqueada (`create, update, delete == false`) para
+    // garantizar contratos Zod, AuditLedger SHA-256, MediaDigestorServer CAS, anti-duplicación SII y HITL "ACTUALIZAR".
+
+    match /tenant_suppliers/{docId} {
+      allow read: if isAdmin() || (isAuthenticated() && resource != null && canReadSupplyTenantDoc(resource.data));
+      allow create, update, delete: if false;
+    }
+
+    match /supply_sites/{siteId} {
+      allow read: if isAdmin() || (isAuthenticated() && resource != null && canReadSupplyTenantDoc(resource.data));
+      allow create, update, delete: if false;
+    }
+
+    match /supply_warehouses/{whId} {
+      allow read: if isAdmin() || (isAuthenticated() && resource != null && canReadSupplyTenantDoc(resource.data));
+      allow create, update, delete: if false;
+    }
+
+    match /supply_inventory_items/{itemId} {
+      allow read: if isAdmin() || (isAuthenticated() && resource != null && canReadSupplyTenantDoc(resource.data));
+      allow create, update, delete: if false;
+    }
+
+    match /supply_requisitions/{reqId} {
+      allow read: if isAdmin() || (isAuthenticated() && resource != null && canReadSupplyTenantDoc(resource.data));
+      allow create, update, delete: if false;
+
+      // Subcolección de líneas de requerimiento (bloquea acceso a subcolecciones huérfanas validando existencia y tenant del padre)
+      match /lines/{lineId} {
+        allow read: if isAdmin() || (
+          isAuthenticated() &&
+          exists(/databases/$(database)/documents/supply_requisitions/$(reqId)) &&
+          canReadSupplyTenantDoc(get(/databases/$(database)/documents/supply_requisitions/$(reqId)).data)
+        );
+        allow create, update, delete: if false;
+      }
+    }
+
+    match /supply_requisition_lines/{lineId} {
+      allow read: if isAdmin() || (isAuthenticated() && resource != null && canReadSupplyTenantDoc(resource.data));
+      allow create, update, delete: if false;
+    }
+
+    match /supply_purchases/{purchaseId} {
+      allow read: if isAdmin() || (isAuthenticated() && resource != null && canReadSupplyTenantDoc(resource.data));
+      allow create, update, delete: if false;
+
+      // Subcolección de líneas de orden de compra (bloquea acceso a subcolecciones huérfanas validando existencia y tenant del padre)
+      match /lines/{lineId} {
+        allow read: if isAdmin() || (
+          isAuthenticated() &&
+          exists(/databases/$(database)/documents/supply_purchases/$(purchaseId)) &&
+          canReadSupplyTenantDoc(get(/databases/$(database)/documents/supply_purchases/$(purchaseId)).data)
+        );
+        allow create, update, delete: if false;
+      }
+    }
+
+    match /supply_purchase_lines/{lineId} {
+      allow read: if isAdmin() || (isAuthenticated() && resource != null && canReadSupplyTenantDoc(resource.data));
+      allow create, update, delete: if false;
+    }
+
+    // Ledger append-only de asignaciones/cumplimiento (mutación exclusiva Admin SDK)
+    match /supply_fulfillment_allocations/{allocId} {
+      allow read: if isAdmin() || (isAuthenticated() && resource != null && canReadSupplyTenantDoc(resource.data));
+      allow create, update, delete: if false;
+    }
+
+    match /supply_assets/{assetId} {
+      allow read: if isAdmin() || (isAuthenticated() && resource != null && canReadSupplyTenantDoc(resource.data));
+      allow create, update, delete: if false;
+    }
+
+    // Ledger append-only de movimientos de inventario/stock (mutación exclusiva Admin SDK)
+    match /supply_stock_ledger/{movId} {
+      allow read: if isAdmin() || (isAuthenticated() && resource != null && canReadSupplyTenantDoc(resource.data));
+      allow create, update, delete: if false;
+    }
+
+    // Ledger append-only de movimientos de caja/fondos por rendir (mutación exclusiva Admin SDK)
+    match /supply_cash_ledger/{cashMovId} {
+      allow read: if isAdmin() || (isAuthenticated() && resource != null && canReadSupplyTenantDoc(resource.data));
+      allow create, update, delete: if false;
+    }
+
+    // Documentos tributarios SII (mutación exclusiva Admin SDK para preservar llave anti-duplicación `rut#tipo#folio` y AuditLedger)
+    match /supply_sii_documents/{docId} {
+      allow read: if isAdmin() || (isAuthenticated() && resource != null && canReadSupplyTenantDoc(resource.data));
+      allow create, update, delete: if false;
+    }
+
+    // Rendiciones de gastos (mutación exclusiva Admin SDK con gate HITL vía `/api/supply/sii/expense-reports`)
+    match /supply_expense_reports/{reportId} {
+      allow read: if isAdmin() || (isAuthenticated() && resource != null && canReadSupplyTenantDoc(resource.data));
+      allow create, update, delete: if false;
+    }
+
+    // Pronósticos de demanda computados en servidor (mutación exclusiva Admin SDK)
+    match /supply_demand_forecasts/{forecastId} {
+      allow read: if isAdmin() || (isAuthenticated() && resource != null && canReadSupplyTenantDoc(resource.data));
+      allow create, update, delete: if false;
     }
 
     // ===============================================================

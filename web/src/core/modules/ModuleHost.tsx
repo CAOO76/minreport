@@ -10,6 +10,7 @@ import {
     type CoreModuleId,
     type OpermaqDomainMode,
     type GeolappDomainMode,
+    type SupplyDomainMode,
 } from './module-registry';
 
 export interface M3ModuleHudFallbackProps {
@@ -162,7 +163,7 @@ export const RequireModuleAccess: React.FC<RequireModuleAccessProps> = ({
 export interface ModuleHostProps {
     moduleId: CoreModuleId;
     embedded?: boolean;
-    domainMode?: OpermaqDomainMode | GeolappDomainMode;
+    domainMode?: OpermaqDomainMode | GeolappDomainMode | SupplyDomainMode;
     hostScope?: 'CLIENT' | 'DEV_GATEWAY' | 'TEST_PILOT';
     enforceEntitlement?: boolean;
     onExitModule?: () => void;
@@ -172,7 +173,7 @@ export interface ModuleHostProps {
 function resolveModuleFallbackLabel(
     t: (key: string, defaultValue: string) => string,
     moduleId: CoreModuleId,
-    domainMode?: OpermaqDomainMode | GeolappDomainMode
+    domainMode?: OpermaqDomainMode | GeolappDomainMode | SupplyDomainMode
 ): string {
     if (moduleId === 'opermaq') {
         if (domainMode === 'CATALOG') return t('core_shell.loading_opermaq_catalog', 'CARGANDO MÓDULO OPERMAQ · CATÁLOGO');
@@ -181,6 +182,16 @@ function resolveModuleFallbackLabel(
         if (domainMode === 'MANUFACTURERS') return t('core_shell.loading_opermaq_manufacturers', 'CARGANDO MÓDULO OPERMAQ · FABRICANTES');
         if (domainMode === 'SUPPLIERS') return t('core_shell.loading_opermaq_suppliers', 'CARGANDO MÓDULO OPERMAQ · PROVEEDORES');
         return t('core_shell.loading_opermaq', 'CARGANDO MÓDULO OPERMAQ');
+    }
+    if (moduleId === 'supply') {
+        if (domainMode === 'DEMAND') return t('core_shell.loading_supply_demand', 'CARGANDO MÓDULO ABASTECIMIENTO · DEMANDA');
+        if (domainMode === 'PROCUREMENT') return t('core_shell.loading_supply_procurement', 'CARGANDO MÓDULO ABASTECIMIENTO · COMPRAS');
+        if (domainMode === 'WAREHOUSE') return t('core_shell.loading_supply_warehouse', 'CARGANDO MÓDULO ABASTECIMIENTO · BODEGA');
+        if (domainMode === 'SII_EXPENSES') return t('core_shell.loading_supply_sii', 'CARGANDO MÓDULO ABASTECIMIENTO · RENDICIONES SII');
+        if (domainMode === 'FINANCE_RECON') return t('core_shell.loading_supply_recon', 'CARGANDO MÓDULO ABASTECIMIENTO · CONCILIACIÓN');
+        if (domainMode === 'FORECAST') return t('core_shell.loading_supply_forecast', 'CARGANDO MÓDULO ABASTECIMIENTO · PROYECCIÓN');
+        if (domainMode === 'WHATSAPP_CHANNELS') return t('core_shell.loading_supply_whatsapp', 'CARGANDO MÓDULO ABASTECIMIENTO · WHATSAPP');
+        return t('core_shell.loading_supply', 'MINREPORT · ABASTECIMIENTO');
     }
     return t('core_shell.loading_geolapp_stockpile', 'MINREPORT · ACOPIOS');
 }

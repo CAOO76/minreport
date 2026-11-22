@@ -155,6 +155,17 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
     }, [domainMode, resetKey, canAccessSimulator]);
 
     useEffect(() => {
+        const handleNavigateHome = () => {
+            setScannerOpen(false);
+            setReconcilerOpen(false);
+            setSimulatorOpen(false);
+            setActiveTab(resolveTabFromDomainMode(domainMode));
+        };
+        window.addEventListener('supply:navigate-home', handleNavigateHome);
+        return () => window.removeEventListener('supply:navigate-home', handleNavigateHome);
+    }, [domainMode]);
+
+    useEffect(() => {
         return syncQueueEngine.subscribe((state) => {
             setOfflinePendingCount(state.pendingCount);
         });

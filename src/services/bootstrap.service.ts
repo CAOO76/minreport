@@ -139,7 +139,7 @@ export const ensureDevRootAccount = async (): Promise<void> => {
         status: 'ACTIVE',
         classification: 'dev-root',
         entitlements: {
-            pluginsEnabled: ['opermaq', 'stockpile'],
+            pluginsEnabled: ['opermaq', 'stockpile', 'supply'],
             allAccess: true,
             canImpersonate: true,
             canManageTestPilots: true
@@ -167,7 +167,7 @@ export const ensureDevRootAccount = async (): Promise<void> => {
             isCommercial: false,
             watermarkRequired: false
         },
-        enabledPlugins: ['opermaq', 'stockpile'],
+        enabledPlugins: ['opermaq', 'stockpile', 'supply'],
         createdAt: Date.now(),
         updatedAt: Date.now()
     }, { merge: true });

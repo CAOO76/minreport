@@ -401,6 +401,26 @@ const AppRoutes = () => {
                     element={<Navigate to="/acopios" replace />}
                 />
                 <Route
+                    path="/abastecimiento"
+                    element={<ModuleHost moduleId="supply" embedded={true} domainMode="DEMAND" />}
+                />
+                <Route
+                    path="/abastecimiento/compras"
+                    element={<ModuleHost moduleId="supply" embedded={true} domainMode="PROCUREMENT" />}
+                />
+                <Route
+                    path="/abastecimiento/bodega"
+                    element={<ModuleHost moduleId="supply" embedded={true} domainMode="WAREHOUSE" />}
+                />
+                <Route
+                    path="/abastecimiento/rendiciones-sii"
+                    element={<ModuleHost moduleId="supply" embedded={true} domainMode="SII_EXPENSES" />}
+                />
+                <Route
+                    path="/supply"
+                    element={<Navigate to="/abastecimiento" replace />}
+                />
+                <Route
                     path="/b2b/equipo"
                     element={
                         <RequireAdminRole disallowEdu>

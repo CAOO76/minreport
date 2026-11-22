@@ -70,10 +70,12 @@ export const MiningAICopilot: React.FC<MiningAICopilotProps> = ({
     const { t } = useTranslation();
     const { session } = useMinReportSession();
     const location = useLocation();
-    const detectedModule: 'core' | 'opermaq' | 'stockpile' = location.pathname.startsWith('/opermaq')
+    const detectedModule: 'core' | 'opermaq' | 'stockpile' | 'supply' = location.pathname.startsWith('/opermaq')
         ? 'opermaq'
         : location.pathname.startsWith('/acopios') || location.pathname.startsWith('/stockpile')
         ? 'stockpile'
+        : location.pathname.startsWith('/abastecimiento') || location.pathname.startsWith('/supply')
+        ? 'supply'
         : 'core';
     const canCurateProposals = Boolean(
         !session?.isEduSandbox && String(session?.role || '').toUpperCase() !== 'VIEWER'

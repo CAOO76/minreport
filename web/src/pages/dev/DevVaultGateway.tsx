@@ -35,7 +35,8 @@ export type DevSection =
     | 'MODULE_OPERMAQ_FLEET'
     | 'MODULE_OPERMAQ_SYMBOLOGY'
     | 'MODULE_OPERMAQ_MANUFACTURERS'
-    | 'MODULE_OPERMAQ_SUPPLIERS';
+    | 'MODULE_OPERMAQ_SUPPLIERS'
+    | 'MODULE_SUPPLY';
 
 function formatCountdownMmSs(seconds: number): string {
     const safe = Math.max(0, Math.floor(seconds));
@@ -1206,6 +1207,31 @@ export const DevVaultGateway: React.FC = () => {
                                     <span className="material-symbols-outlined text-[22px]">storefront</span>
                                 </button>
                             </div>
+
+                            {/* SEPARADOR DE PRECISIÓN FIBONACCI — MÓDULO ABASTECIMIENTO */}
+                            <div className="w-7 h-[1px] bg-[#CBD5E1] dark:bg-[#5A6072]/50 my-[13px] shrink-0" />
+
+                            {/* GRUPO 4: MÓDULO ABASTECIMIENTO (MINREPORT · ABASTECIMIENTO) */}
+                            <div className="flex flex-col items-center gap-1 w-full">
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setActiveSection('MODULE_SUPPLY');
+                                        window.dispatchEvent(new CustomEvent('supply:navigate-home'));
+                                    }}
+                                    title={t('core_dev_vault.nav.supply_title')}
+                                    aria-label={t('core_dev_vault.nav.supply_aria')}
+                                    className={`min-w-[48px] min-h-[48px] w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'MODULE_SUPPLY'
+                                        ? 'text-[#C68346]'
+                                        : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                                        }`}
+                                >
+                                    {activeSection === 'MODULE_SUPPLY' && (
+                                        <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-5 bg-[#C68346]" />
+                                    )}
+                                    <span className="material-symbols-outlined text-[22px]">inventory_2</span>
+                                </button>
+                            </div>
                         </>
                     )}
                 </aside>
@@ -1594,6 +1620,20 @@ export const DevVaultGateway: React.FC = () => {
                                     moduleId="opermaq"
                                     embedded={true}
                                     domainMode="SUPPLIERS"
+                                    hostScope="DEV_GATEWAY"
+                                    enforceEntitlement={false}
+                                />
+                            </div>
+                        )}
+
+                        {/* MÓDULO INDUSTRIAL 3: ABASTECIMIENTO (MINREPORT · ABASTECIMIENTO) */}
+                        {activeSection === 'MODULE_SUPPLY' && (
+                            <div className="w-full h-full min-h-0 overflow-hidden flex-1 flex flex-col">
+                                <ModuleHost
+                                    key="dev-supply"
+                                    moduleId="supply"
+                                    embedded={true}
+                                    domainMode="DEMAND"
                                     hostScope="DEV_GATEWAY"
                                     enforceEntitlement={false}
                                 />

@@ -15,7 +15,7 @@ const router = Router();
 
 const CreatePilotFeedbackSchema = z.object({
     tenantId: z.string().min(1).max(128).default('dev-master-sandbox'),
-    module: z.enum(['core', 'opermaq', 'stockpile', 'geolapp']).default('core'),
+    module: z.enum(['core', 'opermaq', 'stockpile', 'geolapp', 'supply']).default('core'),
     executionMode: z.enum(['integrated', 'standalone']).default('integrated'),
     category: z
         .enum(['AI_KNOWLEDGE_TRAINING', 'CHANGE_REQUEST', 'BUG_CORRECTION', 'FIELD_SIMULATION'])
@@ -28,7 +28,7 @@ const CreatePilotFeedbackSchema = z.object({
 });
 
 const ListPilotFeedbackQuerySchema = z.object({
-    module: z.enum(['core', 'opermaq', 'stockpile', 'geolapp']).optional(),
+    module: z.enum(['core', 'opermaq', 'stockpile', 'geolapp', 'supply']).optional(),
 });
 
 const UpdatePilotFeedbackStatusSchema = z.object({

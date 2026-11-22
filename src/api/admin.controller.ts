@@ -318,14 +318,14 @@ const updateTenantStatusSchema = z.object({
     status: z.enum(['ACTIVE', 'SUSPENDED', 'REJECTED']),
     rejectionReason: z.string().max(1000).optional().nullable(),
     observations: z.string().max(1000).optional().nullable(),
-    enabledPlugins: z.array(z.enum(['opermaq', 'stockpile'])).max(10).optional(),
+    enabledPlugins: z.array(z.enum(['opermaq', 'stockpile', 'supply'])).max(10).optional(),
     confirmationWord: z.string().optional(),
     confirmationKeyword: z.string().optional(),
 });
 
 const approveTenantBodySchema = z.object({
     observations: z.string().max(1000).optional().nullable(),
-    enabledPlugins: z.array(z.enum(['opermaq', 'stockpile'])).max(10).optional(),
+    enabledPlugins: z.array(z.enum(['opermaq', 'stockpile', 'supply'])).max(10).optional(),
     confirmationWord: z.string().optional(),
     confirmationKeyword: z.string().optional(),
 });
@@ -613,6 +613,7 @@ export const updateTenantStatus = async (req: AuthRequest, res: express.Response
                     addonModules: {
                         opermaq: { active: resolvedPlugins.includes('opermaq'), updatedAt: nowMs },
                         stockpile: { active: resolvedPlugins.includes('stockpile'), updatedAt: nowMs },
+                        supply: { active: resolvedPlugins.includes('supply'), updatedAt: nowMs },
                     },
                     maxProjects: existingEntitlements?.maxProjects ?? (isEdu ? 3 : null),
                 };
@@ -627,7 +628,16 @@ export const updateTenantStatus = async (req: AuthRequest, res: express.Response
                     globalModuleActive: true,
                     entitlements: existingEntitlements,
                 });
-                resolvedPlugins = [...(opOk ? ['opermaq'] : []), ...(stOk ? ['stockpile'] : [])];
+                const suOk = resolveEffectiveModuleAccess({
+                    moduleKey: 'supply',
+                    globalModuleActive: true,
+                    entitlements: existingEntitlements,
+                });
+                resolvedPlugins = [
+                    ...(opOk ? ['opermaq'] : []),
+                    ...(stOk ? ['stockpile'] : []),
+                    ...(suOk ? ['supply'] : []),
+                ];
             } else {
                 resolvedPlugins = isEdu ? ['opermaq'] : ['opermaq', 'stockpile'];
                 nextEntitlements = {
@@ -635,6 +645,7 @@ export const updateTenantStatus = async (req: AuthRequest, res: express.Response
                     addonModules: {
                         opermaq: { active: resolvedPlugins.includes('opermaq'), updatedAt: nowMs },
                         stockpile: { active: resolvedPlugins.includes('stockpile'), updatedAt: nowMs },
+                        supply: { active: resolvedPlugins.includes('supply'), updatedAt: nowMs },
                     },
                     maxProjects: isEdu ? 3 : null,
                 };
@@ -665,6 +676,7 @@ export const updateTenantStatus = async (req: AuthRequest, res: express.Response
                     'contract.activeModules': {
                         opermaq: resolvedPlugins.includes('opermaq'),
                         stockpile: resolvedPlugins.includes('stockpile'),
+                        supply: resolvedPlugins.includes('supply'),
                     },
                     updatedAt: nowMs,
                 });
@@ -689,6 +701,7 @@ export const updateTenantStatus = async (req: AuthRequest, res: express.Response
                             activeModules: {
                                 opermaq: resolvedPlugins.includes('opermaq'),
                                 stockpile: resolvedPlugins.includes('stockpile'),
+                                supply: resolvedPlugins.includes('supply'),
                             },
                             activatedAt: nowMs,
                         },
@@ -1128,10 +1141,12 @@ export const updateAccountEntitlements = async (req: AuthRequest, res: express.R
                     basePackage === 'FULL_SUITE' ||
                     basePackage === 'ACADEMIC_SANDBOX',
                 stockpile: basePackage === 'FULL_SUITE',
+                supply: basePackage === 'FULL_SUITE',
             },
             addonModules: {
                 opermaq: { active: addonModules.opermaq, updatedAt: nowMs },
                 stockpile: { active: addonModules.stockpile, updatedAt: nowMs },
+                supply: { active: Boolean(addonModules.supply), updatedAt: nowMs },
             },
             maxProjects: resolvedMaxProjects,
         };
@@ -1146,10 +1161,16 @@ export const updateAccountEntitlements = async (req: AuthRequest, res: express.R
             globalModuleActive: true,
             entitlements: nextEntitlements,
         });
+        const supplyEffective = resolveEffectiveModuleAccess({
+            moduleKey: 'supply',
+            globalModuleActive: true,
+            entitlements: nextEntitlements,
+        });
 
         const nextEnabledPlugins = [
             ...(opermaqEffective ? ['opermaq'] : []),
             ...(stockpileEffective ? ['stockpile'] : []),
+            ...(supplyEffective ? ['supply'] : []),
         ];
 
         const syncPayload = {
@@ -1159,6 +1180,7 @@ export const updateAccountEntitlements = async (req: AuthRequest, res: express.R
             'contract.activeModules': {
                 opermaq: opermaqEffective,
                 stockpile: stockpileEffective,
+                supply: supplyEffective,
             },
             ...eduFields,
             updatedAt: nowMs,
@@ -1769,7 +1791,7 @@ export const updateUIAssetsSettings = async (req: express.Request, res: express.
 };
 
 const updateModuleAvailabilitySchema = z.object({
-    moduleId: z.enum(['opermaq', 'stockpile']),
+    moduleId: z.enum(['opermaq', 'stockpile', 'supply']),
     enabled: z.boolean(),
     confirmationWord: z.literal('ACTUALIZAR'),
 });
@@ -1779,7 +1801,7 @@ export const updateModuleAvailability = async (req: express.Request, res: expres
         const parsed = updateModuleAvailabilitySchema.safeParse(req.body);
         if (!parsed.success) {
             return res.status(400).json({
-                error: 'Payload inválido: se requiere moduleId ("opermaq" | "stockpile"), enabled booleano y confirmationWord === "ACTUALIZAR".',
+                error: 'Payload inválido: se requiere moduleId ("opermaq" | "stockpile" | "supply"), enabled booleano y confirmationWord === "ACTUALIZAR".',
                 details: parsed.error.format(),
             });
         }

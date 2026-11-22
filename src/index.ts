@@ -57,8 +57,10 @@ import geolappRoutes, { postGeolappReconstruct3d } from './api/geolapp.controlle
 import { webauthnRouter } from './api/webauthn.controller';
 import { registerM2mGeolappAdapterRoutes } from './api/m2m-geolapp.adapter';
 import { registerM2mOpermaqAdapterRoutes } from './api/m2m-opermaq.adapter';
+import { registerM2mSupplyAdapterRoutes } from './api/m2m-supply.adapter';
 import { SupplierChannelResolveQuerySchema } from './contracts/manufacturers.contracts';
 import { registerOpermaqModuleRoutes } from './modules/opermaq';
+import { registerSupplyModuleRoutes } from './modules/supply';
 import { SupplierChannelResolverService } from './modules/opermaq/services/SupplierChannelResolverService';
 import { startHuntTaskWatchdog } from './modules/opermaq/services/TaskQueueService';
 import { requireSuperAdmin } from './middleware/admin';
@@ -207,7 +209,14 @@ app.use(
     })
 );
 
-app.use(express.json({ limit: '15mb' }));
+app.use(
+    express.json({
+        limit: '15mb',
+        verify: (req: any, _res, buf) => {
+            req.rawBody = Buffer.from(buf);
+        },
+    })
+);
 app.use(DevEmulatorCheckpointService.expressMutationMiddleware());
 
 // Global Request Logger con supresión de ráfagas para proteger TTY local
@@ -321,6 +330,8 @@ registerM2mGeolappAdapterRoutes(app);
 
 registerM2mOpermaqAdapterRoutes(app);
 
+registerM2mSupplyAdapterRoutes(app);
+
 app.get(
     '/api/m2m/suppliers/resolve',
     x402Gatekeeper({
@@ -371,7 +382,7 @@ app.get(
 const AIInferencePayloadSchema = z.object({
     prompt: z.string().min(1, 'El prompt no puede estar vacío').max(64000),
     systemInstruction: z.string().max(16000).optional(),
-    module: z.enum(['opermaq', 'stockpile', 'geolapp', 'core', 'test-pilot']).optional().default('core'),
+    module: z.enum(['opermaq', 'stockpile', 'supply', 'geolapp', 'core', 'test-pilot']).optional().default('core'),
     preferredTier: z.enum(['PRIMARY', 'SECONDARY', 'ANCHOR_HA']).optional(),
     thinkingLevel: z.enum(['none', 'low', 'medium', 'high']).optional().default('medium'),
     requireHITL: z.boolean().optional().default(false),
@@ -579,6 +590,7 @@ const HitlResolveBodySchema = z.object({
 const VALID_HITL_AUDIT_MODULES = new Set<AuditLedgerModule>([
     'opermaq',
     'stockpile',
+    'supply',
     'b2b-core',
     'core',
     'test-pilot',
@@ -870,6 +882,9 @@ app.patch('/api/admin/modules-status', requireSuperAdmin, mutationRateLimiter, u
 
 // Módulo Funcional OPERMAQ (Subordinado 100% a MINREPORT Core)
 registerOpermaqModuleRoutes(app);
+
+// Módulo Funcional ABASTECIMIENTO (Subordinado 100% a MINREPORT Core)
+registerSupplyModuleRoutes(app);
 
 // Hidratación de Cloud Secret Manager y arranque del servidor
 const port = parseInt(env.PORT, 10);

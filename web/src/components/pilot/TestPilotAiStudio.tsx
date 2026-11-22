@@ -6,7 +6,7 @@ import { getApiUrl } from '../../utils/network';
 import M3LinearProgress from '../common/M3LinearProgress';
 import SovereignVoiceInput, { type EphemeralVoiceAudioPayload } from '../common/SovereignVoiceInput';
 
-export type PilotAiContextModule = 'geolapp' | 'opermaq' | 'core';
+export type PilotAiContextModule = 'geolapp' | 'opermaq' | 'supply' | 'core';
 type InterventionMode = 'BUG_CORRECTION' | 'CHANGE_REQUEST' | 'AI_KNOWLEDGE_TRAINING';
 
 interface ExtractedWisdomPreview {
@@ -47,6 +47,7 @@ const MODE_OPTIONS: Array<{ id: InterventionMode; icon: string; labelKey: string
 const MODULE_OPTIONS: Array<{ id: PilotAiContextModule; labelKey: string }> = [
     { id: 'geolapp', labelKey: 'core_pilot_ws.ai_studio.module_geolapp' },
     { id: 'opermaq', labelKey: 'core_pilot_ws.ai_studio.module_opermaq' },
+    { id: 'supply', labelKey: 'core_pilot_ws.ai_studio.module_supply' },
     { id: 'core', labelKey: 'core_pilot_ws.ai_studio.module_core' },
 ];
 

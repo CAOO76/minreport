@@ -29,17 +29,9 @@ export const StockpileLazyComponent = lazy(() =>
     import('../../modules/geolapp/GeolappModule').then((m) => ({ default: m.GeolappModule }))
 );
 
-// TODO(integrator): switch to static import('../../modules/supply/SupplyWorkspace') after merging frontend-hmi
-const SUPPLY_MODULE_SPECIFIER = '../../modules/supply/SupplyWorkspace';
-
-export const SupplyLazyComponent = lazy(async () => {
-    const m = (await import(/* @vite-ignore */ SUPPLY_MODULE_SPECIFIER)) as {
-        SupplyWorkspace?: ComponentType<any>;
-        default?: ComponentType<any>;
-    };
-    const ResolvedComponent: ComponentType<any> = m.SupplyWorkspace ?? m.default ?? (() => null);
-    return { default: ResolvedComponent };
-});
+export const SupplyLazyComponent = lazy(() =>
+    import('../../modules/supply/SupplyWorkspace').then((m) => ({ default: m.SupplyWorkspace }))
+);
 
 export interface CoreModuleNavItem {
     to: string;

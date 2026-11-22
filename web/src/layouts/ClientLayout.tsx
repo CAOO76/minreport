@@ -18,7 +18,9 @@ const ClientLayout = () => {
         location.pathname.startsWith('/opermaq') ||
         location.pathname.startsWith('/acopios') ||
         location.pathname.startsWith('/stockpile') ||
-        location.pathname.startsWith('/geolapp');
+        location.pathname.startsWith('/geolapp') ||
+        location.pathname.startsWith('/abastecimiento') ||
+        location.pathname.startsWith('/supply');
     const [activeFloatingPanel, setActiveFloatingPanel] = useState<'none' | 'copilot'>('none');
     const { signOut: signOutContext, profile, currentAccount, switchAccount } = useAuth();
     const { session, hasModuleAccess } = useMinReportSession();

@@ -29,7 +29,7 @@ export const EphemeralAudioSchema = z.object({
 
 export const ExtractWisdomInputSchema = z.object({
     rawNarrative: z.string().max(6000).default(''),
-    module: z.enum(['core', 'opermaq', 'stockpile', 'geolapp']).default('core'),
+    module: z.enum(['core', 'opermaq', 'stockpile', 'geolapp', 'supply']).default('core'),
     contextPath: z.string().min(1).max(256).default('/'),
     assetOrSurveyId: z.string().max(128).optional(),
     currentItemContext: z.string().max(1000).optional(),
