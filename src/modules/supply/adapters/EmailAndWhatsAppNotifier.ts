@@ -4,15 +4,24 @@ import {
     type SupplyPurchase,
     type SupplyRequisition,
 } from '../application/supply.types';
-import { MetaWhatsAppCloudAdapter, type WhatsAppSendResult } from './MetaWhatsAppCloudAdapter';
+import {
+    MetaWhatsAppCloudAdapter,
+    sanitizeTemplateParameter,
+    type WhatsAppSendResult,
+} from './MetaWhatsAppCloudAdapter';
 
 /**
  * NOTIFICADOR DUAL EMAIL (RESEND) + WHATSAPP UTILITY (MINREPORT · ABASTECIMIENTO)
  *
  * Despacha alertas operativas hacia compradores (`BUYER` / `SITE_ADMIN` / `OWNER_EXEC`)
- * respetando estrictamente `notificationPreferences` y consentimiento `whatsappOptInAt`
- * (Ley N° 21.719), además de retroalimentación de estado hacia solicitantes en terreno.
+ * respetando estrictamente `notificationPreferences`, `quietHoursStart`/`quietHoursEnd` en zona
+ * horaria IANA del sitio, consentimiento `whatsappOptInAt` (Ley N° 21.719), minimización de PII
+ * hacia Meta y política CSW 24h con template HSM UTILITY `minreport_field_reception_update`
+ * (y fallback automático ante error Meta `131047`).
  */
+
+export const FIELD_RECEPTION_HSM_TEMPLATE = 'minreport_field_reception_update';
+export const CSW_SAFE_WINDOW_MS = 23.5 * 60 * 60 * 1000; // 23.5 horas (margen 30m previo a cierre 24h Meta)
 
 export interface SupplyNotificationRecipient {
     uid: string;
@@ -37,6 +46,71 @@ function escapeHtml(raw: string): string {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
+}
+
+function parseHhMmToMinutes(raw: string | undefined): number | null {
+    if (!raw || typeof raw !== 'string') return null;
+    const match = raw.trim().match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
+    if (!match) return null;
+    return Number(match[1]) * 60 + Number(match[2]);
+}
+
+/**
+ * Evalúa si un instante dado (`nowMs`) cae dentro de `quietHoursStart`–`quietHoursEnd`
+ * en la zona horaria IANA del sitio (default `America/Santiago`), soportando ventanas nocturnas
+ * (ej. `22:00`–`07:00`) y diurnas (ej. `13:00`–`15:00`).
+ */
+export function isWithinQuietHours(
+    nowMs: number,
+    prefs?: Partial<NotificationPreferences>,
+    timezoneIana: string = 'America/Santiago'
+): boolean {
+    const startMin = parseHhMmToMinutes(prefs?.quietHoursStart);
+    const endMin = parseHhMmToMinutes(prefs?.quietHoursEnd);
+    if (startMin === null || endMin === null || startMin === endMin) {
+        return false;
+    }
+
+    const safeTz = (timezoneIana || 'America/Santiago').trim() || 'America/Santiago';
+    let localHour = 0;
+    let localMinute = 0;
+    try {
+        const parts = new Intl.DateTimeFormat('en-GB', {
+            timeZone: safeTz,
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false,
+        }).formatToParts(new Date(nowMs));
+        localHour = Number(parts.find((p) => p.type === 'hour')?.value ?? '0') % 24;
+        localMinute = Number(parts.find((p) => p.type === 'minute')?.value ?? '0');
+    } catch {
+        const parts = new Intl.DateTimeFormat('en-GB', {
+            timeZone: 'America/Santiago',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false,
+        }).formatToParts(new Date(nowMs));
+        localHour = Number(parts.find((p) => p.type === 'hour')?.value ?? '0') % 24;
+        localMinute = Number(parts.find((p) => p.type === 'minute')?.value ?? '0');
+    }
+
+    const currentMin = localHour * 60 + localMinute;
+    if (startMin < endMin) {
+        return currentMin >= startMin && currentMin < endMin;
+    }
+    // Ventana nocturna que cruza medianoche (ej. 22:00 -> 07:00)
+    return currentMin >= startMin || currentMin < endMin;
+}
+
+/**
+ * Minimiza datos personales y tributarios antes de salir hacia Meta Cloud API (Ley N° 21.719):
+ * omite RUTs completos, correos electrónicos y teléfonos personales en alertas operativas WhatsApp.
+ */
+export function minimizePiiForWhatsAppMeta(raw: string): string {
+    return String(raw || '')
+        .replace(/\b\d{1,2}\.?\d{3}\.?\d{3}-[0-9Kk]\b/g, '[RUT_RESERVADO]')
+        .replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, '[EMAIL_RESERVADO]')
+        .replace(/(?:\+56\s?9|\+56\s?2)\s?\d{4}[\s.-]?\d{4}\b/g, '[TEL_RESERVADO]');
 }
 
 function buildRequisitionEmailHtml(requisition: SupplyRequisition, siteName: string): string {
@@ -147,6 +221,7 @@ export class EmailAndWhatsAppNotifier {
         tenantId: string;
         requisition: SupplyRequisition;
         siteName?: string;
+        timezoneIana?: string;
         buyers: SupplyNotificationRecipient[];
     }): Promise<NotificationDispatchResult> {
         let emailsSent = 0;
@@ -168,6 +243,7 @@ export class EmailAndWhatsAppNotifier {
             .map((l) => `${l.itemName} ${l.qtyRequested} ${l.unitSi}`)
             .join(', ');
 
+        const nowMs = Date.now();
         for (const buyer of params.buyers) {
             const prefs = buyer.notificationPreferences || {};
             if (prefs.urgentOnly === true && !isUrgentOrAtypical) {
@@ -191,7 +267,11 @@ export class EmailAndWhatsAppNotifier {
             }
 
             const whatsappPref = prefs.whatsappEnabled ?? prefs.whatsapp;
+            const inQuietHours =
+                !isUrgentOrAtypical &&
+                isWithinQuietHours(nowMs, prefs, params.timezoneIana || 'America/Santiago');
             const whatsappAllowed =
+                !inQuietHours &&
                 whatsappPref === true &&
                 Boolean(buyer.phoneE164) &&
                 Boolean(buyer.whatsappOptInAt);
@@ -201,9 +281,13 @@ export class EmailAndWhatsAppNotifier {
                     'minreport_requisition_alert',
                     'es',
                     [
-                        params.requisition.reqId,
-                        siteLabel,
-                        `${params.requisition.lines.length} ítems: ${linePreview}`,
+                        sanitizeTemplateParameter(params.requisition.reqId),
+                        sanitizeTemplateParameter(minimizePiiForWhatsAppMeta(siteLabel)),
+                        sanitizeTemplateParameter(
+                            minimizePiiForWhatsAppMeta(
+                                `${params.requisition.lines.length} ítems: ${linePreview}`
+                            )
+                        ),
                         isUrgentOrAtypical ? 'REVISIÓN ATÍPICA/PRIORITARIA' : 'ESTÁNDAR',
                     ]
                 );
@@ -220,11 +304,13 @@ export class EmailAndWhatsAppNotifier {
 
     /**
      * Alerta informativa a OWNER / ADMIN sobre compra autónoma o activo sin factura (DTE 33/34).
+     * Minimiza PII hacia Meta omitiendo RUT del proveedor y datos personales en la plantilla WhatsApp.
      */
     public static async notifyOwnerOfDirectPurchase(params: {
         tenantId: string;
         purchase: SupplyPurchase;
         alerts: string[];
+        timezoneIana?: string;
         recipients: SupplyNotificationRecipient[];
     }): Promise<NotificationDispatchResult> {
         let emailsSent = 0;
@@ -258,10 +344,20 @@ export class EmailAndWhatsAppNotifier {
                     'minreport_direct_purchase_alert',
                     'es',
                     [
-                        params.purchase.purchaseId,
-                        `${params.purchase.supplierName} (DTE ${params.purchase.documentType} #${params.purchase.folio})`,
-                        `$${params.purchase.totalAmountClp.toLocaleString('es-CL')} CLP`,
-                        params.alerts[0] || 'Registrada en inventario/activos',
+                        sanitizeTemplateParameter(params.purchase.purchaseId),
+                        sanitizeTemplateParameter(
+                            minimizePiiForWhatsAppMeta(
+                                `${params.purchase.supplierName} (DTE ${params.purchase.documentType} #${params.purchase.folio})`
+                            )
+                        ),
+                        sanitizeTemplateParameter(
+                            `$${params.purchase.totalAmountClp.toLocaleString('es-CL')} CLP`
+                        ),
+                        sanitizeTemplateParameter(
+                            minimizePiiForWhatsAppMeta(
+                                params.alerts[0] || 'Registrada en inventario/activos'
+                            )
+                        ),
                     ]
                 );
                 if (res.ok) {
@@ -276,7 +372,13 @@ export class EmailAndWhatsAppNotifier {
     }
 
     /**
-     * Envía confirmación o actualización de estado al solicitante de terreno por WhatsApp en burbuja única.
+     * Envía confirmación o actualización de estado al solicitante de terreno por WhatsApp:
+     * - Respeta `quietHoursStart`/`quietHoursEnd` en la zona horaria IANA del sitio salvo `urgent: true`.
+     * - Si `forceTemplate` o `!lastInboundAtMs` o transcurrieron `>= 23.5h` desde `lastInboundAtMs`
+     *   (fuera de ventana CSW 24h Meta): envía obligatoriamente el template HSM UTILITY
+     *   `minreport_field_reception_update` (`es`) con parámetros saneados y minimización PII.
+     * - Si dentro de la ventana 24h `sendTextMessage` devuelve `cswExpired` (error Meta `131047`),
+     *   ejecuta fallback automático al mismo HSM `minreport_field_reception_update`.
      */
     public static async sendFieldStatusUpdate(params: {
         toE164: string;
@@ -284,14 +386,71 @@ export class EmailAndWhatsAppNotifier {
         siteName?: string;
         statusLabel: string;
         summaryLines: string[];
+        lastInboundAtMs?: number | null;
+        notificationPreferences?: Partial<NotificationPreferences>;
+        timezoneIana?: string;
+        urgent?: boolean;
+        forceTemplate?: boolean;
+        nowMs?: number;
     }): Promise<WhatsAppSendResult> {
-        const header = `MINREPORT · ${params.requisitionId}${params.siteName ? ` (${params.siteName})` : ''}`;
+        const nowMs = typeof params.nowMs === 'number' && Number.isFinite(params.nowMs) ? params.nowMs : Date.now();
+        const tz = params.timezoneIana || 'America/Santiago';
+
+        if (!params.urgent && isWithinQuietHours(nowMs, params.notificationPreferences, tz)) {
+            return {
+                ok: true,
+                mocked: false,
+                statusCode: 202,
+                skippedReason: 'QUIET_HOURS_DEFERRED',
+            };
+        }
+
+        const safeLines = params.summaryLines.map((line) => minimizePiiForWhatsAppMeta(line));
+        const safeSite = params.siteName ? minimizePiiForWhatsAppMeta(params.siteName) : undefined;
+        const safeStatus = minimizePiiForWhatsAppMeta(params.statusLabel);
+
+        const hsmParams = [
+            sanitizeTemplateParameter(params.requisitionId),
+            sanitizeTemplateParameter(safeSite || 'Faena'),
+            sanitizeTemplateParameter(safeStatus),
+            sanitizeTemplateParameter(safeLines.join(' | ') || 'Sin detalle adicional'),
+        ];
+
+        const hasValidInboundTs =
+            typeof params.lastInboundAtMs === 'number' &&
+            Number.isFinite(params.lastInboundAtMs) &&
+            params.lastInboundAtMs > 0;
+        const outsideCswWindow =
+            Boolean(params.forceTemplate) ||
+            !hasValidInboundTs ||
+            nowMs - (params.lastInboundAtMs as number) >= CSW_SAFE_WINDOW_MS;
+
+        if (outsideCswWindow) {
+            return MetaWhatsAppCloudAdapter.sendTemplateMessage(
+                params.toE164,
+                FIELD_RECEPTION_HSM_TEMPLATE,
+                'es',
+                hsmParams
+            );
+        }
+
+        const header = `MINREPORT · ${params.requisitionId}${safeSite ? ` (${safeSite})` : ''}`;
         const body = [
             header,
-            `Estado: ${params.statusLabel}`,
-            ...params.summaryLines.map((line, idx) => `${idx + 1}. ${line}`),
+            `Estado: ${safeStatus}`,
+            ...safeLines.map((line, idx) => `${idx + 1}. ${line}`),
         ].join('\n');
 
-        return MetaWhatsAppCloudAdapter.sendTextMessage(params.toE164, body);
+        const textResult = await MetaWhatsAppCloudAdapter.sendTextMessage(params.toE164, body);
+        if (!textResult.ok && (textResult.cswExpired || textResult.metaErrorCode === 131047)) {
+            return MetaWhatsAppCloudAdapter.sendTemplateMessage(
+                params.toE164,
+                FIELD_RECEPTION_HSM_TEMPLATE,
+                'es',
+                hsmParams
+            );
+        }
+
+        return textResult;
     }
 }

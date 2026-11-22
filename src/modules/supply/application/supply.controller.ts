@@ -40,6 +40,7 @@ import {
     ReceiptIntelligencePipeline,
 } from './ReceiptIntelligencePipeline';
 import {
+    SUPPLY_COLLECTIONS,
     SupplyConflictError,
     SupplyDuplicateSiiDocumentError,
     SupplyForbiddenError,
@@ -56,6 +57,7 @@ import {
     EvidenceCasRefSchema,
     exportSiiDocumentsToCsv,
     HitlConfirmationKeywordSchema,
+    maskPiiForLog,
     normalizeSupplyItemFromText,
     PaymentMethodSchema,
     PurchaseLineDestinationSchema,
@@ -1003,13 +1005,30 @@ router.post(
                     ? req.headers['x-hub-signature-256']
                     : undefined;
 
-            const rawBodyForHmac: Buffer = Buffer.isBuffer(req.rawBody)
-                ? req.rawBody
-                : Buffer.from(JSON.stringify(req.body || {}), 'utf8');
+            if (!Buffer.isBuffer(req.rawBody) || req.rawBody.length === 0) {
+                return res.status(401).json({
+                    error: 'INVALID_WHATSAPP_SIGNATURE',
+                    message: 'Cuerpo crudo (rawBody) requerido para verificación criptográfica HMAC-SHA256.',
+                });
+            }
+
+            const incomingPhoneNumberIds = MetaWhatsAppCloudAdapter.extractWebhookPhoneNumberIds(req.body);
+            const resolvedChannels = new Map<
+                string,
+                Awaited<ReturnType<typeof MetaWhatsAppCloudAdapter.resolveChannelConfig>>
+            >();
+            for (const pid of incomingPhoneNumberIds) {
+                resolvedChannels.set(pid, await MetaWhatsAppCloudAdapter.resolveChannelConfig(pid));
+            }
+
+            const channelAppSecret =
+                Array.from(resolvedChannels.values()).find((cfg) => cfg?.appSecret)?.appSecret ||
+                undefined;
 
             const isValidSig = await MetaWhatsAppCloudAdapter.verifyWebhookSignature(
-                rawBodyForHmac,
-                sigHeader
+                req.rawBody,
+                sigHeader,
+                channelAppSecret
             );
 
             if (!isValidSig) {
@@ -1019,7 +1038,56 @@ router.post(
                 });
             }
 
-            const inboundEvents = MetaWhatsAppCloudAdapter.parseWebhookEvents(req.body);
+            const isAuthorizedPhoneNumberId = (phoneNumberId?: string): boolean => {
+                if (!phoneNumberId) return true;
+                return Boolean(resolvedChannels.get(phoneNumberId));
+            };
+
+            const allStatusEvents = MetaWhatsAppCloudAdapter.extractStatusEvents(req.body);
+            const authorizedStatusEvents = allStatusEvents.filter((st) =>
+                isAuthorizedPhoneNumberId(st.phoneNumberId)
+            );
+            const statuses: Array<{ wamid: string; status: string; errorCodes: number[] }> = [];
+
+            for (const st of authorizedStatusEvents) {
+                const errorCodes = st.errors.map((e) => e.code);
+                statuses.push({
+                    wamid: st.wamid,
+                    status: st.status,
+                    errorCodes,
+                });
+                if (st.status === 'failed') {
+                    console.warn(
+                        `[SUPPLY-WA-STATUS] Entrega fallida wamid=${st.wamid} dest=${maskPiiForLog(st.recipientId || '')} codes=${errorCodes.join(',') || 'unknown'}`
+                    );
+                }
+                const safeStatusDocId = st.wamid.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 128);
+                await db
+                    .collection(SUPPLY_COLLECTIONS.WHATSAPP_WAMIDS)
+                    .doc(safeStatusDocId)
+                    .set(
+                        {
+                            wamid: st.wamid,
+                            deliveryStatus: st.status,
+                            deliveryStatusAt: new Date(st.timestampMs).toISOString(),
+                            deliveryErrorCodes: errorCodes,
+                            updatedAt: new Date().toISOString(),
+                            ttlExpiresAt: SupplyRepository.computeWhatsAppWamidTtl(),
+                        },
+                        { merge: true }
+                    )
+                    .catch(() => {});
+            }
+
+            const allInboundEvents = MetaWhatsAppCloudAdapter.parseWebhookEvents(req.body);
+            const inboundEvents = allInboundEvents.filter((ev) =>
+                isAuthorizedPhoneNumberId(ev.phoneNumberId)
+            );
+            const ignoredUnknownChannels =
+                allInboundEvents.length -
+                inboundEvents.length +
+                (allStatusEvents.length - authorizedStatusEvents.length);
+
             const flushImmediately =
                 process.env.NODE_ENV === 'test' && req.query.flush === 'true';
 
@@ -1055,6 +1123,9 @@ router.post(
             return res.status(200).json({
                 ok: true,
                 received: inboundEvents.length,
+                ignoredUnknownChannels,
+                statusesProcessed: statuses.length,
+                statuses,
                 results,
             });
         } catch (err) {

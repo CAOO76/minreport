@@ -1690,10 +1690,10 @@ async function runTests(): Promise<void> {
             });
             assert.equal(rfqResp.status, 201);
 
-            // MetaWhatsAppCloudAdapter.downloadMedia CDN allowlist verification
+            // MetaWhatsAppCloudAdapter.downloadMedia CDN allowlist verification (Graph API v24.0)
             MetaWhatsAppCloudAdapter.setCustomFetchForTests(async (url: any) => {
                 const u = String(url);
-                if (u.includes('graph.facebook.com/v21.0/media_ok_123')) {
+                if (u.includes('graph.facebook.com/v24.0/media_ok_123')) {
                     return new Response(
                         JSON.stringify({
                             url: 'https://lookaside.fbsbx.com/whatsapp_business/attachments/?mid=123',
@@ -1702,7 +1702,7 @@ async function runTests(): Promise<void> {
                         { status: 200, headers: { 'Content-Type': 'application/json' } }
                     );
                 }
-                if (u.includes('graph.facebook.com/v21.0/media_evil_999')) {
+                if (u.includes('graph.facebook.com/v24.0/media_evil_999')) {
                     return new Response(
                         JSON.stringify({
                             url: 'https://evil.example.com/steal-bearer',

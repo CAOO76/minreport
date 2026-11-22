@@ -233,11 +233,17 @@ export interface SafeFetchOptions extends RequestInit {
 }
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+const CROSS_ORIGIN_STRIP_HEADERS = [
+    'authorization',
+    'cookie',
+    'proxy-authorization',
+] as const;
 
 /**
  * Ejecuta `fetch` hacia un recurso externo validando DNS anti-SSRF antes de cada salto
- * (máximo 3 redirecciones manuales verificadas o `redirect: 'error'` si `maxRedirects === 0`)
- * y aplicando cota estricta de memoria si se especifica `maxBytes`.
+ * (máximo 3 redirecciones manuales verificadas o `redirect: 'error'` si `maxRedirects === 0`),
+ * eliminando cabeceras sensibles (`Authorization`, `Cookie`, `Proxy-Authorization`) en redirects
+ * cross-origin y aplicando cota estricta de memoria si se especifica `maxBytes`.
  */
 export async function safeFetchExternal(
     rawUrl: string,
@@ -247,17 +253,20 @@ export async function safeFetchExternal(
         maxBytes = 25 * 1024 * 1024,
         maxRedirects = init.redirect === 'error' ? 0 : 3,
         timeoutMs = 15_000,
+        headers: initialHeaders,
         ...fetchInit
     } = init;
 
     let currentUrl = await assertSafeExternalUrl(rawUrl);
     let currentMethod = (fetchInit.method || 'GET').toUpperCase();
     let currentBody = fetchInit.body;
+    const currentHeaders = new Headers(initialHeaders || undefined);
 
     for (let hop = 0; hop <= maxRedirects; hop++) {
         const signal = fetchInit.signal ?? AbortSignal.timeout(timeoutMs);
         const response = await fetch(currentUrl.toString(), {
             ...fetchInit,
+            headers: currentHeaders,
             method: currentMethod,
             body: currentBody,
             redirect: maxRedirects === 0 ? 'error' : 'manual',
@@ -289,7 +298,14 @@ export async function safeFetchExternal(
                 throw new SSRFBlockedError('Cabecera Location de redirección malformada.');
             }
 
-            currentUrl = await assertSafeExternalUrl(nextCandidate);
+            const previousUrl = currentUrl;
+            const nextUrl = await assertSafeExternalUrl(nextCandidate);
+            if (nextUrl.origin !== previousUrl.origin) {
+                for (const sensitiveHeader of CROSS_ORIGIN_STRIP_HEADERS) {
+                    currentHeaders.delete(sensitiveHeader);
+                }
+            }
+            currentUrl = nextUrl;
 
             if (
                 response.status === 303 ||

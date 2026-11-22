@@ -404,27 +404,148 @@ export function normalizeTaxId(rawInput: string, countryCode: string = 'CL'): st
     return res.valid ? res.normalized : null;
 }
 
-/**
- * Normaliza y valida teléfonos internacionales bajo el estándar ITU-T E.164 (`+[1-9]\d{6,14}`).
- */
-export function normalizeE164Phone(rawPhone: string): string {
-    const trimmed = String(rawPhone || '').trim();
-    if (!trimmed) return '';
-    const hasPlus = trimmed.startsWith('+') || trimmed.startsWith('00');
-    const digitsOnly = trimmed.replace(/\D/g, '');
-    if (!digitsOnly) return '';
-    if (trimmed.startsWith('00')) {
-        return `+${digitsOnly.slice(2)}`;
-    }
-    return hasPlus ? `+${digitsOnly}` : `+${digitsOnly}`;
+interface CountryE164Rule {
+    countryCode: string;
+    dialPrefix: string;
+    minTotalDigits: number;
+    maxTotalDigits: number;
+    pattern: RegExp;
+    label: string;
 }
 
-export function validateE164Phone(rawPhone: string): E164PhoneValidationResult {
+const STRICT_COUNTRY_E164_RULES: readonly CountryE164Rule[] = [
+    {
+        countryCode: 'CL',
+        dialPrefix: '56',
+        minTotalDigits: 11,
+        maxTotalDigits: 11,
+        pattern: /^\+56[2-9]\d{8}$/,
+        label: 'Chile (+56, 11 dígitos totales ej. +569XXXXXXXX o +562XXXXXXXX)',
+    },
+    {
+        countryCode: 'PE',
+        dialPrefix: '51',
+        minTotalDigits: 11,
+        maxTotalDigits: 11,
+        pattern: /^\+51\d{9}$/,
+        label: 'Perú (+51, 11 dígitos totales)',
+    },
+    {
+        countryCode: 'BR',
+        dialPrefix: '55',
+        minTotalDigits: 12,
+        maxTotalDigits: 13,
+        pattern: /^\+55\d{10,11}$/,
+        label: 'Brasil (+55, 12 a 13 dígitos totales)',
+    },
+    {
+        countryCode: 'MX',
+        dialPrefix: '52',
+        minTotalDigits: 12,
+        maxTotalDigits: 12,
+        pattern: /^\+52\d{10}$/,
+        label: 'México (+52, 12 dígitos totales)',
+    },
+    {
+        countryCode: 'CO',
+        dialPrefix: '57',
+        minTotalDigits: 12,
+        maxTotalDigits: 12,
+        pattern: /^\+57\d{10}$/,
+        label: 'Colombia (+57, 12 dígitos totales)',
+    },
+    {
+        countryCode: 'AR',
+        dialPrefix: '54',
+        minTotalDigits: 12,
+        maxTotalDigits: 13,
+        pattern: /^\+54\d{10,11}$/,
+        label: 'Argentina (+54, 12 a 13 dígitos totales)',
+    },
+    {
+        countryCode: 'AU',
+        dialPrefix: '61',
+        minTotalDigits: 11,
+        maxTotalDigits: 11,
+        pattern: /^\+61\d{9}$/,
+        label: 'Australia (+61, 11 dígitos totales)',
+    },
+    {
+        countryCode: 'US',
+        dialPrefix: '1',
+        minTotalDigits: 11,
+        maxTotalDigits: 11,
+        pattern: /^\+1\d{10}$/,
+        label: 'US/CA (+1, 11 dígitos totales)',
+    },
+];
+
+const COUNTRY_DEFAULT_DIAL_PREFIX: Record<string, { dialPrefix: string; localMin: number; localMax: number }> = {
+    CL: { dialPrefix: '56', localMin: 9, localMax: 9 },
+    PE: { dialPrefix: '51', localMin: 9, localMax: 9 },
+    BR: { dialPrefix: '55', localMin: 10, localMax: 11 },
+    MX: { dialPrefix: '52', localMin: 10, localMax: 10 },
+    CO: { dialPrefix: '57', localMin: 10, localMax: 10 },
+    AR: { dialPrefix: '54', localMin: 10, localMax: 11 },
+    AU: { dialPrefix: '61', localMin: 9, localMax: 9 },
+    US: { dialPrefix: '1', localMin: 10, localMax: 10 },
+    CA: { dialPrefix: '1', localMin: 10, localMax: 10 },
+};
+
+function findCountryE164RuleByNormalized(normalized: string): CountryE164Rule | undefined {
+    const digits = normalized.startsWith('+') ? normalized.slice(1) : normalized;
+    // Evaluar prefijos de 2 dígitos antes que el prefijo '1' (US/CA)
+    for (const rule of STRICT_COUNTRY_E164_RULES) {
+        if (digits.startsWith(rule.dialPrefix)) {
+            return rule;
+        }
+    }
+    return undefined;
+}
+
+/**
+ * Normaliza teléfonos internacionales bajo el estándar ITU-T E.164 (`+[1-9]\d{6,14}`).
+ * Si se entrega `defaultCountryCode` (ej. `'CL'`) y un número local sin `+`, antepone el código de país.
+ */
+export function normalizeE164Phone(rawPhone: string, defaultCountryCode?: string): string {
+    const trimmed = String(rawPhone || '').trim();
+    if (!trimmed) return '';
+    const startsWithPlus = trimmed.startsWith('+');
+    const startsWithDoubleZero = trimmed.startsWith('00');
+    const digitsOnly = trimmed.replace(/\D/g, '');
+    if (!digitsOnly) return '';
+    if (startsWithDoubleZero) {
+        const stripped = digitsOnly.slice(2);
+        return stripped ? `+${stripped}` : '';
+    }
+    if (!startsWithPlus && defaultCountryCode) {
+        const iso = String(defaultCountryCode).trim().toUpperCase();
+        const cfg = COUNTRY_DEFAULT_DIAL_PREFIX[iso];
+        if (
+            cfg &&
+            !digitsOnly.startsWith(cfg.dialPrefix) &&
+            digitsOnly.length >= cfg.localMin &&
+            digitsOnly.length <= cfg.localMax
+        ) {
+            return `+${cfg.dialPrefix}${digitsOnly}`;
+        }
+    }
+    return `+${digitsOnly}`;
+}
+
+/**
+ * Valida teléfonos bajo estándar ITU-T E.164 con longitudes estrictas por país
+ * (`CL`, `PE`, `BR`, `MX`, `CO`, `AR`, `AU`, `US/CA`) y fallback genérico `^\+[1-9]\d{6,14}$`.
+ */
+export function validateE164Phone(
+    rawPhone: string,
+    expectedCountryCode?: string
+): E164PhoneValidationResult {
     const rawTrimmed = String(rawPhone || '').trim();
     if (!rawTrimmed.startsWith('+')) {
         return {
             valid: false,
-            normalized: normalizeE164Phone(rawTrimmed),
+            normalized: normalizeE164Phone(rawTrimmed, expectedCountryCode),
             reason: 'Teléfono E.164 debe iniciar explícitamente con prefijo internacional "+".',
         };
     }
@@ -436,6 +557,29 @@ export function validateE164Phone(rawPhone: string): E164PhoneValidationResult {
             reason: 'Formato ITU-T E.164 inválido (se requiere +[1-9] seguido de 6 a 14 dígitos).',
         };
     }
+
+    const detectedRule = findCountryE164RuleByNormalized(normalized);
+    if (detectedRule && !detectedRule.pattern.test(normalized)) {
+        return {
+            valid: false,
+            normalized,
+            reason: `Longitud o estructura E.164 inválida para ${detectedRule.label}.`,
+        };
+    }
+
+    if (expectedCountryCode) {
+        const expectedIso = String(expectedCountryCode).trim().toUpperCase();
+        const canonicalExpected = expectedIso === 'CA' ? 'US' : expectedIso;
+        const expectedRule = STRICT_COUNTRY_E164_RULES.find((r) => r.countryCode === canonicalExpected);
+        if (expectedRule && !expectedRule.pattern.test(normalized)) {
+            return {
+                valid: false,
+                normalized,
+                reason: `El número no cumple formato E.164 esperado para ${expectedRule.label}.`,
+            };
+        }
+    }
+
     return {
         valid: true,
         normalized,
