@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { PDFDocument } from 'pdf-lib';
+import { PDFDocument, PDFName } from 'pdf-lib';
 import sharp from 'sharp';
 import type { MediaDigestionProfile } from '../../contracts/media.contracts';
 import { importEsm } from '../esm-loader';
@@ -175,6 +175,66 @@ export class MediaDigestorServer {
     }
 
     /**
+     * Digestor XML DTE SII (`XML_DTE_DOCUMENT`):
+     * Preserva intactos los bytes internos de `<TED>` y `<Signature>` (RSA-SHA1 / XMLDSig SII),
+     * normalizando únicamente BOM UTF-8 y espacios/saltos de línea externos seguros a nivel de bytes.
+     */
+    public static async digestXmlDte(xmlInput: Buffer | string): Promise<DigestedBinaryOutput> {
+        const rawBuffer = Buffer.isBuffer(xmlInput) ? xmlInput : Buffer.from(String(xmlInput || ''), 'utf8');
+        const originalBytes = rawBuffer.length;
+
+        let start = 0;
+        let end = rawBuffer.length;
+
+        // Remover BOM UTF-8 (EF BB BF) si existe al inicio del archivo
+        if (
+            end - start >= 3 &&
+            rawBuffer[start] === 0xef &&
+            rawBuffer[start + 1] === 0xbb &&
+            rawBuffer[start + 2] === 0xbf
+        ) {
+            start += 3;
+        }
+
+        const isAsciiWhitespace = (b: number): boolean =>
+            b === 0x20 || b === 0x09 || b === 0x0a || b === 0x0d;
+
+        while (start < end && isAsciiWhitespace(rawBuffer[start])) {
+            start += 1;
+        }
+        while (end > start && isAsciiWhitespace(rawBuffer[end - 1])) {
+            end -= 1;
+        }
+
+        const outBuffer = Buffer.from(rawBuffer.subarray(start, end));
+        if (outBuffer.length < 3 || outBuffer[0] !== 0x3c || outBuffer[outBuffer.length - 1] !== 0x3e) {
+            const err = new Error(
+                'INVALID_XML_DTE_DOCUMENT: Contenido XML DTE vacío o sin estructura XML válida.'
+            ) as Error & { code?: string };
+            err.code = 'INVALID_XML_DTE_DOCUMENT';
+            throw err;
+        }
+
+        const optimizedBytes = outBuffer.length;
+        const sha256 = this.computeSha256Hex(outBuffer);
+        const savingsRatio =
+            originalBytes > 0
+                ? Math.max(0, Number(((originalBytes - optimizedBytes) / originalBytes).toFixed(4)))
+                : 0;
+
+        return {
+            buffer: outBuffer,
+            sha256,
+            mimeType: 'application/xml',
+            extension: 'xml',
+            profile: 'XML_DTE_DOCUMENT',
+            originalBytes,
+            optimizedBytes,
+            savingsRatio,
+        };
+    }
+
+    /**
      * Optimiza imágenes fotográficas, esquemas técnicos o recortes ISO hacia WebP limpio sin EXIF
      */
     public static async digestImage(
@@ -264,40 +324,46 @@ export class MediaDigestorServer {
         let srcDoc: PDFDocument;
         try {
             srcDoc = await PDFDocument.load(pdfBuffer, {
-                ignoreEncryption: true,
+                ignoreEncryption: false,
                 updateMetadata: false,
             });
-        } catch {
-            // Si el PDF tiene estructura exótica no editable por pdf-lib, devolver el binario original con su SHA-256
-            const sha256 = this.computeSha256Hex(pdfBuffer);
-            return {
-                buffer: pdfBuffer,
-                sha256,
-                mimeType: 'application/pdf',
-                extension: 'pdf',
-                profile: 'PDF_HYBRID_OEM',
-                originalBytes,
-                optimizedBytes: originalBytes,
-                savingsRatio: 0,
-            };
+        } catch (err: any) {
+            const failErr = new Error(
+                `PDF_SANITIZATION_FAILED: No fue posible parsear ni purgar metadatos XMP/Autor/Productor del PDF (${err?.message || 'archivo corrupto o cifrado'}).`
+            ) as Error & { code?: string };
+            failErr.code = 'PDF_SANITIZATION_FAILED';
+            throw failErr;
         }
 
-        // Purgar metadatos privados de autoría / corporativos (Zero-Trust Privacy)
-        srcDoc.setAuthor('');
-        srcDoc.setCreator('MINREPORT MediaDigestor v4.0');
-        srcDoc.setProducer('MINREPORT Industrial Core');
-        srcDoc.setSubject('');
-        srcDoc.setKeywords([]);
+        let pageCount = 0;
+        let bestBuffer: Buffer;
+        try {
+            // Purgar metadatos privados de autoría, XMP y productor (Zero-Trust Privacy Ley N° 21.719)
+            srcDoc.setAuthor('');
+            srcDoc.setCreator('MINREPORT MediaDigestor v4.0');
+            srcDoc.setProducer('MINREPORT Industrial Core');
+            srcDoc.setSubject('');
+            srcDoc.setKeywords([]);
+            try {
+                srcDoc.catalog.delete(PDFName.of('Metadata'));
+            } catch {
+                // Continuar si el catálogo no contiene stream XMP /Metadata
+            }
 
-        const pageCount = srcDoc.getPageCount();
-        const phase1Bytes = await srcDoc.save({
-            useObjectStreams: true,
-            addDefaultPage: false,
-            objectsPerTick: 100,
-        });
-        let bestBuffer: Buffer = Buffer.from(phase1Bytes.buffer, phase1Bytes.byteOffset, phase1Bytes.byteLength);
-        if (bestBuffer.length > originalBytes) {
-            bestBuffer = Buffer.from(pdfBuffer);
+            pageCount = srcDoc.getPageCount();
+            const phase1Bytes = await srcDoc.save({
+                useObjectStreams: true,
+                addDefaultPage: false,
+                objectsPerTick: 100,
+            });
+            // Jamás revertir al buffer crudo sin purgar aunque phase1 tenga leves bytes extra
+            bestBuffer = Buffer.from(phase1Bytes.buffer, phase1Bytes.byteOffset, phase1Bytes.byteLength);
+        } catch (err: any) {
+            const failErr = new Error(
+                `PDF_SANITIZATION_FAILED: Fallo al purgar metadatos XMP/Autor/Productor y re-serializar PDF (${err?.message || 'error interno pdf-lib'}).`
+            ) as Error & { code?: string };
+            failErr.code = 'PDF_SANITIZATION_FAILED';
+            throw failErr;
         }
 
         let resampledPages = 0;
@@ -458,6 +524,15 @@ export class MediaDigestorServer {
             return this.digestPdf(inputBuffer, {
                 enableSelectiveRaster: options?.enableSelectiveRaster ?? true,
             });
+        }
+
+        if (
+            requestedProfile === 'XML_DTE_DOCUMENT' ||
+            lowerMime === 'application/xml' ||
+            lowerMime === 'text/xml' ||
+            lowerMime.includes('xml')
+        ) {
+            return this.digestXmlDte(inputBuffer);
         }
 
         if (lowerMime.startsWith('image/')) {

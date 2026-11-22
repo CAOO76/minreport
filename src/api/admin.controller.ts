@@ -1362,6 +1362,157 @@ export const deleteTenant = async (req: express.Request, res: express.Response) 
     }
 };
 
+const TENANT_SUPPLY_PURGE_COLLECTIONS = [
+    'supply_sites',
+    'supply_warehouses',
+    'supply_inventory_items',
+    'supply_requisitions',
+    'supply_purchases',
+    'supply_sii_documents',
+    'supply_expense_reports',
+    'supply_cash_ledger',
+    'supply_stock_ledger',
+    'supply_assets',
+    'supply_fulfillment_allocations',
+    'supply_forecast_snapshots',
+    'supply_demand_forecasts',
+    'supply_whatsapp_sessions',
+    'supply_whatsapp_wamids',
+    'supply_policy_audit',
+    'tenant_suppliers',
+] as const;
+
+async function purgeTenantCollectionByField(
+    collectionName: string,
+    fieldName: string,
+    tenantId: string,
+    subcollections: string[] = []
+): Promise<number> {
+    let deletedTotal = 0;
+    const seenDocIds = new Set<string>();
+    const MAX_BATCH_ITERATIONS = 50;
+
+    for (let iter = 0; iter < MAX_BATCH_ITERATIONS; iter++) {
+        const snap = await db
+            .collection(collectionName)
+            .where(fieldName, '==', tenantId)
+            .limit(400)
+            .get();
+
+        if (!snap || snap.empty) break;
+
+        const docsToDelete = snap.docs.filter((d) => !seenDocIds.has(d.id));
+        if (docsToDelete.length === 0) break;
+
+        for (const docSnap of docsToDelete) {
+            seenDocIds.add(docSnap.id);
+            for (const subName of subcollections) {
+                if (typeof (docSnap.ref as any)?.collection === 'function') {
+                    try {
+                        const subSnap = await docSnap.ref.collection(subName).limit(400).get();
+                        if (subSnap && !subSnap.empty) {
+                            await Promise.all(
+                                subSnap.docs.map((sDoc) => sDoc.ref.delete().catch(() => {}))
+                            );
+                            deletedTotal += subSnap.docs.length;
+                        }
+                    } catch {
+                        // Subcolección inexistente o vacía
+                    }
+                }
+            }
+        }
+
+        if (typeof (db as any).batch === 'function') {
+            const batch = db.batch();
+            for (const docSnap of docsToDelete) {
+                batch.delete(docSnap.ref);
+            }
+            await batch.commit();
+        } else {
+            await Promise.all(docsToDelete.map((d) => d.ref.delete().catch(() => {})));
+        }
+
+        deletedTotal += docsToDelete.length;
+        if (snap.docs.length < 400) break;
+    }
+
+    return deletedTotal;
+}
+
+async function purgeTenantSupplyAndMediaAssets(tenantId: string): Promise<{
+    purgedSupplyDocs: number;
+    purgedMediaRegistryDocs: number;
+    purgedStorageBlobs: number;
+}> {
+    let purgedSupplyDocs = 0;
+    let purgedMediaRegistryDocs = 0;
+    let purgedStorageBlobs = 0;
+
+    for (const collectionName of TENANT_SUPPLY_PURGE_COLLECTIONS) {
+        try {
+            const subcols = collectionName === 'supply_requisitions' ? ['lines'] : [];
+            purgedSupplyDocs += await purgeTenantCollectionByField(
+                collectionName,
+                'tenantId',
+                tenantId,
+                subcols
+            );
+        } catch (err: any) {
+            console.warn(
+                `[ADMIN][ARCO-P] Purga parcial en colección ${collectionName} para tenant ${tenantId}:`,
+                err?.message || err
+            );
+        }
+    }
+
+    try {
+        purgedMediaRegistryDocs += await purgeTenantCollectionByField('media_registry', 'tenantId', tenantId);
+        purgedMediaRegistryDocs += await purgeTenantCollectionByField('media_registry', 'tenant_id', tenantId);
+    } catch (err: any) {
+        console.warn(
+            `[ADMIN][ARCO-P] Purga parcial en media_registry para tenant ${tenantId}:`,
+            err?.message || err
+        );
+    }
+
+    const safeTenant = CasStorageService.sanitizeTenantIdForPath(tenantId);
+    if (safeTenant) {
+        try {
+            const bucket = storage.bucket();
+            const prefix = `cas_blobs/tenants/${safeTenant}/`;
+            if (bucket && typeof (bucket as any).getFiles === 'function') {
+                const [files] = await (bucket as any).getFiles({ prefix });
+                const fileList = Array.isArray(files) ? files : [];
+                for (let i = 0; i < fileList.length; i += 50) {
+                    const chunk = fileList.slice(i, i + 50);
+                    await Promise.all(
+                        chunk.map((fileRef: any) =>
+                            typeof fileRef?.delete === 'function'
+                                ? fileRef.delete({ ignoreNotFound: true }).catch(() => {})
+                                : Promise.resolve()
+                        )
+                    );
+                }
+                purgedStorageBlobs = fileList.length;
+            } else if (bucket && typeof (bucket as any).deleteFiles === 'function') {
+                await (bucket as any).deleteFiles({ prefix, force: true });
+            }
+        } catch (storageErr: any) {
+            console.warn(
+                `[ADMIN][ARCO-P] Limpieza Storage CAS omitida/parcial para ${safeTenant}:`,
+                storageErr?.message || storageErr
+            );
+        }
+    }
+
+    return {
+        purgedSupplyDocs,
+        purgedMediaRegistryDocs,
+        purgedStorageBlobs,
+    };
+}
+
 const purgeTenantBodySchema = z.object({
     reason: z.string().max(500).optional(),
     confirmationWord: z.string().max(32).optional(),
@@ -1381,6 +1532,7 @@ export const purgeTenant = async (req: express.Request, res: express.Response) =
         }
 
         await cleanupAccountMembers(uid, true);
+        const arcoPurge = await purgeTenantSupplyAndMediaAssets(uid);
 
         await db.collection('tenants').doc(uid).delete();
         await db.collection('accounts').doc(uid).delete();
@@ -1389,13 +1541,20 @@ export const purgeTenant = async (req: express.Request, res: express.Response) =
             req,
             'PURGE_TENANT',
             uid,
-            { outcome: 'PERMANENT_PURGE', reason: parsedBody.data?.reason || null },
+            {
+                outcome: 'PERMANENT_PURGE',
+                reason: parsedBody.data?.reason || null,
+                purgedSupplyDocs: arcoPurge.purgedSupplyDocs,
+                purgedMediaRegistryDocs: arcoPurge.purgedMediaRegistryDocs,
+                purgedStorageBlobs: arcoPurge.purgedStorageBlobs,
+            },
             uid
         );
 
         return res.status(200).json({
             success: true,
-            message: 'Tenant permanently purged.'
+            message: 'Tenant permanently purged.',
+            arcoPurge,
         });
     } catch (error) {
         console.error('[ADMIN] Purge error:', error);

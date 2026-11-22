@@ -1,6 +1,7 @@
+import crypto from 'crypto';
 import { Response, Router } from 'express';
 import { db, auth } from '../config/firebase';
-import { EmailService } from '../services/EmailService';
+import { EmailService, maskEmailForLog } from '../services/EmailService';
 import { env, getCanonicalWebUrl } from '../config/env';
 import { generateSetupToken } from '../utils/security';
 import { cleanRut, getRutVariants } from '../utils/rut';
@@ -1114,6 +1115,123 @@ router.delete('/members/:memberUid', async (req: AuthRequest, res: Response): Pr
 
         await batch.commit();
 
+        // ARCO-P (Ley N° 21.719): purgar sesiones WhatsApp activas del integrante y anonimizar
+        // datos de contacto personal en requisiciones y rendiciones conservando la integridad fiscal.
+        const nowIso = new Date().toISOString();
+        const removedEmailRaw = String(memberData.email || userData.email || '').trim().toLowerCase();
+        const removedEmailHash = removedEmailRaw
+            ? crypto.createHash('sha256').update(removedEmailRaw).digest('hex')
+            : null;
+        const removedEmailMasked = removedEmailRaw ? maskEmailForLog(removedEmailRaw) : null;
+
+        const rawPhone = String(memberData.phoneE164 || userData.phoneE164 || '').trim();
+        const phoneValidation = rawPhone ? validateE164Phone(rawPhone) : null;
+        const normalizedPhone = phoneValidation?.valid ? phoneValidation.normalized : rawPhone || null;
+        const phoneHash = normalizedPhone
+            ? crypto.createHash('sha256').update(normalizedPhone).digest('hex')
+            : null;
+        const safeTenantSlug = accountId.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 40);
+        const deterministicSessionId = normalizedPhone
+            ? `wasess_${safeTenantSlug}_${crypto
+                  .createHash('sha256')
+                  .update(`${accountId}::${normalizedPhone}`)
+                  .digest('hex')
+                  .slice(0, 20)}`
+            : null;
+
+        let purgedWhatsappSessions = 0;
+        let anonymizedRequisitions = 0;
+        let anonymizedExpenseReports = 0;
+
+        try {
+            const deletedSessionIds = new Set<string>();
+            const sessSnap = await db
+                .collection('supply_whatsapp_sessions')
+                .where('tenantId', '==', accountId)
+                .get();
+            for (const sDoc of sessSnap.docs) {
+                const sData = sDoc.data() || {};
+                const matchesMember =
+                    sData.memberUid === memberUid ||
+                    (normalizedPhone && sData.phoneE164 === normalizedPhone) ||
+                    (rawPhone && sData.phoneE164 === rawPhone) ||
+                    (phoneHash && sData.phoneHash === phoneHash) ||
+                    (deterministicSessionId && sDoc.id === deterministicSessionId);
+                if (matchesMember) {
+                    await sDoc.ref.delete().catch(() => {});
+                    deletedSessionIds.add(sDoc.id);
+                    purgedWhatsappSessions += 1;
+                }
+            }
+            if (deterministicSessionId && !deletedSessionIds.has(deterministicSessionId)) {
+                const directSessRef = db.collection('supply_whatsapp_sessions').doc(deterministicSessionId);
+                const directSessSnap = await directSessRef.get().catch(() => null);
+                if (directSessSnap?.exists) {
+                    await directSessRef.delete().catch(() => {});
+                    purgedWhatsappSessions += 1;
+                }
+            }
+        } catch (arcoSessErr) {
+            console.warn('[Staff API][ARCO-P] Error purgando sesiones WhatsApp:', arcoSessErr);
+        }
+
+        try {
+            const reqSnap = await db
+                .collection('supply_requisitions')
+                .where('tenantId', '==', accountId)
+                .get();
+            for (const rDoc of reqSnap.docs) {
+                const rData = rDoc.data() || {};
+                const matchesRequester =
+                    rData.requesterUid === memberUid ||
+                    (phoneHash && rData.requesterPhoneHash === phoneHash) ||
+                    (normalizedPhone && rData.requesterPhoneE164 === normalizedPhone);
+                if (matchesRequester) {
+                    await rDoc.ref
+                        .set(
+                            {
+                                requesterName: '[ANONIMIZADO_ARCO_P]',
+                                requesterPhoneE164: null,
+                                requesterPhoneMasked: null,
+                                requesterPhoneHash: null,
+                                arcoAnonymizedAt: nowIso,
+                                updatedAt: nowIso,
+                            },
+                            { merge: true }
+                        )
+                        .catch(() => {});
+                    anonymizedRequisitions += 1;
+                }
+            }
+        } catch (arcoReqErr) {
+            console.warn('[Staff API][ARCO-P] Error anonimizando requisiciones:', arcoReqErr);
+        }
+
+        try {
+            const expSnap = await db
+                .collection('supply_expense_reports')
+                .where('tenantId', '==', accountId)
+                .get();
+            for (const eDoc of expSnap.docs) {
+                const eData = eDoc.data() || {};
+                if (eData.custodianUid === memberUid) {
+                    await eDoc.ref
+                        .set(
+                            {
+                                custodianName: '[ANONIMIZADO_ARCO_P]',
+                                arcoAnonymizedAt: nowIso,
+                                updatedAt: nowIso,
+                            },
+                            { merge: true }
+                        )
+                        .catch(() => {});
+                    anonymizedExpenseReports += 1;
+                }
+            }
+        } catch (arcoExpErr) {
+            console.warn('[Staff API][ARCO-P] Error anonimizando rendiciones SII:', arcoExpErr);
+        }
+
         await AuditLedger.record({
             tenantId: accountId,
             actorUid: authz.actorUid,
@@ -1122,8 +1240,12 @@ router.delete('/members/:memberUid', async (req: AuthRequest, res: Response): Pr
             module: 'b2b-core',
             targetEntity: memberUid,
             details: {
-                removedEmail: memberData.email || userData.email || null,
+                removedEmailMasked,
+                removedEmailHash,
                 removedRole: currentNormalizedRole,
+                arcoPurgedWhatsappSessions: purgedWhatsappSessions,
+                arcoAnonymizedRequisitions: anonymizedRequisitions,
+                arcoAnonymizedExpenseReports: anonymizedExpenseReports,
             },
             ipAddress: extractClientIp(req),
         });
@@ -1131,6 +1253,11 @@ router.delete('/members/:memberUid', async (req: AuthRequest, res: Response): Pr
         return res.status(200).json({
             success: true,
             uid: memberUid,
+            arcoCleanup: {
+                purgedWhatsappSessions,
+                anonymizedRequisitions,
+                anonymizedExpenseReports,
+            },
         });
     } catch (error: any) {
         console.error('[Staff API] Error removiendo integrante:', error);

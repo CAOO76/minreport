@@ -11,6 +11,7 @@ export const MediaDigestionProfileSchema = z.enum([
     'IMAGE_THUMBNAIL',
     'IMAGE_ISO_SYMBOL',
     'VECTOR_SVG_CLEAN',
+    'XML_DTE_DOCUMENT',
     'VIDEO_FIELD_COMPACT',
     'MESH_3D_GLB',
 ]);

@@ -115,6 +115,7 @@ function coerceDteType(code: number | undefined): SiiDteType {
 function resolveDigestionProfile(mimeType: string): MediaDigestionProfile {
     const lower = (mimeType || '').toLowerCase();
     if (lower.includes('pdf')) return 'PDF_HYBRID_OEM';
+    if (lower.includes('xml')) return 'XML_DTE_DOCUMENT';
     if (lower.startsWith('image/')) return 'IMAGE_TECHNICAL_HD';
     return 'VIDEO_FIELD_COMPACT';
 }
@@ -233,15 +234,10 @@ export class ReceiptIntelligencePipeline {
                 rawBuf.length
             );
 
-            // Para XML DTE, compactar espacios superfluos antes de almacenar en CAS preservando clientOriginalBytes
-            const bufferToDigest =
-                mimeType.includes('xml')
-                    ? Buffer.from(rawBuf.toString('utf8').replace(/>\s+</g, '><').trim(), 'utf8')
-                    : rawBuf;
-
+            // Preservar bytes originales de XML DTE para que `MediaDigestorServer.digestXmlDte` conserve `<TED>` y `<Signature>` intactos
             const profile = resolveDigestionProfile(mimeType || 'image/jpeg');
             const { descriptor, digested } = await CasStorageService.digestAndStore(
-                bufferToDigest,
+                rawBuf,
                 mimeType || 'image/jpeg',
                 profile,
                 {

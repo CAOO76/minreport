@@ -2,6 +2,10 @@ import crypto from 'crypto';
 import { db } from '../../../config/firebase';
 import { AuditLedger } from '../../../core/audit-ledger';
 import {
+    computeShortTtlTimestamp,
+    computeSixYearRetentionTimestamp,
+} from '../../../core/retention-policy';
+import {
     type AtypicalFlagCode,
     BRIDGE_CATALOG_RULES,
     buildSiiDedupeKey,
@@ -123,6 +127,43 @@ export interface AuditActorContext {
     actorUid: string;
     actorEmail: string;
     ipAddress?: string;
+}
+
+export const WHATSAPP_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
+export const WHATSAPP_WAMID_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Enmascara teléfono E.164 para minimización PII Ley N° 21.719 (ej. `+56900001234` -> `+569****1234`).
+ */
+export function maskPhoneE164(rawPhone?: string | null): string | undefined {
+    const clean = String(rawPhone || '').trim();
+    if (!clean) return undefined;
+    const compact = clean.replace(/\s+/g, '');
+    if (compact.includes('****')) return compact;
+    if (compact.length <= 4) return '****';
+    const prefixLen = compact.startsWith('+')
+        ? Math.min(4, compact.length - 4)
+        : Math.min(3, compact.length - 4);
+    return `${compact.slice(0, Math.max(0, prefixLen))}****${compact.slice(-4)}`;
+}
+
+/**
+ * Huella determinista SHA-256 del teléfono E.164 para correlación ARCO-P sin persistir texto plano.
+ */
+export function hashPhoneE164(rawPhone?: string | null): string | undefined {
+    const clean = String(rawPhone || '').trim();
+    if (!clean) return undefined;
+    return crypto.createHash('sha256').update(clean).digest('hex');
+}
+
+/**
+ * Calcula retención legal de 6 años ISO-8601 UTC (Art. 17 Código Tributario de Chile).
+ */
+export function computeSixYearRetentionIso(baseIsoOrDate?: string): string {
+    const parsedMs = baseIsoOrDate ? Date.parse(baseIsoOrDate) : NaN;
+    const baseMs = Number.isFinite(parsedMs) ? parsedMs : Date.now();
+    const ts = computeSixYearRetentionTimestamp(baseMs);
+    return new Date(ts.toMillis()).toISOString();
 }
 
 function safeDocIdPart(raw: string): string {
@@ -412,9 +453,19 @@ export class SupplyRepository {
             ])
         );
 
-        const record: SupplyRequisition = {
+        const requesterPhoneMasked = maskPhoneE164(input.requesterPhoneE164);
+        const requesterPhoneHash = hashPhoneE164(input.requesterPhoneE164);
+
+        const record: SupplyRequisition & {
+            requesterPhoneMasked?: string;
+            requesterPhoneHash?: string;
+        } = {
             ...input,
             reqId,
+            // Ley N° 21.719 minimización PII: jamás persistir teléfono E.164 en texto plano dentro de `supply_requisitions`
+            requesterPhoneE164: requesterPhoneMasked,
+            ...(requesterPhoneMasked ? { requesterPhoneMasked } : {}),
+            ...(requesterPhoneHash ? { requesterPhoneHash } : {}),
             lines: normalizedLines,
             atypicalFlags: aggregateFlags,
             status: input.status || computeRequisitionAggregateStatus(normalizedLines),
@@ -637,7 +688,9 @@ export class SupplyRepository {
                       : undefined,
         }));
 
-        const purchase: SupplyPurchase = {
+        const fiscalRetentionUntil = computeSixYearRetentionIso(params.issueDate || now);
+
+        const purchase: SupplyPurchase & { retentionUntil: string } = {
             purchaseId,
             tenantId: params.tenantId,
             siteId: params.siteId,
@@ -663,6 +716,7 @@ export class SupplyRepository {
             receivedByUid: receptionStatus === 'RECEIVED' ? actor.actorUid : undefined,
             atypicalFlags,
             lines: purchaseLinesWithProgress,
+            retentionUntil: fiscalRetentionUntil,
             createdAt: now,
             updatedAt: now,
         };
@@ -677,7 +731,7 @@ export class SupplyRepository {
             ? buildSiiDocId(params.tenantId, dedupeKey)
             : `${safeDocIdPart(params.tenantId)}__rural_${purchaseId}`;
 
-        const siiDocument: SiiDocumentRecord = {
+        const siiDocument: SiiDocumentRecord & { retentionUntil: string } = {
             docId: siiDocId,
             tenantId: params.tenantId,
             siteId: params.siteId,
@@ -697,6 +751,7 @@ export class SupplyRepository {
             rcvStatus: params.documentType === 33 || params.documentType === 34 ? 'PENDING_ACCEPTANCE' : 'NOT_APPLICABLE',
             missingInvoiceForCapex: missingInvoiceAlert,
             evidenceCasRef: params.evidenceCasRef,
+            retentionUntil: fiscalRetentionUntil,
             createdAt: now,
             updatedAt: now,
         };
@@ -1541,7 +1596,7 @@ export class SupplyRepository {
             );
             const balanceClp = Math.round(input.fundAdvanceClp - renderedTotalClp);
 
-            const report: SiiExpenseReport = {
+            const report: SiiExpenseReport & { retentionUntil: string } = {
                 reportId,
                 tenantId: input.tenantId,
                 siteId: input.siteId,
@@ -1556,6 +1611,7 @@ export class SupplyRepository {
                 balanceClp,
                 siiDocumentIds: selectedDocs.map((item) => item.data.docId),
                 status: 'SUBMITTED',
+                retentionUntil: computeSixYearRetentionIso(now),
                 createdAt: now,
                 updatedAt: now,
             };
@@ -1915,5 +1971,51 @@ export class SupplyRepository {
         }
 
         return list.sort((a, b) => b.aggregatedQty - a.aggregatedQty);
+    }
+
+    // -----------------------------------------------------------------------
+    // Ephemeral WhatsApp State TTL (24h sessions / 7d wamids — Ley N° 21.719)
+    // -----------------------------------------------------------------------
+
+    public static computeWhatsAppSessionTtl(fromMs?: number) {
+        return computeShortTtlTimestamp(WHATSAPP_SESSION_TTL_MS, fromMs);
+    }
+
+    public static computeWhatsAppWamidTtl(fromMs?: number) {
+        return computeShortTtlTimestamp(WHATSAPP_WAMID_TTL_MS, fromMs);
+    }
+
+    public static async saveWhatsAppSession(
+        sessionId: string,
+        sessionData: Record<string, unknown>
+    ): Promise<void> {
+        const ttlExpiresAt = this.computeWhatsAppSessionTtl();
+        await db
+            .collection(SUPPLY_COLLECTIONS.WHATSAPP_SESSIONS)
+            .doc(sessionId)
+            .set(
+                {
+                    ...sessionData,
+                    ttlExpiresAt,
+                    updatedAt: new Date().toISOString(),
+                },
+                { merge: true }
+            );
+    }
+
+    public static async recordWhatsAppWamid(
+        wamidDocId: string,
+        payload: { wamid: string; tenantId: string; processedAt?: string }
+    ): Promise<void> {
+        const ttlExpiresAt = this.computeWhatsAppWamidTtl();
+        await db
+            .collection(SUPPLY_COLLECTIONS.WHATSAPP_WAMIDS)
+            .doc(wamidDocId)
+            .set({
+                wamid: payload.wamid,
+                tenantId: payload.tenantId,
+                processedAt: payload.processedAt || new Date().toISOString(),
+                ttlExpiresAt,
+            });
     }
 }

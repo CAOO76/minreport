@@ -103,6 +103,7 @@ export interface AIInferenceRequest {
     media?: InlineMediaPart[];
     fileParts?: FileUriPart[];
     cachedContent?: string;
+    dataClassification?: 'TENANT_PRIVATE' | 'GLOBAL_OEM' | 'SYMBOLOGY_MASTER';
 }
 
 export type EmbeddingTaskType =
@@ -355,9 +356,21 @@ export class ResilientAIClient {
     private static readonly MAX_DECISION_RETRIES = 1;
     private static readonly CACHE_COLLECTION = 'ai_inference_cache';
     private static readonly TELEMETRY_COLLECTION = 'ai_telemetry';
+    private static testSDKClient: GoogleGenAI | null = null;
 
     public static clearDecisionCacheForTesting(): void {
         memoryDecisionCache.clear();
+    }
+
+    public static clearInferenceCacheForTesting(): void {
+        memoryInferenceCache.clear();
+    }
+
+    public static setTestSDKClientForTesting(client: GoogleGenAI | null): void {
+        this.testSDKClient = client;
+        if (!client) {
+            cachedGenAIClient = null;
+        }
     }
 
     public static async getTelemetrySnapshot(): Promise<SwarmTelemetrySnapshot> {
@@ -546,7 +559,75 @@ export class ResilientAIClient {
         return new Promise((resolve) => setTimeout(resolve, ms));
     }
 
+    /**
+     * Compuerta Soberana Ley N° 21.719 / CDPA Zero-Training (P0-15):
+     * - En `NODE_ENV === 'production'`, exige `USE_VERTEX_AI === 'true'` en `southamerica-west1`
+     *   o credencial corporativa CDPA (`PROD_SECRET_MANAGER_GCP`).
+     * - Para inferencias `TENANT_PRIVATE` (o multimodales con `tenantId` y `dataClassification !== 'GLOBAL_OEM'`)
+     *   en producción, exige estrictamente Vertex AI en `southamerica-west1` (`USE_VERTEX_AI === 'true'`).
+     * - En desarrollo/test permite ejecución local sin bloquear pruebas deterministas.
+     */
+    public static async assertPaidTierCdpa(
+        req?: Pick<AIInferenceRequest, 'tenantId' | 'media' | 'dataClassification'>
+    ): Promise<void> {
+        if (process.env.NODE_ENV !== 'production') {
+            return;
+        }
+
+        const useVertexAi = process.env.USE_VERTEX_AI === 'true';
+        const vertexLocation = (process.env.VERTEX_AI_LOCATION || 'southamerica-west1').trim();
+        const isTenantPrivateInference = Boolean(
+            req &&
+                (req.dataClassification === 'TENANT_PRIVATE' ||
+                    (req.tenantId &&
+                        req.media &&
+                        req.media.length > 0 &&
+                        req.dataClassification !== 'GLOBAL_OEM'))
+        );
+
+        if (isTenantPrivateInference) {
+            if (!useVertexAi) {
+                throw new AISwarmUnavailableError(
+                    '[LEY 21.719 / CDPA] Inferencias TENANT_PRIVATE o multimodales con datos de cliente en producción exigen Vertex AI en southamerica-west1 (USE_VERTEX_AI=true).',
+                    'CDPA_REQUIRED_IN_PRODUCTION'
+                );
+            }
+            if (vertexLocation !== 'southamerica-west1') {
+                throw new AISwarmUnavailableError(
+                    `[LEY 21.719 / CDPA] Región Vertex AI no soberana (${vertexLocation}). En producción se exige southamerica-west1.`,
+                    'CDPA_REQUIRED_IN_PRODUCTION'
+                );
+            }
+            return;
+        }
+
+        if (useVertexAi) {
+            if (vertexLocation !== 'southamerica-west1') {
+                throw new AISwarmUnavailableError(
+                    `[LEY 21.719 / CDPA] Región Vertex AI no soberana (${vertexLocation}). En producción se exige southamerica-west1.`,
+                    'CDPA_REQUIRED_IN_PRODUCTION'
+                );
+            }
+            return;
+        }
+
+        const keyProfile = await resolveActiveGeminiKeyProfile();
+        if (keyProfile !== 'PROD_SECRET_MANAGER_GCP') {
+            throw new AISwarmUnavailableError(
+                `[LEY 21.719 / CDPA] En producción se exige USE_VERTEX_AI=true (southamerica-west1) o credencial corporativa CDPA PROD_SECRET_MANAGER_GCP (perfil activo: ${keyProfile}).`,
+                'CDPA_REQUIRED_IN_PRODUCTION'
+            );
+        }
+    }
+
     private static async getSDKClient(): Promise<GoogleGenAI> {
+        if (process.env.NODE_ENV === 'production') {
+            await this.assertPaidTierCdpa();
+        }
+        if (this.testSDKClient) {
+            return this.testSDKClient;
+        }
+
         const gatewayBaseUrl = (process.env.AI_GATEWAY_BASE_URL || '').trim();
         const httpOptions = gatewayBaseUrl ? { baseUrl: gatewayBaseUrl } : undefined;
 
@@ -692,13 +773,21 @@ export class ResilientAIClient {
         const schemaSig = req.responseSchema ? JSON.stringify(req.responseSchema) : '';
         const targetTier = this.resolveEffectiveTier(req);
         const normalizedPrompt = req.prompt.replace(/\s+/g, ' ').trim();
-        // Consultas Grounded de catálogo maestro en OPERMAQ comparten caché global cross-tenant
-        const effectiveScope =
-            req.module === 'opermaq' && (req.useGoogleSearch || req.requireGroundedEvidence) && !req.tenantId
-                ? 'GLOBAL'
-                : req.tenantId || 'GLOBAL';
+        const cleanTenant = (req.tenantId || '').trim();
+        const hasMedia = Boolean(req.media && req.media.length > 0);
+        // Consultas Grounded de catálogo maestro en OPERMAQ sin tenant ni adjuntos privados comparten caché global;
+        // toda inferencia con `tenantId` queda estrictamente aislada por tenant en la clave SHA-256.
+        const effectiveScope = cleanTenant
+            ? `TENANT:${cleanTenant}`
+            : req.module === 'opermaq' && (req.useGoogleSearch || req.requireGroundedEvidence) && !hasMedia
+              ? 'GLOBAL'
+              : 'GLOBAL';
+        const mediaDigests = (req.media || []).map((m) => ({
+            mimeType: String(m.mimeType || '').split(';')[0].trim().toLowerCase(),
+            sha256: createHash('sha256').update(String(m.dataBase64 || '')).digest('hex'),
+        }));
         const normalized = JSON.stringify({
-            v: '4.0-fail-closed-grounded',
+            v: '4.1-multimodal-tenant-scoped',
             tenantId: effectiveScope,
             module: req.module,
             tier: targetTier,
@@ -712,6 +801,7 @@ export class ResilientAIClient {
             codeExec: Boolean(req.useCodeExecution),
             mime: req.responseMimeType || 'text/plain',
             schema: schemaSig,
+            media: mediaDigests,
         });
         return createHash('sha256').update(normalized).digest('hex');
     }
@@ -921,6 +1011,7 @@ export class ResilientAIClient {
             systemInstruction: sanitizedSystemInstruction,
         };
 
+        await this.assertPaidTierCdpa(req);
         const ai = await this.getSDKClient();
         const enrichedSys = await this.enrichSystemInstructionWithPilotFeedback(
             req.module,
@@ -933,7 +1024,6 @@ export class ResilientAIClient {
         const isCacheable =
             !req.bypassCache &&
             (req.temperature ?? 0.2) <= 0.3 &&
-            (!req.media || req.media.length === 0) &&
             (!req.fileParts || req.fileParts.length === 0);
 
         const cacheKey = isCacheable ? this.computeCacheKey(req, effectiveSystemInstruction) : '';
@@ -1210,6 +1300,8 @@ export class ResilientAIClient {
                             .doc(cacheKey)
                             .set({
                                 cacheKey,
+                                tenantId: req.tenantId ? req.tenantId.trim() : null,
+                                hasMedia: Boolean(req.media && req.media.length > 0),
                                 module: req.module,
                                 model: modelName,
                                 tierUsed: tier,

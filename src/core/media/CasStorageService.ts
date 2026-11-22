@@ -52,6 +52,7 @@ export interface PersistDigestedOptions {
     originalFilename?: string;
     clientOriginalBytes?: number;
     nearDuplicateHammingThreshold?: number;
+    enablePerceptualDedup?: boolean;
 }
 
 export interface CasBlobStreamHandle {
@@ -399,29 +400,59 @@ export class CasStorageService {
         tenantId?: string,
         maxHamming: number = 4
     ): Promise<DigestedMediaDescriptor | null> {
-        if (!phashHex || phashHex.length !== 16) return null;
+        const normalizedPhash = String(phashHex || '').trim().toLowerCase();
+        if (!normalizedPhash || normalizedPhash.length !== 16) return null;
+
+        const cleanTenant = String(tenantId || '').trim();
+        // Fail-closed multi-tenant: JAMÁS ejecutar búsqueda perceptual TENANT_PRIVATE sin tenantId explícito
+        if (scope === 'TENANT_PRIVATE' && !cleanTenant) {
+            return null;
+        }
+        // Evitar falsos positivos perceptuales en imágenes planas sin gradiente dentro de TENANT_PRIVATE
+        if (
+            scope === 'TENANT_PRIVATE' &&
+            (normalizedPhash === '0000000000000000' || normalizedPhash === 'ffffffffffffffff')
+        ) {
+            return null;
+        }
 
         try {
-            let query: FirebaseFirestore.Query = db
-                .collection(this.REGISTRY_COLLECTION)
-                .where('scope', '==', scope);
-
-            if (scope === 'TENANT_PRIVATE' && tenantId) {
-                query = query.where('tenantId', '==', tenantId);
-            }
+            // En TENANT_PRIVATE consultar por `tenantId` (índice simple sin requerir índice compuesto)
+            // y verificar frontera de scope+tenantId también en memoria (defensa en profundidad).
+            const query: FirebaseFirestore.Query =
+                scope === 'TENANT_PRIVATE'
+                    ? db.collection(this.REGISTRY_COLLECTION).where('tenantId', '==', cleanTenant)
+                    : db.collection(this.REGISTRY_COLLECTION).where('scope', '==', scope);
 
             const snap = await query.limit(150).get();
             for (const docSnap of snap.docs) {
-                const d = docSnap.data();
+                const d = docSnap.data() || {};
+                const docScope = String(d.scope || '').trim().toUpperCase();
+                if (docScope !== scope) continue;
+                if (scope === 'TENANT_PRIVATE') {
+                    const docTenant = String(d.tenantId || d.tenant_id || '').trim();
+                    if (!docTenant || docTenant !== cleanTenant) continue;
+                }
                 if (!d.phashHex) continue;
-                const dist = MediaDigestorServer.hammingDistanceHex64(phashHex, d.phashHex);
+                const dist = MediaDigestorServer.hammingDistanceHex64(normalizedPhash, d.phashHex);
                 if (dist <= maxHamming) {
                     const realSha = String(d.sha256 || docSnap.id).trim().toLowerCase();
+                    await db
+                        .collection(this.REGISTRY_COLLECTION)
+                        .doc(docSnap.id)
+                        .set(
+                            {
+                                refCount: FieldValue.increment(1),
+                                lastReferencedAt: new Date().toISOString(),
+                            },
+                            { merge: true }
+                        )
+                        .catch(() => {});
                     return this.mapRegistryDataToDescriptor(realSha, d, true, realSha);
                 }
             }
         } catch {
-            // Si falta índice compuesto en emulador, no bloquear escritura
+            // Si falta índice en emulador, no bloquear escritura
         }
         return null;
     }
@@ -458,19 +489,28 @@ export class CasStorageService {
             return this.mapRegistryDataToDescriptor(cleanHash, existingLookup.data, true);
         }
 
-        // 2. Verificar cuasi-duplicado perceptual en imágenes OEM / Simbología
-        if (
-            digested.phashHex &&
-            (options.scope === 'GLOBAL_OEM' || options.scope === 'SYMBOLOGY_MASTER')
-        ) {
-            const nearHit = await this.findNearDuplicateByPhash(
-                digested.phashHex,
-                options.scope,
-                options.tenantId,
-                options.nearDuplicateHammingThreshold ?? 3
-            );
-            if (nearHit) {
-                return nearHit;
+        // 2. Verificar cuasi-duplicado perceptual (`dHash` 64-bit) en OEM/Simbología (<=3) y TENANT_PRIVATE aislado (<=2)
+        if (options.enablePerceptualDedup !== false && digested.phashHex) {
+            if (options.scope === 'GLOBAL_OEM' || options.scope === 'SYMBOLOGY_MASTER') {
+                const nearHit = await this.findNearDuplicateByPhash(
+                    digested.phashHex,
+                    options.scope,
+                    undefined,
+                    options.nearDuplicateHammingThreshold ?? 3
+                );
+                if (nearHit) {
+                    return nearHit;
+                }
+            } else if (options.scope === 'TENANT_PRIVATE' && options.tenantId?.trim()) {
+                const nearHit = await this.findNearDuplicateByPhash(
+                    digested.phashHex,
+                    'TENANT_PRIVATE',
+                    options.tenantId.trim(),
+                    options.nearDuplicateHammingThreshold ?? 2
+                );
+                if (nearHit) {
+                    return nearHit;
+                }
             }
         }
 
