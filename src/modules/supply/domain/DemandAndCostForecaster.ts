@@ -28,7 +28,36 @@ export const DS594_MIN_WATER_L_PER_PAX_DAY = 100;
 export const DS594_DEFAULT_WATER_L_PER_PAX_DAY = 120;
 export const DS28_HIGH_ALTITUDE_THRESHOLD_M = 3000;
 export const DS28_VERY_HIGH_ALTITUDE_THRESHOLD_M = 4000;
-export const LEY21719_MIN_K_ANONYMITY = 3;
+export const LEY21719_MIN_K_ANONYMITY = 5;
+
+export function isSandboxTenantId(
+    tenantId: string,
+    isEduSandbox?: boolean,
+    accountType?: string
+): boolean {
+    if (isEduSandbox === true) return true;
+    const normalizedType = String(accountType || '').trim().toUpperCase();
+    if (
+        normalizedType &&
+        normalizedType !== 'B2B' &&
+        (normalizedType === 'EDUCATIONAL' ||
+            normalizedType === 'EDU' ||
+            normalizedType === 'TEST_PILOT' ||
+            normalizedType === 'DEV' ||
+            normalizedType === 'DEV_ROOT' ||
+            normalizedType === 'ADMIN')
+    ) {
+        return true;
+    }
+    const clean = String(tenantId || '').trim().toLowerCase();
+    if (!clean) return true;
+    return (
+        clean === 'dev-master-sandbox' ||
+        clean.startsWith('pilot-') ||
+        clean.startsWith('edu-') ||
+        clean.startsWith('dev-')
+    );
+}
 
 export interface DailyConsumptionObservation {
     dateIso: string;
@@ -61,6 +90,8 @@ export interface TenantDemandObservation {
     districtCode: string;
     geoFix?: { lat: number; lng: number };
     optInMarketplace: boolean;
+    isEduSandbox?: boolean;
+    accountType?: string;
     canonicalSkuId: string;
     skuName?: string;
     categoryCode?: SupplyCategoryCode;
@@ -76,7 +107,7 @@ export interface DemandSignalProjectionOptions {
     periodWindow?: string;
     expiresAt?: string;
     customCatalog?: readonly CanonicalSupplySku[];
-    /** Mínimo k-anonimato (se aplica piso inviolable `>= 3` por Ley N° 21.719) */
+    /** Mínimo k-anonimato (se aplica piso inviolable `>= 5` B2B por Ley N° 21.719) */
     minK?: number;
     generatedAt?: string;
 }
@@ -84,6 +115,7 @@ export interface DemandSignalProjectionOptions {
 export interface DemandSignalProjectionResult {
     signals: DemandPoolSignal[];
     droppedOptOutCount: number;
+    droppedSandboxCount: number;
     suppressedLowKGroupCount: number;
     enforcedK: number;
 }
@@ -152,6 +184,8 @@ export function evaluateDs594WaterGuardrail(params: {
             ? roundSupplyQty(requiredReserveL - currentAvailableL)
             : 0;
 
+    const waterStorageCapacityL = roundSupplyQty(Math.max(0, params.site.waterStorageCapacityL));
+
     return {
         requiredDailyLPerPax,
         altitudeFactorApplied,
@@ -159,10 +193,11 @@ export function evaluateDs594WaterGuardrail(params: {
         currentAvailableL,
         currentWarehouseL,
         currentInTransitL,
+        waterStorageCapacityL,
         coverageDays,
         compliant: deficitL <= 0,
         deficitL,
-        storageCapacitySufficient: params.site.waterStorageCapacityL >= requiredReserveL,
+        storageCapacitySufficient: waterStorageCapacityL >= requiredReserveL,
     };
 }
 
@@ -255,9 +290,10 @@ function computeMedianReferenceClp(prices: readonly number[]): number | undefine
  *
  * Garantías inviolables (alineado 1:1 con `DemandPoolSignalSchema.strict()`):
  * 1. Opt-in explícito: descarta toda observación con `optInMarketplace !== true`.
- * 2. k-anonimato estricto (`k >= 3`): solo emite señal si existen al menos `k` tenants distintos
+ * 2. Exclusión de sandboxes: descarta cualquier cuenta EDU (`isEduSandbox`), TEST-PILOT (`pilot-*`) o DEV (`dev-master-sandbox`).
+ * 3. k-anonimato estricto (`k >= 5`): solo emite señal si existen al menos `k` tenants B2B distintos
  *    Y `k` sitios distintos en el mismo `districtCode` + `canonicalSkuId`.
- * 3. Cero exposición de PII/identificadores: la salida no contiene `tenantId`, `siteId` ni `geoFix`.
+ * 4. Cero exposición de PII/identificadores: la salida no contiene `tenantId`, `siteId` ni `geoFix`.
  */
 export function projectAnonymousDemandSignals(
     observations: readonly TenantDemandObservation[],
@@ -271,6 +307,7 @@ export function projectAnonymousDemandSignals(
     const expiresAt = options.expiresAt || options.windowEndIso;
 
     let droppedOptOutCount = 0;
+    let droppedSandboxCount = 0;
 
     interface GroupBucket {
         districtCode: string;
@@ -290,6 +327,10 @@ export function projectAnonymousDemandSignals(
     for (const obs of observations) {
         if (obs.optInMarketplace !== true) {
             droppedOptOutCount += 1;
+            continue;
+        }
+        if (isSandboxTenantId(obs.tenantId, obs.isEduSandbox, obs.accountType)) {
+            droppedSandboxCount += 1;
             continue;
         }
         if (obs.projectedDemandSi <= 0 || !obs.districtCode.trim() || !obs.canonicalSkuId.trim()) {
@@ -363,6 +404,7 @@ export function projectAnonymousDemandSignals(
     return {
         signals,
         droppedOptOutCount,
+        droppedSandboxCount,
         suppressedLowKGroupCount,
         enforcedK,
     };

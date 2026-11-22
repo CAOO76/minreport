@@ -12,6 +12,7 @@
  * - Exportación CSV lista para contabilidad chilena / conciliación RCV SII.
  */
 
+import crypto from 'node:crypto';
 import { validateChileanRut } from '../../../utils/taxIdValidator';
 import {
     AtypicalFlagCode,
@@ -25,6 +26,18 @@ export const LEY_19983_RCV_DAYS = 8;
 export const DEFAULT_ARITHMETIC_TOLERANCE_CLP = 2;
 
 const VALID_SII_DTE_TYPES = new Set<number>([33, 34, 39, 41, 52, 61, 0]);
+
+export interface SiiTedRsaVerificationResult {
+    tedRsaVerified: boolean | null;
+    algorithm: 'RSA-SHA1';
+    reason:
+        | 'VALID_SIGNATURE'
+        | 'INVALID_SIGNATURE'
+        | 'TED_OR_DD_MISSING'
+        | 'FRMT_MISSING'
+        | 'CAF_RSAPK_ABSENT'
+        | 'INVALID_PUBLIC_KEY_OR_SIGNATURE_ENCODING';
+}
 
 export interface ParsedSiiTedPdf417 {
     valid: boolean;
@@ -44,6 +57,7 @@ export interface ParsedSiiTedPdf417 {
     firstItemSummary?: string;
     tedTimestamp?: string;
     tedSignaturePresent: boolean;
+    tedRsaVerified: boolean | null;
     dedupeKey: string;
 }
 
@@ -76,6 +90,7 @@ export interface ParsedSiiXmlDte {
     totalAmountClp: number;
     lines: ParsedSiiXmlDteLine[];
     embeddedTed?: ParsedSiiTedPdf417;
+    tedRsaVerified: boolean | null;
     dedupeKey: string;
 }
 
@@ -114,6 +129,7 @@ export interface ValidateSiiDocumentInput {
         vatAmountClp?: number;
         totalAmountClp: number;
     };
+    expectedReceiverTaxId?: string;
     lineSubtotalsGrossClp?: readonly number[];
     hasCapexAsset?: boolean;
     existingDedupeKeys?: readonly string[] | ReadonlySet<string>;
@@ -124,6 +140,8 @@ export interface ValidateSiiDocumentInput {
 export interface SiiDocumentValidationOutcome {
     valid: boolean;
     isDuplicate: boolean;
+    tedRsaVerified: boolean | null;
+    receiverTaxIdMismatch: boolean;
     errors: string[];
     warnings: string[];
     atypicalFlags: AtypicalFlagCode[];
@@ -176,6 +194,138 @@ function normalizeFolio(rawFolio: string): string {
     return cleaned.toUpperCase();
 }
 
+export function isValidPositiveFolio(folio: string): boolean {
+    const normalized = normalizeFolio(folio);
+    if (!normalized || !/^\d+$/.test(normalized)) {
+        return false;
+    }
+    const parsed = Number(normalized);
+    return Number.isSafeInteger(parsed) && parsed > 0;
+}
+
+function stripLeadingZeroBytes(buf: Buffer): Buffer {
+    let idx = 0;
+    while (idx < buf.length - 1 && buf[idx] === 0) {
+        idx += 1;
+    }
+    return buf.subarray(idx);
+}
+
+/**
+ * Verifica criptográficamente la firma RSA-SHA1 de un Timbre Electrónico SII (`<TED>`)
+ * usando `node:crypto` nativo con clave pública RSA JWK extraída desde `<CAF><DA><RSAPK><M>` y `<E>`.
+ *
+ * - Retorna `tedRsaVerified: true` si `<FRMT>` verifica contra `<DD>...</DD>` (literal o compactado sin CRLF/tabs).
+ * - Retorna `tedRsaVerified: false` si existe clave pública CAF y firma `<FRMT>` pero la verificación falla (tampering).
+ * - Retorna `tedRsaVerified: null` si el TED no incluye bloque `<CAF><DA><RSAPK>` o falta `<DD>`/`<FRMT>`.
+ */
+export function verifySiiTedRsaSignature(tedOrDteXml: string): SiiTedRsaVerificationResult {
+    const raw = String(tedOrDteXml || '').trim();
+    if (!raw) {
+        return {
+            tedRsaVerified: null,
+            algorithm: 'RSA-SHA1',
+            reason: 'TED_OR_DD_MISSING',
+        };
+    }
+
+    const tedBlockMatch = raw.match(/<TED\b[^>]*>[\s\S]*?<\/TED>/i);
+    const scopeXml = tedBlockMatch ? tedBlockMatch[0] : raw;
+
+    const ddMatch = scopeXml.match(/<DD\b[^>]*>[\s\S]*?<\/DD>/i);
+    if (!ddMatch) {
+        return {
+            tedRsaVerified: null,
+            algorithm: 'RSA-SHA1',
+            reason: 'TED_OR_DD_MISSING',
+        };
+    }
+    const ddExact = ddMatch[0];
+
+    const frmtMatch = scopeXml.match(/<FRMT\b[^>]*>([\s\S]*?)<\/FRMT>/i);
+    const frmtBase64 = frmtMatch ? frmtMatch[1].replace(/\s+/g, '') : '';
+    if (!frmtBase64) {
+        return {
+            tedRsaVerified: null,
+            algorithm: 'RSA-SHA1',
+            reason: 'FRMT_MISSING',
+        };
+    }
+
+    const rsapkMatch = scopeXml.match(/<RSAPK\b[^>]*>([\s\S]*?)<\/RSAPK>/i);
+    if (!rsapkMatch) {
+        return {
+            tedRsaVerified: null,
+            algorithm: 'RSA-SHA1',
+            reason: 'CAF_RSAPK_ABSENT',
+        };
+    }
+    const modulusMatch = rsapkMatch[1].match(/<M\b[^>]*>([\s\S]*?)<\/M>/i);
+    const exponentMatch = rsapkMatch[1].match(/<E\b[^>]*>([\s\S]*?)<\/E>/i);
+    const mBase64 = modulusMatch ? modulusMatch[1].replace(/\s+/g, '') : '';
+    const eBase64 = exponentMatch ? exponentMatch[1].replace(/\s+/g, '') : '';
+
+    if (!mBase64 || !eBase64) {
+        return {
+            tedRsaVerified: null,
+            algorithm: 'RSA-SHA1',
+            reason: 'CAF_RSAPK_ABSENT',
+        };
+    }
+
+    try {
+        const mBuf = Buffer.from(mBase64, 'base64');
+        const eBuf = Buffer.from(eBase64, 'base64');
+        const sigBuf = Buffer.from(frmtBase64, 'base64');
+        if (mBuf.length === 0 || eBuf.length === 0 || sigBuf.length === 0) {
+            return {
+                tedRsaVerified: false,
+                algorithm: 'RSA-SHA1',
+                reason: 'INVALID_PUBLIC_KEY_OR_SIGNATURE_ENCODING',
+            };
+        }
+
+        const publicKey = crypto.createPublicKey({
+            key: {
+                kty: 'RSA',
+                n: stripLeadingZeroBytes(mBuf).toString('base64url'),
+                e: stripLeadingZeroBytes(eBuf).toString('base64url'),
+            },
+            format: 'jwk',
+        });
+
+        const ddCompact = ddExact.replace(/>\s+</g, '><').replace(/\r?\n|\t/g, '');
+        const candidateStrings = ddCompact === ddExact ? [ddExact] : [ddExact, ddCompact];
+
+        for (const payloadStr of candidateStrings) {
+            for (const encoding of ['utf8', 'latin1'] as const) {
+                const verifier = crypto.createVerify('RSA-SHA1');
+                verifier.update(Buffer.from(payloadStr, encoding));
+                verifier.end();
+                if (verifier.verify(publicKey, sigBuf)) {
+                    return {
+                        tedRsaVerified: true,
+                        algorithm: 'RSA-SHA1',
+                        reason: 'VALID_SIGNATURE',
+                    };
+                }
+            }
+        }
+
+        return {
+            tedRsaVerified: false,
+            algorithm: 'RSA-SHA1',
+            reason: 'INVALID_SIGNATURE',
+        };
+    } catch {
+        return {
+            tedRsaVerified: false,
+            algorithm: 'RSA-SHA1',
+            reason: 'INVALID_PUBLIC_KEY_OR_SIGNATURE_ENCODING',
+        };
+    }
+}
+
 /**
  * Construye la llave determinística anti-duplicación SII:
  * `${normalizedRut}#${dteType}#${folio}` (ej. `76123456-K#33#12345`).
@@ -199,7 +349,12 @@ export function checkSiiDuplicate(
 }
 
 /**
- * Calcula los montos neto / IVA recuperable (crédito fiscal DTE 33) vs no recuperable (Boleta 39/41 / DTE 0).
+ * Calcula los montos neto / IVA recuperable (crédito fiscal DL 825):
+ * - DTE 33 (Factura Afecta): IVA 19% es Crédito Fiscal recuperable (`+vat`).
+ * - DTE 52 (Guía de Despacho): traslada mercadería, NO otorga Crédito Fiscal (`vatRecoverableClp: 0`, `vatNonRecoverableClp: 0`).
+ * - DTE 61 (Nota de Crédito): reduce Crédito Fiscal (`vatRecoverableClp: -absVat`, `isCreditNote: true`).
+ * - DTE 39 (Boleta Afecta): IVA 19% incluido pero NO recuperable (`vatNonRecoverableClp: vat`).
+ * - DTE 34 / 41 / 0 (Exentos / Rural): IVA `0`.
  */
 export function computeChileanVatBreakdown(params: {
     dteType: SiiDteType;
@@ -212,6 +367,7 @@ export function computeChileanVatBreakdown(params: {
     vatRecoverableClp: number;
     vatNonRecoverableClp: number;
     totalAmountClp: number;
+    isCreditNote: boolean;
 } {
     const total = roundClp(params.totalAmountClp);
 
@@ -223,11 +379,53 @@ export function computeChileanVatBreakdown(params: {
             vatRecoverableClp: 0,
             vatNonRecoverableClp: 0,
             totalAmountClp: total,
+            isCreditNote: false,
         };
     }
 
-    // DTE 33 (Factura Afecta), 52 (Guía), 61 (Nota de Crédito) — IVA 19% es Crédito Fiscal recuperable
-    if (params.dteType === 33 || params.dteType === 52 || params.dteType === 61) {
+    // DTE 52 (Guía de Despacho Electrónica): NO otorga derecho a Crédito Fiscal (DL 825 Art. 23)
+    if (params.dteType === 52) {
+        const net =
+            params.netAmountClp !== undefined
+                ? roundClp(params.netAmountClp)
+                : roundClp(total / (1 + CHILE_VAT_RATE));
+        const vat =
+            params.vatAmountClp !== undefined
+                ? roundClp(params.vatAmountClp)
+                : roundClp(total - net);
+        return {
+            netAmountClp: net,
+            vatAmountClp: vat,
+            vatRecoverableClp: 0,
+            vatNonRecoverableClp: 0,
+            totalAmountClp: total,
+            isCreditNote: false,
+        };
+    }
+
+    // DTE 61 (Nota de Crédito Electrónica): reduce Crédito Fiscal IVA (`vatRecoverableClp < 0`)
+    if (params.dteType === 61) {
+        const absTotal = Math.abs(total);
+        const absNet =
+            params.netAmountClp !== undefined
+                ? Math.abs(roundClp(params.netAmountClp))
+                : roundClp(absTotal / (1 + CHILE_VAT_RATE));
+        const absVat =
+            params.vatAmountClp !== undefined
+                ? Math.abs(roundClp(params.vatAmountClp))
+                : roundClp(absTotal - absNet);
+        return {
+            netAmountClp: -absNet,
+            vatAmountClp: -absVat,
+            vatRecoverableClp: -absVat,
+            vatNonRecoverableClp: 0,
+            totalAmountClp: -absTotal,
+            isCreditNote: true,
+        };
+    }
+
+    // DTE 33 (Factura Electrónica Afecta) — IVA 19% es Crédito Fiscal recuperable
+    if (params.dteType === 33) {
         const net =
             params.netAmountClp !== undefined
                 ? roundClp(params.netAmountClp)
@@ -242,6 +440,7 @@ export function computeChileanVatBreakdown(params: {
             vatRecoverableClp: vat,
             vatNonRecoverableClp: 0,
             totalAmountClp: total,
+            isCreditNote: false,
         };
     }
 
@@ -261,6 +460,7 @@ export function computeChileanVatBreakdown(params: {
         vatRecoverableClp: 0,
         vatNonRecoverableClp: impliedVat,
         totalAmountClp: total,
+        isCreditNote: false,
     };
 }
 
@@ -297,8 +497,8 @@ export function parseSiiTedPdf417(tedRawXml: string): ParsedSiiTedPdf417 {
     const dteType: SiiDteType = parsedTd ?? 0;
 
     const folio = normalizeFolio(folioRaw);
-    if (!folio) {
-        errors.push('Folio (<F>) ausente en TED.');
+    if (!folio || (dteType !== 0 && !isValidPositiveFolio(folio))) {
+        errors.push('FOLIO_MUST_BE_POSITIVE: Folio (<F>) ausente o no positivo en TED.');
     }
 
     if (!/^\d{4}-\d{2}-\d{2}$/.test(fe)) {
@@ -330,6 +530,13 @@ export function parseSiiTedPdf417(tedRawXml: string): ParsedSiiTedPdf417 {
         errors.push('Firma electrónica <FRMT> ausente o truncada en TED.');
     }
 
+    const rsaCheck = verifySiiTedRsaSignature(raw);
+    if (rsaCheck.tedRsaVerified === false) {
+        errors.push(
+            `TED_RSA_SIGNATURE_INVALID: Firma criptográfica RSA-SHA1 del timbre TED inválida (${rsaCheck.reason}).`
+        );
+    }
+
     const dedupeKey = buildSiiDedupeKey(re, dteType, folio);
 
     return {
@@ -350,6 +557,7 @@ export function parseSiiTedPdf417(tedRawXml: string): ParsedSiiTedPdf417 {
         firstItemSummary: it1,
         tedTimestamp: tsted,
         tedSignaturePresent,
+        tedRsaVerified: rsaCheck.tedRsaVerified,
         dedupeKey,
     };
 }
@@ -392,7 +600,9 @@ export function parseSiiXmlDte(xmlString: string): ParsedSiiXmlDte {
     const dteType: SiiDteType = parsedDte ?? 0;
 
     const folio = normalizeFolio(folioRaw);
-    if (!folio) errors.push('Folio ausente en XML DTE.');
+    if (!folio || (dteType !== 0 && !isValidPositiveFolio(folio))) {
+        errors.push('FOLIO_MUST_BE_POSITIVE: Folio ausente o no positivo en XML DTE.');
+    }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(fchEmis)) {
         errors.push(`FchEmis inválida en XML DTE: "${fchEmis}".`);
     }
@@ -438,6 +648,10 @@ export function parseSiiXmlDte(xmlString: string): ParsedSiiXmlDte {
 
     const tedMatch = xml.match(/<TED\b[\s\S]*?<\/TED>/i);
     const embeddedTed = tedMatch ? parseSiiTedPdf417(tedMatch[0]) : undefined;
+    const tedRsaVerified = embeddedTed ? embeddedTed.tedRsaVerified : null;
+    if (tedRsaVerified === false) {
+        errors.push('TED_RSA_SIGNATURE_INVALID: Firma criptográfica RSA-SHA1 del timbre TED embebido inválida.');
+    }
 
     const dedupeKey = buildSiiDedupeKey(rutEmisorRaw, dteType, folio);
 
@@ -462,6 +676,7 @@ export function parseSiiXmlDte(xmlString: string): ParsedSiiXmlDte {
         totalAmountClp: Number.isFinite(mntTotal) ? roundClp(mntTotal) : 0,
         lines,
         embeddedTed,
+        tedRsaVerified,
         dedupeKey,
     };
 }
@@ -596,6 +811,8 @@ export function validateSiiDocumentForPurchase(
     let rawVat: number | undefined;
     let totalAmountClp = 0;
     let tedVerified = false;
+    let tedRsaVerified: boolean | null = null;
+    let receiverTaxIdMismatch = false;
     let lineSubtotalsForCheck: number[] = input.lineSubtotalsGrossClp
         ? [...input.lineSubtotalsGrossClp]
         : [];
@@ -613,7 +830,8 @@ export function validateSiiDocumentForPurchase(
         rawNet = parsedXml.netAmountClp || parsedXml.exemptAmountClp;
         rawVat = parsedXml.vatAmountClp;
         totalAmountClp = parsedXml.totalAmountClp;
-        tedVerified = Boolean(parsedXml.embeddedTed?.valid);
+        tedRsaVerified = parsedXml.tedRsaVerified;
+        tedVerified = Boolean(parsedXml.embeddedTed?.valid) && tedRsaVerified !== false;
 
         // Si el caller no entregó subtotales explícitos, usar las líneas del XML (en DTE 33 los Detalles son netos)
         if (lineSubtotalsForCheck.length === 0 && parsedXml.lines.length > 0) {
@@ -632,7 +850,8 @@ export function validateSiiDocumentForPurchase(
         folio = parsedTed.folio;
         issueDate = parsedTed.issueDate;
         totalAmountClp = parsedTed.totalAmountClp;
-        tedVerified = parsedTed.valid && parsedTed.tedSignaturePresent;
+        tedRsaVerified = parsedTed.tedRsaVerified;
+        tedVerified = parsedTed.valid && parsedTed.tedSignaturePresent && tedRsaVerified !== false;
     } else if (input.manualFallback) {
         sourceFormat = 'MANUAL_OR_OCR';
         supplierTaxIdRaw = input.manualFallback.supplierTaxId;
@@ -646,6 +865,25 @@ export function validateSiiDocumentForPurchase(
         totalAmountClp = input.manualFallback.totalAmountClp;
     } else {
         errors.push('No se proporcionó XML DTE, TED PDF417 ni cabecera manual para validación SII.');
+    }
+
+    // Rechazo determinista de folio <= 0 / vacío para todo DTE tributario (`dteType !== 0`)
+    if (dteType !== 0 && !isValidPositiveFolio(folio) && !errors.some((e) => e.includes('FOLIO_MUST_BE_POSITIVE'))) {
+        errors.push(`FOLIO_MUST_BE_POSITIVE: Folio tributario inválido ("${folio}") para DTE ${dteType}.`);
+    }
+
+    // Validación criptográfica <RR> contra RUT receptor esperado del tenant (ignora 66666666-6 consumidor final)
+    if (input.expectedReceiverTaxId && input.expectedReceiverTaxId.trim() && receiverTaxId && receiverTaxId !== '66666666-6') {
+        const expectedRut = validateChileanRut(input.expectedReceiverTaxId);
+        const actualRut = validateChileanRut(receiverTaxId);
+        const expectedNorm = expectedRut.normalized || input.expectedReceiverTaxId.replace(/[\s.]/g, '').toUpperCase();
+        const actualNorm = actualRut.normalized || receiverTaxId.replace(/[\s.]/g, '').toUpperCase();
+        if (expectedNorm && actualNorm && actualNorm !== expectedNorm) {
+            receiverTaxIdMismatch = true;
+            errors.push(
+                `RECEIVER_TAX_ID_MISMATCH: RUT Receptor (${actualNorm}) no coincide con el RUT de la empresa (${expectedNorm}).`
+            );
+        }
     }
 
     const rutCheck = validateChileanRut(supplierTaxIdRaw);
@@ -717,6 +955,9 @@ export function validateSiiDocumentForPurchase(
         rcvUrgencyAlert: rcvDeadline.rcvUrgencyAlert,
         sourceFormat,
         tedVerified,
+        tedRsaVerified,
+        isCreditNote: vat.isCreditNote,
+        receiverTaxIdMismatch,
         atypicalFlags,
         arithmeticValid: arithmetic.valid,
         arithmeticDeltaClp: arithmetic.deltaClp,
@@ -725,6 +966,8 @@ export function validateSiiDocumentForPurchase(
     return {
         valid: errors.length === 0,
         isDuplicate,
+        tedRsaVerified,
+        receiverTaxIdMismatch,
         errors,
         warnings,
         atypicalFlags,

@@ -6,20 +6,57 @@ import {
     computeSixYearRetentionTimestamp,
 } from '../../../core/retention-policy';
 import {
+    DEFAULT_SUPPLY_CATALOG_SEED,
+    findCanonicalSkuById as findDomainCanonicalSkuById,
+    matchCanonicalSkuByText as matchDomainCanonicalSkuByText,
+} from '../catalog/DefaultSupplyCatalogSeed';
+import {
+    LEY21719_MIN_K_ANONYMITY,
+    type TenantDemandObservation,
+    evaluateDs594WaterGuardrail,
+    forecastSkuDemand,
+    isSandboxTenantId,
+    projectAnonymousDemandSignals,
+} from '../domain/DemandAndCostForecaster';
+import { matchPurchaseToRequisitions } from '../domain/RequisitionFulfillmentMatcher';
+import {
+    buildSiiDedupeKey as buildDomainSiiDedupeKey,
+    computeChileanVatBreakdown,
+    computeRcvAcceptanceDeadline,
+    isValidPositiveFolio,
+    validateSiiDocumentForPurchase,
+} from '../domain/SiiTaxValidator';
+import { consolidateRequisitionsToShoppingList } from '../domain/SmartShoppingListConsolidator';
+import {
+    confirmWarehouseReception,
+    reconcilePurchase,
+} from '../domain/StockAssetCashCostReconciler';
+import {
+    type SplitInvoiceSmurfingResult,
+    detectSplitInvoiceSmurfing,
+} from '../domain/SupplyPolicyAndAnomalyEngine';
+import type {
+    RequisitionLineStatus as DomainRequisitionLineStatus,
+    RequisitionStatus as DomainRequisitionStatus,
+    SupplyPurchase as DomainSupplyPurchase,
+    SupplyRequisition as DomainSupplyRequisition,
+    SupplySite as DomainSupplySite,
+    SupplyUrgency as DomainSupplyUrgency,
+} from '../domain/types';
+import { getTaxJurisdictionAdapter } from '../ports/ITaxJurisdictionAdapter';
+import {
     type AtypicalFlagCode,
     BRIDGE_CATALOG_RULES,
-    buildSiiDedupeKey,
     type CanonicalSupplySku,
     type CashLedgerEntry,
-    computeRcvDeadline,
+    type ConsolidatedShoppingBucket,
+    type ConsolidatedShoppingItem,
     type ConsolidatedShoppingList,
-    consolidateOpenRequisitions,
     type DemandForecast,
     type DemandForecastLine,
     type DemandPoolSignal,
     type FulfillmentAllocation,
     type PaymentMethod,
-    type PurchaseLineDestination,
     type PurchaseMode,
     type RequisitionStatus,
     type SiiDocumentRecord,
@@ -40,9 +77,11 @@ import {
  * SUPPLY REPOSITORY (Capa 5 — Base de Datos Única Cloud Firestore `southamerica-west1`)
  *
  * Gobierna la persistencia multi-tenant de MINREPORT · ABASTECIMIENTO con aislamiento
- * estricto por `tenantId`, anti-duplicación tributaria SII, conciliación FIFO N:M,
- * separación patrimonial CAPEX (`supply_assets`), anonimato k>=3 para Marketplace
- * y trazabilidad criptográfica inmutable en `AuditLedger`.
+ * estricto por `tenantId`, anti-duplicación tributaria SII (con validación RSA-SHA1/DL 825),
+ * conciliación FIFO N:M (`RequisitionFulfillmentMatcher` + `StockAssetCashCostReconciler`),
+ * separación patrimonial CAPEX (`supply_assets` + `event_ledger`), pronóstico DS 594 sobre
+ * stock real (`DemandAndCostForecaster`), auditoría de políticas (`supply_policy_audit`),
+ * anonimato `k >= 5` B2B para Marketplace y trazabilidad criptográfica en `AuditLedger`.
  */
 
 export const SUPPLY_COLLECTIONS = {
@@ -61,9 +100,40 @@ export const SUPPLY_COLLECTIONS = {
     EXPENSE_REPORTS: 'supply_expense_reports',
     DEMAND_FORECASTS: 'supply_demand_forecasts',
     MARKET_DEMAND_SIGNALS: 'market_demand_signals',
+    POLICY_AUDIT: 'supply_policy_audit',
+    EVENT_LEDGER: 'event_ledger',
     WHATSAPP_SESSIONS: 'supply_whatsapp_sessions',
     WHATSAPP_WAMIDS: 'supply_whatsapp_wamids',
 } as const;
+
+export interface SupplyPolicyAuditEntry {
+    auditId: string;
+    tenantId: string;
+    siteId?: string;
+    actorUid: string;
+    eventType:
+        | 'POLICY_HARD_DENY'
+        | 'DGMN_EXPLOSIVES_BLOCK'
+        | 'ROLE_MISMATCH_BLOCK'
+        | 'ATYPICAL_FLAG'
+        | 'SPLIT_INVOICE_SMURFING'
+        | 'SII_FISCAL_WARNING';
+    policyCode: string;
+    severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+    entityId?: string;
+    rawItemText?: string;
+    details: Record<string, unknown>;
+    createdAt: string;
+}
+
+export type DemandForecastWithRealWater = DemandForecast & {
+    availableWaterL: number;
+    waterStoredL: number;
+    waterInTransitL: number;
+    ds594Compliant: boolean;
+    waterDeficitL: number;
+    storageCapacitySufficient: boolean;
+};
 
 export class SupplyDuplicateSiiDocumentError extends Error {
     public readonly statusCode = 409;
@@ -193,6 +263,72 @@ function computeRequisitionAggregateStatus(lines: SupplyRequisition['lines']): R
     return 'OPEN';
 }
 
+function toDomainUrgency(urgency: string | undefined): DomainSupplyUrgency {
+    if (urgency === 'CRITICAL' || urgency === 'HIGH' || urgency === 'STANDARD' || urgency === 'PLANNED') {
+        return urgency;
+    }
+    return 'PLANNED';
+}
+
+function toDomainLineStatus(status: string | undefined): DomainRequisitionLineStatus {
+    if (status === 'OPEN' || status === 'PARTIAL' || status === 'FULFILLED' || status === 'CANCELLED') {
+        return status;
+    }
+    return 'OPEN';
+}
+
+function toDomainReqStatus(status: string | undefined): DomainRequisitionStatus {
+    if (
+        status === 'DRAFT' ||
+        status === 'OPEN' ||
+        status === 'PARTIAL' ||
+        status === 'FULFILLED' ||
+        status === 'CANCELLED' ||
+        status === 'CLOSED' ||
+        status === 'PENDING_REVIEW'
+    ) {
+        return status;
+    }
+    return 'OPEN';
+}
+
+function mapAppReqToDomain(req: SupplyRequisition): DomainSupplyRequisition {
+    return {
+        reqId: req.reqId,
+        tenantId: req.tenantId,
+        siteId: req.siteId,
+        requesterUid: req.requesterUid,
+        requesterName: req.requesterName,
+        requesterRole: req.requesterRole,
+        demandOrigin: req.demandOrigin,
+        demandNature: req.demandNature,
+        costCenter: req.costCenter,
+        linkedAssetId: req.linkedAssetId,
+        linkedPlanRef: req.linkedPlanRef,
+        status: toDomainReqStatus(req.status),
+        createdAt: req.createdAt,
+        updatedAt: req.updatedAt,
+        lines: req.lines.map((l) => ({
+            lineId: l.lineId,
+            canonicalSkuId: l.canonicalSkuId,
+            description: l.itemName,
+            categoryCode: l.categoryCode,
+            procurementBucket: l.procurementBucket,
+            unitSi: l.unitSi,
+            qtyRequested: l.qtyRequested,
+            qtyPurchased: l.qtyPurchased,
+            qtyReceived: l.qtyReceived,
+            qtyPending: l.qtyPending,
+            lineStatus: toDomainLineStatus(l.lineStatus),
+            atypicalFlags: [...(l.atypicalFlags || [])],
+            fulfillmentChannel: l.fulfillmentChannel,
+            urgency: toDomainUrgency(l.urgency),
+            estimatedUnitClp: l.estimatedUnitClp,
+            attributes: l.attributes,
+        })),
+    };
+}
+
 export class SupplyRepository {
     private static async recordAudit(
         tenantId: string,
@@ -211,6 +347,24 @@ export class SupplyRepository {
             details,
             ipAddress: actor.ipAddress,
         });
+    }
+
+    /**
+     * Persiste registro inmutable de auditoría de políticas (`supply_policy_audit`)
+     * para bloqueos DS 132, explosivos DGMN Ley N° 17.798, banderas atípicas y smurfing.
+     */
+    public static async recordPolicyAudit(
+        input: Omit<SupplyPolicyAuditEntry, 'auditId' | 'createdAt'>
+    ): Promise<SupplyPolicyAuditEntry> {
+        const now = new Date().toISOString();
+        const auditId = `paud_${Date.now().toString(36)}_${crypto.randomBytes(4).toString('hex')}`;
+        const record: SupplyPolicyAuditEntry = {
+            ...input,
+            auditId,
+            createdAt: now,
+        };
+        await db.collection(SUPPLY_COLLECTIONS.POLICY_AUDIT).doc(auditId).set(record);
+        return record;
     }
 
     // -----------------------------------------------------------------------
@@ -288,7 +442,7 @@ export class SupplyRepository {
         let items: CanonicalSupplySku[] = snap.docs.map((d) => d.data() as CanonicalSupplySku);
 
         if (items.length === 0) {
-            items = BRIDGE_CATALOG_RULES.map((r) => ({
+            const bridgeItems: CanonicalSupplySku[] = BRIDGE_CATALOG_RULES.map((r) => ({
                 canonicalSkuId: r.canonicalSkuId,
                 name: r.itemName,
                 categoryCode: r.categoryCode,
@@ -299,6 +453,24 @@ export class SupplyRepository {
                 isControlled: false,
                 leySaco25kgApplied: Boolean(r.packConversions?.some((c) => c.leySaco)),
             }));
+            const seenIds = new Set(bridgeItems.map((i) => i.canonicalSkuId));
+            const seedItems: CanonicalSupplySku[] = DEFAULT_SUPPLY_CATALOG_SEED.filter(
+                (seed) => !seenIds.has(seed.canonicalSkuId)
+            ).map((seed) => ({
+                canonicalSkuId: seed.canonicalSkuId,
+                name: seed.name,
+                categoryCode: seed.categoryCode,
+                procurementBucket: seed.procurementBucket,
+                baseUnitSi: seed.baseUnitSi,
+                unspscCode: seed.unspscCode,
+                requiredSlots: [...seed.requiredSlots],
+                defaultPackToSi: seed.defaultPackToSi?.factorToSi,
+                isCapexAsset: seed.isCapexAsset,
+                isControlled: seed.isControlled,
+                leySaco25kgApplied: seed.leySaco25kgApplied,
+                aliases: [...seed.aliases],
+            }));
+            items = [...bridgeItems, ...seedItems];
         }
 
         if (options?.tenantId) {
@@ -321,6 +493,16 @@ export class SupplyRepository {
         }
 
         return items.sort((a, b) => a.name.localeCompare(b.name, 'es'));
+    }
+
+    /**
+     * Resuelve un SKU canónico usando `DefaultSupplyCatalogSeed` (por ID o texto libre).
+     */
+    public static resolveCanonicalSkuFromSeed(rawIdOrText: string) {
+        return (
+            findDomainCanonicalSkuById(rawIdOrText) ||
+            matchDomainCanonicalSkuByText(rawIdOrText)
+        );
     }
 
     public static async upsertCatalogSku(
@@ -527,7 +709,59 @@ export class SupplyRepository {
         siteId?: string
     ): Promise<ConsolidatedShoppingList> {
         const reqs = await this.listRequisitions(tenantId, { siteId });
-        return consolidateOpenRequisitions(tenantId, reqs, siteId);
+        const reqRoleById = new Map<string, SupplyOperationalRole>(
+            reqs.map((r) => [r.reqId, r.requesterRole])
+        );
+        const domainReqs = reqs.map(mapAppReqToDomain);
+        const domainConsolidated = consolidateRequisitionsToShoppingList(domainReqs, {
+            tenantId,
+            siteId: siteId || '',
+        });
+
+        let totalPendingLines = 0;
+        const buckets: ConsolidatedShoppingBucket[] = domainConsolidated.buckets.map((bucket) => {
+            const items: ConsolidatedShoppingItem[] = bucket.items.map((item) => {
+                totalPendingLines += item.sourceReqRefs.length;
+                return {
+                    canonicalSkuId: item.canonicalSkuId,
+                    itemName: item.name,
+                    categoryCode: item.categoryCode,
+                    procurementBucket: item.procurementBucket,
+                    unitSi: item.unitSi,
+                    totalQtyPending: item.totalQtyPending,
+                    highestUrgency: item.highestUrgency,
+                    hasPartialPending: item.hasPartialPending,
+                    atypicalCount: item.atypicalCount,
+                    estimatedClp: item.estimatedClp,
+                    sourceReqRefs: item.sourceReqRefs.map((ref) => ({
+                        reqId: ref.reqId,
+                        lineId: ref.lineId,
+                        costCenter: ref.costCenter,
+                        requesterRole: reqRoleById.get(ref.reqId) || 'CAMP_MANAGER',
+                        qtyPending: ref.qtyPending,
+                        urgency: ref.urgency,
+                        atypicalFlags: ref.atypicalFlags,
+                    })),
+                };
+            });
+            return {
+                procurementBucket: bucket.procurementBucket,
+                itemCount: items.length,
+                atypicalCount: bucket.totalAtypicalCount,
+                estimatedBucketClp: bucket.estimatedBucketClp,
+                items,
+            };
+        });
+
+        return {
+            tenantId,
+            siteId,
+            generatedAt: domainConsolidated.generatedAt,
+            openRequisitionCount: domainConsolidated.sourceRequisitionCount,
+            totalPendingLines,
+            totalEstimatedClp: domainConsolidated.totalEstimatedClp,
+            buckets,
+        };
     }
 
     // -----------------------------------------------------------------------
@@ -641,6 +875,8 @@ export class SupplyRepository {
             paymentMethod: PaymentMethod;
             evidenceCasRef?: SupplyPurchase['evidenceCasRef'];
             tedRawXml?: string;
+            expectedReceiverTaxId?: string;
+            countryCode?: string;
             lines: SupplyPurchaseLine[];
             atypicalFlags?: AtypicalFlagCode[];
         },
@@ -652,20 +888,112 @@ export class SupplyRepository {
         createdAssets: SupplyAsset[];
         updatedRequisitionIds: string[];
         missingInvoiceAlert: boolean;
+        tedRsaVerified?: boolean | null;
+        smurfingAlert?: SplitInvoiceSmurfingResult;
     }> {
         const now = new Date().toISOString();
-        const dedupeKey = buildSiiDedupeKey(params.supplierTaxId, params.documentType, params.folio);
+
+        // 1. Validación fiscal determinista vía `SiiTaxValidator` + puerto `ITaxJurisdictionAdapter`
+        if (params.documentType !== 0 && (!Number.isInteger(params.folio) || !isValidPositiveFolio(String(params.folio)))) {
+            throw new SupplyValidationError(
+                'FOLIO_MUST_BE_POSITIVE',
+                `FOLIO_MUST_BE_POSITIVE: El folio tributario debe ser mayor que cero para DTE ${params.documentType}.`
+            );
+        }
+
+        const taxAdapter = getTaxJurisdictionAdapter(params.countryCode || 'CL');
+        if (params.documentType !== 0 && taxAdapter.countryCode === 'CL') {
+            const rutValidation = taxAdapter.validateTaxId(params.supplierTaxId);
+            if (!rutValidation.valid) {
+                throw new SupplyValidationError(
+                    'INVALID_SUPPLIER_TAX_ID',
+                    `INVALID_SUPPLIER_TAX_ID: RUT proveedor inválido (${params.supplierTaxId}): ${rutValidation.reason || 'fallo Módulo-11'}.`
+                );
+            }
+        }
+
+        const hasCapexLine = params.lines.some((l) => l.isCapexAsset || l.destination === 'CAPEX_ASSET');
+
+        const siiValidation = validateSiiDocumentForPurchase({
+            siiDocId: `val_${Date.now().toString(36)}`,
+            tenantId: params.tenantId,
+            siteId: params.siteId,
+            tedRawXml: params.tedRawXml,
+            manualFallback: !params.tedRawXml
+                ? {
+                      supplierTaxId: params.supplierTaxId,
+                      supplierName: params.supplierName,
+                      dteType: params.documentType,
+                      folio: String(params.folio),
+                      issueDate: params.issueDate,
+                      netAmountClp: params.netAmountClp,
+                      vatAmountClp: params.vatAmountClp,
+                      totalAmountClp: params.totalAmountClp,
+                  }
+                : undefined,
+            expectedReceiverTaxId: params.expectedReceiverTaxId,
+            hasCapexAsset: hasCapexLine,
+        });
+
+        if (siiValidation.errors.some((e) => e.includes('FOLIO_MUST_BE_POSITIVE'))) {
+            throw new SupplyValidationError(
+                'FOLIO_MUST_BE_POSITIVE',
+                siiValidation.errors.find((e) => e.includes('FOLIO_MUST_BE_POSITIVE'))!
+            );
+        }
+        if (siiValidation.tedRsaVerified === false) {
+            throw new SupplyValidationError(
+                'TED_RSA_SIGNATURE_INVALID',
+                'TED_RSA_SIGNATURE_INVALID: La firma criptográfica RSA-SHA1 del timbre TED no coincide con la clave pública CAF.'
+            );
+        }
+        if (siiValidation.receiverTaxIdMismatch) {
+            throw new SupplyValidationError(
+                'RECEIVER_TAX_ID_MISMATCH',
+                siiValidation.errors.find((e) => e.includes('RECEIVER_TAX_ID_MISMATCH')) ||
+                    'RECEIVER_TAX_ID_MISMATCH: El RUT receptor del documento no coincide con la empresa.'
+            );
+        }
+
+        const dedupeKey = buildDomainSiiDedupeKey(
+            params.supplierTaxId,
+            params.documentType,
+            String(params.folio)
+        );
         const purchaseId = `pur_${Date.now().toString(36)}_${crypto.randomBytes(3).toString('hex')}`;
         const safeRut = safeDocIdPart(params.supplierTaxId || params.supplierName);
         const supplierId = `tsup_${safeDocIdPart(params.tenantId)}_${safeRut}`;
 
-        const hasCapexLine = params.lines.some((l) => l.isCapexAsset || l.destination === 'CAPEX_ASSET');
+        // 2. Detección determinista de fraccionamiento de facturas (`SPLIT_INVOICE_SMURFING` <= 48h)
+        const [siteDoc, recentSitePurchases] = await Promise.all([
+            this.getSite(params.tenantId, params.siteId).catch(() => null),
+            this.listPurchases(params.tenantId, params.siteId).catch(() => []),
+        ]);
+        const approvalThresholdClp = Math.max(
+            1,
+            Number(siteDoc?.directPurchaseAlertThresholdClp ?? 500_000)
+        );
+        const smurfingAlert = detectSplitInvoiceSmurfing({
+            supplierTaxId: params.supplierTaxId,
+            currentAmountClp: params.totalAmountClp,
+            currentTimestampIso: now,
+            recentPurchases: recentSitePurchases.map((p) => ({
+                purchaseId: p.purchaseId,
+                supplierTaxId: p.supplierTaxId,
+                totalAmountClp: p.totalAmountClp,
+                createdAtIso: p.createdAt,
+            })),
+            approvalThresholdClp,
+            windowHours: 48,
+        });
+
         const missingInvoiceAlert = hasCapexLine && params.documentType !== 33 && params.documentType !== 34;
 
         const atypicalFlags = Array.from(
             new Set<AtypicalFlagCode>([
                 ...(params.atypicalFlags || []),
                 ...(hasCapexLine ? (['ATYPICAL_HIGH_VALUE_OR_CAPEX'] as AtypicalFlagCode[]) : []),
+                ...(smurfingAlert.detected ? (['ATYPICAL_HIGH_VALUE_OR_CAPEX'] as AtypicalFlagCode[]) : []),
                 ...(missingInvoiceAlert ? (['ATYPICAL_ASSET_WITHOUT_INVOICE'] as AtypicalFlagCode[]) : []),
             ])
         );
@@ -690,7 +1018,11 @@ export class SupplyRepository {
 
         const fiscalRetentionUntil = computeSixYearRetentionIso(params.issueDate || now);
 
-        const purchase: SupplyPurchase & { retentionUntil: string } = {
+        const purchase: SupplyPurchase & {
+            retentionUntil: string;
+            tedRsaVerified?: boolean | null;
+            policyAlerts?: string[];
+        } = {
             purchaseId,
             tenantId: params.tenantId,
             siteId: params.siteId,
@@ -711,6 +1043,8 @@ export class SupplyRepository {
             paymentMethod: params.paymentMethod,
             evidenceCasRef: params.evidenceCasRef,
             tedRawXml: params.tedRawXml,
+            tedRsaVerified: siiValidation.tedRsaVerified,
+            ...(smurfingAlert.detected ? { policyAlerts: ['SPLIT_INVOICE_SMURFING'] } : {}),
             receptionStatus,
             receivedAt: receptionStatus === 'RECEIVED' ? now : undefined,
             receivedByUid: receptionStatus === 'RECEIVED' ? actor.actorUid : undefined,
@@ -721,17 +1055,29 @@ export class SupplyRepository {
             updatedAt: now,
         };
 
-        const { rcvDeadlineDate, rcvDaysRemaining } = computeRcvDeadline(
-            params.issueDate,
-            params.documentType
-        );
-        const vatCreditRecoverableClp = params.documentType === 33 ? Math.round(params.vatAmountClp) : 0;
+        const rcvDomain = computeRcvAcceptanceDeadline(params.issueDate, params.documentType);
+        const rcvDeadlineDate = rcvDomain.applicable ? rcvDomain.deadlineIso ?? null : null;
+        const rcvDaysRemaining = rcvDomain.applicable ? rcvDomain.daysRemaining ?? null : null;
+
+        // DL 825 exacto vía `SiiTaxValidator.computeChileanVatBreakdown`:
+        // DTE 33 => +vat, DTE 52 => 0, DTE 61 => -vat (Nota de Crédito), DTE 39 => 0
+        const vatBreakdown = computeChileanVatBreakdown({
+            dteType: params.documentType,
+            totalAmountClp: params.totalAmountClp,
+            netAmountClp: params.netAmountClp,
+            vatAmountClp: params.vatAmountClp,
+        });
+        const vatCreditRecoverableClp = vatBreakdown.vatRecoverableClp;
         const enforceUniqueSii = params.documentType !== 0 && params.folio > 0;
         const siiDocId = enforceUniqueSii
             ? buildSiiDocId(params.tenantId, dedupeKey)
             : `${safeDocIdPart(params.tenantId)}__rural_${purchaseId}`;
 
-        const siiDocument: SiiDocumentRecord & { retentionUntil: string } = {
+        const siiDocument: SiiDocumentRecord & {
+            retentionUntil: string;
+            tedRsaVerified?: boolean | null;
+            isCreditNote?: boolean;
+        } = {
             docId: siiDocId,
             tenantId: params.tenantId,
             siteId: params.siteId,
@@ -751,6 +1097,8 @@ export class SupplyRepository {
             rcvStatus: params.documentType === 33 || params.documentType === 34 ? 'PENDING_ACCEPTANCE' : 'NOT_APPLICABLE',
             missingInvoiceForCapex: missingInvoiceAlert,
             evidenceCasRef: params.evidenceCasRef,
+            tedRsaVerified: siiValidation.tedRsaVerified,
+            isCreditNote: vatBreakdown.isCreditNote,
             retentionUntil: fiscalRetentionUntil,
             createdAt: now,
             updatedAt: now,
@@ -828,7 +1176,8 @@ export class SupplyRepository {
             }
             txOpenReqs.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 
-            // FASE 2: CÁLCULO DETERMINISTA EN MEMORIA
+            // FASE 2: CÁLCULO DETERMINISTA EN MEMORIA VÍA MOTORES DE DOMINIO
+            // (`RequisitionFulfillmentMatcher` + `StockAssetCashCostReconciler`)
             const reqById = new Map<string, SupplyRequisition>(txOpenReqs.map((r) => [r.reqId, r]));
             const mutatedReqs = new Map<string, SupplyRequisition>();
             const txAllocations: FulfillmentAllocation[] = [];
@@ -836,119 +1185,217 @@ export class SupplyRepository {
             const txCashEntries: CashLedgerEntry[] = [];
             const txStockLedgers: StockLedgerEntry[] = [];
             const txUpdatedInventory = new Map<string, SupplyInventoryItem>();
+            const remainingQtyByLineId = new Map<string, number>();
 
+            // 2a. Aplicar primero asignaciones explícitas confirmadas por el usuario en UI HITL
             for (const pLine of params.lines) {
                 const isCapex = pLine.isCapexAsset || pLine.destination === 'CAPEX_ASSET';
                 let remainingQty = Number(pLine.qtyPurchased);
 
-                if (!isCapex && params.purchaseMode !== 'DIRECT_AUTONOMOUS') {
-                    if (Array.isArray(pLine.explicitAllocations)) {
-                        for (const exp of pLine.explicitAllocations) {
-                            if (remainingQty <= 0) break;
-                            const targetReq = reqById.get(exp.reqId);
-                            if (!targetReq) continue;
-                            const targetLine = targetReq.lines.find((l) => l.lineId === exp.reqLineId);
-                            if (!targetLine || targetLine.qtyPending <= 0) continue;
-
-                            const allocQty = Math.min(remainingQty, exp.qtyAllocated, targetLine.qtyPending);
-                            if (allocQty <= 0) continue;
-
-                            targetLine.qtyPurchased = Number((targetLine.qtyPurchased + allocQty).toFixed(3));
-                            targetLine.qtyPending = Math.max(
-                                0,
-                                Number((targetLine.qtyRequested - targetLine.qtyPurchased).toFixed(3))
-                            );
-                            if (pLine.destination === 'STOCK_IN_WAREHOUSE') {
-                                targetLine.qtyReceived = Number((targetLine.qtyReceived + allocQty).toFixed(3));
-                            }
-                            targetLine.lineStatus = targetLine.qtyPending <= 0 ? 'FULFILLED' : 'PARTIAL';
-                            targetReq.status = computeRequisitionAggregateStatus(targetReq.lines);
-                            targetReq.updatedAt = now;
-                            mutatedReqs.set(targetReq.reqId, targetReq);
-
-                            remainingQty = Number((remainingQty - allocQty).toFixed(3));
-                            txAllocations.push({
-                                allocationId: `alloc_${crypto.randomBytes(5).toString('hex')}`,
-                                tenantId: params.tenantId,
-                                siteId: params.siteId,
-                                purchaseId,
-                                purchaseLineId: pLine.purchaseLineId,
-                                requisitionId: targetReq.reqId,
-                                requisitionLineId: targetLine.lineId,
-                                canonicalSkuId: pLine.canonicalSkuId,
-                                qtyAllocated: allocQty,
-                                unitSi: pLine.unitSi,
-                                destination: pLine.destination,
-                                createdAt: now,
-                            });
-                        }
-                    }
-
-                    for (const targetReq of reqById.values()) {
+                if (!isCapex && params.purchaseMode !== 'DIRECT_AUTONOMOUS' && Array.isArray(pLine.explicitAllocations)) {
+                    for (const exp of pLine.explicitAllocations) {
                         if (remainingQty <= 0) break;
-                        for (const targetLine of targetReq.lines) {
-                            if (remainingQty <= 0) break;
-                            if (targetLine.lineStatus === 'FULFILLED' || targetLine.lineStatus === 'CANCELLED') continue;
-                            if (targetLine.qtyPending <= 0) continue;
-                            if (targetLine.canonicalSkuId !== pLine.canonicalSkuId) continue;
+                        const targetReq = reqById.get(exp.reqId);
+                        if (!targetReq) continue;
+                        const targetLine = targetReq.lines.find((l) => l.lineId === exp.reqLineId);
+                        if (!targetLine || targetLine.qtyPending <= 0) continue;
 
-                            const allocQty = Math.min(remainingQty, targetLine.qtyPending);
-                            targetLine.qtyPurchased = Number((targetLine.qtyPurchased + allocQty).toFixed(3));
-                            targetLine.qtyPending = Math.max(
-                                0,
-                                Number((targetLine.qtyRequested - targetLine.qtyPurchased).toFixed(3))
-                            );
-                            if (pLine.destination === 'STOCK_IN_WAREHOUSE') {
-                                targetLine.qtyReceived = Number((targetLine.qtyReceived + allocQty).toFixed(3));
-                            }
-                            targetLine.lineStatus = targetLine.qtyPending <= 0 ? 'FULFILLED' : 'PARTIAL';
-                            targetReq.status = computeRequisitionAggregateStatus(targetReq.lines);
-                            targetReq.updatedAt = now;
-                            mutatedReqs.set(targetReq.reqId, targetReq);
+                        const allocQty = Math.min(remainingQty, exp.qtyAllocated, targetLine.qtyPending);
+                        if (allocQty <= 0) continue;
 
-                            remainingQty = Number((remainingQty - allocQty).toFixed(3));
-                            txAllocations.push({
-                                allocationId: `alloc_${crypto.randomBytes(5).toString('hex')}`,
-                                tenantId: params.tenantId,
-                                siteId: params.siteId,
-                                purchaseId,
-                                purchaseLineId: pLine.purchaseLineId,
-                                requisitionId: targetReq.reqId,
-                                requisitionLineId: targetLine.lineId,
-                                canonicalSkuId: pLine.canonicalSkuId,
-                                qtyAllocated: allocQty,
-                                unitSi: pLine.unitSi,
-                                destination: pLine.destination,
-                                createdAt: now,
-                            });
+                        targetLine.qtyPurchased = Number((targetLine.qtyPurchased + allocQty).toFixed(3));
+                        targetLine.qtyPending = Math.max(
+                            0,
+                            Number((targetLine.qtyRequested - targetLine.qtyPurchased).toFixed(3))
+                        );
+                        if (pLine.destination === 'STOCK_IN_WAREHOUSE') {
+                            targetLine.qtyReceived = Number((targetLine.qtyReceived + allocQty).toFixed(3));
+                        }
+                        targetLine.lineStatus = targetLine.qtyPending <= 0 ? 'FULFILLED' : 'PARTIAL';
+                        targetReq.status = computeRequisitionAggregateStatus(targetReq.lines);
+                        targetReq.updatedAt = now;
+                        mutatedReqs.set(targetReq.reqId, targetReq);
+
+                        remainingQty = Number((remainingQty - allocQty).toFixed(3));
+                        txAllocations.push({
+                            allocationId: `alloc_${crypto.randomBytes(5).toString('hex')}`,
+                            tenantId: params.tenantId,
+                            siteId: params.siteId,
+                            purchaseId,
+                            purchaseLineId: pLine.purchaseLineId,
+                            requisitionId: targetReq.reqId,
+                            requisitionLineId: targetLine.lineId,
+                            canonicalSkuId: pLine.canonicalSkuId,
+                            qtyAllocated: allocQty,
+                            unitSi: pLine.unitSi,
+                            destination: pLine.destination,
+                            createdAt: now,
+                        });
+                    }
+                }
+                remainingQtyByLineId.set(pLine.purchaseLineId, remainingQty);
+            }
+
+            // 2b. Invocar `RequisitionFulfillmentMatcher` para conciliación N:M FIFO de los remanentes
+            const domainOpenReqs = Array.from(reqById.values()).map(mapAppReqToDomain);
+            const domainLinesForMatcher = params.lines
+                .filter((l) => (remainingQtyByLineId.get(l.purchaseLineId) || 0) > 0)
+                .map((l) => {
+                    const remQty = remainingQtyByLineId.get(l.purchaseLineId) || 0;
+                    const ratio = l.qtyPurchased > 0 ? remQty / l.qtyPurchased : 1;
+                    const lineGross = Math.round(l.subtotalClp * ratio);
+                    const lineVat = computeChileanVatBreakdown({
+                        dteType: params.documentType,
+                        totalAmountClp: lineGross,
+                    });
+                    return {
+                        purchaseLineId: l.purchaseLineId,
+                        canonicalSkuId: l.canonicalSkuId,
+                        description: l.description,
+                        categoryCode: l.categoryCode,
+                        unitSi: l.unitSi,
+                        qtyPurchased: remQty,
+                        unitPriceNetClp: remQty > 0 ? Math.round(Math.abs(lineVat.netAmountClp) / remQty) : 0,
+                        unitPriceGrossClp: l.unitPriceClp,
+                        subtotalNetClp: Math.abs(lineVat.netAmountClp),
+                        subtotalGrossClp: lineGross,
+                        destination: l.destination,
+                        isCapexAsset: l.isCapexAsset || l.destination === 'CAPEX_ASSET',
+                        costCenter: l.costCenter,
+                        serialOrTag: l.serialOrTag,
+                    };
+                });
+
+            const domainRemainingPurchase: DomainSupplyPurchase = {
+                purchaseId,
+                tenantId: params.tenantId,
+                siteId: params.siteId,
+                buyerUid: params.buyerUid,
+                buyerRole: params.buyerRole,
+                purchaseMode: params.purchaseMode,
+                authorizedByAuthority: params.authorizedByAuthority,
+                supplierTaxId: params.supplierTaxId,
+                supplierName: params.supplierName,
+                supplierId,
+                documentType: params.documentType,
+                folio: String(params.folio),
+                issueDate: params.issueDate,
+                netAmountClp: Math.round(params.netAmountClp),
+                vatAmountClp: Math.round(params.vatAmountClp),
+                totalAmountClp: Math.round(params.totalAmountClp),
+                paymentMethod: params.paymentMethod,
+                tedRawXml: params.tedRawXml,
+                createdAt: now,
+                lines: domainLinesForMatcher,
+            };
+
+            const fulfillmentResult = matchPurchaseToRequisitions(
+                domainRemainingPurchase,
+                domainOpenReqs,
+                { matchedAt: now }
+            );
+
+            // Sincronizar requisiciones actualizadas por FIFO del dominio hacia el estado transaccional
+            for (const updatedDomReq of fulfillmentResult.updatedRequisitions) {
+                const targetAppReq = reqById.get(updatedDomReq.reqId);
+                if (!targetAppReq) continue;
+                let changed = false;
+                for (const domLine of updatedDomReq.lines) {
+                    const appLine = targetAppReq.lines.find((l) => l.lineId === domLine.lineId);
+                    if (!appLine) continue;
+                    const deltaPurchased = Number((domLine.qtyPurchased - appLine.qtyPurchased).toFixed(3));
+                    if (deltaPurchased > 0) {
+                        changed = true;
+                        appLine.qtyPurchased = Number(domLine.qtyPurchased.toFixed(3));
+                        appLine.qtyPending = Number(domLine.qtyPending.toFixed(3));
+                        appLine.lineStatus = domLine.lineStatus;
+                        const matchingAlloc = fulfillmentResult.allocations.find(
+                            (a) =>
+                                a.requisitionId === updatedDomReq.reqId &&
+                                a.requisitionLineId === domLine.lineId &&
+                                a.destination === 'STOCK_IN_WAREHOUSE'
+                        );
+                        if (matchingAlloc) {
+                            appLine.qtyReceived = Number((appLine.qtyReceived + deltaPurchased).toFixed(3));
                         }
                     }
                 }
-
-                if (remainingQty > 0) {
-                    txAllocations.push({
-                        allocationId: `alloc_${crypto.randomBytes(5).toString('hex')}`,
-                        tenantId: params.tenantId,
-                        siteId: params.siteId,
-                        purchaseId,
-                        purchaseLineId: pLine.purchaseLineId,
-                        requisitionId: 'UNSOLICITED_PURCHASE',
-                        requisitionLineId: 'UNSOLICITED_PURCHASE',
-                        canonicalSkuId: pLine.canonicalSkuId,
-                        qtyAllocated: remainingQty,
-                        unitSi: pLine.unitSi,
-                        destination: pLine.destination,
-                        createdAt: now,
-                    });
+                if (changed) {
+                    targetAppReq.status = computeRequisitionAggregateStatus(targetAppReq.lines);
+                    targetAppReq.updatedAt = now;
+                    mutatedReqs.set(targetAppReq.reqId, targetAppReq);
                 }
+            }
+
+            for (const domAlloc of fulfillmentResult.allocations) {
+                txAllocations.push({
+                    allocationId: `alloc_${crypto.randomBytes(5).toString('hex')}`,
+                    tenantId: params.tenantId,
+                    siteId: params.siteId,
+                    purchaseId,
+                    purchaseLineId: domAlloc.purchaseLineId,
+                    requisitionId: domAlloc.requisitionId || 'UNSOLICITED_PURCHASE',
+                    requisitionLineId: domAlloc.requisitionLineId || 'UNSOLICITED_PURCHASE',
+                    canonicalSkuId: domAlloc.canonicalSkuId,
+                    qtyAllocated: domAlloc.qtyAllocated,
+                    unitSi: domAlloc.unitSi,
+                    destination: domAlloc.destination,
+                    createdAt: now,
+                });
+            }
+
+            // 2c. Invocar `StockAssetCashCostReconciler.reconcilePurchase` para separar CAPEX vs OPEX / Caja / Stock
+            const domainFullPurchase: DomainSupplyPurchase = {
+                ...domainRemainingPurchase,
+                lines: params.lines.map((l) => {
+                    const lineVat = computeChileanVatBreakdown({
+                        dteType: params.documentType,
+                        totalAmountClp: l.subtotalClp,
+                    });
+                    return {
+                        purchaseLineId: l.purchaseLineId,
+                        canonicalSkuId: l.canonicalSkuId,
+                        description: l.description,
+                        categoryCode: l.categoryCode,
+                        unitSi: l.unitSi,
+                        qtyPurchased: l.qtyPurchased,
+                        unitPriceNetClp:
+                            l.qtyPurchased > 0 ? Math.round(Math.abs(lineVat.netAmountClp) / l.qtyPurchased) : 0,
+                        unitPriceGrossClp: l.unitPriceClp,
+                        subtotalNetClp: Math.abs(lineVat.netAmountClp),
+                        subtotalGrossClp: l.subtotalClp,
+                        destination: l.destination,
+                        isCapexAsset: l.isCapexAsset || l.destination === 'CAPEX_ASSET',
+                        costCenter: l.costCenter,
+                        serialOrTag: l.serialOrTag,
+                    };
+                }),
+            };
+
+            const domainRecon = reconcilePurchase(domainFullPurchase, fulfillmentResult.allocations, {
+                recordedAt: now,
+            });
+
+            const domainAssetByLineId = new Map(
+                domainRecon.createdAssets.map((a) => [a.purchaseLineId, a])
+            );
+
+            for (let idx = 0; idx < params.lines.length; idx++) {
+                const pLine = params.lines[idx];
+                const domAsset = domainAssetByLineId.get(pLine.purchaseLineId);
+                const domCash = domainRecon.cashEntries[idx];
+                const isCapex = Boolean(domAsset || pLine.isCapexAsset || pLine.destination === 'CAPEX_ASSET');
 
                 if (isCapex) {
-                    const lineNetClp =
-                        params.documentType === 33
-                            ? Math.round(pLine.subtotalClp / 1.19)
-                            : Math.round(pLine.subtotalClp);
-                    const lineVatCreditClp =
-                        params.documentType === 33 ? Math.max(0, Math.round(pLine.subtotalClp - lineNetClp)) : 0;
+                    const lineVatCreditClp = domAsset
+                        ? domAsset.vatCreditClp
+                        : computeChileanVatBreakdown({
+                              dteType: params.documentType,
+                              totalAmountClp: pLine.subtotalClp,
+                          }).vatRecoverableClp;
+                    const lineNetClp = domAsset
+                        ? domAsset.acquisitionNetClp
+                        : Math.max(0, Math.round(pLine.subtotalClp - Math.max(0, lineVatCreditClp)));
 
                     txCreatedAssets.push({
                         assetId: `sasset_${Date.now().toString(36)}_${crypto.randomBytes(3).toString('hex')}`,
@@ -964,7 +1411,9 @@ export class SupplyRepository {
                         supplierTaxId: params.supplierTaxId,
                         supplierName: params.supplierName,
                         evidenceCasRef: params.evidenceCasRef,
-                        missingInvoiceAlert: params.documentType !== 33 && params.documentType !== 34,
+                        missingInvoiceAlert: domAsset
+                            ? domAsset.missingInvoiceAlert
+                            : params.documentType !== 33 && params.documentType !== 34,
                         costCenter: 'CC-CAPEX',
                         createdAt: now,
                         updatedAt: now,
@@ -998,11 +1447,19 @@ export class SupplyRepository {
                     txStockLedgers.push(computed.ledgerEntry);
                 }
 
-                const lineVatCredit =
-                    params.documentType === 33
-                        ? Math.round(pLine.subtotalClp - pLine.subtotalClp / 1.19)
-                        : 0;
-                const lineNet = Math.max(0, Math.round(pLine.subtotalClp - lineVatCredit));
+                // Costo tributario contable: cuando no hay IVA crédito fiscal recuperable (ej. Boleta 39, DTE 52),
+                // el monto pagado completo constituye base de costo (DL 825 Art. 23).
+                const lineVatCredit = domCash
+                    ? domCash.vatRecoverableClp
+                    : computeChileanVatBreakdown({
+                          dteType: params.documentType,
+                          totalAmountClp: pLine.subtotalClp,
+                      }).vatRecoverableClp;
+                const lineNetBasis =
+                    params.documentType === 61
+                        ? -Math.abs(Math.round(pLine.subtotalClp - Math.abs(lineVatCredit)))
+                        : Math.max(0, Math.round(pLine.subtotalClp - Math.max(0, lineVatCredit)));
+
                 txCashEntries.push({
                     entryId: `cash_${crypto.randomBytes(5).toString('hex')}`,
                     tenantId: params.tenantId,
@@ -1012,11 +1469,11 @@ export class SupplyRepository {
                         params.paymentMethod === 'REEMBOLSO_GERENCIA'
                             ? 'REIMBURSEMENT_DUE'
                             : 'EXPENSE_RENDERED',
-                    amountClp: Math.round(pLine.subtotalClp),
-                    netAmountClp: lineNet,
+                    amountClp: params.documentType === 61 ? -Math.abs(Math.round(pLine.subtotalClp)) : Math.round(pLine.subtotalClp),
+                    netAmountClp: lineNetBasis,
                     vatCreditClp: lineVatCredit,
                     isCapex,
-                    costCenter: isCapex ? 'CC-CAPEX' : pLine.costCenter || 'CC-CAMPAMENTO',
+                    costCenter: isCapex ? 'CC-CAPEX' : domCash?.costCenter || pLine.costCenter || 'CC-CAMPAMENTO',
                     referenceId: purchaseId,
                     actorUid: actor.actorUid,
                     description: `${pLine.description} (${pLine.qtyPurchased} ${pLine.unitSi}) · DTE ${params.documentType} #${params.folio}`,
@@ -1065,6 +1522,26 @@ export class SupplyRepository {
             mutatedReqIds = Array.from(mutatedReqs.keys());
         });
 
+        if (smurfingAlert.detected) {
+            await this.recordPolicyAudit({
+                tenantId: params.tenantId,
+                siteId: params.siteId,
+                actorUid: actor.actorUid,
+                eventType: 'SPLIT_INVOICE_SMURFING',
+                policyCode: 'SPLIT_INVOICE_SMURFING',
+                severity: 'HIGH',
+                entityId: purchaseId,
+                details: {
+                    supplierTaxId: smurfingAlert.supplierTaxIdNormalized,
+                    purchaseCount: smurfingAlert.purchaseCount,
+                    cumulativeAmountClp: smurfingAlert.cumulativeAmountClp,
+                    approvalThresholdClp: smurfingAlert.approvalThresholdClp,
+                    windowHours: smurfingAlert.windowHours,
+                    relatedPurchaseIds: smurfingAlert.relatedPurchaseIds,
+                },
+            });
+        }
+
         await this.recordAudit(params.tenantId, actor, 'SUPPLY_PURCHASE_COMMITTED', purchaseId, {
             hitlConfirmed: true,
             purchaseMode: params.purchaseMode,
@@ -1073,6 +1550,8 @@ export class SupplyRepository {
             allocationsCount: allocations.length,
             createdAssetsCount: createdAssets.length,
             missingInvoiceAlert,
+            tedRsaVerified: siiValidation.tedRsaVerified,
+            smurfingDetected: smurfingAlert.detected,
             casSha256: params.evidenceCasRef?.sha256 || null,
             casOriginalBytes: params.evidenceCasRef?.originalBytes || null,
             casOptimizedBytes: params.evidenceCasRef?.optimizedBytes || null,
@@ -1086,6 +1565,8 @@ export class SupplyRepository {
             createdAssets,
             updatedRequisitionIds: mutatedReqIds,
             missingInvoiceAlert,
+            tedRsaVerified: siiValidation.tedRsaVerified,
+            ...(smurfingAlert.detected ? { smurfingAlert } : {}),
         };
     }
 
@@ -1228,7 +1709,26 @@ export class SupplyRepository {
                 }
             }
 
-            // FASE 2: CÁLCULO ATÓMICO EN MEMORIA
+            // FASE 2: CÁLCULO ATÓMICO EN MEMORIA (evaluado vía `StockAssetCashCostReconciler.confirmWarehouseReception`)
+            confirmWarehouseReception({
+                receptionId: `rec_${loaded.purchaseId}_${Date.now().toString(36)}`,
+                tenantId: params.tenantId,
+                siteId: loaded.siteId,
+                purchaseId: loaded.purchaseId,
+                recordedAt: now,
+                lines: inTransitLines.map((line) => {
+                    const prog = incomingByLineId.get(line.purchaseLineId)!;
+                    return {
+                        canonicalSkuId: line.canonicalSkuId,
+                        unitSi: line.unitSi,
+                        expectedInTransitQty: Math.max(0, Number((line.qtyPurchased - prog.prev).toFixed(3))),
+                        receivedQty: prog.incoming,
+                        unitCostNetClp: line.unitPriceClp,
+                        costCenter: line.costCenter || 'CC-CAMPAMENTO',
+                    };
+                }),
+            });
+
             let txReceivedItemCount = 0;
             const txUpdatedInventory = new Map<string, SupplyInventoryItem>();
             const txStockLedgers: StockLedgerEntry[] = [];
@@ -1445,16 +1945,42 @@ export class SupplyRepository {
             throw new SupplyNotFoundError('Activo patrimonial no pertenece a la cuenta activa.');
         }
 
+        const timestampIso = new Date().toISOString();
         const updated: SupplyAsset = {
             ...existing,
             opermaqAssetId: opermaqAssetId.trim(),
-            updatedAt: new Date().toISOString(),
+            updatedAt: timestampIso,
         };
         await ref.set(updated, { merge: true });
+
+        // Emitir evento trazable inter-módulo en `event_ledger` (supply -> opermaq) con payloadHash SHA-256
+        const ledgerEventPayload = {
+            eventType: 'SUPPLY_ASSET_LINKED_TO_OPERMAQ' as const,
+            sourceModule: 'supply' as const,
+            targetModule: 'opermaq' as const,
+            tenantId,
+            siteId: updated.siteId,
+            assetId,
+            opermaqAssetId: updated.opermaqAssetId!,
+            actorUid: actor.actorUid,
+            timestampIso,
+        };
+        const payloadHash = crypto
+            .createHash('sha256')
+            .update(JSON.stringify(ledgerEventPayload))
+            .digest('hex');
+        const eventId = `evt_sup_opm_${Date.now().toString(36)}_${crypto.randomBytes(4).toString('hex')}`;
+        await db.collection(SUPPLY_COLLECTIONS.EVENT_LEDGER).doc(eventId).set({
+            eventId,
+            ...ledgerEventPayload,
+            payloadHash,
+        });
 
         await this.recordAudit(tenantId, actor, 'SUPPLY_ASSET_LINKED_OPERMAQ', assetId, {
             hitlConfirmed: true,
             opermaqAssetId: updated.opermaqAssetId,
+            eventLedgerId: eventId,
+            payloadHash,
         });
         return updated;
     }
@@ -1503,11 +2029,11 @@ export class SupplyRepository {
             .get();
         let list = snap.docs.map((d) => {
             const raw = d.data() as SiiDocumentRecord;
-            const refreshedDeadline = computeRcvDeadline(raw.issueDate, raw.documentType);
+            const refreshedDeadline = computeRcvAcceptanceDeadline(raw.issueDate, raw.documentType);
             return {
                 ...raw,
-                rcvDeadlineDate: refreshedDeadline.rcvDeadlineDate,
-                rcvDaysRemaining: refreshedDeadline.rcvDaysRemaining,
+                rcvDeadlineDate: refreshedDeadline.applicable ? refreshedDeadline.deadlineIso ?? null : null,
+                rcvDaysRemaining: refreshedDeadline.applicable ? refreshedDeadline.daysRemaining ?? null : null,
             };
         });
         if (filters?.siteId) list = list.filter((d) => d.siteId === filters.siteId);
@@ -1664,13 +2190,20 @@ export class SupplyRepository {
     }
 
     // -----------------------------------------------------------------------
-    // Demand Forecast (`supply_demand_forecasts` — DS 594 Art. 14 + EWMA)
+    // Demand Forecast (`supply_demand_forecasts` — DS 594 Art. 14 + EWMA sobre stock real)
     // -----------------------------------------------------------------------
 
     /**
      * Cálculo puro de pronóstico (100% solo lectura, 0 escrituras en Firestore).
+     * Delega el guardrail sanitario DS 594 + DS 28 y el cálculo EWMA/DOI al motor
+     * `DemandAndCostForecaster`, calculando `availableWaterL` estrictamente desde el
+     * stock real de agua potable registrado (`supply_inventory_items`), nunca asumiendo
+     * tanque lleno `waterStorageCapacityL`.
      */
-    public static async computeForecastReadOnly(tenantId: string, siteId?: string): Promise<DemandForecast[]> {
+    public static async computeForecastReadOnly(
+        tenantId: string,
+        siteId?: string
+    ): Promise<DemandForecastWithRealWater[]> {
         const sites = siteId
             ? ([await this.getSite(tenantId, siteId)].filter(Boolean) as SupplySite[])
             : await this.listSites(tenantId);
@@ -1695,7 +2228,7 @@ export class SupplyRepository {
                       },
                   ];
 
-        const forecasts: DemandForecast[] = [];
+        const forecasts: DemandForecastWithRealWater[] = [];
         const now = new Date().toISOString();
 
         for (const site of effectiveSites) {
@@ -1707,16 +2240,46 @@ export class SupplyRepository {
             const headcount = Math.max(0, Number(site.currentHeadcount || 0));
             const leadTimeDays = Math.max(1, Number(site.leadTimeDays || 7));
             const altitudeM = Number(site.geoFix?.altitudeM || 0);
-            const altitudeMultiplier = altitudeM > 3000 ? 1.15 : 1.0; // DS 28 hipobaria gran altitud
             const ds594Target = Math.max(100, Number(site.ds594DailyWaterTargetLPerPax || 120));
-
-            const dailyWaterNeedL = headcount * ds594Target * altitudeMultiplier;
-            const requiredWaterReserveL = Math.round(dailyWaterNeedL * leadTimeDays);
             const waterStorageCapacityL = Math.round(Number(site.waterStorageCapacityL || 0));
-            const waterCoverageDays =
-                dailyWaterNeedL > 0
-                    ? Number((waterStorageCapacityL / dailyWaterNeedL).toFixed(2))
-                    : 999;
+
+            // Stock REAL de agua potable en bodega y tránsito (`supply_inventory_items`) — jamás asumir tanque lleno
+            const waterItems = inventory.filter((inv) => inv.categoryCode === 'AGUA_POTABLE');
+            const waterWarehouseL = waterItems.reduce(
+                (acc, inv) => acc + Math.max(0, Number(inv.qtyInWarehouse || 0)),
+                0
+            );
+            const waterInTransitL = waterItems.reduce(
+                (acc, inv) => acc + Math.max(0, Number(inv.qtyInTransit || 0)),
+                0
+            );
+
+            const domainSite: DomainSupplySite = {
+                siteId: site.siteId,
+                tenantId: site.tenantId,
+                name: site.name,
+                districtCode: site.districtCode,
+                altitudeMeters: altitudeM,
+                shiftPattern: site.shiftPattern,
+                currentHeadcount: headcount,
+                waterStorageCapacityL,
+                ds594DailyWaterTargetLPerPax: ds594Target,
+                leadTimeDays,
+                monthlyBudgetClp: site.monthlyBudgetClp,
+                marketplaceOptIn: site.marketplaceOptIn,
+            };
+
+            const ds594Guard = evaluateDs594WaterGuardrail({
+                site: domainSite,
+                currentWaterWarehouseL: waterWarehouseL,
+                currentWaterInTransitL: waterInTransitL,
+            });
+
+            const altitudeMultiplier = ds594Guard.altitudeFactorApplied;
+            const requiredWaterReserveL = Math.round(ds594Guard.requiredReserveL);
+            const availableWaterL = Math.round(ds594Guard.currentAvailableL);
+            const waterCoverageDays = Number(ds594Guard.coverageDays.toFixed(2));
+            const ds594Compliant = ds594Guard.compliant;
 
             const waterAlertLevel: DemandForecast['waterAlertLevel'] =
                 headcount > 0 && waterCoverageDays < leadTimeDays
@@ -1746,13 +2309,22 @@ export class SupplyRepository {
                         : inv.categoryCode === 'VIVERES_ALIMENTACION'
                           ? 0.35
                           : 0.05;
-                const ewmaDailyRate = Number(
-                    ((inv.dailyBurnRatePerPax ?? defaultPerPax) * Math.max(1, headcount)).toFixed(3)
-                );
-                const totalAvailable = inv.qtyInWarehouse + inv.qtyInTransit;
-                const doi = ewmaDailyRate > 0 ? Number((totalAvailable / ewmaDailyRate).toFixed(1)) : null;
-                const targetBuffer = ewmaDailyRate * leadTimeDays * 1.25;
-                const recommendedReorderQty = Math.max(0, Number((targetBuffer - totalAvailable).toFixed(2)));
+                const domainForecast = forecastSkuDemand({
+                    site: domainSite,
+                    canonicalSkuId: inv.canonicalSkuId,
+                    categoryCode: inv.categoryCode,
+                    unitSi: inv.unitSi,
+                    history: [],
+                    currentWarehouseStockSi: inv.qtyInWarehouse,
+                    currentInTransitStockSi: inv.qtyInTransit,
+                    fallbackDailyPerPaxSi: inv.dailyBurnRatePerPax ?? defaultPerPax,
+                    computedAt: now,
+                });
+
+                const ewmaDailyRate = Number(domainForecast.ewmaDailyTotalSi.toFixed(3));
+                const doi =
+                    ewmaDailyRate > 0 ? Number(domainForecast.daysOfInventoryEffective.toFixed(1)) : null;
+                const recommendedReorderQty = Number(domainForecast.recommendedOrderQtySi.toFixed(2));
 
                 const riskLevel: DemandForecastLine['riskLevel'] =
                     doi !== null && doi < leadTimeDays * 0.5
@@ -1787,6 +2359,12 @@ export class SupplyRepository {
                 ds594WaterTargetLPerPax: ds594Target,
                 requiredWaterReserveL,
                 waterStorageCapacityL,
+                availableWaterL,
+                waterStoredL: Math.round(waterWarehouseL),
+                waterInTransitL: Math.round(waterInTransitL),
+                ds594Compliant,
+                waterDeficitL: Math.round(ds594Guard.deficitL),
+                storageCapacitySufficient: ds594Guard.storageCapacitySufficient,
                 waterCoverageDays,
                 waterAlertLevel,
                 dailyFoodOpexClpPerPax,
@@ -1801,7 +2379,10 @@ export class SupplyRepository {
     /**
      * Recalcula y persiste bajo demanda (`POST /forecast/recalculate`).
      */
-    public static async computeAndStoreForecast(tenantId: string, siteId?: string): Promise<DemandForecast[]> {
+    public static async computeAndStoreForecast(
+        tenantId: string,
+        siteId?: string
+    ): Promise<DemandForecastWithRealWater[]> {
         const forecasts = await this.computeForecastReadOnly(tenantId, siteId);
         for (const forecast of forecasts) {
             await db.collection(SUPPLY_COLLECTIONS.DEMAND_FORECASTS).doc(forecast.forecastId).set(forecast);
@@ -1810,14 +2391,15 @@ export class SupplyRepository {
     }
 
     // -----------------------------------------------------------------------
-    // Marketplace Anonymous Demand Signals (`market_demand_signals` — k >= 3)
+    // Marketplace Anonymous Demand Signals (`market_demand_signals` — k >= 5 B2B)
     // -----------------------------------------------------------------------
 
     /**
      * Proyecta señales anónimas de demanda agregada por distrito minero (Ley N° 21.719):
      * - Exige opt-in explícito del sitio (`marketplaceOptIn === true`).
-     * - Impone anonimato k >= 3 estricto: mínimo 3 TENANTS distintos Y 3 SITIOS distintos
-     *   por distrito+SKU (un solo tenant con 3 faenas JAMÁS puede emitir una señal).
+     * - Excluye estrictamente cuentas sandbox (`5º EDU` / `isEduSandbox`, `3º TEST-PILOT` / `pilot-*`, `1º DEV` / `dev-master-sandbox`).
+     * - Impone anonimato `k >= 5` estricto vía `DemandAndCostForecaster.projectAnonymousDemandSignals`:
+     *   mínimo 5 TENANTS B2B distintos Y 5 SITIOS distintos por distrito+SKU.
      * - CERO `tenantId`, CERO `siteId`, CERO coordenadas GPS exactas.
      */
     public static async refreshAnonymousDemandSignals(): Promise<DemandPoolSignal[]> {
@@ -1826,35 +2408,65 @@ export class SupplyRepository {
             .where('marketplaceOptIn', '==', true)
             .get();
 
+        // Verificar en `accounts` que ningún tenant EDU / TEST-PILOT / DEV entre al pool B2B
+        const accountMetaCache = new Map<string, { isEduSandbox: boolean; accountType?: string }>();
+        const resolveAccountMeta = async (
+            tenantId: string
+        ): Promise<{ isEduSandbox: boolean; accountType?: string }> => {
+            const cached = accountMetaCache.get(tenantId);
+            if (cached) return cached;
+            let isEduSandbox = false;
+            let accountType: string | undefined;
+            try {
+                const accSnap = await db.collection('accounts').doc(tenantId).get();
+                if (accSnap.exists) {
+                    const data = accSnap.data() || {};
+                    const rawType = String(data.type || '').trim().toUpperCase();
+                    const rawClass = String(data.classification || '').trim().toLowerCase();
+                    isEduSandbox =
+                        data.isEduSandbox === true ||
+                        rawType === 'EDUCATIONAL' ||
+                        rawClass === 'edu';
+                    accountType = rawType || undefined;
+                }
+            } catch {
+                // Fallback a verificación por prefijo en `isSandboxTenantId`
+            }
+            const meta = { isEduSandbox, accountType };
+            accountMetaCache.set(tenantId, meta);
+            return meta;
+        };
+
         const optedSitesByKey = new Map<
             string,
-            { districtCode: string; tenantKey: string; siteKey: string }
+            {
+                districtCode: string;
+                tenantKey: string;
+                siteId: string;
+                isEduSandbox: boolean;
+                accountType?: string;
+            }
         >();
+
         for (const doc of sitesSnap.docs) {
             const s = doc.data() as SupplySite;
             if (!s.marketplaceOptIn || !s.districtCode || !s.tenantId || !s.siteId) continue;
-            optedSitesByKey.set(`${s.tenantId}::${s.siteId}`, {
+            const tenantKey = s.tenantId.trim();
+            const accMeta = await resolveAccountMeta(tenantKey);
+            if (isSandboxTenantId(tenantKey, accMeta.isEduSandbox, accMeta.accountType)) {
+                continue;
+            }
+            optedSitesByKey.set(`${tenantKey}::${s.siteId}`, {
                 districtCode: s.districtCode.trim().toUpperCase(),
-                tenantKey: s.tenantId.trim(),
-                siteKey: `${s.tenantId}::${s.siteId}`,
+                tenantKey,
+                siteId: s.siteId,
+                isEduSandbox: accMeta.isEduSandbox,
+                accountType: accMeta.accountType,
             });
         }
 
         const reqsSnap = await db.collection(SUPPLY_COLLECTIONS.REQUISITIONS).limit(1000).get();
-        const buckets = new Map<
-            string,
-            {
-                districtCode: string;
-                categoryCode: DemandPoolSignal['categoryCode'];
-                procurementBucket: DemandPoolSignal['procurementBucket'];
-                canonicalSkuId: string;
-                skuName: string;
-                unitSi: DemandPoolSignal['unitSi'];
-                aggregatedQty: number;
-                distinctTenants: Set<string>;
-                distinctSites: Set<string>;
-            }
-        >();
+        const observations: TenantDemandObservation[] = [];
 
         for (const doc of reqsSnap.docs) {
             const req = doc.data() as SupplyRequisition;
@@ -1866,25 +2478,21 @@ export class SupplyRepository {
                 if (line.lineStatus === 'FULFILLED' || line.lineStatus === 'CANCELLED') continue;
                 if (line.qtyPending <= 0) continue;
 
-                const key = `${siteMeta.districtCode}::${line.canonicalSkuId}`;
-                const existing = buckets.get(key);
-                if (!existing) {
-                    buckets.set(key, {
-                        districtCode: siteMeta.districtCode,
-                        categoryCode: line.categoryCode,
-                        procurementBucket: line.procurementBucket,
-                        canonicalSkuId: line.canonicalSkuId,
-                        skuName: line.itemName,
-                        unitSi: line.unitSi,
-                        aggregatedQty: line.qtyPending,
-                        distinctTenants: new Set([siteMeta.tenantKey]),
-                        distinctSites: new Set([siteMeta.siteKey]),
-                    });
-                } else {
-                    existing.aggregatedQty = Number((existing.aggregatedQty + line.qtyPending).toFixed(3));
-                    existing.distinctTenants.add(siteMeta.tenantKey);
-                    existing.distinctSites.add(siteMeta.siteKey);
-                }
+                observations.push({
+                    tenantId: siteMeta.tenantKey,
+                    siteId: siteMeta.siteId,
+                    districtCode: siteMeta.districtCode,
+                    optInMarketplace: true,
+                    isEduSandbox: siteMeta.isEduSandbox,
+                    accountType: siteMeta.accountType,
+                    canonicalSkuId: line.canonicalSkuId,
+                    skuName: line.itemName,
+                    categoryCode: line.categoryCode,
+                    procurementBucket: line.procurementBucket,
+                    unitSi: line.unitSi,
+                    projectedDemandSi: line.qtyPending,
+                    unitPriceClp: line.estimatedUnitClp,
+                });
             }
         }
 
@@ -1892,31 +2500,39 @@ export class SupplyRepository {
         const windowStartIso = now.toISOString();
         const windowEndIso = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
         const periodWindow = `${windowStartIso.slice(0, 10)}/${windowEndIso.slice(0, 10)}`;
-        const emitted: DemandPoolSignal[] = [];
 
-        for (const entry of buckets.values()) {
-            // Compuerta estricta Ley N° 21.719: >= 3 tenants distintos Y >= 3 sitios distintos
-            if (entry.distinctTenants.size < 3 || entry.distinctSites.size < 3) {
-                continue;
-            }
-            const signalId = `sig_${safeDocIdPart(entry.districtCode)}_${safeDocIdPart(entry.canonicalSkuId)}`;
-            const signal: DemandPoolSignal = {
+        const projected = projectAnonymousDemandSignals(observations, {
+            windowStartIso,
+            windowEndIso,
+            periodWindow,
+            expiresAt: windowEndIso,
+            minK: LEY21719_MIN_K_ANONYMITY,
+            generatedAt: windowStartIso,
+        });
+
+        const emitted: DemandPoolSignal[] = [];
+        for (const sig of projected.signals) {
+            const signalId = `sig_${safeDocIdPart(sig.districtCode)}_${safeDocIdPart(sig.canonicalSkuId)}`;
+            const strictSignal: DemandPoolSignal = {
                 signalId,
-                districtCode: entry.districtCode,
-                periodWindow,
-                canonicalSkuId: entry.canonicalSkuId,
-                skuName: entry.skuName,
-                categoryCode: entry.categoryCode,
-                procurementBucket: entry.procurementBucket,
-                unitSi: entry.unitSi,
-                aggregatedQty: entry.aggregatedQty,
-                participatingEntitiesCount: entry.distinctTenants.size,
+                districtCode: sig.districtCode,
+                periodWindow: sig.periodWindow,
+                canonicalSkuId: sig.canonicalSkuId,
+                skuName: sig.skuName,
+                categoryCode: sig.categoryCode,
+                procurementBucket: sig.procurementBucket,
+                unitSi: sig.unitSi,
+                aggregatedQty: sig.aggregatedQty,
+                participatingEntitiesCount: sig.participatingEntitiesCount,
                 optInVerified: true,
-                generatedAt: windowStartIso,
-                expiresAt: windowEndIso,
+                ...(typeof sig.medianReferenceUnitClp === 'number'
+                    ? { medianReferenceUnitClp: sig.medianReferenceUnitClp }
+                    : {}),
+                generatedAt: sig.generatedAt,
+                expiresAt: sig.expiresAt,
             };
-            await db.collection(SUPPLY_COLLECTIONS.MARKET_DEMAND_SIGNALS).doc(signalId).set(signal);
-            emitted.push(signal);
+            await db.collection(SUPPLY_COLLECTIONS.MARKET_DEMAND_SIGNALS).doc(signalId).set(strictSignal);
+            emitted.push(strictSignal);
         }
 
         return emitted.sort((a, b) => b.aggregatedQty - a.aggregatedQty);
@@ -1929,15 +2545,15 @@ export class SupplyRepository {
         const snap = await db.collection(SUPPLY_COLLECTIONS.MARKET_DEMAND_SIGNALS).limit(500).get();
         let list = snap.docs
             .map((d) => d.data() as Record<string, any>)
-            // Defensa en profundidad: jamás exponer registros con k < 3 o sin opt-in
+            // Defensa en profundidad: jamás exponer registros con k < 5 o sin opt-in
             .filter((s) => {
                 const entities = Number(s.participatingEntitiesCount ?? 0);
-                return entities >= 3 && s.optInVerified === true;
+                return entities >= LEY21719_MIN_K_ANONYMITY && s.optInVerified === true;
             })
             // Strip estricto 1:1 con #9 DemandPoolSignalSchema.strict() (cero tenantId/GPS)
             .map((s): DemandPoolSignal => {
                 const skuName = String(s.skuName || s.itemName || 'Insumo');
-                const entities = Number(s.participatingEntitiesCount ?? 3);
+                const entities = Number(s.participatingEntitiesCount ?? LEY21719_MIN_K_ANONYMITY);
                 const generatedAt = String(s.generatedAt || new Date().toISOString());
                 const expiresAt = String(s.expiresAt || generatedAt);
                 return {

@@ -25,6 +25,17 @@ import {
 } from '../adapters/MetaWhatsAppCloudAdapter';
 import { CampChannel, type ResolvedWhatsAppMember } from '../channels/camp.channel';
 import {
+    DEFAULT_ROLE_PROFILES,
+    matchCanonicalSkuByText as matchDomainCanonicalSkuByText,
+} from '../catalog/DefaultSupplyCatalogSeed';
+import { LEY21719_MIN_K_ANONYMITY } from '../domain/DemandAndCostForecaster';
+import {
+    type PolicyItemCandidate,
+    evaluateDirectPurchaseAuthority,
+    evaluateRequisitionPolicy,
+} from '../domain/SupplyPolicyAndAnomalyEngine';
+import { normalizeQuantityToSi } from '../domain/UnitNormalizationEngine';
+import {
     ReceiptCasAccessDeniedError,
     ReceiptIntelligencePipeline,
 } from './ReceiptIntelligencePipeline';
@@ -38,8 +49,6 @@ import {
 } from './SupplyRepository';
 import {
     CanonicalSupplySkuSchema,
-    checkGlobalHardDeny,
-    evaluateAtypicalFlagsForLine,
     EvidenceCasRefSchema,
     exportSiiDocumentsToCsv,
     HitlConfirmationKeywordSchema,
@@ -845,6 +854,8 @@ const CreatePurchaseBodySchema = z.object({
     paymentMethod: PaymentMethodSchema,
     evidenceCasRef: EvidenceCasRefSchema.nullable().optional(),
     tedRawXml: z.string().max(16384).nullable().optional(),
+    expectedReceiverTaxId: z.string().trim().max(32).optional(),
+    countryCode: z.string().trim().regex(/^[A-Z]{2}$/).optional(),
     allocations: z.array(TopLevelAllocationInputSchema).max(500).optional(),
     lines: z.array(FlexiblePurchaseLineInputSchema).min(1).max(200),
 });
@@ -1239,13 +1250,36 @@ router.post('/requisitions', mutationRateLimiter, async (req: SupplyRequest, res
             });
         }
 
-        const site = await SupplyRepository.getSite(ctx.tenantId, parsed.data.siteId);
+        const [site, recentSiteReqs, siteInventory] = await Promise.all([
+            SupplyRepository.getSite(ctx.tenantId, parsed.data.siteId),
+            SupplyRepository.listRequisitions(ctx.tenantId, { siteId: parsed.data.siteId }).catch(() => []),
+            SupplyRepository.listInventory(ctx.tenantId, parsed.data.siteId).catch(() => []),
+        ]);
         const roleMismatchMode = site?.roleMismatchMode || 'FLAG_AND_ACCEPT';
-        const deniedItems: Array<{ itemName: string; reason: string }> = [];
-        const acceptedLines = [];
+        const actorOpRole = asOperationalRole(ctx.supplyProfile.role);
+        const roleDefaults = DEFAULT_ROLE_PROFILES[actorOpRole];
+        const domainMemberProfile = {
+            ...roleDefaults,
+            allowedCategories:
+                ctx.supplyProfile.allowedCategories && ctx.supplyProfile.allowedCategories.length > 0
+                    ? ctx.supplyProfile.allowedCategories
+                    : roleDefaults.allowedCategories,
+            deniedCategories:
+                ctx.supplyProfile.deniedCategories && ctx.supplyProfile.deniedCategories.length > 0
+                    ? ctx.supplyProfile.deniedCategories
+                    : roleDefaults.deniedCategories,
+            maxRequisitionClp: ctx.supplyProfile.maxRequisitionClp ?? roleDefaults.maxRequisitionClp,
+            canRecordDirectPurchase: ctx.supplyProfile.canRecordDirectPurchase,
+            autoApproveDirectPurchase: ctx.supplyProfile.autoApproveDirectPurchase,
+            allowCapex: ctx.supplyProfile.allowCapex,
+            licensedForControlledItems: Boolean(
+                (ctx.supplyProfile as any).licensedForControlledItems ??
+                    (ctx.isSystemPrivileged || actorOpRole === 'OWNER_EXEC')
+            ),
+        };
 
-        for (let idx = 0; idx < parsed.data.lines.length; idx++) {
-            const rawLine = parsed.data.lines[idx];
+        // 1. Normalización de unidades SI + Ley del Saco 25 kg (`UnitNormalizationEngine` + `DefaultSupplyCatalogSeed`)
+        const preparedLines = parsed.data.lines.map((rawLine, idx) => {
             const resolvedItemName = (
                 rawLine.normalizedName ||
                 rawLine.itemName ||
@@ -1253,55 +1287,148 @@ router.post('/requisitions', mutationRateLimiter, async (req: SupplyRequest, res
                 ''
             ).trim();
             const rawTextForPolicy = `${rawLine.rawDescription || ''} ${resolvedItemName}`.trim();
-            const hardDeny = checkGlobalHardDeny(rawTextForPolicy);
-            if (hardDeny.denied) {
-                deniedItems.push({
-                    itemName: resolvedItemName,
-                    reason: hardDeny.reason || 'Bloqueado por política DS 132.',
-                });
-                continue;
-            }
-
             const norm = normalizeSupplyItemFromText(resolvedItemName, rawLine.qtyRequested, rawLine.unitSi);
-            const categoryCode = rawLine.categoryCode || norm.categoryCode;
-            const actorOpRole = asOperationalRole(ctx.supplyProfile.role);
-            const flags = evaluateAtypicalFlagsForLine({
-                role: actorOpRole,
-                profile: { ...ctx.supplyProfile, role: actorOpRole },
-                categoryCode,
-                isCapexAsset: norm.isCapexAsset,
-                estimatedTotalClp: rawLine.estimatedUnitClp
-                    ? rawLine.estimatedUnitClp * rawLine.qtyRequested
-                    : undefined,
+            const domainSeedSku =
+                (rawLine.canonicalSkuId
+                    ? SupplyRepository.resolveCanonicalSkuFromSeed(rawLine.canonicalSkuId)
+                    : undefined) || matchDomainCanonicalSkuByText(rawTextForPolicy);
+            const unitNorm = normalizeQuantityToSi({
+                quantity: rawLine.qtyRequested,
+                unitRaw: rawLine.unitSi,
+                itemText: rawTextForPolicy,
+                sku: domainSeedSku,
             });
+            const effectiveUnitSi = rawLine.unitSi || unitNorm.unitSi || norm.unitSi;
+            const effectiveQtySi = rawLine.unitSi
+                ? rawLine.qtyRequested
+                : unitNorm.factorApplied !== 1
+                  ? unitNorm.quantitySi
+                  : rawLine.qtyRequested;
+            const categoryCode = rawLine.categoryCode || domainSeedSku?.categoryCode || norm.categoryCode;
+            const procurementBucket =
+                rawLine.procurementBucket || domainSeedSku?.procurementBucket || norm.procurementBucket;
+            const canonicalSkuId = rawLine.canonicalSkuId || norm.canonicalSkuId;
 
-            if (roleMismatchMode === 'STRICT_BLOCK' && flags.includes('ATYPICAL_ROLE_MISMATCH')) {
-                deniedItems.push({
-                    itemName: resolvedItemName,
-                    reason: `Categoría ${categoryCode} restringida para rol ${ctx.supplyProfile.role}.`,
-                });
-                continue;
-            }
+            return {
+                itemKey: `line_${idx}`,
+                rawLine,
+                resolvedItemName,
+                rawTextForPolicy,
+                canonicalSkuId,
+                categoryCode,
+                procurementBucket,
+                unitSi: effectiveUnitSi,
+                qtySi: effectiveQtySi,
+                leySaco25kgApplied: Boolean(unitNorm.leySaco25kgApplied || norm.leySaco25kgApplied),
+                isCapexAsset: Boolean(norm.isCapexAsset || domainSeedSku?.isCapexAsset),
+                domainSeedSku,
+            };
+        });
+
+        // 2. Evaluación determinista de políticas (`SupplyPolicyAndAnomalyEngine`: DS 132 NFD/leet, DGMN explosivos, 5 flags)
+        const policyCandidates: PolicyItemCandidate[] = preparedLines.map((p) => ({
+            itemKey: p.itemKey,
+            rawText: p.rawTextForPolicy,
+            canonicalSkuId: p.canonicalSkuId,
+            sku: p.domainSeedSku,
+            categoryCode: p.categoryCode,
+            quantitySi: p.qtySi,
+            unitSi: p.unitSi,
+            estimatedUnitClp: p.rawLine.estimatedUnitClp,
+            isCapexAsset: p.isCapexAsset,
+            isControlled: Boolean(p.domainSeedSku?.isControlled || p.categoryCode === 'EXPLOSIVOS_REGULADO'),
+        }));
+
+        const availableStockBySku: Record<string, { inWarehouseSi: number; inTransitSi: number }> = {};
+        for (const inv of siteInventory) {
+            availableStockBySku[inv.canonicalSkuId] = {
+                inWarehouseSi: inv.qtyInWarehouse,
+                inTransitSi: inv.qtyInTransit,
+            };
+        }
+
+        const recentRequisitions = recentSiteReqs.flatMap((r) =>
+            r.lines.map((l) => ({
+                canonicalSkuId: l.canonicalSkuId,
+                requestedAtIso: r.createdAt,
+                qtyRequestedSi: l.qtyRequested,
+            }))
+        );
+
+        const policyEval = evaluateRequisitionPolicy(policyCandidates, {
+            requesterRole: actorOpRole,
+            memberProfile: domainMemberProfile,
+            demandNature: parsed.data.demandNature,
+            roleMismatchMode,
+            availableStockBySku,
+            recentRequisitions,
+        });
+
+        const deniedItems: Array<{ itemName: string; reason: string; code?: string }> = [];
+        for (const rej of policyEval.rejectedItems) {
+            const matchPrep = preparedLines.find((p) => p.itemKey === rej.itemKey);
+            deniedItems.push({
+                itemName: matchPrep?.resolvedItemName || rej.rawText,
+                reason: rej.reasonSpanish,
+                code: rej.rejectionCode,
+            });
+            await SupplyRepository.recordPolicyAudit({
+                tenantId: ctx.tenantId,
+                siteId: parsed.data.siteId,
+                actorUid: ctx.actorUid,
+                eventType:
+                    rej.rejectionCode === 'DGMN_EXPLOSIVES_BLOCK'
+                        ? 'DGMN_EXPLOSIVES_BLOCK'
+                        : rej.rejectionCode === 'ROLE_MISMATCH_STRICT_BLOCK'
+                          ? 'ROLE_MISMATCH_BLOCK'
+                          : 'POLICY_HARD_DENY',
+                policyCode: rej.rejectionCode,
+                severity:
+                    rej.rejectionCode === 'DGMN_EXPLOSIVES_BLOCK' ||
+                    rej.rejectionCode === 'DS132_ALCOHOL' ||
+                    rej.rejectionCode === 'DS132_DRUGS'
+                        ? 'CRITICAL'
+                        : 'HIGH',
+                rawItemText: rej.rawText,
+                details: {
+                    matchedTerm: rej.matchedTerm || null,
+                    requesterRole: actorOpRole,
+                    reason: rej.reasonSpanish,
+                },
+            }).catch(() => {});
+        }
+
+        const acceptedByKey = new Map(policyEval.acceptedItems.map((a) => [a.itemKey, a]));
+        const acceptedLines = [];
+
+        for (let idx = 0; idx < preparedLines.length; idx++) {
+            const prep = preparedLines[idx];
+            const accepted = acceptedByKey.get(prep.itemKey);
+            if (!accepted) continue;
+
+            const mergedAttributes = prep.leySaco25kgApplied
+                ? { ...(prep.rawLine.attributes || {}), leySaco25kgApplied: true }
+                : prep.rawLine.attributes;
 
             acceptedLines.push({
                 lineId: `rline_${idx + 1}_${crypto.randomBytes(2).toString('hex')}`,
-                canonicalSkuId: rawLine.canonicalSkuId || norm.canonicalSkuId,
-                itemName: resolvedItemName,
-                rawRequestedText: rawLine.rawDescription || resolvedItemName,
-                categoryCode,
-                procurementBucket: rawLine.procurementBucket || norm.procurementBucket,
-                unitSi: rawLine.unitSi || norm.unitSi,
-                qtyRequested: rawLine.qtyRequested,
+                canonicalSkuId: prep.canonicalSkuId,
+                itemName: prep.resolvedItemName,
+                rawRequestedText: prep.rawLine.rawDescription || prep.resolvedItemName,
+                categoryCode: prep.categoryCode,
+                procurementBucket: prep.procurementBucket,
+                unitSi: prep.unitSi,
+                qtyRequested: prep.qtySi,
                 qtyPurchased: 0,
                 qtyReceived: 0,
-                qtyPending: rawLine.qtyRequested,
+                qtyPending: prep.qtySi,
                 lineStatus: 'OPEN' as const,
-                atypicalFlags: flags,
+                atypicalFlags: accepted.atypicalFlags,
                 fulfillmentChannel: 'MANUAL_LOCAL_PURCHASE' as const,
-                urgency: rawLine.urgency,
-                estimatedUnitClp: rawLine.estimatedUnitClp,
-                attributes: rawLine.attributes,
-                evidenceCasRef: rawLine.evidenceCasRef || undefined,
+                urgency: prep.rawLine.urgency,
+                estimatedUnitClp: prep.rawLine.estimatedUnitClp,
+                attributes: mergedAttributes,
+                evidenceCasRef: prep.rawLine.evidenceCasRef || undefined,
             });
         }
 
@@ -1318,7 +1445,7 @@ router.post('/requisitions', mutationRateLimiter, async (req: SupplyRequest, res
                 siteId: parsed.data.siteId,
                 requesterUid: ctx.actorUid,
                 requesterName: ctx.actorName,
-                requesterRole: asOperationalRole(ctx.supplyProfile.role),
+                requesterRole: actorOpRole,
                 requesterPhoneE164: ctx.phoneE164,
                 demandOrigin: parsed.data.demandOrigin,
                 demandNature: parsed.data.demandNature,
@@ -1335,6 +1462,22 @@ router.post('/requisitions', mutationRateLimiter, async (req: SupplyRequest, res
                 ipAddress: extractClientIp(req),
             }
         );
+
+        if (policyEval.hasAtypicalFlags) {
+            await SupplyRepository.recordPolicyAudit({
+                tenantId: ctx.tenantId,
+                siteId: parsed.data.siteId,
+                actorUid: ctx.actorUid,
+                eventType: 'ATYPICAL_FLAG',
+                policyCode: requisition.atypicalFlags.join('|') || 'ATYPICAL_FLAG',
+                severity: 'MEDIUM',
+                entityId: requisition.reqId,
+                details: {
+                    atypicalFlags: requisition.atypicalFlags,
+                    requesterRole: actorOpRole,
+                },
+            }).catch(() => {});
+        }
 
         return res.status(201).json({
             success: true,
@@ -1646,13 +1789,34 @@ router.post('/purchases', mutationRateLimiter, async (req: SupplyRequest, res: R
 
         const data = parsed.data;
 
-        // Validar autoridad explícita `canRecordDirectPurchase` para compra directa autónoma
+        // Validar autoridad explícita vía `SupplyPolicyAndAnomalyEngine.evaluateDirectPurchaseAuthority` + RBAC
+        const buyerOpRole = asOperationalRole(ctx.supplyProfile.role);
+        const roleDefaults = DEFAULT_ROLE_PROFILES[buyerOpRole];
+        const directAuth = evaluateDirectPurchaseAuthority({
+            role: buyerOpRole,
+            memberProfile: {
+                ...roleDefaults,
+                canRecordDirectPurchase: Boolean(
+                    ctx.isSystemPrivileged || ctx.supplyProfile.canRecordDirectPurchase === true
+                ),
+                autoApproveDirectPurchase: Boolean(
+                    ctx.isSystemPrivileged || ctx.supplyProfile.autoApproveDirectPurchase === true
+                ),
+                allowCapex: Boolean(canAuthorizeCapex(ctx)),
+            },
+            totalAmountClp: data.totalAmountClp,
+            includesCapexAsset: false,
+        });
+
         const canDirect =
-            ctx.isSystemPrivileged || ctx.supplyProfile.canRecordDirectPurchase === true;
+            ctx.isSystemPrivileged ||
+            (ctx.supplyProfile.canRecordDirectPurchase === true && directAuth.authorized);
 
         if (data.purchaseMode === 'DIRECT_AUTONOMOUS' && !canDirect) {
             return res.status(403).json({
-                error: 'DIRECT_PURCHASE_FORBIDDEN: Su perfil no está autorizado para registrar compras autónomas directas.',
+                error:
+                    directAuth.denialReasonSpanish ||
+                    'DIRECT_PURCHASE_FORBIDDEN: Su perfil no está autorizado para registrar compras autónomas directas.',
                 code: 'DIRECT_PURCHASE_FORBIDDEN',
             });
         }
@@ -1751,6 +1915,8 @@ router.post('/purchases', mutationRateLimiter, async (req: SupplyRequest, res: R
                 paymentMethod: data.paymentMethod,
                 evidenceCasRef: data.evidenceCasRef || undefined,
                 tedRawXml: data.tedRawXml || undefined,
+                expectedReceiverTaxId: data.expectedReceiverTaxId,
+                countryCode: data.countryCode,
                 lines: normalizedLines,
             },
             {
@@ -1765,6 +1931,12 @@ router.post('/purchases', mutationRateLimiter, async (req: SupplyRequest, res: R
             ...result,
         });
     } catch (err: any) {
+        if (err instanceof SupplyValidationError) {
+            return res.status(400).json({
+                error: err.message,
+                code: err.code,
+            });
+        }
         if (err instanceof SupplyDuplicateSiiDocumentError) {
             return res.status(409).json({
                 error: err.message,
@@ -2240,7 +2412,7 @@ router.get('/sii/export', async (req: SupplyRequest, res: Response) => {
 });
 
 // ---------------------------------------------------------------------------
-// Anonymous Marketplace Demand Signals (`/marketplace-signals` — k >= 3)
+// Anonymous Marketplace Demand Signals (`/marketplace-signals` — k >= 5 B2B)
 // ---------------------------------------------------------------------------
 
 router.get('/marketplace-signals', async (req: SupplyRequest, res: Response) => {
@@ -2250,7 +2422,7 @@ router.get('/marketplace-signals', async (req: SupplyRequest, res: Response) => 
         const signals = await SupplyRepository.listAnonymousDemandSignals({ districtCode, categoryCode });
         return res.status(200).json({
             success: true,
-            kAnonymityMinimum: 3,
+            kAnonymityMinimum: LEY21719_MIN_K_ANONYMITY,
             count: signals.length,
             signals,
         });
@@ -2287,14 +2459,14 @@ router.post('/marketplace-signals/refresh', mutationRateLimiter, async (req: Sup
             details: {
                 hitlConfirmed: true,
                 emittedSignalCount: signals.length,
-                kAnonymityMinimum: 3,
+                kAnonymityMinimum: LEY21719_MIN_K_ANONYMITY,
             },
             ipAddress: extractClientIp(req),
         }).catch(() => {});
 
         return res.status(200).json({
             success: true,
-            kAnonymityMinimum: 3,
+            kAnonymityMinimum: LEY21719_MIN_K_ANONYMITY,
             count: signals.length,
             signals,
         });

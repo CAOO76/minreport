@@ -521,7 +521,7 @@ async function runTests(): Promise<void> {
         pilotExpiresAt: futureExpiry,
     });
 
-    // Seed anonymous demand signal (k >= 3) for M2M RFQ tests
+    // Seed anonymous demand signal (k >= 5 B2B) for M2M RFQ tests
     await mockDb.collection(SUPPLY_COLLECTIONS.MARKET_DEMAND_SIGNALS).doc('sig_CL-ATACAMA_sku-cemento').set({
         signalId: 'sig_CL-ATACAMA_sku-cemento',
         districtCode: 'CL-ATACAMA',
@@ -531,7 +531,7 @@ async function runTests(): Promise<void> {
         procurementBucket: 'FERRETERIA',
         unitSi: 'kg',
         aggregatedQty: 500,
-        participatingEntitiesCount: 4,
+        participatingEntitiesCount: 5,
         optInVerified: true,
         generatedAt: new Date().toISOString(),
         expiresAt: new Date(Date.now() + 7 * 86400 * 1000).toISOString(),

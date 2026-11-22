@@ -1368,7 +1368,7 @@ async function runTests(): Promise<void> {
             assert.equal(linkJson.asset.opermaqAssetId, 'opermaq_asset_cocina_01');
         }
 
-        console.log('8) Testing SII Export CSV, DS 594 Forecast, k>=3 Anonymous Marketplace, M2M x402 & Simulator RBAC...');
+        console.log('8) Testing SII Export CSV, DS 594 Forecast (real water stock), k>=5 Anonymous Marketplace, M2M x402 & Simulator RBAC...');
         {
             // SII CSV Export
             const csvResp = await apiFetch(`${baseUrl}/api/supply/sii/export?siteId=${SITE_A}`, {
@@ -1379,20 +1379,52 @@ async function runTests(): Promise<void> {
             assert.ok(csvText.includes('DEDUPE_KEY;RUT_EMISOR;PROVEEDOR'));
             assert.ok(csvText.includes('76192083-9#39#3001'));
 
-            // Forecast DS 594 + altitude 3400m multiplier 1.15
+            // Forecast DS 594 + altitude 3400m multiplier 1.2 (DS 28 via DemandAndCostForecaster) sobre stock REAL
+            // Sin stock de agua registrado -> availableWaterL=0, ds594Compliant=false, CRITICAL (jamás asume tanque lleno!)
+            const fcZeroResp = await apiFetch(`${baseUrl}/api/supply/forecast?siteId=${SITE_A}`, {
+                headers: { Authorization: 'Bearer tok-owner' },
+            });
+            assert.equal(fcZeroResp.status, 200);
+            const fcZeroJson: any = await fcZeroResp.json();
+            assert.equal(fcZeroJson.forecasts[0].altitudeMultiplier, 1.2);
+            assert.equal(fcZeroJson.forecasts[0].requiredWaterReserveL, Math.round(40 * 120 * 1.2 * 7));
+            assert.equal(fcZeroJson.forecasts[0].availableWaterL, 0);
+            assert.equal(fcZeroJson.forecasts[0].ds594Compliant, false);
+            assert.equal(fcZeroJson.forecasts[0].waterAlertLevel, 'CRITICAL');
+
+            // Con 25000 L de stock real de agua potable en bodega -> WARNING (4.34 días < 7d leadTime, >= 3.5d)
+            await SupplyRepository.applyInventoryDelta({
+                tenantId: TENANT_A,
+                siteId: SITE_A,
+                canonicalSkuId: 'sku-agua-bidon',
+                itemName: 'Agua Purificada Bidón',
+                categoryCode: 'AGUA_POTABLE',
+                procurementBucket: 'GAS_AGUA_COMBUSTIBLE',
+                unitSi: 'L',
+                inTransitDelta: 0,
+                inWarehouseDelta: 25000,
+                unitCostClp: 150,
+                movementType: 'INBOUND_WAREHOUSE_DIRECT',
+                referenceId: 'seed-water-stock',
+                actorUid: 'uid-owner',
+            });
             const fcResp = await apiFetch(`${baseUrl}/api/supply/forecast?siteId=${SITE_A}`, {
                 headers: { Authorization: 'Bearer tok-owner' },
             });
             assert.equal(fcResp.status, 200);
             const fcJson: any = await fcResp.json();
-            assert.equal(fcJson.forecasts[0].altitudeMultiplier, 1.15);
-            assert.equal(fcJson.forecasts[0].requiredWaterReserveL, Math.round(40 * 120 * 1.15 * 7));
-            assert.equal(fcJson.forecasts[0].waterAlertLevel, 'WARNING'); // 25000L < 38640L required for 7d
+            assert.equal(fcJson.forecasts[0].altitudeMultiplier, 1.2);
+            assert.equal(fcJson.forecasts[0].requiredWaterReserveL, Math.round(40 * 120 * 1.2 * 7));
+            assert.equal(fcJson.forecasts[0].availableWaterL, 25000);
+            assert.equal(fcJson.forecasts[0].ds594Compliant, false);
+            assert.equal(fcJson.forecasts[0].waterAlertLevel, 'WARNING'); // 25000L < 40320L required for 7d
 
-            // Also seed a SINGLE tenant with 3 sites in CL-TARAPACA (must be blocked: distinctTenants=1 < 3!)
+            // Seed 4 extra B2B tenants in CL-ATACAMA (total k=5 with TENANT_A) + CL-COQUIMBO (k=2) + CL-TARAPACA (1 tenant, 3 sites)
             for (const extra of [
                 { tenantId: 'tenant-b', siteId: 'site-b', districtCode: 'CL-ATACAMA' },
                 { tenantId: 'tenant-c', siteId: 'site-c', districtCode: 'CL-ATACAMA' },
+                { tenantId: 'tenant-f', siteId: 'site-f', districtCode: 'CL-ATACAMA' },
+                { tenantId: 'tenant-g', siteId: 'site-g', districtCode: 'CL-ATACAMA' },
                 { tenantId: 'tenant-d', siteId: 'site-d', districtCode: 'CL-COQUIMBO' },
                 { tenantId: 'tenant-e', siteId: 'site-e', districtCode: 'CL-COQUIMBO' },
                 { tenantId: 'tenant-single', siteId: 'site-single-1', districtCode: 'CL-TARAPACA' },
@@ -1480,10 +1512,10 @@ async function runTests(): Promise<void> {
             });
             assert.equal(refreshResp.status, 200);
             const refreshJson: any = await refreshResp.json();
-            // ONLY CL-ATACAMA (3 distinct tenants + 3 distinct sites)! CL-COQUIMBO (k=2) & CL-TARAPACA (1 tenant, 3 sites) suppressed!
+            // ONLY CL-ATACAMA (5 distinct B2B tenants + 5 distinct sites)! CL-COQUIMBO (k=2) & CL-TARAPACA (1 tenant, 3 sites) suppressed!
             assert.equal(refreshJson.count, 1);
             assert.equal(refreshJson.signals[0].districtCode, 'CL-ATACAMA');
-            assert.equal(refreshJson.signals[0].participatingEntitiesCount, 3);
+            assert.equal(refreshJson.signals[0].participatingEntitiesCount, 5);
             assert.equal(refreshJson.signals[0].optInVerified, true);
             assert.equal(refreshJson.signals[0].skuName, 'Papas');
             assert.equal(refreshJson.signals[0].procurementBucket, 'VERDULERIA');
@@ -1529,7 +1561,7 @@ async function runTests(): Promise<void> {
             assert.equal(m2mOk.status, 200);
             const m2mOkJson: any = await m2mOk.json();
             assert.equal(m2mOkJson.count, 1);
-            assert.equal(m2mOkJson.privacyCompliance, 'LEY_21719_K_ANONYMITY_GE_3');
+            assert.equal(m2mOkJson.privacyCompliance, 'LEY_21719_K_ANONYMITY_GE_5');
 
             // Simulator endpoint works for DEV_ROOT
             const simOk = await apiFetch(`${baseUrl}/api/supply/whatsapp/simulate`, {

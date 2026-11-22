@@ -34,7 +34,7 @@ function isValidStrictSupplierTaxId(raw: string): boolean {
  * `x402Gatekeeper` (HTTP 402 Payment Required bajo estándar x402 Foundation) para
  * futuros proveedores Marketplace / RFQ agénticos:
  * - Jamás expone `tenantId`, nombres de faena ni coordenadas GPS exactas (Ley N° 21.719).
- * - Exige k-anonymity `k >= 3` sitios/tenants distintos y `optInVerified === true`.
+ * - Exige k-anonymity `k >= 5` sitios/tenants B2B distintos y `optInVerified === true`.
  */
 
 export const M2mSupplyDemandSignalsQuerySchema = z.object({
@@ -85,7 +85,7 @@ export const M2mRfqQuoteSubmitSchema = z
 export function registerM2mSupplyAdapterRoutes(app: express.Application): void {
     /**
      * GET /api/m2m/supply/demand-signals
-     * Señales anónimas de demanda agrupada por distrito minero (k >= 3, opt-in Ley 21.719).
+     * Señales anónimas de demanda agrupada por distrito minero (k >= 5 B2B, opt-in Ley 21.719).
      */
     app.get(
         '/api/m2m/supply/demand-signals',
@@ -112,7 +112,7 @@ export function registerM2mSupplyAdapterRoutes(app: express.Application): void {
                     success: true,
                     protocol: 'x402 Foundation v1.0',
                     region: 'southamerica-west1',
-                    privacyCompliance: 'LEY_21719_K_ANONYMITY_GE_3',
+                    privacyCompliance: 'LEY_21719_K_ANONYMITY_GE_5',
                     settlementMode: req.x402Context?.mode || 'VERIFIED',
                     timestamp: new Date().toISOString(),
                     count: signals.length,
@@ -210,9 +210,9 @@ export function registerM2mSupplyAdapterRoutes(app: express.Application): void {
                 }
                 const signalData = signalSnap.data() || {};
                 const entityCount = Number(signalData.participatingEntitiesCount ?? 0);
-                if (entityCount < 3 || signalData.optInVerified !== true) {
+                if (entityCount < 5 || signalData.optInVerified !== true) {
                     return res.status(403).json({
-                        error: 'Señal bloqueada por política de anonimato k >= 3 entidades distintas (Ley N° 21.719).',
+                        error: 'Señal bloqueada por política de anonimato k >= 5 entidades B2B distintas (Ley N° 21.719).',
                     });
                 }
 

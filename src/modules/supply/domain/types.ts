@@ -435,6 +435,9 @@ export interface SiiDocumentRecord {
     rcvUrgencyAlert: boolean;
     sourceFormat: 'XML_DTE' | 'TED_PDF417' | 'MANUAL_OR_OCR';
     tedVerified: boolean;
+    tedRsaVerified?: boolean | null;
+    isCreditNote?: boolean;
+    receiverTaxIdMismatch?: boolean;
     atypicalFlags: AtypicalFlagCode[];
     arithmeticValid: boolean;
     arithmeticDeltaClp: number;
@@ -507,6 +510,7 @@ export interface Ds594WaterGuardrailEvaluation {
     currentAvailableL: number;
     currentWarehouseL: number;
     currentInTransitL: number;
+    waterStorageCapacityL?: number;
     coverageDays: number;
     compliant: boolean;
     deficitL: number;
@@ -534,7 +538,7 @@ export interface DemandForecast {
 /**
  * Señal agregada y estrictamente anónima para futuro Marketplace MINREPORT.
  * Cumplimiento Ley N° 21.719: alineada 1:1 con `DemandPoolSignalSchema.strict()`,
- * sin `tenantId`, sin `siteId`, sin coordenadas GPS, exigiendo opt-in explícito y k-anonimato (k >= 3).
+ * sin `tenantId`, sin `siteId`, sin coordenadas GPS, exigiendo opt-in explícito y k-anonimato (k >= 5 B2B).
  */
 export interface DemandPoolSignal {
     signalId: string;

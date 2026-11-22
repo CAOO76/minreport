@@ -16,3 +16,4 @@ export * from '../ports/IDemandSourcePort';
 export * from '../ports/IMessagingGateway';
 export * from '../ports/IPurchaseIntakePort';
 export * from '../ports/ISourcingDispatcherPort';
+export * from '../ports/ITaxJurisdictionAdapter';

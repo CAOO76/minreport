@@ -88,9 +88,47 @@ export interface AcceptedPolicyItem {
 export interface RejectedPolicyItem {
     itemKey: string;
     rawText: string;
-    rejectionCode: HardDenyCategory | 'ROLE_MISMATCH_STRICT_BLOCK' | 'CONTROLLED_LICENSE_REQUIRED';
+    rejectionCode:
+        | HardDenyCategory
+        | 'DGMN_EXPLOSIVES_BLOCK'
+        | 'ROLE_MISMATCH_STRICT_BLOCK'
+        | 'CONTROLLED_LICENSE_REQUIRED';
     reasonSpanish: string;
     matchedTerm?: string;
+}
+
+export interface DgmnExplosivesCheckResult {
+    isExplosive: boolean;
+    matchedTerm?: string;
+    reasonSpanish?: string;
+}
+
+export interface RecentPurchaseForSmurfingCheck {
+    purchaseId?: string;
+    supplierTaxId: string;
+    totalAmountClp: number;
+    createdAtIso: string;
+}
+
+export interface SplitInvoiceSmurfingInput {
+    supplierTaxId: string;
+    currentAmountClp: number;
+    currentTimestampIso?: string;
+    recentPurchases: readonly RecentPurchaseForSmurfingCheck[];
+    approvalThresholdClp: number;
+    windowHours?: number;
+}
+
+export interface SplitInvoiceSmurfingResult {
+    detected: boolean;
+    code?: 'SPLIT_INVOICE_SMURFING';
+    supplierTaxIdNormalized: string;
+    purchaseCount: number;
+    cumulativeAmountClp: number;
+    approvalThresholdClp: number;
+    windowHours: number;
+    relatedPurchaseIds: string[];
+    reasonSpanish?: string;
 }
 
 export interface RequisitionPolicyEvaluation {
@@ -228,45 +266,216 @@ const HARD_DENY_PATTERNS: ReadonlyArray<{
     },
 ];
 
+const DGMN_EXPLOSIVES_TERMS: readonly string[] = [
+    'dinamita',
+    'dinamitas',
+    'anfo',
+    'emulsion explosiva',
+    'emulsiones explosivas',
+    'detonador',
+    'detonadores',
+    'fulminante',
+    'fulminantes',
+    'cordon detonante',
+    'cordones detonantes',
+    'pentrita',
+    'tnt',
+    'polvora',
+    'booster explosivo',
+    'boosters explosivos',
+    'mecha lenta',
+    'mechas lentas',
+];
+
+const LEETSPEAK_CHAR_MAP: Readonly<Record<string, string>> = {
+    '0': 'o',
+    '3': 'e',
+    '4': 'a',
+    '1': 'i',
+    '@': 'a',
+    '!': 'i',
+    '$': 's',
+};
+
 function containsWholePhrase(text: string, phrase: string): boolean {
     const escaped = phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     return new RegExp(`(^|\\s)${escaped}(\\s|$)`).test(text);
 }
 
 /**
- * Evalúa la lista inviolable `GLOBAL_HARD_DENY` (DS 132 + absurdos fuera de dominio).
- * Aplica a TODOS los roles sin excepción (incluido `OWNER_EXEC`).
+ * Normalización determinista anti-evasión:
+ * 1) Descomposición Unicode NFD + remoción de diacríticos (`cérvèzâ` -> `cerveza`).
+ * 2) De-ofuscación leetspeak (`0->o, 3->e, 4->a, 1->i, @->a, !->i, $->s`) sobre tokens no puramente numéricos
+ *    (`c3rv3za` -> `cerveza`, `mar1hu4na` -> `marihuana`, `d3t0n@d0r` -> `detonador`), preservando números puros (`70`, `45`).
  */
-export function checkGlobalHardDeny(rawText: string): HardDenyCheckResult {
-    const normalized = normalizeCatalogText(rawText);
-    if (!normalized) return { denied: false };
+export function normalizePolicyTextWithDeobfuscation(rawText: string): {
+    nfdClean: string;
+    deobfuscated: string;
+} {
+    const nfdLower = String(rawText || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase();
 
-    // Verificar primero excepciones sanitarias/industriales (ej. "alcohol gel")
-    let sanitizedForAlcohol = normalized;
+    const nfdClean = normalizeCatalogText(nfdLower);
+
+    const rawTokens = nfdLower
+        .replace(/[^a-z0-9@!$\s]/g, ' ')
+        .split(/\s+/)
+        .filter(Boolean);
+
+    const mappedTokens = rawTokens.map((tok) => {
+        if (/^\d+$/.test(tok)) return tok;
+        // Evitar convertir signos '!' al final de palabra normal (ej. "cerveza!")
+        const trimmedTrailingBang = tok.replace(/!+$/g, '');
+        const candidate = trimmedTrailingBang || tok;
+        return candidate.replace(/[0341@!$]/g, (ch) => LEETSPEAK_CHAR_MAP[ch] ?? ch);
+    });
+
+    const deobfuscated = mappedTokens.join(' ').replace(/\s+/g, ' ').trim();
+    return { nfdClean, deobfuscated };
+}
+
+function stripSafeAlcoholPhrases(text: string): string {
+    let result = text;
     for (const safePhrase of SAFE_INDUSTRIAL_ALCOHOL_PHRASES) {
-        if (containsWholePhrase(sanitizedForAlcohol, safePhrase)) {
-            sanitizedForAlcohol = sanitizedForAlcohol.replace(
+        if (containsWholePhrase(result, safePhrase)) {
+            result = result.replace(
                 new RegExp(`(^|\\s)${safePhrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\s|$)`, 'g'),
                 ' '
             );
         }
     }
+    return result.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Evalúa la lista inviolable `GLOBAL_HARD_DENY` (DS 132 + absurdos fuera de dominio)
+ * con normalización Unicode NFD + leetspeak anti-evasión.
+ * Aplica a TODOS los roles sin excepción (incluido `OWNER_EXEC`).
+ */
+export function checkGlobalHardDeny(rawText: string): HardDenyCheckResult {
+    const { nfdClean, deobfuscated } = normalizePolicyTextWithDeobfuscation(rawText);
+    if (!nfdClean && !deobfuscated) return { denied: false };
+
+    const candidates = nfdClean === deobfuscated ? [nfdClean] : [nfdClean, deobfuscated];
 
     for (const group of HARD_DENY_PATTERNS) {
-        const target = group.category === 'DS132_ALCOHOL' ? sanitizedForAlcohol : normalized;
-        for (const term of group.terms) {
-            if (containsWholePhrase(target, term)) {
-                return {
-                    denied: true,
-                    category: group.category,
-                    matchedTerm: term,
-                    reasonSpanish: group.reasonTemplate(term),
-                };
+        for (const candidate of candidates) {
+            const target = group.category === 'DS132_ALCOHOL' ? stripSafeAlcoholPhrases(candidate) : candidate;
+            for (const term of group.terms) {
+                if (containsWholePhrase(target, term)) {
+                    return {
+                        denied: true,
+                        category: group.category,
+                        matchedTerm: term,
+                        reasonSpanish: group.reasonTemplate(term),
+                    };
+                }
             }
         }
     }
 
     return { denied: false };
+}
+
+/**
+ * Detector determinista DGMN Ley N° 17.798 para explosivos y accesorios de tronadura
+ * con normalización NFD + leetspeak anti-evasión.
+ */
+export function checkDgmnExplosives(rawText: string): DgmnExplosivesCheckResult {
+    const { nfdClean, deobfuscated } = normalizePolicyTextWithDeobfuscation(rawText);
+    if (!nfdClean && !deobfuscated) return { isExplosive: false };
+
+    const candidates = nfdClean === deobfuscated ? [nfdClean] : [nfdClean, deobfuscated];
+    for (const candidate of candidates) {
+        for (const term of DGMN_EXPLOSIVES_TERMS) {
+            if (containsWholePhrase(candidate, term)) {
+                return {
+                    isExplosive: true,
+                    matchedTerm: term,
+                    reasonSpanish: `No podemos procesar "${term}": material explosivo regulado por Ley N° 17.798 (DGMN) que requiere licencia vigente autorizada.`,
+                };
+            }
+        }
+    }
+    return { isExplosive: false };
+}
+
+/**
+ * Detector determinista de fraccionamiento de facturas (`SPLIT_INVOICE_SMURFING`):
+ * identifica 2 o más compras al mismo proveedor (`supplierTaxId`) dentro de una ventana <= 48h
+ * donde cada compra está bajo el tope de aprobación (`approvalThresholdClp`), pero su suma acumulada lo supera.
+ */
+export function detectSplitInvoiceSmurfing(
+    input: SplitInvoiceSmurfingInput
+): SplitInvoiceSmurfingResult {
+    const windowHours = input.windowHours ?? 48;
+    const threshold = Math.round(input.approvalThresholdClp);
+    const currentAmount = Math.round(input.currentAmountClp);
+    const normalizedSupplier = String(input.supplierTaxId || '')
+        .replace(/[\s.]/g, '')
+        .toUpperCase();
+
+    if (!normalizedSupplier || threshold <= 0 || currentAmount <= 0 || currentAmount >= threshold) {
+        return {
+            detected: false,
+            supplierTaxIdNormalized: normalizedSupplier,
+            purchaseCount: currentAmount > 0 ? 1 : 0,
+            cumulativeAmountClp: Math.max(0, currentAmount),
+            approvalThresholdClp: Math.max(0, threshold),
+            windowHours,
+            relatedPurchaseIds: [],
+        };
+    }
+
+    const nowMs = input.currentTimestampIso ? Date.parse(input.currentTimestampIso) : Date.now();
+    const windowMs = windowHours * 3600 * 1000;
+
+    const matchedRecent = input.recentPurchases.filter((rec) => {
+        const recSupplier = String(rec.supplierTaxId || '')
+            .replace(/[\s.]/g, '')
+            .toUpperCase();
+        if (recSupplier !== normalizedSupplier) return false;
+        const amt = Math.round(rec.totalAmountClp);
+        if (amt <= 0 || amt >= threshold) return false;
+        const recMs = Date.parse(rec.createdAtIso);
+        if (!Number.isFinite(recMs) || !Number.isFinite(nowMs)) return false;
+        const diff = nowMs - recMs;
+        return diff >= -60_000 && diff <= windowMs;
+    });
+
+    const purchaseCount = matchedRecent.length + 1;
+    const cumulativeAmountClp = Math.round(
+        currentAmount + matchedRecent.reduce((sum, r) => sum + Math.round(r.totalAmountClp), 0)
+    );
+    const relatedPurchaseIds = matchedRecent
+        .map((r) => r.purchaseId)
+        .filter((id): id is string => Boolean(id));
+
+    if (purchaseCount >= 2 && cumulativeAmountClp > threshold) {
+        return {
+            detected: true,
+            code: 'SPLIT_INVOICE_SMURFING',
+            supplierTaxIdNormalized: normalizedSupplier,
+            purchaseCount,
+            cumulativeAmountClp,
+            approvalThresholdClp: threshold,
+            windowHours,
+            relatedPurchaseIds,
+            reasonSpanish: `Alerta SPLIT_INVOICE_SMURFING: ${purchaseCount} compras fraccionadas al proveedor ${normalizedSupplier} en <= ${windowHours}h acumulan CLP ${cumulativeAmountClp}, superando el umbral CLP ${threshold}.`,
+        };
+    }
+
+    return {
+        detected: false,
+        supplierTaxIdNormalized: normalizedSupplier,
+        purchaseCount,
+        cumulativeAmountClp,
+        approvalThresholdClp: threshold,
+        windowHours,
+        relatedPurchaseIds,
+    };
 }
 
 /**
@@ -302,11 +511,25 @@ export function evaluateRequisitionPolicy(
             continue;
         }
 
-        // 2. Artículos controlados (ej. explosivos regulados DGMN)
-        const isControlled = Boolean(
-            item.isControlled || item.sku?.isControlled || item.categoryCode === 'EXPLOSIVOS_REGULADO'
-        );
-        if (isControlled && !profile.licensedForControlledItems) {
+        // 2. Explosivos regulados DGMN Ley N° 17.798 (`DGMN_EXPLOSIVES_BLOCK`) y otros artículos controlados
+        const dgmnCheck = checkDgmnExplosives(item.rawText);
+        const isDgmnExplosive =
+            dgmnCheck.isExplosive || item.categoryCode === 'EXPLOSIVOS_REGULADO';
+        if (isDgmnExplosive && !profile.licensedForControlledItems) {
+            rejectedItems.push({
+                itemKey: item.itemKey,
+                rawText: item.rawText,
+                rejectionCode: 'DGMN_EXPLOSIVES_BLOCK',
+                matchedTerm: dgmnCheck.matchedTerm,
+                reasonSpanish:
+                    dgmnCheck.reasonSpanish ||
+                    `No podemos procesar "${item.rawText}": material explosivo regulado por Ley N° 17.798 (DGMN) que requiere licencia vigente autorizada.`,
+            });
+            continue;
+        }
+
+        const isControlled = Boolean(item.isControlled || item.sku?.isControlled);
+        if (isControlled && !isDgmnExplosive && !profile.licensedForControlledItems) {
             rejectedItems.push({
                 itemKey: item.itemKey,
                 rawText: item.rawText,

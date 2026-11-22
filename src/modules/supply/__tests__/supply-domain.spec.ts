@@ -8,6 +8,8 @@
  */
 
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
+import path from 'node:path';
 import {
     // Catalog & Types
     DEFAULT_ROLE_PROFILES,
@@ -19,7 +21,9 @@ import {
     normalizeQuantityToSi,
     normalizeUnitExpression,
     // 2. SupplyPolicyAndAnomalyEngine
+    checkDgmnExplosives,
     checkGlobalHardDeny,
+    detectSplitInvoiceSmurfing,
     evaluateDirectPurchaseAuthority,
     evaluateRequisitionPolicy,
     // 3. ConversationSlotValidator
@@ -37,27 +41,35 @@ import {
     reconcilePurchase,
     // 7. SiiTaxValidator
     buildSiiDedupeKey,
+    computeChileanVatBreakdown,
     computeRcvAcceptanceDeadline,
     exportSiiDocumentsToAccountantCsv,
     parseSiiTedPdf417,
     parseSiiXmlDte,
     validateSiiDocumentForPurchase,
     verifyDocumentArithmetic,
+    verifySiiTedRsaSignature,
     // 8. DemandAndCostForecaster
+    LEY21719_MIN_K_ANONYMITY,
     TenantDemandObservation,
     computeEwmaSeries,
     evaluateDs594WaterGuardrail,
     forecastSkuDemand,
     projectAnonymousDemandSignals,
+    // 9. International Tax & Safety Ports
+    ChileMiningSafetyPolicyPack,
+    ChileSiiTaxJurisdictionAdapter,
+    getSiteSafetyPolicyPack,
+    getTaxJurisdictionAdapter,
 } from '../domain';
 
 interface TestCase {
     name: string;
-    fn: () => void;
+    fn: () => void | Promise<void>;
 }
 
 const tests: TestCase[] = [];
-function test(name: string, fn: () => void): void {
+function test(name: string, fn: () => void | Promise<void>): void {
     tests.push({ name, fn });
 }
 
@@ -293,7 +305,7 @@ test('2.2 SupplyPolicyAndAnomalyEngine: 5 banderas atípicas y modo FLAG_AND_ACC
     );
     assert.ok(stockCover.acceptedItems[0].atypicalFlags.includes('ATYPICAL_DUPLICATE_FREQ'));
 
-    // Insumo controlado (explosivos) bloqueado sin licencia DGMN y permitido con licencia
+    // Insumo controlado (explosivos DGMN Ley N° 17.798) bloqueado sin licencia y permitido con licencia
     const detSku = findCanonicalSkuById('SKU-EXP-DETONADOR')!;
     const unlicensed = evaluateRequisitionPolicy(
         [
@@ -310,7 +322,23 @@ test('2.2 SupplyPolicyAndAnomalyEngine: 5 banderas atípicas y modo FLAG_AND_ACC
         ],
         { requesterRole: 'CAMP_MANAGER', demandNature: 'REACTIVE_FIELD' }
     );
-    assert.equal(unlicensed.rejectedItems[0].rejectionCode, 'CONTROLLED_LICENSE_REQUIRED');
+    assert.equal(unlicensed.rejectedItems[0].rejectionCode, 'DGMN_EXPLOSIVES_BLOCK');
+
+    // Otros insumos controlados (no explosivos) sin licencia -> CONTROLLED_LICENSE_REQUIRED
+    const unlicensedNonExplosive = evaluateRequisitionPolicy(
+        [
+            {
+                itemKey: 'ctrl1',
+                rawText: '20 L acido sulfurico reactivo',
+                categoryCode: 'OTROS_OPERACIONAL',
+                quantitySi: 20,
+                unitSi: 'L',
+                isControlled: true,
+            },
+        ],
+        { requesterRole: 'CAMP_MANAGER', demandNature: 'REACTIVE_FIELD' }
+    );
+    assert.equal(unlicensedNonExplosive.rejectedItems[0].rejectionCode, 'CONTROLLED_LICENSE_REQUIRED');
 
     const licensed = evaluateRequisitionPolicy(
         [
@@ -1411,9 +1439,9 @@ test('8.1 DemandAndCostForecaster: EWMA per-cápita, DOI y guardrail DS 594 Art.
     assert.equal(extremeGuard.compliant, true);
 });
 
-test('8.2 DemandAndCostForecaster: DemandSignalProjector (Ley N° 21.719) exige opt-in y k >= 3 sin fuga de tenantId ni GPS', () => {
+test('8.2 DemandAndCostForecaster: DemandSignalProjector (Ley N° 21.719) exige opt-in, excluye sandboxes y exige k >= 5 B2B sin fuga PII/GPS', () => {
     const observations: TenantDemandObservation[] = [
-        // Distrito CL-III-COPIAPO: 3 tenants distintos con opt-in (DEBE EMITIRSE) + 1 opt-out (DEBE DESCARTARSE)
+        // Distrito CL-III-COPIAPO: 5 tenants B2B distintos con opt-in (DEBE EMITIRSE) + 1 opt-out + 3 sandboxes (EDU, pilot-*, dev-master-sandbox)
         {
             tenantId: 'tenant-secret-A', siteId: 'site-A1', districtCode: 'CL-III-COPIAPO',
             geoFix: { lat: -27.3668, lng: -70.3322 }, optInMarketplace: true,
@@ -1433,12 +1461,42 @@ test('8.2 DemandAndCostForecaster: DemandSignalProjector (Ley N° 21.719) exige 
             projectedDemandSi: 250, unitPriceClp: 1150,
         },
         {
+            tenantId: 'tenant-secret-F', siteId: 'site-F1', districtCode: 'CL-III-COPIAPO',
+            geoFix: { lat: -27.3500, lng: -70.3100 }, optInMarketplace: true,
+            canonicalSkuId: 'SKU-VIV-PAPAS', procurementBucket: 'VERDULERIA', unitSi: 'kg',
+            projectedDemandSi: 200, unitPriceClp: 1120,
+        },
+        {
+            tenantId: 'tenant-secret-G', siteId: 'site-G1', districtCode: 'CL-III-COPIAPO',
+            geoFix: { lat: -27.3800, lng: -70.3500 }, optInMarketplace: true,
+            canonicalSkuId: 'SKU-VIV-PAPAS', procurementBucket: 'VERDULERIA', unitSi: 'kg',
+            projectedDemandSi: 300, unitPriceClp: 1180,
+        },
+        {
             tenantId: 'tenant-optout-D', siteId: 'site-D1', districtCode: 'CL-III-COPIAPO',
             geoFix: { lat: -27.5000, lng: -70.5000 }, optInMarketplace: false,
             canonicalSkuId: 'SKU-VIV-PAPAS', procurementBucket: 'VERDULERIA', unitSi: 'kg',
             projectedDemandSi: 999, unitPriceClp: 1000,
         },
-        // Distrito CL-II-ANTOFAGASTA: solo 2 tenants distintos (k = 2 < 3 => DEBE SUPRIMIRSE incluso si piden minK: 1!)
+        {
+            tenantId: 'edu-u-atacama', siteId: 'site-edu-1', districtCode: 'CL-III-COPIAPO',
+            optInMarketplace: true, isEduSandbox: true, accountType: 'EDUCATIONAL',
+            canonicalSkuId: 'SKU-VIV-PAPAS', procurementBucket: 'VERDULERIA', unitSi: 'kg',
+            projectedDemandSi: 500, unitPriceClp: 1000,
+        },
+        {
+            tenantId: 'pilot-user-01', siteId: 'site-pilot-1', districtCode: 'CL-III-COPIAPO',
+            optInMarketplace: true, accountType: 'TEST_PILOT',
+            canonicalSkuId: 'SKU-VIV-PAPAS', procurementBucket: 'VERDULERIA', unitSi: 'kg',
+            projectedDemandSi: 500, unitPriceClp: 1000,
+        },
+        {
+            tenantId: 'dev-master-sandbox', siteId: 'site-dev-1', districtCode: 'CL-III-COPIAPO',
+            optInMarketplace: true, accountType: 'DEV',
+            canonicalSkuId: 'SKU-VIV-PAPAS', procurementBucket: 'VERDULERIA', unitSi: 'kg',
+            projectedDemandSi: 500, unitPriceClp: 1000,
+        },
+        // Distrito CL-II-ANTOFAGASTA: solo 4 tenants B2B distintos (k = 4 < 5 => DEBE SUPRIMIRSE incluso si piden minK: 1!)
         {
             tenantId: 'tenant-antofa-1', siteId: 'site-AN1', districtCode: 'CL-II-ANTOFAGASTA',
             geoFix: { lat: -23.6509, lng: -70.3975 }, optInMarketplace: true,
@@ -1451,7 +1509,19 @@ test('8.2 DemandAndCostForecaster: DemandSignalProjector (Ley N° 21.719) exige 
             canonicalSkuId: 'SKU-FER-CEMENTO', procurementBucket: 'FERRETERIA', unitSi: 'kg',
             projectedDemandSi: 800, unitPriceClp: 230,
         },
-        // Mismo tenant con 3 sitios distintos en CL-IV-COQUIMBO (solo 1 tenant => DEBE SUPRIMIRSE!)
+        {
+            tenantId: 'tenant-antofa-3', siteId: 'site-AN3', districtCode: 'CL-II-ANTOFAGASTA',
+            optInMarketplace: true,
+            canonicalSkuId: 'SKU-FER-CEMENTO', procurementBucket: 'FERRETERIA', unitSi: 'kg',
+            projectedDemandSi: 600, unitPriceClp: 210,
+        },
+        {
+            tenantId: 'tenant-antofa-4', siteId: 'site-AN4', districtCode: 'CL-II-ANTOFAGASTA',
+            optInMarketplace: true,
+            canonicalSkuId: 'SKU-FER-CEMENTO', procurementBucket: 'FERRETERIA', unitSi: 'kg',
+            projectedDemandSi: 700, unitPriceClp: 215,
+        },
+        // Mismo tenant con 5 sitios distintos en CL-IV-COQUIMBO (solo 1 tenant => DEBE SUPRIMIRSE!)
         {
             tenantId: 'tenant-single-E', siteId: 'site-E1', districtCode: 'CL-IV-COQUIMBO',
             optInMarketplace: true, canonicalSkuId: 'SKU-FER-PERNOS', procurementBucket: 'FERRETERIA', unitSi: 'un',
@@ -1467,17 +1537,29 @@ test('8.2 DemandAndCostForecaster: DemandSignalProjector (Ley N° 21.719) exige 
             optInMarketplace: true, canonicalSkuId: 'SKU-FER-PERNOS', procurementBucket: 'FERRETERIA', unitSi: 'un',
             projectedDemandSi: 100,
         },
+        {
+            tenantId: 'tenant-single-E', siteId: 'site-E4', districtCode: 'CL-IV-COQUIMBO',
+            optInMarketplace: true, canonicalSkuId: 'SKU-FER-PERNOS', procurementBucket: 'FERRETERIA', unitSi: 'un',
+            projectedDemandSi: 100,
+        },
+        {
+            tenantId: 'tenant-single-E', siteId: 'site-E5', districtCode: 'CL-IV-COQUIMBO',
+            optInMarketplace: true, canonicalSkuId: 'SKU-FER-PERNOS', procurementBucket: 'FERRETERIA', unitSi: 'un',
+            projectedDemandSi: 100,
+        },
     ];
 
     const projected = projectAnonymousDemandSignals(observations, {
         windowStartIso: '2026-11-21T00:00:00Z',
         windowEndIso: '2026-11-28T00:00:00Z',
-        minK: 1, // Intento malicioso de bajar k < 3: debe forzarse piso >= 3!
+        minK: 1, // Intento malicioso de bajar k < 5: debe forzarse piso >= 5!
     });
 
-    assert.equal(projected.enforcedK, 3);
+    assert.equal(LEY21719_MIN_K_ANONYMITY, 5);
+    assert.equal(projected.enforcedK, 5);
     assert.equal(projected.droppedOptOutCount, 1);
-    assert.equal(projected.suppressedLowKGroupCount, 2); // Antofagasta (2 tenants) + Coquimbo (1 tenant)
+    assert.equal(projected.droppedSandboxCount, 3); // EDU + pilot-* + dev-master-sandbox excluidos
+    assert.equal(projected.suppressedLowKGroupCount, 2); // Antofagasta (4 tenants) + Coquimbo (1 tenant)
     assert.equal(projected.signals.length, 1);
 
     const signal = projected.signals[0];
@@ -1485,8 +1567,8 @@ test('8.2 DemandAndCostForecaster: DemandSignalProjector (Ley N° 21.719) exige 
     assert.equal(signal.periodWindow, '2026-11-21..2026-11-28');
     assert.equal(signal.skuName, 'Papas');
     assert.equal(signal.categoryCode, 'VIVERES_ALIMENTACION');
-    assert.equal(signal.participatingEntitiesCount, 3);
-    assert.equal(signal.aggregatedQty, 1000); // 300 + 450 + 250 (opt-out 999 excluido!)
+    assert.equal(signal.participatingEntitiesCount, 5);
+    assert.equal(signal.aggregatedQty, 1500); // 300 + 450 + 250 + 200 + 300 (opt-out y sandboxes excluidos!)
     assert.equal(signal.medianReferenceUnitClp, 1150);
     assert.equal(signal.optInVerified, true);
     assert.equal(signal.expiresAt, '2026-11-28T00:00:00Z');
@@ -1522,16 +1604,736 @@ test('8.2 DemandAndCostForecaster: DemandSignalProjector (Ley N° 21.719) exige 
 });
 
 // ============================================================================
+// 9. ETAPA E05 — TED RSA-SHA1, DL 825 (52/61/folio=0/<RR>), NFD/LEET/DGMN/SMURFING,
+//    DOI REAL, PUERTOS INTERNACIONALES Y WIRING EN RUNTIME
+// ============================================================================
+function buildSignedTedXmlFixture(): { validTedXml: string; tamperedTedXml: string } {
+    const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', {
+        modulusLength: 1024,
+    });
+    const jwk = publicKey.export({ format: 'jwk' }) as { n: string; e: string };
+    const mBase64 = Buffer.from(jwk.n, 'base64url').toString('base64');
+    const eBase64 = Buffer.from(jwk.e, 'base64url').toString('base64');
+
+    const ddBlock =
+        `<DD><RE>76123465-K</RE><TD>33</TD><F>54321</F><FE>2026-11-21</FE><RR>76123456-0</RR>` +
+        `<RSR>MINERA ATACAMA SPA</RSR><MNT>571200</MNT><IT1>Cocina industrial 4 platos</IT1>` +
+        `<CAF version="1.0"><DA><RE>76123465-K</RE><RS>COMERCIAL ATACAMA SPA</RS><TD>33</TD>` +
+        `<RNG><D>1</D><H>99999</H></RNG><FA>2026-01-01</FA>` +
+        `<RSAPK><M>${mBase64}</M><E>${eBase64}</E></RSAPK><IDK>100</IDK></DA>` +
+        `<FRMA algoritmo="SHA1withRSA">Q0FGU0lH</FRMA></CAF><TSTED>2026-11-21T10:30:00</TSTED></DD>`;
+
+    const signer = crypto.createSign('RSA-SHA1');
+    signer.update(Buffer.from(ddBlock, 'utf8'));
+    signer.end();
+    const signatureBase64 = signer.sign(privateKey, 'base64');
+
+    const validTedXml = `<TED version="1.0">${ddBlock}<FRMT algoritmo="SHA1withRSA">${signatureBase64}</FRMT></TED>`;
+    const tamperedTedXml = validTedXml.replace('<MNT>571200</MNT>', '<MNT>971200</MNT>');
+    return { validTedXml, tamperedTedXml };
+}
+
+test('9.1 E05 SiiTaxValidator: verificación criptográfica real TED RSA-SHA1 (válida true vs manipulada false)', () => {
+    const { validTedXml, tamperedTedXml } = buildSignedTedXmlFixture();
+
+    const okRsa = verifySiiTedRsaSignature(validTedXml);
+    assert.equal(okRsa.tedRsaVerified, true);
+    assert.equal(okRsa.reason, 'VALID_SIGNATURE');
+
+    const okValidation = validateSiiDocumentForPurchase({
+        siiDocId: 'SII-RSA-OK',
+        tenantId: 't1',
+        siteId: 's1',
+        tedRawXml: validTedXml,
+        expectedReceiverTaxId: '76.123.456-0',
+        referenceDateIso: '2026-11-21',
+    });
+    assert.equal(okValidation.valid, true);
+    assert.equal(okValidation.tedRsaVerified, true);
+    assert.equal(okValidation.record.tedVerified, true);
+    assert.equal(okValidation.record.tedRsaVerified, true);
+    assert.equal(okValidation.receiverTaxIdMismatch, false);
+
+    // Manipulación del monto en <DD> sin re-firmar -> TED_RSA_SIGNATURE_INVALID
+    const badRsa = verifySiiTedRsaSignature(tamperedTedXml);
+    assert.equal(badRsa.tedRsaVerified, false);
+    assert.equal(badRsa.reason, 'INVALID_SIGNATURE');
+
+    const badValidation = validateSiiDocumentForPurchase({
+        siiDocId: 'SII-RSA-BAD',
+        tenantId: 't1',
+        siteId: 's1',
+        tedRawXml: tamperedTedXml,
+        referenceDateIso: '2026-11-21',
+    });
+    assert.equal(badValidation.valid, false);
+    assert.equal(badValidation.tedRsaVerified, false);
+    assert.equal(badValidation.record.tedVerified, false);
+    assert.ok(badValidation.errors.some((e) => e.includes('TED_RSA_SIGNATURE_INVALID')));
+});
+
+test('9.2 E05 SiiTaxValidator: folio="0" rechazado en DTE 33, DTE 52 IVA=0, DTE 61 negativo y <RR> mismatch', () => {
+    // folio='0' rechazado en DTE 33 (cero bypass de unicidad SII)
+    const zeroFolioRes = validateSiiDocumentForPurchase({
+        siiDocId: 'SII-ZERO-FOLIO',
+        tenantId: 't1',
+        siteId: 's1',
+        manualFallback: {
+            supplierTaxId: '76.123.465-K',
+            supplierName: 'Comercial Norte SpA',
+            dteType: 33,
+            folio: '0',
+            issueDate: '2026-11-21',
+            totalAmountClp: 119_000,
+        },
+    });
+    assert.equal(zeroFolioRes.valid, false);
+    assert.ok(zeroFolioRes.errors.some((e) => e.includes('FOLIO_MUST_BE_POSITIVE')));
+
+    // DTE 52 Guía de Despacho: NO otorga Crédito Fiscal (DL 825)
+    const vat52 = computeChileanVatBreakdown({ dteType: 52, totalAmountClp: 119_000 });
+    assert.equal(vat52.vatRecoverableClp, 0);
+    assert.equal(vat52.vatNonRecoverableClp, 0);
+    assert.equal(vat52.isCreditNote, false);
+
+    // DTE 61 Nota de Crédito: reduce Crédito Fiscal (`vatRecoverableClp < 0`, `isCreditNote: true`)
+    const vat61 = computeChileanVatBreakdown({ dteType: 61, totalAmountClp: 119_000 });
+    assert.equal(vat61.vatRecoverableClp, -19_000);
+    assert.equal(vat61.vatAmountClp, -19_000);
+    assert.equal(vat61.netAmountClp, -100_000);
+    assert.equal(vat61.totalAmountClp, -119_000);
+    assert.equal(vat61.isCreditNote, true);
+
+    // <RR> mismatch contra expectedReceiverTaxId del tenant
+    const { validTedXml } = buildSignedTedXmlFixture();
+    const rrMismatch = validateSiiDocumentForPurchase({
+        siiDocId: 'SII-RR-MISMATCH',
+        tenantId: 't1',
+        siteId: 's1',
+        tedRawXml: validTedXml,
+        expectedReceiverTaxId: '76.192.083-9', // distinto de 76123456-0 en <RR>
+    });
+    assert.equal(rrMismatch.valid, false);
+    assert.equal(rrMismatch.receiverTaxIdMismatch, true);
+    assert.ok(rrMismatch.errors.some((e) => e.includes('RECEIVER_TAX_ID_MISMATCH')));
+});
+
+test('9.3 E05 SupplyPolicyAndAnomalyEngine: DS 132 NFD/leetspeak, DGMN explosivos y SPLIT_INVOICE_SMURFING', () => {
+    // Evasiones Unicode NFD y leetspeak bloqueadas determinísticamente
+    assert.equal(checkGlobalHardDeny('2 cajas de cérvèzâ artesanal').denied, true);
+    assert.equal(checkGlobalHardDeny('2 cajas de c3rv3za').denied, true);
+    assert.equal(checkGlobalHardDeny('mar1hu4na para turno').denied, true);
+    assert.equal(checkGlobalHardDeny('botella de p!sc0 y v1n0').denied, true);
+    assert.equal(checkGlobalHardDeny('c@nn@b1$').denied, true);
+    // Whitelist sanitaria preservada
+    assert.equal(checkGlobalHardDeny('alcohol gel 70 desinfectante 5L').denied, false);
+    assert.equal(checkGlobalHardDeny('alcohol isopropilico industrial').denied, false);
+
+    // DGMN Ley N° 17.798 explosivos detectados incluso como texto libre en categoría no controlada
+    assert.equal(checkDgmnExplosives('5 cajas de dinamita').isExplosive, true);
+    assert.equal(checkDgmnExplosives('2 sacos de 4nf0').isExplosive, true);
+    assert.equal(checkDgmnExplosives('10 d3t0n@d0res y mecha lenta').isExplosive, true);
+
+    const dgmnBlocked = evaluateRequisitionPolicy(
+        [
+            {
+                itemKey: 'd1',
+                rawText: '5 cajas de dinamita',
+                categoryCode: 'FERRETERIA_CONSTRUCCION',
+                quantitySi: 5,
+                unitSi: 'caja',
+            },
+            {
+                itemKey: 'd2',
+                rawText: '2 sacos de anfo',
+                categoryCode: 'OTROS_OPERACIONAL',
+                quantitySi: 50,
+                unitSi: 'kg',
+            },
+        ],
+        { requesterRole: 'OPS_FOREMAN', demandNature: 'REACTIVE_FIELD' }
+    );
+    assert.equal(dgmnBlocked.acceptedItems.length, 0);
+    assert.equal(dgmnBlocked.rejectedItems.length, 2);
+    assert.equal(dgmnBlocked.rejectedItems[0].rejectionCode, 'DGMN_EXPLOSIVES_BLOCK');
+    assert.equal(dgmnBlocked.rejectedItems[1].rejectionCode, 'DGMN_EXPLOSIVES_BLOCK');
+
+    // Con licencia DGMN autorizada (OWNER_EXEC) sí pasa
+    const dgmnAllowed = evaluateRequisitionPolicy(
+        [
+            {
+                itemKey: 'd3',
+                rawText: '2 sacos de anfo',
+                categoryCode: 'EXPLOSIVOS_REGULADO',
+                quantitySi: 50,
+                unitSi: 'kg',
+            },
+        ],
+        {
+            requesterRole: 'OWNER_EXEC',
+            memberProfile: DEFAULT_ROLE_PROFILES.OWNER_EXEC,
+            demandNature: 'PLANNED_ENGINEERING',
+        }
+    );
+    assert.equal(dgmnAllowed.acceptedItems.length, 1);
+
+    // SPLIT_INVOICE_SMURFING: 2+ compras al mismo proveedor en <= 48h bajo umbral que juntas lo superan
+    const smurf = detectSplitInvoiceSmurfing({
+        supplierTaxId: '76.192.083-9',
+        currentAmountClp: 290_000,
+        currentTimestampIso: '2026-11-21T18:00:00Z',
+        approvalThresholdClp: 500_000,
+        windowHours: 48,
+        recentPurchases: [
+            {
+                purchaseId: 'pur-prev-1',
+                supplierTaxId: '76192083-9',
+                totalAmountClp: 320_000,
+                createdAtIso: '2026-11-21T09:00:00Z', // 9h atrás (< 48h)
+            },
+        ],
+    });
+    assert.equal(smurf.detected, true);
+    assert.equal(smurf.code, 'SPLIT_INVOICE_SMURFING');
+    assert.equal(smurf.purchaseCount, 2);
+    assert.equal(smurf.cumulativeAmountClp, 610_000);
+    assert.deepEqual(smurf.relatedPurchaseIds, ['pur-prev-1']);
+
+    // Fuera de ventana 48h -> NO dispara smurfing
+    const noSmurfOld = detectSplitInvoiceSmurfing({
+        supplierTaxId: '76.192.083-9',
+        currentAmountClp: 290_000,
+        currentTimestampIso: '2026-11-21T18:00:00Z',
+        approvalThresholdClp: 500_000,
+        windowHours: 48,
+        recentPurchases: [
+            {
+                purchaseId: 'pur-old-1',
+                supplierTaxId: '76192083-9',
+                totalAmountClp: 320_000,
+                createdAtIso: '2026-11-18T09:00:00Z', // > 72h atrás
+            },
+        ],
+    });
+    assert.equal(noSmurfOld.detected, false);
+});
+
+test('9.4 E05 DemandAndCostForecaster: DOI DS 594 sobre stock real menor a capacidad física', () => {
+    const site: SupplySite = {
+        siteId: 'site-water-real',
+        tenantId: 't-b2b-1',
+        name: 'Campamento Real Stock',
+        districtCode: 'CL-ATACAMA',
+        altitudeMeters: 3400, // factor DS 28 = 1.2
+        shiftPattern: '7x7',
+        currentHeadcount: 40,
+        waterStorageCapacityL: 50_000, // Capacidad física sobrada (>= 40320 L)
+        ds594DailyWaterTargetLPerPax: 120,
+        leadTimeDays: 7,
+    };
+
+    // Stock real = 0 L aunque estanque tenga 50.000 L de capacidad -> compliant: false, available: 0
+    const emptyTank = evaluateDs594WaterGuardrail({
+        site,
+        currentWaterWarehouseL: 0,
+        currentWaterInTransitL: 0,
+    });
+    assert.equal(emptyTank.currentAvailableL, 0);
+    assert.equal(emptyTank.waterStorageCapacityL, 50_000);
+    assert.equal(emptyTank.storageCapacitySufficient, true);
+    assert.equal(emptyTank.compliant, false);
+    assert.equal(emptyTank.coverageDays, 0);
+    assert.equal(emptyTank.deficitL, 40_320);
+
+    // Stock real parcial (10.000 L bodega + 5.000 L tránsito = 15.000 L < 40.320 L)
+    const partialTank = evaluateDs594WaterGuardrail({
+        site,
+        currentWaterWarehouseL: 10_000,
+        currentWaterInTransitL: 5_000,
+    });
+    assert.equal(partialTank.currentAvailableL, 15_000);
+    assert.equal(partialTank.compliant, false);
+    assert.equal(partialTank.deficitL, 25_320);
+});
+
+test('9.5 E05 ITaxJurisdictionAdapter & ISiteSafetyPolicyPack: Chile activo + stubs PE/BR/MX/CO/AR/AU/EU', () => {
+    assert.equal(getTaxJurisdictionAdapter('CL'), ChileSiiTaxJurisdictionAdapter);
+    assert.equal(ChileSiiTaxJurisdictionAdapter.implemented, true);
+    assert.equal(ChileSiiTaxJurisdictionAdapter.currencyCode, 'CLP');
+    assert.equal(ChileSiiTaxJurisdictionAdapter.validateTaxId('76.123.465-K').valid, true);
+    assert.equal(ChileSiiTaxJurisdictionAdapter.computeTaxBreakdown({ documentType: 52, totalAmount: 119_000 }).recoverableTaxAmount, 0);
+    assert.equal(ChileSiiTaxJurisdictionAdapter.computeTaxBreakdown({ documentType: 61, totalAmount: 119_000 }).recoverableTaxAmount, -19_000);
+
+    const pe = getTaxJurisdictionAdapter('PE');
+    assert.equal(pe.currencyCode, 'PEN');
+    assert.equal(pe.implemented, false);
+    assert.equal(pe.validateTaxId('20100047218').valid, true);
+    assert.equal(pe.computeTaxBreakdown({ documentType: '01', totalAmount: 118 }).taxAmount, 18);
+
+    const mx = getTaxJurisdictionAdapter('MX');
+    assert.equal(mx.currencyCode, 'MXN');
+    assert.equal(mx.validateTaxId('MIN260101AB3').valid, true);
+
+    const br = getTaxJurisdictionAdapter('BR');
+    assert.equal(br.currencyCode, 'BRL');
+    assert.equal(br.validateTaxId('12.345.678/0001-99'.replace(/\//g, '')).valid, true);
+
+    const co = getTaxJurisdictionAdapter('CO');
+    assert.equal(co.currencyCode, 'COP');
+    assert.equal(co.validateTaxId('900123456-7').valid, true);
+
+    const ar = getTaxJurisdictionAdapter('AR');
+    assert.equal(ar.currencyCode, 'ARS');
+    assert.equal(ar.validateTaxId('30-71234567-9').valid, true);
+
+    const au = getTaxJurisdictionAdapter('AU');
+    assert.equal(au.currencyCode, 'AUD');
+    assert.equal(au.validateTaxId('51 824 753 556').valid, true);
+
+    const eu = getTaxJurisdictionAdapter('EU');
+    assert.equal(eu.currencyCode, 'EUR');
+    assert.equal(eu.validateTaxId('DE123456789').valid, true);
+    const euDoc = eu.validateDocument({
+        documentId: 'eu-1',
+        tenantId: 't-eu',
+        siteId: 's-eu',
+        supplierTaxId: 'DE123456789',
+        supplierName: 'EuroMine GmbH',
+        documentType: '380',
+        folio: 'INV-1001',
+        issueDate: '2026-11-21',
+        totalAmount: 1200,
+    });
+    assert.equal(euDoc.valid, true);
+    assert.ok(euDoc.warnings.some((w) => w.includes('JURISDICTION_ADAPTER_STUB')));
+
+    const safetyPack = getSiteSafetyPolicyPack('CL');
+    assert.equal(safetyPack, ChileMiningSafetyPolicyPack);
+    assert.equal(safetyPack.maxManualLoadKg, 25);
+    assert.equal(safetyPack.minWaterLitersPerPaxDay, 100);
+    assert.equal(safetyPack.checkProhibitedItem('c3rv3za').denied, true);
+    assert.equal(safetyPack.checkControlledExplosives('dinamita', false).blocked, true);
+    assert.equal(safetyPack.checkControlledExplosives('dinamita', true).blocked, false);
+});
+
+test('9.6 E05 Runtime Wiring: SupplyRepository (supply_policy_audit, event_ledger, DOI real, SII folio/RSA y k>=5 sin sandboxes)', async () => {
+    // Instalar stub determinista en memoria solo para este test de wiring de runtime
+    const collections = new Map<string, Map<string, Record<string, any>>>();
+    const getCol = (name: string) => {
+        let c = collections.get(name);
+        if (!c) {
+            c = new Map();
+            collections.set(name, c);
+        }
+        return c;
+    };
+    const mkDocRef = (colName: string, docId: string): any => ({
+        id: docId,
+        path: `${colName}/${docId}`,
+        async get() {
+            const d = getCol(colName).get(docId);
+            return { id: docId, exists: Boolean(d), data: () => (d ? JSON.parse(JSON.stringify(d)) : undefined) };
+        },
+        async set(payload: Record<string, any>, opts?: { merge?: boolean }) {
+            const prev = opts?.merge && getCol(colName).has(docId) ? getCol(colName).get(docId)! : {};
+            getCol(colName).set(docId, { ...prev, ...JSON.parse(JSON.stringify(payload)) });
+        },
+    });
+    const mkQuery = (colName: string, filters: Array<{ f: string; v: unknown }> = []): any => ({
+        where(f: string, _op: string, v: unknown) {
+            return mkQuery(colName, [...filters, { f, v }]);
+        },
+        limit() {
+            return mkQuery(colName, filters);
+        },
+        async get() {
+            const docs = Array.from(getCol(colName).entries())
+                .filter(([, data]) => filters.every((fl) => data[fl.f] === fl.v))
+                .map(([id, data]) => ({
+                    id,
+                    exists: true,
+                    data: () => JSON.parse(JSON.stringify(data)),
+                }));
+            return { empty: docs.length === 0, size: docs.length, docs };
+        },
+    });
+    const fakeDb: any = {
+        collection(colName: string) {
+            return {
+                doc: (id?: string) => mkDocRef(colName, id || `auto_${Date.now()}`),
+                where: (f: string, op: string, v: unknown) => mkQuery(colName, [{ f, v }]),
+                limit: () => mkQuery(colName, []),
+                get: () => mkQuery(colName, []).get(),
+            };
+        },
+        async runTransaction(fn: (tx: any) => Promise<any>) {
+            const ops: Array<() => Promise<void>> = [];
+            const tx = {
+                get: (ref: any) => ref.get(),
+                set: (ref: any, data: any, opts?: any) => {
+                    ops.push(() => ref.set(data, opts));
+                    return tx;
+                },
+            };
+            const res = await fn(tx);
+            for (const op of ops) await op();
+            return res;
+        },
+    };
+    const fakeAdmin: any = {
+        apps: [{ name: '[DEFAULT]' }],
+        firestore: Object.assign(() => fakeDb, {
+            Timestamp: { fromMillis: (ms: number) => ({ toMillis: () => ms }) },
+            FieldValue: { serverTimestamp: () => Date.now() },
+        }),
+    };
+    const firebaseResolved = require.resolve(path.resolve(__dirname, '../../../config/firebase'));
+    require.cache[firebaseResolved] = {
+        id: firebaseResolved,
+        filename: firebaseResolved,
+        loaded: true,
+        exports: { __esModule: true, default: fakeAdmin, db: fakeDb, auth: {}, storage: {} },
+    } as any;
+
+    const { SUPPLY_COLLECTIONS, SupplyRepository } = require('../application/SupplyRepository') as typeof import('../application/SupplyRepository');
+    const actor = { actorUid: 'uid-e05', actorEmail: 'e05@minreport.test' };
+
+    // 1. DefaultSupplyCatalogSeed conectado en listCatalog()
+    const catalog = await SupplyRepository.listCatalog();
+    assert.ok(catalog.some((s) => s.canonicalSkuId === 'SKU-VIV-PAPAS'));
+    assert.ok(catalog.some((s) => s.canonicalSkuId === 'SKU-EXP-DETONADOR'));
+
+    // 2. Site con estanque 50.000 L pero 0 stock real de agua -> availableWaterL === 0, ds594Compliant === false
+    await SupplyRepository.upsertSite(
+        'tenant-b2b-1',
+        {
+            siteId: 'site-e05',
+            name: 'Faena E05 Cordillera',
+            districtCode: 'CL-ATACAMA',
+            geoFix: { latitude: -27.3, longitude: -70.3, altitudeM: 3400 },
+            shiftPattern: '7x7',
+            currentHeadcount: 40,
+            waterStorageCapacityL: 50_000,
+            ds594DailyWaterTargetLPerPax: 120,
+            leadTimeDays: 7,
+            marketplaceOptIn: true,
+            roleMismatchMode: 'FLAG_AND_ACCEPT',
+            directPurchaseAlertThresholdClp: 500_000,
+        },
+        actor
+    );
+    const [fcEmpty] = await SupplyRepository.computeForecastReadOnly('tenant-b2b-1', 'site-e05');
+    assert.equal(fcEmpty.availableWaterL, 0);
+    assert.equal(fcEmpty.waterStorageCapacityL, 50_000);
+    assert.equal(fcEmpty.ds594Compliant, false);
+    assert.equal(fcEmpty.altitudeMultiplier, 1.2);
+
+    // 3. SiiTaxValidator en runtime: rechaza folio=0 y TED RSA-SHA1 manipulado
+    const { tamperedTedXml } = buildSignedTedXmlFixture();
+    await assert.rejects(
+        () =>
+            SupplyRepository.createPurchaseWithReconciliation(
+                {
+                    tenantId: 'tenant-b2b-1',
+                    siteId: 'site-e05',
+                    buyerUid: 'uid-e05',
+                    buyerRole: 'OWNER_EXEC',
+                    purchaseMode: 'DIRECT_AUTONOMOUS',
+                    authorizedByAuthority: true,
+                    supplierTaxId: '76123465-K',
+                    supplierName: 'Comercial Norte SpA',
+                    documentType: 33,
+                    folio: 0,
+                    issueDate: '2026-11-21',
+                    netAmountClp: 100_000,
+                    vatAmountClp: 19_000,
+                    totalAmountClp: 119_000,
+                    paymentMethod: 'TRANSFERENCIA',
+                    lines: [
+                        {
+                            purchaseLineId: 'pl-zero',
+                            canonicalSkuId: 'sku-papas',
+                            description: 'Papas',
+                            categoryCode: 'VIVERES_ALIMENTACION',
+                            procurementBucket: 'VERDULERIA',
+                            unitSi: 'kg',
+                            qtyPurchased: 100,
+                            unitPriceClp: 1190,
+                            subtotalClp: 119_000,
+                            destination: 'STOCK_IN_WAREHOUSE',
+                            costCenter: 'CC-CAMPAMENTO',
+                            isCapexAsset: false,
+                        },
+                    ],
+                },
+                actor
+            ),
+        /FOLIO_MUST_BE_POSITIVE/
+    );
+
+    await assert.rejects(
+        () =>
+            SupplyRepository.createPurchaseWithReconciliation(
+                {
+                    tenantId: 'tenant-b2b-1',
+                    siteId: 'site-e05',
+                    buyerUid: 'uid-e05',
+                    buyerRole: 'OWNER_EXEC',
+                    purchaseMode: 'DIRECT_AUTONOMOUS',
+                    authorizedByAuthority: true,
+                    supplierTaxId: '76123465-K',
+                    supplierName: 'Comercial Norte SpA',
+                    documentType: 33,
+                    folio: 54321,
+                    issueDate: '2026-11-21',
+                    netAmountClp: 480_000,
+                    vatAmountClp: 91_200,
+                    totalAmountClp: 571_200,
+                    paymentMethod: 'TRANSFERENCIA',
+                    tedRawXml: tamperedTedXml,
+                    lines: [
+                        {
+                            purchaseLineId: 'pl-tamper',
+                            canonicalSkuId: 'sku-cocina-industrial',
+                            description: 'Cocina industrial',
+                            categoryCode: 'ACTIVO_EQUIPAMIENTO',
+                            procurementBucket: 'MANTENCION_EQUIPAMIENTO',
+                            unitSi: 'un',
+                            qtyPurchased: 1,
+                            unitPriceClp: 571_200,
+                            subtotalClp: 571_200,
+                            destination: 'CAPEX_ASSET',
+                            costCenter: 'CC-CAPEX',
+                            isCapexAsset: true,
+                        },
+                    ],
+                },
+                actor
+            ),
+        /TED_RSA_SIGNATURE_INVALID/
+    );
+
+    // 4. Dos compras fraccionadas (< 500k cada una, suma 620k > 500k en < 48h) -> escribe `supply_policy_audit` SPLIT_INVOICE_SMURFING
+    const p1 = await SupplyRepository.createPurchaseWithReconciliation(
+        {
+            tenantId: 'tenant-b2b-1',
+            siteId: 'site-e05',
+            buyerUid: 'uid-e05',
+            buyerRole: 'OWNER_EXEC',
+            purchaseMode: 'DIRECT_AUTONOMOUS',
+            authorizedByAuthority: true,
+            supplierTaxId: '76123465-K',
+            supplierName: 'Comercial Norte SpA',
+            documentType: 33,
+            folio: 8001,
+            issueDate: '2026-11-21',
+            netAmountClp: 268_908,
+            vatAmountClp: 51_092,
+            totalAmountClp: 320_000,
+            paymentMethod: 'TRANSFERENCIA',
+            lines: [
+                {
+                    purchaseLineId: 'pl-smurf-1',
+                    canonicalSkuId: 'sku-cocina-industrial',
+                    description: 'Cocina Campamento',
+                    categoryCode: 'ACTIVO_EQUIPAMIENTO',
+                    procurementBucket: 'MANTENCION_EQUIPAMIENTO',
+                    unitSi: 'un',
+                    qtyPurchased: 1,
+                    unitPriceClp: 320_000,
+                    subtotalClp: 320_000,
+                    destination: 'CAPEX_ASSET',
+                    costCenter: 'CC-CAPEX',
+                    isCapexAsset: true,
+                },
+            ],
+        },
+        actor
+    );
+    const p2 = await SupplyRepository.createPurchaseWithReconciliation(
+        {
+            tenantId: 'tenant-b2b-1',
+            siteId: 'site-e05',
+            buyerUid: 'uid-e05',
+            buyerRole: 'OWNER_EXEC',
+            purchaseMode: 'DIRECT_AUTONOMOUS',
+            authorizedByAuthority: true,
+            supplierTaxId: '76123465-K',
+            supplierName: 'Comercial Norte SpA',
+            documentType: 52, // Guía de Despacho -> vatCreditRecoverableClp === 0
+            folio: 8002,
+            issueDate: '2026-11-21',
+            netAmountClp: 252_101,
+            vatAmountClp: 47_899,
+            totalAmountClp: 300_000,
+            paymentMethod: 'TRANSFERENCIA',
+            lines: [
+                {
+                    purchaseLineId: 'pl-smurf-2',
+                    canonicalSkuId: 'sku-papas',
+                    description: 'Papas',
+                    categoryCode: 'VIVERES_ALIMENTACION',
+                    procurementBucket: 'VERDULERIA',
+                    unitSi: 'kg',
+                    qtyPurchased: 250,
+                    unitPriceClp: 1200,
+                    subtotalClp: 300_000,
+                    destination: 'STOCK_IN_WAREHOUSE',
+                    costCenter: 'CC-CAMPAMENTO',
+                    isCapexAsset: false,
+                },
+            ],
+        },
+        actor
+    );
+    assert.equal(p2.siiDocument.vatCreditRecoverableClp, 0);
+    assert.equal(p2.smurfingAlert?.detected, true);
+    assert.equal(p2.smurfingAlert?.code, 'SPLIT_INVOICE_SMURFING');
+    const policyAudits = Array.from(getCol(SUPPLY_COLLECTIONS.POLICY_AUDIT).values());
+    assert.ok(policyAudits.some((a) => a.policyCode === 'SPLIT_INVOICE_SMURFING'));
+
+    // 5. linkAssetToOpermaq emite evento trazable en `event_ledger` con payloadHash SHA-256
+    const assetId = p1.createdAssets[0].assetId;
+    await SupplyRepository.linkAssetToOpermaq('tenant-b2b-1', assetId, 'opm-eq-777', actor);
+    const ledgerEvents = Array.from(getCol(SUPPLY_COLLECTIONS.EVENT_LEDGER).values());
+    assert.equal(ledgerEvents.length, 1);
+    assert.equal(ledgerEvents[0].eventType, 'SUPPLY_ASSET_LINKED_TO_OPERMAQ');
+    assert.equal(ledgerEvents[0].sourceModule, 'supply');
+    assert.equal(ledgerEvents[0].targetModule, 'opermaq');
+    assert.equal(ledgerEvents[0].assetId, assetId);
+    assert.equal(ledgerEvents[0].opermaqAssetId, 'opm-eq-777');
+    assert.match(ledgerEvents[0].payloadHash, /^[a-f0-9]{64}$/);
+
+    // 6. refreshAnonymousDemandSignals: k >= 5 B2B y excluye EDU, pilot-* y dev-master-sandbox
+    await fakeDb.collection('accounts').doc('edu-u-chile').set({ type: 'EDUCATIONAL', isEduSandbox: true });
+    await fakeDb.collection('accounts').doc('pilot-sandbox-9').set({ type: 'TEST_PILOT' });
+    await fakeDb.collection('accounts').doc('dev-master-sandbox').set({ type: 'DEV' });
+    const seedTenants = [
+        'tenant-b2b-1',
+        'tenant-b2b-2',
+        'tenant-b2b-3',
+        'tenant-b2b-4',
+        'edu-u-chile',
+        'pilot-sandbox-9',
+        'dev-master-sandbox',
+    ];
+    for (const tid of seedTenants) {
+        const sid = `site-${tid}`;
+        await fakeDb.collection(SUPPLY_COLLECTIONS.SITES).doc(sid).set({
+            siteId: sid,
+            tenantId: tid,
+            name: `Site ${tid}`,
+            districtCode: 'CL-ANTOFAGASTA',
+            marketplaceOptIn: true,
+            currentHeadcount: 10,
+            waterStorageCapacityL: 10_000,
+            ds594DailyWaterTargetLPerPax: 120,
+            leadTimeDays: 5,
+            shiftPattern: '7x7',
+            roleMismatchMode: 'FLAG_AND_ACCEPT',
+            directPurchaseAlertThresholdClp: 500_000,
+        });
+        await SupplyRepository.createRequisition(
+            {
+                tenantId: tid,
+                siteId: sid,
+                requesterUid: `u-${tid}`,
+                requesterName: 'Op',
+                requesterRole: 'CAMP_MANAGER',
+                demandOrigin: 'WA_CAMP',
+                demandNature: 'REACTIVE_FIELD',
+                costCenter: 'CC-CAMPAMENTO',
+                atypicalFlags: [],
+                lines: [
+                    {
+                        lineId: `l-${tid}`,
+                        canonicalSkuId: 'sku-cemento',
+                        itemName: 'Cemento Portland',
+                        categoryCode: 'FERRETERIA_CONSTRUCCION',
+                        procurementBucket: 'FERRETERIA',
+                        unitSi: 'kg',
+                        qtyRequested: 100,
+                        qtyPurchased: 0,
+                        qtyReceived: 0,
+                        qtyPending: 100,
+                        lineStatus: 'OPEN',
+                        atypicalFlags: [],
+                        fulfillmentChannel: 'MANUAL_LOCAL_PURCHASE',
+                        urgency: 'STANDARD',
+                    },
+                ],
+            },
+            actor
+        );
+    }
+    // Solo 4 tenants B2B + 3 sandboxes => 4 < 5 => 0 señales emitidas (sandboxes NO cuentan!)
+    const signalsWith4B2b = await SupplyRepository.refreshAnonymousDemandSignals();
+    assert.equal(signalsWith4B2b.length, 0);
+
+    // Agregar 5º tenant B2B => ahora k = 5 B2B => se emite 1 señal con aggregatedQty = 500 (sin los 300 de sandboxes!)
+    await fakeDb.collection(SUPPLY_COLLECTIONS.SITES).doc('site-tenant-b2b-5').set({
+        siteId: 'site-tenant-b2b-5',
+        tenantId: 'tenant-b2b-5',
+        name: 'Site B2B 5',
+        districtCode: 'CL-ANTOFAGASTA',
+        marketplaceOptIn: true,
+        currentHeadcount: 10,
+        waterStorageCapacityL: 10_000,
+        ds594DailyWaterTargetLPerPax: 120,
+        leadTimeDays: 5,
+        shiftPattern: '7x7',
+        roleMismatchMode: 'FLAG_AND_ACCEPT',
+        directPurchaseAlertThresholdClp: 500_000,
+    });
+    await SupplyRepository.createRequisition(
+        {
+            tenantId: 'tenant-b2b-5',
+            siteId: 'site-tenant-b2b-5',
+            requesterUid: 'u-b2b-5',
+            requesterName: 'Op 5',
+            requesterRole: 'CAMP_MANAGER',
+            demandOrigin: 'WA_CAMP',
+            demandNature: 'REACTIVE_FIELD',
+            costCenter: 'CC-CAMPAMENTO',
+            atypicalFlags: [],
+            lines: [
+                {
+                    lineId: 'l-b2b-5',
+                    canonicalSkuId: 'sku-cemento',
+                    itemName: 'Cemento Portland',
+                    categoryCode: 'FERRETERIA_CONSTRUCCION',
+                    procurementBucket: 'FERRETERIA',
+                    unitSi: 'kg',
+                    qtyRequested: 100,
+                    qtyPurchased: 0,
+                    qtyReceived: 0,
+                    qtyPending: 100,
+                    lineStatus: 'OPEN',
+                    atypicalFlags: [],
+                    fulfillmentChannel: 'MANUAL_LOCAL_PURCHASE',
+                    urgency: 'STANDARD',
+                },
+            ],
+        },
+        actor
+    );
+    const signalsWith5B2b = await SupplyRepository.refreshAnonymousDemandSignals();
+    assert.equal(signalsWith5B2b.length, 1);
+    assert.equal(signalsWith5B2b[0].participatingEntitiesCount, 5);
+    assert.equal(signalsWith5B2b[0].aggregatedQty, 500);
+});
+
+// ============================================================================
 // RUNNER DETERMINÍSTICO
 // ============================================================================
-function runSuite(): void {
+async function runSuite(): Promise<void> {
     let passed = 0;
     let failed = 0;
 
     console.log('\n=== MINREPORT · ABASTECIMIENTO — Domain Engines Unit Test Suite ===');
     for (const tc of tests) {
         try {
-            tc.fn();
+            await tc.fn();
             passed += 1;
             console.log(`  [PASS] ${tc.name}`);
         } catch (err) {
@@ -1547,4 +2349,4 @@ function runSuite(): void {
     }
 }
 
-runSuite();
+void runSuite();
