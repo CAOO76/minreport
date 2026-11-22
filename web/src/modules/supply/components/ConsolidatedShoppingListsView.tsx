@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useId, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import M3LinearProgress from '../../../components/common/M3LinearProgress';
 import M3Switch from '../../../components/common/M3Switch';
@@ -30,11 +30,12 @@ const BUCKET_ICON: Record<ProcurementBucket, string> = {
 
 export const ConsolidatedShoppingListsView: React.FC<ConsolidatedShoppingListsViewProps> = ({
     groups,
-    loading,
+    loading: _loading,
     canScanReceipt,
     onOpenScannerForBucket,
 }) => {
     const { t } = useTranslation();
+    const uid = useId();
     const [selectedBucket, setSelectedBucket] = useState<ProcurementBucket | 'ALL'>('ALL');
     const [onlyAtypical, setOnlyAtypical] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
@@ -101,8 +102,6 @@ export const ConsolidatedShoppingListsView: React.FC<ConsolidatedShoppingListsVi
 
     return (
         <section className="w-full flex flex-col bg-[#FFFFFF] dark:bg-[#000000] select-none">
-            {loading && <M3LinearProgress indeterminate ariaLabel={t('supply.common.loading')} />}
-
             {/* Flat Filter & Route Progress Strip */}
             <div className="px-fib-21 py-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C] flex flex-wrap items-center justify-between gap-fib-13">
                 <div className="flex flex-wrap items-center gap-fib-8">
@@ -112,7 +111,7 @@ export const ConsolidatedShoppingListsView: React.FC<ConsolidatedShoppingListsVi
                         aria-label={t('supply.lists.all_buckets')}
                         title={t('supply.lists.all_buckets')}
                         className={cn(
-                            'min-h-[40px] px-fib-13 font-mono text-microcopy uppercase border-b-2 transition-colors cursor-pointer bg-transparent rounded-none shadow-none',
+                            'min-h-[48px] px-fib-13 font-mono text-microcopy uppercase border-b-2 transition-colors cursor-pointer bg-transparent rounded-none shadow-none',
                             selectedBucket === 'ALL'
                                 ? 'border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6]'
                                 : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
@@ -132,9 +131,9 @@ export const ConsolidatedShoppingListsView: React.FC<ConsolidatedShoppingListsVi
                                 aria-label={t(`supply.buckets.${bucket}`)}
                                 title={t(`supply.buckets.${bucket}`)}
                                 className={cn(
-                                    'bg-transparent border-0 border-b-2 outline-none p-1 min-w-[44px] min-h-[44px] inline-flex items-center justify-center gap-1 transition-colors cursor-pointer rounded-none shadow-none',
+                                    'bg-transparent border-0 border-b-2 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center gap-fib-8 transition-colors cursor-pointer rounded-none shadow-none',
                                     active
-                                        ? 'border-[#C68346] text-[#C68346]'
+                                        ? 'border-[#C68346] text-[#7C3F0E] dark:text-[#C68346]'
                                         : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
                                 )}
                             >
@@ -153,14 +152,19 @@ export const ConsolidatedShoppingListsView: React.FC<ConsolidatedShoppingListsVi
 
                 <div className="flex flex-wrap items-center gap-fib-13">
                     <div className="relative">
+                        <label htmlFor={`${uid}-search`} className="sr-only">
+                            {t('supply.common.search_placeholder')}
+                        </label>
                         <input
+                            id={`${uid}-search`}
                             type="text"
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
                             autoComplete="off"
                             spellCheck={false}
+                            aria-label={t('supply.common.search_placeholder')}
                             placeholder={t('supply.common.search_placeholder')}
-                            className="w-56 min-h-[40px] px-fib-13 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
+                            className="w-56 min-h-[48px] px-fib-13 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
                         />
                     </div>
                     <div className="flex items-center gap-fib-8">
@@ -187,7 +191,7 @@ export const ConsolidatedShoppingListsView: React.FC<ConsolidatedShoppingListsVi
                             className={cn(
                                 'font-bold',
                                 routeProgress.pct === 100
-                                    ? 'text-[#00AEEF]'
+                                    ? 'text-[#0369A1] dark:text-[#00AEEF]'
                                     : 'text-[#0F172A] dark:text-[#F3F4F6]'
                             )}
                         >
@@ -239,7 +243,7 @@ export const ConsolidatedShoppingListsView: React.FC<ConsolidatedShoppingListsVi
                                             {group.totalLines} SKU
                                         </span>
                                         {group.atypicalCount > 0 && (
-                                            <span className="font-mono text-microcopy tabular-nums text-[#C68346] font-bold">
+                                            <span className="font-mono text-microcopy tabular-nums text-[#7C3F0E] dark:text-[#C68346] font-bold">
                                                 {group.atypicalCount} {t('supply.telemetry.atypical_flags')}
                                             </span>
                                         )}
@@ -318,7 +322,7 @@ export const ConsolidatedShoppingListsView: React.FC<ConsolidatedShoppingListsVi
                                                             </span>
                                                         </button>
 
-                                                        <div className="min-w-0 flex-1 space-y-1">
+                                                        <div className="min-w-0 flex-1 space-y-fib-8">
                                                             <div className="flex flex-wrap items-center gap-fib-8">
                                                                 <span
                                                                     className={cn(
@@ -333,8 +337,12 @@ export const ConsolidatedShoppingListsView: React.FC<ConsolidatedShoppingListsVi
                                                                 <span className="font-mono text-microcopy tabular-nums text-[#475569] dark:text-[#8A93A6] select-text">
                                                                     {item.canonicalSkuId}
                                                                 </span>
+                                                                <CopyButton
+                                                                    value={item.canonicalSkuId}
+                                                                    title={t('supply.common.copy_code')}
+                                                                />
                                                                 {hasAtypical && (
-                                                                    <span className="font-mono text-microcopy uppercase font-bold text-[#C68346]">
+                                                                    <span className="font-mono text-microcopy uppercase font-bold text-[#7C3F0E] dark:text-[#C68346]">
                                                                         {item.atypicalFlags?.[0]
                                                                             ? t(
                                                                                   `supply.atypicals.${item.atypicalFlags[0]}`
@@ -353,7 +361,9 @@ export const ConsolidatedShoppingListsView: React.FC<ConsolidatedShoppingListsVi
                                                                 <span>·</span>
                                                                 <span
                                                                     className={
-                                                                        isCritical ? 'text-[#C68346] font-bold' : ''
+                                                                        isCritical
+                                                                            ? 'text-[#7C3F0E] dark:text-[#C68346] font-bold'
+                                                                            : ''
                                                                     }
                                                                 >
                                                                     {item.priority}
@@ -432,7 +442,7 @@ export const ConsolidatedShoppingListsView: React.FC<ConsolidatedShoppingListsVi
                                                                     </div>
                                                                     <div className="flex items-center gap-fib-13">
                                                                         {ref.atypicalFlags?.length > 0 && (
-                                                                            <span className="text-microcopy text-[#C68346] font-bold">
+                                                                            <span className="text-microcopy text-[#7C3F0E] dark:text-[#C68346] font-bold">
                                                                                 {ref.atypicalFlags
                                                                                     .map((f) =>
                                                                                         t(

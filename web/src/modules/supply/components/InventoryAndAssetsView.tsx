@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useId, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import M3LinearProgress from '../../../components/common/M3LinearProgress';
 import CopyButton from '../../../components/common/CopyButton';
@@ -23,6 +23,8 @@ export interface InventoryAndAssetsViewProps {
     activeSite?: SupplySite | null;
     tenantId?: string;
     loading: boolean;
+    canMutate?: boolean;
+    canManageCapex?: boolean;
     onMutated: () => void;
 }
 
@@ -35,10 +37,13 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
     forecast,
     activeSite,
     tenantId,
-    loading,
+    loading: _loading,
+    canMutate = true,
+    canManageCapex = true,
     onMutated,
 }) => {
     const { t } = useTranslation();
+    const uid = useId();
     const [tab, setTab] = useState<WarehouseTab>('STOCK');
     const [searchQuery, setSearchQuery] = useState('');
     const [pendingReceptionPurchase, setPendingReceptionPurchase] =
@@ -192,8 +197,6 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
 
     return (
         <section className="w-full flex flex-col bg-[#FFFFFF] dark:bg-[#000000] select-none">
-            {loading && <M3LinearProgress indeterminate ariaLabel={t('supply.common.loading')} />}
-
             {/* Sub-view Switcher & Search */}
             <div className="px-fib-21 py-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C] flex flex-wrap items-center justify-between gap-fib-13">
                 <div className="flex items-center gap-fib-8">
@@ -203,9 +206,9 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
                         aria-label={t('supply.warehouse.stock_tab')}
                         title={t('supply.warehouse.stock_tab')}
                         className={cn(
-                            'bg-transparent border-0 border-b-2 outline-none p-1 min-w-[48px] min-h-[44px] inline-flex items-center justify-center gap-fib-8 transition-colors cursor-pointer rounded-none shadow-none',
+                            'bg-transparent border-0 border-b-2 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center gap-fib-8 transition-colors cursor-pointer rounded-none shadow-none',
                             tab === 'STOCK'
-                                ? 'border-[#C68346] text-[#C68346]'
+                                ? 'border-[#C68346] text-[#7C3F0E] dark:text-[#C68346]'
                                 : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
                         )}
                     >
@@ -221,9 +224,9 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
                         aria-label={t('supply.warehouse.assets_tab')}
                         title={t('supply.warehouse.assets_tab')}
                         className={cn(
-                            'bg-transparent border-0 border-b-2 outline-none p-1 min-w-[48px] min-h-[44px] inline-flex items-center justify-center gap-fib-8 transition-colors cursor-pointer rounded-none shadow-none',
+                            'bg-transparent border-0 border-b-2 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center gap-fib-8 transition-colors cursor-pointer rounded-none shadow-none',
                             tab === 'ASSETS'
-                                ? 'border-[#C68346] text-[#C68346]'
+                                ? 'border-[#C68346] text-[#7C3F0E] dark:text-[#C68346]'
                                 : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
                         )}
                     >
@@ -234,22 +237,29 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
                             {assets.length}
                         </span>
                         {missingInvoiceCount > 0 && (
-                            <span className="font-mono text-microcopy tabular-nums font-bold text-[#C68346]">
+                            <span className="font-mono text-microcopy tabular-nums font-bold text-[#7C3F0E] dark:text-[#C68346]">
                                 !{missingInvoiceCount}
                             </span>
                         )}
                     </button>
                 </div>
 
-                <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    autoComplete="off"
-                    spellCheck={false}
-                    placeholder={t('supply.common.search_placeholder')}
-                    className="w-56 min-h-[40px] px-fib-13 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
-                />
+                <div>
+                    <label htmlFor={`${uid}-search`} className="sr-only">
+                        {t('supply.common.search_placeholder')}
+                    </label>
+                    <input
+                        id={`${uid}-search`}
+                        type="text"
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        autoComplete="off"
+                        spellCheck={false}
+                        aria-label={t('supply.common.search_placeholder')}
+                        placeholder={t('supply.common.search_placeholder')}
+                        className="w-56 min-h-[48px] px-fib-13 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
+                    />
+                </div>
             </div>
 
             {notice && (
@@ -257,8 +267,8 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
                     className={cn(
                         'mx-fib-21 mt-fib-13 border-l-[3px] pl-fib-13 py-fib-8 font-mono text-data-dense tabular-nums',
                         notice.tone === 'copper'
-                            ? 'border-[#C68346] text-[#C68346]'
-                            : 'border-[#00AEEF] text-[#00AEEF]'
+                            ? 'border-[#C68346] text-[#7C3F0E] dark:text-[#C68346]'
+                            : 'border-[#00AEEF] text-[#0369A1] dark:text-[#00AEEF]'
                     )}
                 >
                     {notice.text}
@@ -311,7 +321,9 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
                             <span
                                 className={cn(
                                     'font-bold',
-                                    waterTelemetry.compliant ? 'text-[#00AEEF]' : 'text-[#C68346]'
+                                    waterTelemetry.compliant
+                                        ? 'text-[#0369A1] dark:text-[#00AEEF]'
+                                        : 'text-[#7C3F0E] dark:text-[#C68346]'
                                 )}
                             >
                                 {t('supply.warehouse.ds594_days')}: {waterTelemetry.coverageDays}
@@ -331,7 +343,7 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
                 <div className="divide-y divide-[#E2E8F0] dark:divide-[#12151C]">
                     {inTransitPurchases.length > 0 && (
                         <div className="px-fib-21 py-fib-13 bg-[#F8FAFC] dark:bg-[#07090D] space-y-fib-8">
-                            <div className="font-mono text-microcopy uppercase font-bold text-[#C68346]">
+                            <div className="font-mono text-microcopy uppercase font-bold text-[#7C3F0E] dark:text-[#C68346]">
                                 {t('supply.warehouse.col_transit')} ({inTransitPurchases.length})
                             </div>
                             <div className="divide-y divide-[#E2E8F0] dark:divide-[#12151C]">
@@ -344,6 +356,10 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
                                             <span className="font-bold text-[#0F172A] dark:text-[#F3F4F6] select-text">
                                                 {p.purchaseId}
                                             </span>
+                                            <CopyButton
+                                                value={p.purchaseId}
+                                                title={t('supply.common.copy_code')}
+                                            />
                                             <span className="text-[#475569] dark:text-[#8A93A6]">
                                                 {p.supplierName}
                                             </span>
@@ -354,17 +370,19 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
                                                 {formatClp(p.totalAmountClp)}
                                             </span>
                                         </div>
-                                        <button
-                                            type="button"
-                                            onClick={() => setPendingReceptionPurchase(p)}
-                                            aria-label={t('supply.warehouse.confirm_reception')}
-                                            title={t('supply.warehouse.confirm_reception')}
-                                            className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[44px] inline-flex items-center justify-center text-[#C68346] hover:opacity-80 cursor-pointer rounded-none shadow-none"
-                                        >
-                                            <span className="material-symbols-outlined text-[22px]">
-                                                local_shipping
-                                            </span>
-                                        </button>
+                                        {canMutate && (
+                                            <button
+                                                type="button"
+                                                onClick={() => setPendingReceptionPurchase(p)}
+                                                aria-label={t('supply.warehouse.confirm_reception')}
+                                                title={t('supply.warehouse.confirm_reception')}
+                                                className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#7C3F0E] dark:text-[#C68346] hover:opacity-80 cursor-pointer rounded-none shadow-none"
+                                            >
+                                                <span className="material-symbols-outlined text-[22px]">
+                                                    local_shipping
+                                                </span>
+                                            </button>
+                                        )}
                                     </div>
                                 ))}
                             </div>
@@ -418,13 +436,17 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
                                               : 'border-l-transparent'
                                     )}
                                 >
-                                    <div className="md:col-span-4 min-w-0">
+                                    <div className="md:col-span-4 min-w-0 space-y-fib-8">
                                         <div className="text-data-dense font-semibold text-[#0F172A] dark:text-[#F3F4F6] truncate">
                                             {item.name}
                                         </div>
-                                        <div className="font-mono text-microcopy text-[#475569] dark:text-[#8A93A6] select-text">
-                                            {item.canonicalSkuId} ·{' '}
-                                            {t(`supply.categories.${item.categoryCode}`)}
+                                        <div className="flex items-center gap-fib-8 font-mono text-microcopy text-[#475569] dark:text-[#8A93A6]">
+                                            <span className="select-text">{item.canonicalSkuId}</span>
+                                            <CopyButton
+                                                value={item.canonicalSkuId}
+                                                title={t('supply.common.copy_code')}
+                                            />
+                                            <span>· {t(`supply.categories.${item.categoryCode}`)}</span>
                                         </div>
                                     </div>
 
@@ -432,7 +454,7 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
                                         className={cn(
                                             'md:col-span-2 md:text-right font-mono text-data-dense tabular-nums',
                                             item.qtyInTransit > 0
-                                                ? 'text-[#C68346] font-bold'
+                                                ? 'text-[#7C3F0E] dark:text-[#C68346] font-bold'
                                                 : 'text-[#475569] dark:text-[#8A93A6]'
                                         )}
                                     >
@@ -443,12 +465,12 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
                                         {item.qtyInWarehouse} {item.unitSi}
                                     </div>
 
-                                    <div className="md:col-span-4 space-y-1">
+                                    <div className="md:col-span-4 space-y-fib-8">
                                         <div className="flex items-center justify-between font-mono text-microcopy tabular-nums">
                                             <span
                                                 className={cn(
                                                     isAlert
-                                                        ? 'text-[#C68346] font-bold'
+                                                        ? 'text-[#7C3F0E] dark:text-[#C68346] font-bold'
                                                         : 'text-[#475569] dark:text-[#8A93A6]'
                                                 )}
                                             >
@@ -497,7 +519,7 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
                                     )}
                                 >
                                     <div className="flex flex-wrap items-start justify-between gap-fib-13">
-                                        <div className="min-w-0 space-y-1">
+                                        <div className="min-w-0 space-y-fib-8">
                                             <div className="flex flex-wrap items-center gap-fib-8">
                                                 <span className="text-body-main font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
                                                     {asset.name}
@@ -506,9 +528,15 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
                                                     {asset.serialOrTag ||
                                                         t('supply.common.not_declared')}
                                                 </span>
+                                                {asset.serialOrTag && (
+                                                    <CopyButton
+                                                        value={asset.serialOrTag}
+                                                        title={t('supply.common.copy_code')}
+                                                    />
+                                                )}
                                             </div>
                                             {lacksInvoice && (
-                                                <div className="flex items-center gap-fib-8 font-mono text-microcopy font-bold text-[#C68346]">
+                                                <div className="flex items-center gap-fib-8 font-mono text-microcopy font-bold text-[#7C3F0E] dark:text-[#C68346]">
                                                     <span className="material-symbols-outlined text-[16px]">
                                                         warning
                                                     </span>
@@ -523,7 +551,7 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
 
                                         <div className="flex items-center gap-fib-8 shrink-0">
                                             {asset.opermaqAssetId ? (
-                                                <div className="flex items-center gap-fib-8 font-mono text-microcopy text-[#00AEEF] font-bold">
+                                                <div className="flex items-center gap-fib-8 font-mono text-microcopy text-[#0369A1] dark:text-[#00AEEF] font-bold">
                                                     <span className="material-symbols-outlined text-[18px]">
                                                         verified
                                                     </span>
@@ -534,17 +562,20 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
                                                     <CopyButton value={asset.opermaqAssetId} />
                                                 </div>
                                             ) : (
-                                                <button
-                                                    type="button"
-                                                    onClick={() => setPendingLinkAsset(asset)}
-                                                    aria-label={t('supply.warehouse.link_opermaq')}
-                                                    title={t('supply.warehouse.link_opermaq')}
-                                                    className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[44px] inline-flex items-center justify-center text-[#00AEEF] hover:opacity-80 cursor-pointer rounded-none shadow-none"
-                                                >
-                                                    <span className="material-symbols-outlined text-[22px]">
-                                                        link
-                                                    </span>
-                                                </button>
+                                                canMutate &&
+                                                canManageCapex && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setPendingLinkAsset(asset)}
+                                                        aria-label={t('supply.warehouse.link_opermaq')}
+                                                        title={t('supply.warehouse.link_opermaq')}
+                                                        className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#0369A1] dark:text-[#00AEEF] hover:opacity-80 cursor-pointer rounded-none shadow-none"
+                                                    >
+                                                        <span className="material-symbols-outlined text-[22px]">
+                                                            link
+                                                        </span>
+                                                    </button>
+                                                )
                                             )}
                                         </div>
                                     </div>
@@ -570,7 +601,7 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
                                             <div className="text-[#475569] dark:text-[#8A93A6]">
                                                 {t('supply.warehouse.asset_invoice')}
                                             </div>
-                                            <div className="flex items-center gap-1 text-data-dense text-[#0F172A] dark:text-[#F3F4F6]">
+                                            <div className="flex items-center gap-fib-8 text-data-dense text-[#0F172A] dark:text-[#F3F4F6]">
                                                 <span className="select-text">
                                                     DTE {asset.invoiceDteType} #{asset.invoiceFolio || '—'}
                                                 </span>
@@ -591,7 +622,7 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
                                     </div>
 
                                     {casLine && (
-                                        <div className="font-mono text-microcopy tabular-nums text-[#00AEEF] select-text">
+                                        <div className="font-mono text-microcopy tabular-nums text-[#0369A1] dark:text-[#00AEEF] select-text">
                                             {casLine}
                                         </div>
                                     )}

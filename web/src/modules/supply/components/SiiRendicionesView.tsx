@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useId, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import M3LinearProgress from '../../../components/common/M3LinearProgress';
 import SecureImage from '../../../components/common/SecureImage';
@@ -22,6 +22,8 @@ export interface SiiRendicionesViewProps {
     activeSiteId?: string;
     tenantId?: string;
     loading: boolean;
+    canMutate?: boolean;
+    canApproveExpenseReports?: boolean;
     onMutated: () => void;
 }
 
@@ -33,9 +35,12 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
     activeSiteId,
     tenantId,
     loading,
+    canMutate = true,
+    canApproveExpenseReports: _canApproveExpenseReports = false,
     onMutated,
 }) => {
     const { t } = useTranslation();
+    const uid = useId();
     const [tab, setTab] = useState<SiiTab>('BOLETAS');
     const [searchQuery, setSearchQuery] = useState('');
     const [previewDoc, setPreviewDoc] = useState<SiiDocumentRecord | null>(null);
@@ -115,12 +120,12 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
 
     const handleRequestCreateEnvelope = (e: React.FormEvent) => {
         e.preventDefault();
-        if (!holderName.trim() || !envelopeTitle.trim()) return;
+        if (!canMutate || !holderName.trim() || !envelopeTitle.trim()) return;
         setHitlEnvelopeOpen(true);
     };
 
     const handleConfirmCreateEnvelope = async () => {
-        if (!holderName.trim() || !envelopeTitle.trim()) return;
+        if (!canMutate || !holderName.trim() || !envelopeTitle.trim()) return;
         setCreatingEnvelope(true);
         setNotice(null);
         try {
@@ -176,7 +181,7 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
 
     return (
         <section className="w-full flex flex-col bg-[#FFFFFF] dark:bg-[#000000] select-none">
-            {(loading || exporting) && (
+            {!loading && exporting && (
                 <M3LinearProgress indeterminate ariaLabel={t('supply.common.loading')} />
             )}
 
@@ -189,9 +194,9 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                         aria-label={t('supply.sii.tab_boletas')}
                         title={t('supply.sii.tab_boletas')}
                         className={cn(
-                            'bg-transparent border-0 border-b-2 outline-none p-1 min-w-[48px] min-h-[44px] inline-flex items-center justify-center gap-fib-8 transition-colors cursor-pointer rounded-none shadow-none',
+                            'bg-transparent border-0 border-b-2 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center gap-fib-8 transition-colors cursor-pointer rounded-none shadow-none',
                             tab === 'BOLETAS'
-                                ? 'border-[#C68346] text-[#C68346]'
+                                ? 'border-[#C68346] text-[#7C3F0E] dark:text-[#C68346]'
                                 : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
                         )}
                     >
@@ -207,9 +212,9 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                         aria-label={t('supply.sii.tab_facturas')}
                         title={t('supply.sii.tab_facturas')}
                         className={cn(
-                            'bg-transparent border-0 border-b-2 outline-none p-1 min-w-[48px] min-h-[44px] inline-flex items-center justify-center gap-fib-8 transition-colors cursor-pointer rounded-none shadow-none',
+                            'bg-transparent border-0 border-b-2 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center gap-fib-8 transition-colors cursor-pointer rounded-none shadow-none',
                             tab === 'FACTURAS'
-                                ? 'border-[#C68346] text-[#C68346]'
+                                ? 'border-[#C68346] text-[#7C3F0E] dark:text-[#C68346]'
                                 : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
                         )}
                     >
@@ -218,7 +223,7 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                             {facturas.length}
                         </span>
                         {rcvUrgentCount > 0 && (
-                            <span className="font-mono text-microcopy tabular-nums font-bold text-[#C68346]">
+                            <span className="font-mono text-microcopy tabular-nums font-bold text-[#7C3F0E] dark:text-[#C68346]">
                                 !{rcvUrgentCount}
                             </span>
                         )}
@@ -230,9 +235,9 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                         aria-label={t('supply.sii.tab_envelopes')}
                         title={t('supply.sii.tab_envelopes')}
                         className={cn(
-                            'bg-transparent border-0 border-b-2 outline-none p-1 min-w-[48px] min-h-[44px] inline-flex items-center justify-center gap-fib-8 transition-colors cursor-pointer rounded-none shadow-none',
+                            'bg-transparent border-0 border-b-2 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center gap-fib-8 transition-colors cursor-pointer rounded-none shadow-none',
                             tab === 'ENVELOPES'
-                                ? 'border-[#C68346] text-[#C68346]'
+                                ? 'border-[#C68346] text-[#7C3F0E] dark:text-[#C68346]'
                                 : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
                         )}
                     >
@@ -244,23 +249,30 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                 </div>
 
                 <div className="flex items-center gap-fib-8">
-                    <input
-                        type="text"
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        autoComplete="off"
-                        spellCheck={false}
-                        placeholder={t('supply.common.search_placeholder')}
-                        className="w-52 min-h-[40px] px-fib-13 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
-                    />
+                    <div>
+                        <label htmlFor={`${uid}-search`} className="sr-only">
+                            {t('supply.common.search_placeholder')}
+                        </label>
+                        <input
+                            id={`${uid}-search`}
+                            type="text"
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            autoComplete="off"
+                            spellCheck={false}
+                            aria-label={t('supply.common.search_placeholder')}
+                            placeholder={t('supply.common.search_placeholder')}
+                            className="w-52 min-h-[48px] px-fib-13 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
+                        />
+                    </div>
 
-                    {tab === 'ENVELOPES' && (
+                    {tab === 'ENVELOPES' && canMutate && (
                         <button
                             type="button"
                             onClick={() => setShowNewEnvelope((prev) => !prev)}
                             aria-label={t('supply.sii.new_envelope')}
                             title={t('supply.sii.new_envelope')}
-                            className="bg-transparent border-0 outline-none p-1 min-w-[44px] min-h-[44px] inline-flex items-center justify-center text-[#00AEEF] hover:opacity-80 cursor-pointer rounded-none shadow-none"
+                            className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#0369A1] dark:text-[#00AEEF] hover:opacity-80 cursor-pointer rounded-none shadow-none"
                         >
                             <span className="material-symbols-outlined text-[22px]">
                                 {showNewEnvelope ? 'close' : 'add'}
@@ -274,7 +286,7 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                         disabled={exporting}
                         aria-label={t('supply.sii.export_csv')}
                         title={t('supply.sii.export_csv')}
-                        className="bg-transparent border-0 outline-none p-1 min-w-[44px] min-h-[44px] inline-flex items-center justify-center text-[#00AEEF] hover:opacity-80 cursor-pointer rounded-none shadow-none disabled:opacity-40"
+                        className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#0369A1] dark:text-[#00AEEF] hover:opacity-80 cursor-pointer rounded-none shadow-none disabled:opacity-40"
                     >
                         <span className="material-symbols-outlined text-[22px]">download</span>
                     </button>
@@ -286,15 +298,15 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                     className={cn(
                         'mx-fib-21 mt-fib-13 border-l-[3px] pl-fib-13 py-fib-8 font-mono text-data-dense tabular-nums',
                         notice.tone === 'copper'
-                            ? 'border-[#C68346] text-[#C68346]'
-                            : 'border-[#00AEEF] text-[#00AEEF]'
+                            ? 'border-[#C68346] text-[#7C3F0E] dark:text-[#C68346]'
+                            : 'border-[#00AEEF] text-[#0369A1] dark:text-[#00AEEF]'
                     )}
                 >
                     {notice.text}
                 </div>
             )}
 
-            {/* Shielded CAS Media Preview Bar */}
+            {/* Shielded CAS Media Preview Bar (Dual Light/Dark Sol Atacama) */}
             {previewDoc && (
                 <div className="px-fib-21 py-fib-13 bg-[#F8FAFC] dark:bg-[#07090D] border-b border-[#00AEEF] space-y-fib-13">
                     <div className="flex items-center justify-between gap-fib-13 font-mono text-data-dense tabular-nums">
@@ -306,7 +318,7 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                                 {previewDoc.supplierName}
                             </span>
                             {formatCasTelemetry(previewDoc.evidenceCasRef) && (
-                                <span className="text-microcopy text-[#00AEEF] select-text">
+                                <span className="text-microcopy text-[#0369A1] dark:text-[#00AEEF] select-text">
                                     {formatCasTelemetry(previewDoc.evidenceCasRef)}
                                 </span>
                             )}
@@ -316,13 +328,13 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                             onClick={() => setPreviewDoc(null)}
                             aria-label={t('supply.common.close')}
                             title={t('supply.common.close')}
-                            className="bg-transparent border-0 outline-none p-1 text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] cursor-pointer rounded-none shadow-none"
+                            className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] cursor-pointer rounded-none shadow-none"
                         >
                             <span className="material-symbols-outlined text-[20px]">close</span>
                         </button>
                     </div>
                     {previewDoc.evidenceCasRef?.downloadUrl ? (
-                        <div className="max-h-72 overflow-hidden border border-[#E2E8F0] dark:border-[#12151C] bg-[#000000] flex items-center justify-center rounded-none shadow-none">
+                        <div className="max-h-72 overflow-hidden border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] flex items-center justify-center rounded-none shadow-none">
                             <SecureImage
                                 src={previewDoc.evidenceCasRef.downloadUrl}
                                 alt={`DTE ${previewDoc.documentType} #${previewDoc.folio}`}
@@ -363,10 +375,11 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                                 rcvDays <= 2;
                             const casLine = formatCasTelemetry(doc.evidenceCasRef);
 
+                            // ISA-101 Color por Excepción (Dark Cockpit silencioso en estado nominal)
                             const barClass =
                                 doc.isDuplicate || rcvUrgent
                                     ? 'border-l-[#C68346]'
-                                    : isRcvAccepted || !doc.isDuplicate
+                                    : isRcvAccepted
                                       ? 'border-l-[#00AEEF]'
                                       : 'border-l-transparent';
 
@@ -378,17 +391,29 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                                         barClass
                                     )}
                                 >
-                                    <div className="min-w-0 flex-1 space-y-1">
+                                    <div className="min-w-0 flex-1 space-y-fib-8">
                                         <div className="flex flex-wrap items-center gap-fib-8">
-                                            <span className="font-mono text-data-dense font-bold text-[#0F172A] dark:text-[#F3F4F6] tabular-nums">
+                                            <span className="font-mono text-data-dense font-bold text-[#0F172A] dark:text-[#F3F4F6] tabular-nums select-text">
                                                 DTE {doc.documentType} #{doc.folio || '—'}
                                             </span>
+                                            {doc.folio && (
+                                                <CopyButton
+                                                    value={doc.folio}
+                                                    title={t('supply.common.copy_folio')}
+                                                />
+                                            )}
                                             <span className="text-data-dense text-[#0F172A] dark:text-[#F3F4F6] font-semibold">
                                                 {doc.supplierName}
                                             </span>
                                             <span className="font-mono text-microcopy tabular-nums text-[#475569] dark:text-[#8A93A6] select-text">
                                                 {doc.supplierTaxId}
                                             </span>
+                                            {doc.supplierTaxId && (
+                                                <CopyButton
+                                                    value={doc.supplierTaxId}
+                                                    title={t('supply.common.copy_code')}
+                                                />
+                                            )}
                                             <span className="font-mono text-microcopy tabular-nums text-[#475569] dark:text-[#8A93A6]">
                                                 {doc.issueDate?.slice(0, 10)}
                                             </span>
@@ -396,13 +421,13 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
 
                                         <div className="flex flex-wrap items-center gap-fib-13 font-mono text-microcopy tabular-nums">
                                             {/* Anti-duplication fingerprint */}
-                                            <div className="flex items-center gap-1">
+                                            <div className="flex items-center gap-fib-8">
                                                 <span
                                                     className={cn(
                                                         'material-symbols-outlined text-[15px]',
                                                         doc.isDuplicate
-                                                            ? 'text-[#C68346]'
-                                                            : 'text-[#00AEEF]'
+                                                            ? 'text-[#7C3F0E] dark:text-[#C68346]'
+                                                            : 'text-[#0369A1] dark:text-[#00AEEF]'
                                                     )}
                                                 >
                                                     {doc.isDuplicate ? 'warning' : 'verified'}
@@ -411,7 +436,7 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                                                     className={cn(
                                                         'select-text',
                                                         doc.isDuplicate
-                                                            ? 'text-[#C68346] font-bold'
+                                                            ? 'text-[#7C3F0E] dark:text-[#C68346] font-bold'
                                                             : 'text-[#475569] dark:text-[#8A93A6]'
                                                     )}
                                                 >
@@ -432,9 +457,9 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                                                     className={cn(
                                                         'font-bold',
                                                         rcvUrgent
-                                                            ? 'text-[#C68346]'
+                                                            ? 'text-[#7C3F0E] dark:text-[#C68346]'
                                                             : isRcvAccepted
-                                                              ? 'text-[#00AEEF]'
+                                                              ? 'text-[#0369A1] dark:text-[#00AEEF]'
                                                               : 'text-[#475569] dark:text-[#8A93A6]'
                                                     )}
                                                 >
@@ -449,7 +474,7 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                                             )}
 
                                             {casLine && (
-                                                <span className="text-[#00AEEF] select-text">
+                                                <span className="text-[#0369A1] dark:text-[#00AEEF] select-text">
                                                     {casLine}
                                                 </span>
                                             )}
@@ -475,7 +500,7 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                                                 onClick={() => setPreviewDoc(doc)}
                                                 aria-label={t('supply.sii.preview_evidence')}
                                                 title={t('supply.sii.preview_evidence')}
-                                                className="bg-transparent border-0 outline-none p-1 min-w-[44px] min-h-[44px] inline-flex items-center justify-center text-[#475569] dark:text-[#8A93A6] hover:text-[#00AEEF] cursor-pointer rounded-none shadow-none"
+                                                className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#475569] dark:text-[#8A93A6] hover:text-[#0369A1] dark:hover:text-[#00AEEF] cursor-pointer rounded-none shadow-none"
                                             >
                                                 <span className="material-symbols-outlined text-[20px]">
                                                     visibility
@@ -493,7 +518,7 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
             {/* ENVELOPES TAB (Fondos por Rendir & Sobres de Rendición) */}
             {tab === 'ENVELOPES' && (
                 <div>
-                    {showNewEnvelope && (
+                    {canMutate && showNewEnvelope && (
                         <form
                             onSubmit={handleRequestCreateEnvelope}
                             autoComplete="off"
@@ -501,67 +526,88 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                             className="px-fib-21 py-fib-21 bg-[#F8FAFC] dark:bg-[#07090D] border-b border-[#E2E8F0] dark:border-[#12151C] grid grid-cols-1 md:grid-cols-7 gap-fib-13 items-end"
                         >
                             <div className="space-y-fib-8">
-                                <label className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">
+                                <label
+                                    htmlFor={`${uid}-env-title`}
+                                    className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]"
+                                >
                                     {t('supply.sii.envelope_title')}
                                 </label>
                                 <input
+                                    id={`${uid}-env-title`}
                                     type="text"
                                     value={envelopeTitle}
                                     onChange={(e) => setEnvelopeTitle(e.target.value)}
                                     autoComplete="off"
                                     spellCheck={false}
-                                    className="w-full min-h-[44px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
+                                    className="w-full min-h-[48px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
                                 />
                             </div>
                             <div className="space-y-fib-8">
-                                <label className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">
+                                <label
+                                    htmlFor={`${uid}-env-cc`}
+                                    className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]"
+                                >
                                     {t('supply.sii.envelope_cost_center')}
                                 </label>
                                 <input
+                                    id={`${uid}-env-cc`}
                                     type="text"
                                     value={envelopeCostCenter}
                                     onChange={(e) => setEnvelopeCostCenter(e.target.value)}
                                     autoComplete="off"
                                     spellCheck={false}
-                                    className="w-full min-h-[44px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
+                                    className="w-full min-h-[48px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
                                 />
                             </div>
                             <div className="space-y-fib-8">
-                                <label className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">
+                                <label
+                                    htmlFor={`${uid}-env-holder`}
+                                    className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]"
+                                >
                                     {t('supply.sii.envelope_holder')}
                                 </label>
                                 <input
+                                    id={`${uid}-env-holder`}
                                     type="text"
                                     value={holderName}
                                     onChange={(e) => setHolderName(e.target.value)}
                                     autoComplete="off"
                                     spellCheck={false}
-                                    className="w-full min-h-[44px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
+                                    className="w-full min-h-[48px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
                                 />
                             </div>
                             <div className="space-y-fib-8">
-                                <label className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">
+                                <label
+                                    htmlFor={`${uid}-env-period`}
+                                    className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]"
+                                >
                                     {t('supply.sii.envelope_period')}
                                 </label>
                                 <input
+                                    id={`${uid}-env-period`}
                                     type="text"
                                     value={periodLabel}
                                     onChange={(e) => setPeriodLabel(e.target.value)}
                                     autoComplete="off"
                                     spellCheck={false}
-                                    className="w-full min-h-[44px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-data-dense tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
+                                    className="w-full min-h-[48px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-data-dense tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
                                 />
                             </div>
                             <div className="space-y-fib-8">
-                                <label className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">
+                                <label
+                                    htmlFor={`${uid}-env-payment`}
+                                    className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]"
+                                >
                                     {t('supply.scanner.payment_label')}
                                 </label>
                                 <select
+                                    id={`${uid}-env-payment`}
+                                    aria-label={t('supply.scanner.payment_label')}
                                     value={paymentMethod}
                                     onChange={(e) =>
                                         setPaymentMethod(e.target.value as PaymentMethod)
                                     }
-                                    className="w-full min-h-[44px] px-fib-8 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
+                                    className="w-full min-h-[48px] px-fib-8 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
                                 >
                                     {PAYMENT_METHODS.map((pm) => (
                                         <option key={pm} value={pm}>
@@ -571,23 +617,27 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                                 </select>
                             </div>
                             <div className="space-y-fib-8">
-                                <label className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">
+                                <label
+                                    htmlFor={`${uid}-env-advance`}
+                                    className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]"
+                                >
                                     {t('supply.sii.envelope_advance')}
                                 </label>
                                 <input
+                                    id={`${uid}-env-advance`}
                                     type="number"
                                     min={0}
                                     value={fundAdvanceClp}
                                     onChange={(e) => setFundAdvanceClp(Number(e.target.value) || 0)}
                                     autoComplete="off"
                                     spellCheck={false}
-                                    className="w-full min-h-[44px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-data-dense tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
+                                    className="w-full min-h-[48px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-data-dense tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
                                 />
                             </div>
                             <button
                                 type="submit"
                                 disabled={creatingEnvelope || !holderName.trim() || !envelopeTitle.trim()}
-                                className="min-h-[44px] px-fib-21 bg-[#C68346] border border-[#C68346] text-[#FFFFFF] font-mono text-data-dense font-bold uppercase rounded-none shadow-none cursor-pointer disabled:opacity-40"
+                                className="min-h-[48px] px-fib-21 bg-[#C68346] border border-[#C68346] text-[#000000] font-mono text-data-dense font-bold uppercase rounded-none shadow-none cursor-pointer disabled:opacity-40"
                             >
                                 {t('supply.common.save')}
                             </button>
@@ -627,10 +677,14 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                                         )}
                                     >
                                         <div className="flex flex-wrap items-center justify-between gap-fib-8 font-mono tabular-nums">
-                                            <div className="flex items-center gap-fib-8">
+                                            <div className="flex flex-wrap items-center gap-fib-8">
                                                 <span className="text-data-dense font-bold text-[#0F172A] dark:text-[#F3F4F6] select-text">
                                                     {rep.title || rep.code}
                                                 </span>
+                                                <CopyButton
+                                                    value={rep.code || rep.reportId}
+                                                    title={t('supply.common.copy_code')}
+                                                />
                                                 <span className="text-microcopy text-[#475569] dark:text-[#8A93A6]">
                                                     {rep.costCenter}
                                                 </span>
@@ -672,8 +726,8 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                                                     className={cn(
                                                         'text-data-dense font-bold',
                                                         negativeBalance
-                                                            ? 'text-[#C68346]'
-                                                            : 'text-[#00AEEF]'
+                                                            ? 'text-[#7C3F0E] dark:text-[#C68346]'
+                                                            : 'text-[#0369A1] dark:text-[#00AEEF]'
                                                     )}
                                                 >
                                                     {formatClp(rep.balanceClp)}

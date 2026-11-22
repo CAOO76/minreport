@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useId, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import M3LinearProgress from '../../../components/common/M3LinearProgress';
 import CopyButton from '../../../components/common/CopyButton';
@@ -23,6 +23,7 @@ export interface RequisitionBacklogViewProps {
     defaultSiteId?: string;
     tenantId?: string;
     loading: boolean;
+    canMutate?: boolean;
     canAccessSimulator: boolean;
     simulatorOpen: boolean;
     onToggleSimulator: (open: boolean) => void;
@@ -77,13 +78,15 @@ export const RequisitionBacklogView: React.FC<RequisitionBacklogViewProps> = ({
     sites,
     defaultSiteId,
     tenantId,
-    loading,
+    loading: _loading,
+    canMutate = true,
     canAccessSimulator,
     simulatorOpen,
     onToggleSimulator,
     onRequisitionCreated,
 }) => {
     const { t } = useTranslation();
+    const uid = useId();
     const [originFilter, setOriginFilter] = useState<SupplyDemandOrigin | 'ALL'>('ALL');
     const [searchQuery, setSearchQuery] = useState('');
     const [showCreateForm, setShowCreateForm] = useState(false);
@@ -122,6 +125,7 @@ export const RequisitionBacklogView: React.FC<RequisitionBacklogViewProps> = ({
 
     const handleCreateManualRequisition = async (e: React.FormEvent) => {
         e.preventDefault();
+        if (!canMutate) return;
         const validLines = draftLines.filter((l) => l.name.trim().length > 0 && l.qtyRequested > 0);
         if (validLines.length === 0) return;
 
@@ -230,20 +234,19 @@ export const RequisitionBacklogView: React.FC<RequisitionBacklogViewProps> = ({
 
     return (
         <section className="w-full flex flex-col bg-[#FFFFFF] dark:bg-[#000000] select-none">
-            {loading && <M3LinearProgress indeterminate ariaLabel={t('supply.common.loading')} />}
-
             {/* Controls Strip */}
             <div className="px-fib-21 py-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C] flex flex-wrap items-center justify-between gap-fib-13">
                 <div className="flex flex-wrap items-center gap-fib-13">
                     <select
+                        id={`${uid}-origin-filter`}
                         value={originFilter}
                         onChange={(e) =>
                             setOriginFilter(e.target.value as SupplyDemandOrigin | 'ALL')
                         }
                         aria-label={t('supply.backlog.origin')}
-                        className="min-h-[40px] px-fib-13 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
+                        className="min-h-[48px] px-fib-13 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
                     >
-                        <option value="ALL">{t('supply.backlog.origin')}: ALL</option>
+                        <option value="ALL">{t('supply.common.all_origins')}</option>
                         {DEMAND_ORIGINS.map((origin) => (
                             <option key={origin} value={origin}>
                                 {t(`supply.origins.${origin}`)}
@@ -251,34 +254,43 @@ export const RequisitionBacklogView: React.FC<RequisitionBacklogViewProps> = ({
                         ))}
                     </select>
 
-                    <input
-                        type="text"
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        autoComplete="off"
-                        spellCheck={false}
-                        placeholder={t('supply.common.search_placeholder')}
-                        className="w-56 min-h-[40px] px-fib-13 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
-                    />
+                    <div>
+                        <label htmlFor={`${uid}-search`} className="sr-only">
+                            {t('supply.common.search_placeholder')}
+                        </label>
+                        <input
+                            id={`${uid}-search`}
+                            type="text"
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            autoComplete="off"
+                            spellCheck={false}
+                            aria-label={t('supply.common.search_placeholder')}
+                            placeholder={t('supply.common.search_placeholder')}
+                            className="w-56 min-h-[48px] px-fib-13 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
+                        />
+                    </div>
                 </div>
 
                 <div className="flex items-center gap-fib-8">
-                    <button
-                        type="button"
-                        onClick={() => setShowCreateForm((prev) => !prev)}
-                        aria-label={t('supply.backlog.new_requisition')}
-                        title={t('supply.backlog.new_requisition')}
-                        className={cn(
-                            'bg-transparent border-0 outline-none p-1 min-w-[44px] min-h-[44px] inline-flex items-center justify-center transition-colors cursor-pointer rounded-none shadow-none',
-                            showCreateForm
-                                ? 'text-[#C68346]'
-                                : 'text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
-                        )}
-                    >
-                        <span className="material-symbols-outlined text-[22px]">
-                            {showCreateForm ? 'close' : 'add'}
-                        </span>
-                    </button>
+                    {canMutate && (
+                        <button
+                            type="button"
+                            onClick={() => setShowCreateForm((prev) => !prev)}
+                            aria-label={t('supply.backlog.new_requisition')}
+                            title={t('supply.backlog.new_requisition')}
+                            className={cn(
+                                'bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center transition-colors cursor-pointer rounded-none shadow-none',
+                                showCreateForm
+                                    ? 'text-[#7C3F0E] dark:text-[#C68346]'
+                                    : 'text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
+                            )}
+                        >
+                            <span className="material-symbols-outlined text-[22px]">
+                                {showCreateForm ? 'close' : 'add'}
+                            </span>
+                        </button>
+                    )}
 
                     {canAccessSimulator && (
                         <button
@@ -287,9 +299,9 @@ export const RequisitionBacklogView: React.FC<RequisitionBacklogViewProps> = ({
                             aria-label={t('supply.backlog.open_simulator')}
                             title={t('supply.backlog.open_simulator')}
                             className={cn(
-                                'bg-transparent border-0 outline-none p-1 min-w-[44px] min-h-[44px] inline-flex items-center justify-center transition-colors cursor-pointer rounded-none shadow-none',
+                                'bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center transition-colors cursor-pointer rounded-none shadow-none',
                                 simulatorOpen
-                                    ? 'text-[#00AEEF]'
+                                    ? 'text-[#0369A1] dark:text-[#00AEEF]'
                                     : 'text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
                             )}
                         >
@@ -304,8 +316,8 @@ export const RequisitionBacklogView: React.FC<RequisitionBacklogViewProps> = ({
                     className={cn(
                         'mx-fib-21 mt-fib-13 border-l-[3px] pl-fib-13 py-fib-8 font-mono text-data-dense tabular-nums',
                         formNotice.tone === 'copper'
-                            ? 'border-[#C68346] text-[#C68346]'
-                            : 'border-[#00AEEF] text-[#00AEEF]'
+                            ? 'border-[#C68346] text-[#7C3F0E] dark:text-[#C68346]'
+                            : 'border-[#00AEEF] text-[#0369A1] dark:text-[#00AEEF]'
                     )}
                 >
                     {formNotice.text}
@@ -313,7 +325,7 @@ export const RequisitionBacklogView: React.FC<RequisitionBacklogViewProps> = ({
             )}
 
             {/* Inline Manual Requisition Form */}
-            {showCreateForm && (
+            {canMutate && showCreateForm && (
                 <form
                     onSubmit={handleCreateManualRequisition}
                     autoComplete="off"
@@ -322,13 +334,18 @@ export const RequisitionBacklogView: React.FC<RequisitionBacklogViewProps> = ({
                 >
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-fib-13">
                         <div className="space-y-fib-8">
-                            <label className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">
+                            <label
+                                htmlFor={`${uid}-req-site`}
+                                className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]"
+                            >
                                 {t('supply.common.site_selector')}
                             </label>
                             <select
+                                id={`${uid}-req-site`}
+                                aria-label={t('supply.common.site_selector')}
                                 value={siteId}
                                 onChange={(e) => setSiteId(e.target.value)}
-                                className="w-full min-h-[44px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
+                                className="w-full min-h-[48px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
                             >
                                 {sites.length > 0 ? (
                                     sites.map((s) => (
@@ -342,28 +359,33 @@ export const RequisitionBacklogView: React.FC<RequisitionBacklogViewProps> = ({
                             </select>
                         </div>
                         <div className="space-y-fib-8">
-                            <label className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">
+                            <label
+                                htmlFor={`${uid}-req-cc`}
+                                className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]"
+                            >
                                 {t('supply.backlog.cost_center')}
                             </label>
                             <input
+                                id={`${uid}-req-cc`}
                                 type="text"
                                 value={costCenter}
                                 onChange={(e) => setCostCenter(e.target.value)}
                                 autoComplete="off"
                                 spellCheck={false}
-                                className="w-full min-h-[44px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
+                                className="w-full min-h-[48px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
                             />
                         </div>
                     </div>
 
                     <div className="space-y-fib-8">
-                        {draftLines.map((line) => (
+                        {draftLines.map((line, idx) => (
                             <div
                                 key={line.key}
                                 className="grid grid-cols-1 md:grid-cols-12 gap-fib-8 items-center"
                             >
                                 <input
                                     type="text"
+                                    aria-label={`${t('supply.backlog.sku_name')} #${idx + 1}`}
                                     value={line.name}
                                     onChange={(e) =>
                                         setDraftLines((prev) =>
@@ -377,9 +399,10 @@ export const RequisitionBacklogView: React.FC<RequisitionBacklogViewProps> = ({
                                     autoComplete="off"
                                     spellCheck={false}
                                     placeholder={t('supply.backlog.sku_name')}
-                                    className="md:col-span-4 min-h-[44px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
+                                    className="md:col-span-4 min-h-[48px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
                                 />
                                 <select
+                                    aria-label={`${t('supply.backlog.category')} #${idx + 1}`}
                                     value={line.categoryCode}
                                     onChange={(e) =>
                                         setDraftLines((prev) =>
@@ -394,7 +417,7 @@ export const RequisitionBacklogView: React.FC<RequisitionBacklogViewProps> = ({
                                             )
                                         )
                                     }
-                                    className="md:col-span-3 min-h-[44px] px-fib-8 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
+                                    className="md:col-span-3 min-h-[48px] px-fib-8 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
                                 >
                                     {SUPPLY_CATEGORIES.map((c) => (
                                         <option key={c} value={c}>
@@ -404,6 +427,7 @@ export const RequisitionBacklogView: React.FC<RequisitionBacklogViewProps> = ({
                                 </select>
                                 <input
                                     type="number"
+                                    aria-label={`${t('supply.backlog.qty')} #${idx + 1}`}
                                     step="any"
                                     min={0}
                                     value={line.qtyRequested}
@@ -418,9 +442,10 @@ export const RequisitionBacklogView: React.FC<RequisitionBacklogViewProps> = ({
                                     }
                                     autoComplete="off"
                                     spellCheck={false}
-                                    className="md:col-span-2 min-h-[44px] px-fib-8 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-data-dense tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
+                                    className="md:col-span-2 min-h-[48px] px-fib-8 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-data-dense tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
                                 />
                                 <select
+                                    aria-label={`${t('supply.backlog.unit')} #${idx + 1}`}
                                     value={line.unitSi}
                                     onChange={(e) =>
                                         setDraftLines((prev) =>
@@ -431,7 +456,7 @@ export const RequisitionBacklogView: React.FC<RequisitionBacklogViewProps> = ({
                                             )
                                         )
                                     }
-                                    className="md:col-span-1 min-h-[44px] px-fib-8 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
+                                    className="md:col-span-1 min-h-[48px] px-fib-8 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
                                 >
                                     {SUPPLY_UNITS_SI.map((u) => (
                                         <option key={u} value={u}>
@@ -440,6 +465,7 @@ export const RequisitionBacklogView: React.FC<RequisitionBacklogViewProps> = ({
                                     ))}
                                 </select>
                                 <select
+                                    aria-label={`${t('supply.backlog.urgency')} #${idx + 1}`}
                                     value={line.urgency}
                                     onChange={(e) =>
                                         setDraftLines((prev) =>
@@ -454,11 +480,17 @@ export const RequisitionBacklogView: React.FC<RequisitionBacklogViewProps> = ({
                                             )
                                         )
                                     }
-                                    className="md:col-span-1 min-h-[44px] px-fib-8 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-microcopy text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
+                                    className="md:col-span-1 min-h-[48px] px-fib-8 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-microcopy text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
                                 >
-                                    <option value="STANDARD">STD</option>
-                                    <option value="HIGH">HIGH</option>
-                                    <option value="CRITICAL">CRIT</option>
+                                    <option value="STANDARD">
+                                        {t('supply.backlog.urgency_standard')}
+                                    </option>
+                                    <option value="HIGH">
+                                        {t('supply.backlog.urgency_high')}
+                                    </option>
+                                    <option value="CRITICAL">
+                                        {t('supply.backlog.urgency_critical')}
+                                    </option>
                                 </select>
                                 <div className="md:col-span-1 flex justify-end">
                                     {draftLines.length > 1 && (
@@ -471,7 +503,7 @@ export const RequisitionBacklogView: React.FC<RequisitionBacklogViewProps> = ({
                                             }
                                             aria-label={t('supply.common.remove')}
                                             title={t('supply.common.remove')}
-                                            className="bg-transparent border-0 outline-none p-1 text-[#475569] dark:text-[#8A93A6] hover:text-[#C68346] cursor-pointer rounded-none shadow-none"
+                                            className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#475569] dark:text-[#8A93A6] hover:text-[#7C3F0E] dark:hover:text-[#C68346] cursor-pointer rounded-none shadow-none"
                                         >
                                             <span className="material-symbols-outlined text-[18px]">
                                                 delete
@@ -489,14 +521,14 @@ export const RequisitionBacklogView: React.FC<RequisitionBacklogViewProps> = ({
                             onClick={() => setDraftLines((prev) => [...prev, createDraftLine()])}
                             aria-label={t('supply.backlog.add_line')}
                             title={t('supply.backlog.add_line')}
-                            className="bg-transparent border-0 outline-none p-1 min-w-[44px] min-h-[44px] inline-flex items-center justify-center text-[#00AEEF] hover:opacity-80 cursor-pointer rounded-none shadow-none"
+                            className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#0369A1] dark:text-[#00AEEF] hover:opacity-80 cursor-pointer rounded-none shadow-none"
                         >
                             <span className="material-symbols-outlined text-[20px]">add</span>
                         </button>
                         <button
                             type="submit"
                             disabled={submittingReq}
-                            className="min-h-[44px] px-fib-21 bg-[#C68346] border border-[#C68346] text-[#FFFFFF] font-mono text-data-dense font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer disabled:opacity-40"
+                            className="min-h-[48px] px-fib-21 bg-[#C68346] border border-[#C68346] text-[#000000] font-mono text-data-dense font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer disabled:opacity-40"
                         >
                             {t('supply.backlog.submit_req')}
                         </button>
@@ -509,7 +541,7 @@ export const RequisitionBacklogView: React.FC<RequisitionBacklogViewProps> = ({
                 <div className="border-b border-[#00AEEF] bg-[#F8FAFC] dark:bg-[#07090D] p-fib-21 space-y-fib-13">
                     <div className="flex flex-wrap items-center justify-between gap-fib-8 border-b border-[#E2E8F0] dark:border-[#12151C] pb-fib-13">
                         <div className="flex items-center gap-fib-8">
-                            <span className="material-symbols-outlined text-[20px] text-[#00AEEF]">
+                            <span className="material-symbols-outlined text-[20px] text-[#0369A1] dark:text-[#00AEEF]">
                                 chat
                             </span>
                             <span className="font-mono text-data-dense font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6]">
@@ -522,7 +554,7 @@ export const RequisitionBacklogView: React.FC<RequisitionBacklogViewProps> = ({
                                 onClick={() => void sendSimulatedMessage(undefined, true)}
                                 aria-label={t('supply.backlog.sim_reset')}
                                 title={t('supply.backlog.sim_reset')}
-                                className="bg-transparent border-0 outline-none p-1 min-w-[40px] min-h-[40px] inline-flex items-center justify-center text-[#475569] dark:text-[#8A93A6] hover:text-[#C68346] cursor-pointer rounded-none shadow-none"
+                                className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#475569] dark:text-[#8A93A6] hover:text-[#7C3F0E] dark:hover:text-[#C68346] cursor-pointer rounded-none shadow-none"
                             >
                                 <span className="material-symbols-outlined text-[18px]">refresh</span>
                             </button>
@@ -531,7 +563,7 @@ export const RequisitionBacklogView: React.FC<RequisitionBacklogViewProps> = ({
                                 onClick={() => onToggleSimulator(false)}
                                 aria-label={t('supply.common.close')}
                                 title={t('supply.common.close')}
-                                className="bg-transparent border-0 outline-none p-1 min-w-[40px] min-h-[40px] inline-flex items-center justify-center text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] cursor-pointer rounded-none shadow-none"
+                                className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] cursor-pointer rounded-none shadow-none"
                             >
                                 <span className="material-symbols-outlined text-[18px]">close</span>
                             </button>
@@ -539,28 +571,46 @@ export const RequisitionBacklogView: React.FC<RequisitionBacklogViewProps> = ({
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-fib-13">
-                        <input
-                            type="text"
-                            value={simPhone}
-                            onChange={(e) => setSimPhone(e.target.value)}
-                            autoComplete="off"
-                            spellCheck={false}
-                            aria-label={t('supply.backlog.sim_phone')}
-                            placeholder="+56911112222"
-                            className="min-h-[40px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-data-dense tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
-                        />
-                        <select
-                            value={simRole}
-                            onChange={(e) => setSimRole(e.target.value as SupplyOperationalRole)}
-                            aria-label={t('supply.backlog.sim_role')}
-                            className="min-h-[40px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
-                        >
-                            {SIM_ROLES.map((r) => (
-                                <option key={r} value={r}>
-                                    {r}
-                                </option>
-                            ))}
-                        </select>
+                        <div className="space-y-fib-8">
+                            <label
+                                htmlFor={`${uid}-sim-phone`}
+                                className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]"
+                            >
+                                {t('supply.backlog.sim_phone')}
+                            </label>
+                            <input
+                                id={`${uid}-sim-phone`}
+                                type="text"
+                                value={simPhone}
+                                onChange={(e) => setSimPhone(e.target.value)}
+                                autoComplete="off"
+                                spellCheck={false}
+                                aria-label={t('supply.backlog.sim_phone')}
+                                placeholder="+56911112222"
+                                className="w-full min-h-[48px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-data-dense tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
+                            />
+                        </div>
+                        <div className="space-y-fib-8">
+                            <label
+                                htmlFor={`${uid}-sim-role`}
+                                className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]"
+                            >
+                                {t('supply.backlog.sim_role')}
+                            </label>
+                            <select
+                                id={`${uid}-sim-role`}
+                                value={simRole}
+                                onChange={(e) => setSimRole(e.target.value as SupplyOperationalRole)}
+                                aria-label={t('supply.backlog.sim_role')}
+                                className="w-full min-h-[48px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
+                            >
+                                {SIM_ROLES.map((r) => (
+                                    <option key={r} value={r}>
+                                        {r}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
                     </div>
 
                     {/* Deterministic Scenario Presets */}
@@ -571,7 +621,7 @@ export const RequisitionBacklogView: React.FC<RequisitionBacklogViewProps> = ({
                             onClick={() =>
                                 void sendSimulatedMessage(t('supply.backlog.sim_preset_slots_msg'))
                             }
-                            className="min-h-[36px] px-fib-13 border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] hover:border-[#00AEEF] font-mono text-microcopy text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none cursor-pointer"
+                            className="min-h-[48px] px-fib-13 border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] hover:border-[#00AEEF] font-mono text-microcopy text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none cursor-pointer"
                         >
                             {t('supply.backlog.sim_preset_slots')}
                         </button>
@@ -581,7 +631,7 @@ export const RequisitionBacklogView: React.FC<RequisitionBacklogViewProps> = ({
                             onClick={() =>
                                 void sendSimulatedMessage(t('supply.backlog.sim_preset_deny_msg'))
                             }
-                            className="min-h-[36px] px-fib-13 border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] hover:border-[#C68346] font-mono text-microcopy text-[#C68346] rounded-none shadow-none cursor-pointer"
+                            className="min-h-[48px] px-fib-13 border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] hover:border-[#C68346] font-mono text-microcopy text-[#7C3F0E] dark:text-[#C68346] rounded-none shadow-none cursor-pointer"
                         >
                             {t('supply.backlog.sim_preset_deny')}
                         </button>
@@ -593,7 +643,7 @@ export const RequisitionBacklogView: React.FC<RequisitionBacklogViewProps> = ({
                                     t('supply.backlog.sim_preset_atypical_msg')
                                 )
                             }
-                            className="min-h-[36px] px-fib-13 border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] hover:border-[#C68346] font-mono text-microcopy text-[#C68346] rounded-none shadow-none cursor-pointer"
+                            className="min-h-[48px] px-fib-13 border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] hover:border-[#C68346] font-mono text-microcopy text-[#7C3F0E] dark:text-[#C68346] rounded-none shadow-none cursor-pointer"
                         >
                             {t('supply.backlog.sim_preset_atypical')}
                         </button>
@@ -601,7 +651,7 @@ export const RequisitionBacklogView: React.FC<RequisitionBacklogViewProps> = ({
                             type="button"
                             disabled={simBusy}
                             onClick={() => void sendSimulatedMessage('OK')}
-                            className="min-h-[36px] px-fib-13 border border-[#00AEEF] bg-[#FFFFFF] dark:bg-[#000000] font-mono text-microcopy text-[#00AEEF] rounded-none shadow-none cursor-pointer"
+                            className="min-h-[48px] px-fib-13 border border-[#00AEEF] bg-[#FFFFFF] dark:bg-[#000000] font-mono text-microcopy text-[#0369A1] dark:text-[#00AEEF] rounded-none shadow-none cursor-pointer"
                         >
                             {t('supply.backlog.sim_preset_confirm')}
                         </button>
@@ -616,7 +666,7 @@ export const RequisitionBacklogView: React.FC<RequisitionBacklogViewProps> = ({
                                 <div
                                     key={msg.id}
                                     className={cn(
-                                        'px-fib-13 py-fib-8 space-y-1 border-l-[3px]',
+                                        'px-fib-13 py-fib-8 space-y-fib-8 border-l-[3px]',
                                         msg.hardDeniedItems?.length || msg.atypicalFlags?.length
                                             ? 'border-[#C68346]'
                                             : msg.direction === 'OUTBOUND'
@@ -627,7 +677,7 @@ export const RequisitionBacklogView: React.FC<RequisitionBacklogViewProps> = ({
                                     <div className="flex items-center justify-between font-mono text-microcopy tabular-nums text-[#475569] dark:text-[#8A93A6]">
                                         <span>{msg.direction === 'INBOUND' ? simRole : 'MINREPORT BOT'}</span>
                                         {msg.fsmState && (
-                                            <span className="text-[#00AEEF] font-bold">
+                                            <span className="text-[#0369A1] dark:text-[#00AEEF] font-bold">
                                                 {t('supply.backlog.fsm_state')}: {msg.fsmState}
                                             </span>
                                         )}
@@ -636,20 +686,24 @@ export const RequisitionBacklogView: React.FC<RequisitionBacklogViewProps> = ({
                                         {msg.text}
                                     </div>
                                     {msg.hardDeniedItems && msg.hardDeniedItems.length > 0 && (
-                                        <div className="font-mono text-microcopy text-[#C68346]">
+                                        <div className="font-mono text-microcopy text-[#7C3F0E] dark:text-[#C68346]">
                                             {t('supply.backlog.hard_denied')}: {msg.hardDeniedItems.join(', ')}
                                         </div>
                                     )}
                                     {msg.atypicalFlags && msg.atypicalFlags.length > 0 && (
-                                        <div className="font-mono text-microcopy text-[#C68346]">
+                                        <div className="font-mono text-microcopy text-[#7C3F0E] dark:text-[#C68346]">
                                             {msg.atypicalFlags
                                                 .map((f) => t(`supply.atypicals.${f}`))
                                                 .join(' · ')}
                                         </div>
                                     )}
                                     {msg.committedReqId && (
-                                        <div className="font-mono text-microcopy text-[#00AEEF] select-text">
-                                            REQ: {msg.committedReqId}
+                                        <div className="flex items-center gap-fib-8 font-mono text-microcopy text-[#0369A1] dark:text-[#00AEEF] select-text">
+                                            <span>REQ: {msg.committedReqId}</span>
+                                            <CopyButton
+                                                value={msg.committedReqId}
+                                                title={t('supply.common.copy_code')}
+                                            />
                                         </div>
                                     )}
                                 </div>
@@ -666,21 +720,26 @@ export const RequisitionBacklogView: React.FC<RequisitionBacklogViewProps> = ({
                         spellCheck={false}
                         className="flex items-center gap-fib-8"
                     >
+                        <label htmlFor={`${uid}-sim-input`} className="sr-only">
+                            {t('supply.backlog.sim_input_placeholder')}
+                        </label>
                         <input
+                            id={`${uid}-sim-input`}
                             type="text"
                             value={simInput}
                             onChange={(e) => setSimInput(e.target.value)}
                             autoComplete="off"
                             spellCheck={false}
+                            aria-label={t('supply.backlog.sim_input_placeholder')}
                             placeholder={t('supply.backlog.sim_input_placeholder')}
-                            className="flex-1 min-h-[44px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#00AEEF] outline-none text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
+                            className="flex-1 min-h-[48px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#00AEEF] outline-none text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
                         />
                         <button
                             type="submit"
                             disabled={simBusy || !simInput.trim()}
                             aria-label={t('supply.backlog.sim_send')}
                             title={t('supply.backlog.sim_send')}
-                            className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#00AEEF] hover:opacity-80 cursor-pointer rounded-none shadow-none disabled:opacity-40"
+                            className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#0369A1] dark:text-[#00AEEF] hover:opacity-80 cursor-pointer rounded-none shadow-none disabled:opacity-40"
                         >
                             <span className="material-symbols-outlined text-[22px]">send</span>
                         </button>
@@ -743,9 +802,9 @@ export const RequisitionBacklogView: React.FC<RequisitionBacklogViewProps> = ({
                                             className={cn(
                                                 'font-bold uppercase',
                                                 reqFulfilled
-                                                    ? 'text-[#00AEEF]'
+                                                    ? 'text-[#0369A1] dark:text-[#00AEEF]'
                                                     : reqHasAtypical
-                                                      ? 'text-[#C68346]'
+                                                      ? 'text-[#7C3F0E] dark:text-[#C68346]'
                                                       : 'text-[#0F172A] dark:text-[#F3F4F6]'
                                             )}
                                         >
@@ -772,7 +831,7 @@ export const RequisitionBacklogView: React.FC<RequisitionBacklogViewProps> = ({
                                                 key={line.lineId}
                                                 className="py-fib-8 grid grid-cols-1 md:grid-cols-12 gap-fib-8 items-center"
                                             >
-                                                <div className="md:col-span-5 min-w-0">
+                                                <div className="md:col-span-5 min-w-0 space-y-fib-8">
                                                     <div className="flex flex-wrap items-center gap-fib-8">
                                                         <span className="text-data-dense font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
                                                             {line.name}
@@ -780,9 +839,13 @@ export const RequisitionBacklogView: React.FC<RequisitionBacklogViewProps> = ({
                                                         <span className="font-mono text-microcopy text-[#475569] dark:text-[#8A93A6] select-text">
                                                             {line.canonicalSkuId}
                                                         </span>
+                                                        <CopyButton
+                                                            value={line.canonicalSkuId}
+                                                            title={t('supply.common.copy_code')}
+                                                        />
                                                     </div>
                                                     {isAtypical && (
-                                                        <div className="font-mono text-microcopy text-[#C68346] font-bold">
+                                                        <div className="font-mono text-microcopy text-[#7C3F0E] dark:text-[#C68346] font-bold">
                                                             {line.atypicalFlags
                                                                 .map((f) =>
                                                                     t(`supply.atypicals.${f}`)
@@ -796,7 +859,7 @@ export const RequisitionBacklogView: React.FC<RequisitionBacklogViewProps> = ({
                                                     {t(`supply.buckets.${line.procurementBucket}`)}
                                                 </div>
 
-                                                <div className="md:col-span-2 space-y-1">
+                                                <div className="md:col-span-2 space-y-fib-8">
                                                     <div className="font-mono text-microcopy tabular-nums text-[#0F172A] dark:text-[#F3F4F6]">
                                                         {line.qtyPurchased} / {line.qtyRequested}{' '}
                                                         {line.unitSi}
@@ -811,10 +874,10 @@ export const RequisitionBacklogView: React.FC<RequisitionBacklogViewProps> = ({
                                                     <span
                                                         className={cn(
                                                             line.lineStatus === 'FULFILLED'
-                                                                ? 'text-[#00AEEF]'
+                                                                ? 'text-[#0369A1] dark:text-[#00AEEF]'
                                                                 : line.lineStatus === 'PARTIAL' ||
                                                                     isAtypical
-                                                                  ? 'text-[#C68346]'
+                                                                  ? 'text-[#7C3F0E] dark:text-[#C68346]'
                                                                   : 'text-[#475569] dark:text-[#8A93A6]'
                                                         )}
                                                     >

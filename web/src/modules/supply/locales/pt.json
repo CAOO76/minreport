@@ -24,6 +24,10 @@
       "expand": "Expandir rastreabilidade",
       "collapse": "Recolher rastreabilidade",
       "copy_folio": "Copiar fólio / chave",
+      "copy_code": "Copiar código",
+      "all_origins": "Todas as origens",
+      "read_only_mode": "SOMENTE LEITURA",
+      "sandbox_marketplace_blocked": "MARKETPLACE BLOQUEADO (SANDBOX)",
       "hitl_keyword": "ACTUALIZAR",
       "sync_dead_letter": "Erro de sincronização (revisão obrigatória)"
     },
@@ -33,7 +37,7 @@
       "warehouse": "Almoxarifado e cofre patrimonial de ativos",
       "sii": "Prestações SII, recibos e faturas",
       "scanner": "Digitalizar recibo / fatura ou compra direta",
-      "reconciler": "Painel de conciliação HITL (38.2%)",
+      "reconciler": "Painel de conciliação HITL",
       "wa_simulator": "Simulador WhatsApp Acampamento (DEV / PILOT)"
     },
     "telemetry": {
@@ -43,6 +47,7 @@
       "rcv_urgent": "RCV ≤ 8D",
       "assets_no_dte": "ATIVOS SEM DTE 33",
       "offline_queue": "FILA OFFLINE",
+      "dead_letter": "DLQ",
       "water_ds594": "ÁGUA DS 594"
     },
     "buckets": {
@@ -170,6 +175,9 @@
       "origin": "Origem",
       "nature": "Natureza",
       "urgency": "Urgência",
+      "urgency_standard": "STD",
+      "urgency_high": "ALTA",
+      "urgency_critical": "CRÍTICA",
       "sku_name": "Descrição / SKU",
       "qty": "Quantidade",
       "unit": "Unidade SI",
@@ -220,7 +228,7 @@
       "asset_no_invoice_warn": "ATIVO CAPEX SEM FATURA DTE 33/34 (SEM CRÉDITO IVA)",
       "rut_invalid": "RUT INVÁLIDO (MÓDULO 11)",
       "rut_valid": "RUT VÁLIDO",
-      "send_to_reconciler": "Conciliar com Backlog (38.2%)",
+      "send_to_reconciler": "Conciliar com Backlog",
       "commit_direct": "Registrar Compra (HITL)",
       "offline_queued_notice": "Na fila offline (CAS + SyncQueueEngine)",
       "barcode_unsupported": "BarcodeDetector PDF417 indisponível; use XML/TED ou foto",
@@ -244,8 +252,9 @@
       "err_pending_ai_proposals": "Resolva todas as sugestões IA pendentes (1 a 1)"
     },
     "reconciler": {
-      "title": "CONCILIAÇÃO HITL (38.2%)",
+      "title": "CONCILIAÇÃO HITL",
       "empty": "Selecione ou digitalize um documento para conciliar com o backlog",
+      "select_requisition": "Alocar à requisição",
       "col_requested": "SOLICITADO / PENDENTE",
       "col_detected": "DETECTADO NA COMPRA",
       "col_new_status": "NOVO STATUS",

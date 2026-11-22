@@ -40,6 +40,21 @@ export interface SupplyWorkspaceProps {
 
 type SupplyPrimaryTab = 'PROCUREMENT' | 'DEMAND' | 'WAREHOUSE' | 'SII_EXPENSES';
 
+function parseTabQueryParam(raw?: string | null): SupplyPrimaryTab | null {
+    switch (String(raw || '').trim().toUpperCase()) {
+        case 'PROCUREMENT':
+            return 'PROCUREMENT';
+        case 'DEMAND':
+            return 'DEMAND';
+        case 'WAREHOUSE':
+            return 'WAREHOUSE';
+        case 'SII_EXPENSES':
+            return 'SII_EXPENSES';
+        default:
+            return null;
+    }
+}
+
 function resolveTabFromDomainMode(mode?: string): SupplyPrimaryTab {
     switch (String(mode || '').toUpperCase()) {
         case 'DEMAND':
@@ -56,6 +71,28 @@ function resolveTabFromDomainMode(mode?: string): SupplyPrimaryTab {
             return 'PROCUREMENT';
     }
 }
+
+function resolveInitialSupplyTab(embedded: boolean, domainMode?: string): SupplyPrimaryTab {
+    if (!embedded && typeof window !== 'undefined') {
+        const params = new URLSearchParams(window.location.search);
+        const fromUrl = parseTabQueryParam(params.get('tab'));
+        if (fromUrl) return fromUrl;
+    }
+    return resolveTabFromDomainMode(domainMode);
+}
+
+const SUPPLY_SYNC_EVENTS = [
+    'supply:purchase-committed',
+    'supply:purchase-synced',
+    'supply:requisition-created',
+    'supply:requisition-synced',
+    'supply:reception-confirmed',
+    'supply:reception-synced',
+    'supply:sii-updated',
+    'supply:sii-expense-report-synced',
+    'supply:sii-expense-report-status-synced',
+    'supply:opermaq-link-synced',
+] as const;
 
 export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
     embedded = false,
@@ -78,40 +115,85 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
         return session?.tenantId || undefined;
     }, [propTenantId, hostScope, session]);
 
-    const isExecOwner = useMemo(() => {
-        const role = String(session?.role || '').toUpperCase();
+    const supplyPermissions = session?.permissions?.supply;
+    const sessionRoleUpper = String(session?.role || '').toUpperCase();
+    const isReadOnlyRole = sessionRoleUpper === 'VIEWER' || sessionRoleUpper === 'BILLING_ONLY';
+
+    const canMutateSupply = useMemo(() => {
+        if (isReadOnlyRole) return false;
+        if (supplyPermissions) return Boolean(supplyPermissions.canMutate);
         return Boolean(
             session?.isDevRoot ||
                 session?.isSuperAdmin ||
-                role === 'OWNER' ||
-                role === 'ADMIN'
-        );
-    }, [session]);
-
-    const canScanAndBuy = useMemo(() => {
-        const role = String(session?.role || '').toUpperCase();
-        return Boolean(
-            isExecOwner ||
                 session?.isTestPilot ||
-                role === 'OPERATOR' ||
-                role === 'BUYER'
+                sessionRoleUpper === 'OWNER' ||
+                sessionRoleUpper === 'ADMIN' ||
+                sessionRoleUpper === 'OPERATOR' ||
+                sessionRoleUpper === 'BUYER'
         );
-    }, [isExecOwner, session]);
+    }, [isReadOnlyRole, session, sessionRoleUpper, supplyPermissions]);
+
+    const canRecordDirectPurchase = useMemo(() => {
+        if (!canMutateSupply) return false;
+        if (supplyPermissions) return Boolean(supplyPermissions.canRecordDirectPurchase);
+        return Boolean(
+            session?.isDevRoot ||
+                session?.isSuperAdmin ||
+                sessionRoleUpper === 'OWNER' ||
+                sessionRoleUpper === 'ADMIN'
+        );
+    }, [canMutateSupply, session, sessionRoleUpper, supplyPermissions]);
+
+    const canApproveExpenseReports = useMemo(() => {
+        if (!canMutateSupply) return false;
+        if (supplyPermissions) return Boolean(supplyPermissions.canApproveExpenseReports);
+        return Boolean(
+            session?.isDevRoot ||
+                session?.isSuperAdmin ||
+                sessionRoleUpper === 'OWNER' ||
+                sessionRoleUpper === 'ADMIN'
+        );
+    }, [canMutateSupply, session, sessionRoleUpper, supplyPermissions]);
+
+    const canManageCapex = useMemo(() => {
+        if (!canMutateSupply) return false;
+        if (supplyPermissions) return Boolean(supplyPermissions.canManageCapex);
+        return Boolean(
+            session?.isDevRoot ||
+                session?.isSuperAdmin ||
+                sessionRoleUpper === 'OWNER' ||
+                sessionRoleUpper === 'ADMIN'
+        );
+    }, [canMutateSupply, session, sessionRoleUpper, supplyPermissions]);
+
+    // Guard estricto: cuentas 5º EDU y 3º TEST-PILOT jamás pueden activar marketplaceOptIn
+    const isMarketplaceBlocked = useMemo(
+        () =>
+            Boolean(
+                session?.isEduSandbox ||
+                    session?.isTestPilot ||
+                    hostScope === 'TEST_PILOT'
+            ),
+        [hostScope, session]
+    );
+
+    const canScanAndBuy = canMutateSupply;
 
     // WhatsApp Campamento interactive simulator strictly gated to DEV & TEST-PILOT
     const canAccessSimulator = useMemo(
         () =>
             Boolean(
-                session?.isDevRoot ||
-                    session?.isTestPilot ||
-                    hostScope === 'DEV_GATEWAY' ||
-                    hostScope === 'TEST_PILOT'
+                canMutateSupply &&
+                    (session?.isDevRoot ||
+                        session?.isTestPilot ||
+                        hostScope === 'DEV_GATEWAY' ||
+                        hostScope === 'TEST_PILOT')
             ),
-        [session, hostScope]
+        [canMutateSupply, session, hostScope]
     );
 
     const [activeTab, setActiveTab] = useState<SupplyPrimaryTab>(() =>
-        resolveTabFromDomainMode(domainMode)
+        resolveInitialSupplyTab(embedded, domainMode)
     );
     const [selectedSiteId, setSelectedSiteId] = useState<string>('');
     const [scannerOpen, setScannerOpen] = useState(false);
@@ -126,6 +208,7 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
     const [offlinePendingCount, setOfflinePendingCount] = useState<number>(
         syncQueueEngine.getState().pendingCount
     );
+    const [deadLetterCount, setDeadLetterCount] = useState<number>(0);
 
     // Data state
     const [loading, setLoading] = useState(false);
@@ -142,7 +225,11 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
     const [expenseReports, setExpenseReports] = useState<SiiExpenseReport[]>([]);
 
     useEffect(() => {
-        setActiveTab(resolveTabFromDomainMode(domainMode));
+        if (domainMode) {
+            setActiveTab(resolveTabFromDomainMode(domainMode));
+        } else if (resetKey !== undefined) {
+            setActiveTab(resolveInitialSupplyTab(embedded, domainMode));
+        }
         if (String(domainMode || '').toUpperCase() === 'FINANCE_RECON') {
             setReconcilerOpen(true);
         }
@@ -152,7 +239,33 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
         ) {
             setSimulatorOpen(true);
         }
-    }, [domainMode, resetKey, canAccessSimulator]);
+    }, [domainMode, resetKey, canAccessSimulator, embedded]);
+
+    // Sincronizar activeTab <-> query param ?tab= cuando !embedded
+    useEffect(() => {
+        if (embedded || typeof window === 'undefined') return;
+        try {
+            const url = new URL(window.location.href);
+            if (url.searchParams.get('tab') !== activeTab) {
+                url.searchParams.set('tab', activeTab);
+                window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+            }
+        } catch {
+            // Entorno sin history/URL editable
+        }
+    }, [activeTab, embedded]);
+
+    useEffect(() => {
+        if (embedded || typeof window === 'undefined') return;
+        const handlePopState = () => {
+            const fromUrl = parseTabQueryParam(
+                new URLSearchParams(window.location.search).get('tab')
+            );
+            if (fromUrl) setActiveTab(fromUrl);
+        };
+        window.addEventListener('popstate', handlePopState);
+        return () => window.removeEventListener('popstate', handlePopState);
+    }, [embedded]);
 
     useEffect(() => {
         const handleNavigateHome = () => {
@@ -165,11 +278,21 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
         return () => window.removeEventListener('supply:navigate-home', handleNavigateHome);
     }, [domainMode]);
 
+    const refreshDeadLetterCount = useCallback(async () => {
+        try {
+            const dlq = await syncQueueEngine.getDeadLetterTasks(resolvedTenantId);
+            setDeadLetterCount(dlq.length);
+        } catch {
+            // Mantener contador previo si IndexedDB no está disponible
+        }
+    }, [resolvedTenantId]);
+
     useEffect(() => {
+        void refreshDeadLetterCount();
         return syncQueueEngine.subscribe((state) => {
             setOfflinePendingCount(state.pendingCount);
         });
-    }, []);
+    }, [refreshDeadLetterCount]);
 
     const loadAllData = useCallback(async () => {
         setLoading(true);
@@ -211,6 +334,29 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
     useEffect(() => {
         void loadAllData();
     }, [loadAllData]);
+
+    // Suscripción reactiva a eventos de SyncQueueEngine (reconexión offline + dead-letter)
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        const onSynced = () => {
+            void loadAllData();
+            void refreshDeadLetterCount();
+        };
+        const onDeadLetter = () => {
+            setDeadLetterCount((prev) => prev + 1);
+            void refreshDeadLetterCount();
+        };
+        for (const evName of SUPPLY_SYNC_EVENTS) {
+            window.addEventListener(evName, onSynced);
+        }
+        window.addEventListener('minreport:sync-dead-letter', onDeadLetter);
+        return () => {
+            for (const evName of SUPPLY_SYNC_EVENTS) {
+                window.removeEventListener(evName, onSynced);
+            }
+            window.removeEventListener('minreport:sync-dead-letter', onDeadLetter);
+        };
+    }, [loadAllData, refreshDeadLetterCount]);
 
     const activeSite = useMemo(
         () => sites.find((s) => s.siteId === selectedSiteId) || sites[0] || null,
@@ -277,10 +423,13 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
         : 'w-full min-h-[100dvh] flex-1 flex flex-col bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] font-sans rounded-none shadow-none overflow-hidden select-none';
 
     return (
-        <div className={containerClass}>
+        <div
+            className={containerClass}
+            data-marketplace-opt-in={isMarketplaceBlocked ? 'blocked' : 'allowed'}
+        >
             {/* Single 56px Contextual Header (MBUX Zero-Layer — Zero Stacked Headers) */}
-            <header className="h-[56px] shrink-0 px-fib-13 sm:px-fib-21 bg-[#F8FAFC] dark:bg-[#07090D] border-b border-[#E2E8F0] dark:border-[#12151C] flex items-center justify-between gap-fib-13">
-                {/* Left: Icon-First Mode Tabs + Site Filter */}
+            <header className="min-h-[56px] shrink-0 px-fib-13 sm:px-fib-21 bg-[#F8FAFC] dark:bg-[#07090D] border-b border-[#E2E8F0] dark:border-[#12151C] flex flex-wrap items-center justify-between gap-fib-8">
+                {/* Left: Icon-First Mode Tabs + Always-Visible Site Selector (<1280px included) */}
                 <nav
                     aria-label={t('supply.module_title')}
                     className="flex items-center gap-fib-8 min-w-0"
@@ -321,7 +470,7 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                                 className={cn(
                                     'bg-transparent border-0 border-b-2 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center transition-colors cursor-pointer rounded-none shadow-none',
                                     isActive
-                                        ? 'border-[#C68346] text-[#C68346]'
+                                        ? 'border-[#C68346] text-[#7C3F0E] dark:text-[#C68346]'
                                         : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
                                 )}
                             >
@@ -332,12 +481,13 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                         );
                     })}
 
-                    {sites.length > 1 && (
+                    {sites.length > 0 && (
                         <select
+                            id="supply-active-site-select"
                             value={selectedSiteId}
                             onChange={(e) => setSelectedSiteId(e.target.value)}
                             aria-label={t('supply.common.site_selector')}
-                            className="hidden sm:block ml-fib-8 min-h-[36px] px-fib-8 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-microcopy text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
+                            className="ml-fib-8 min-h-[48px] max-w-[160px] sm:max-w-[200px] px-fib-8 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-microcopy text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
                         >
                             <option value="">{t('supply.common.all_sites')}</option>
                             {sites.map((s) => (
@@ -367,7 +517,7 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                             className={cn(
                                 'text-data-dense font-bold',
                                 telemetry.atypicalCount > 0
-                                    ? 'text-[#C68346]'
+                                    ? 'text-[#7C3F0E] dark:text-[#C68346]'
                                     : 'text-[#0F172A] dark:text-[#F3F4F6]'
                             )}
                         >
@@ -382,7 +532,7 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                             className={cn(
                                 'text-data-dense font-bold',
                                 telemetry.inTransitCount > 0
-                                    ? 'text-[#C68346]'
+                                    ? 'text-[#7C3F0E] dark:text-[#C68346]'
                                     : 'text-[#0F172A] dark:text-[#F3F4F6]'
                             )}
                         >
@@ -397,7 +547,7 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                             className={cn(
                                 'text-data-dense font-bold',
                                 telemetry.rcvUrgent > 0
-                                    ? 'text-[#C68346]'
+                                    ? 'text-[#7C3F0E] dark:text-[#C68346]'
                                     : 'text-[#0F172A] dark:text-[#F3F4F6]'
                             )}
                         >
@@ -412,25 +562,55 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                             className={cn(
                                 'text-data-dense font-bold',
                                 telemetry.assetsWithoutInvoice > 0
-                                    ? 'text-[#C68346]'
+                                    ? 'text-[#7C3F0E] dark:text-[#C68346]'
                                     : 'text-[#0F172A] dark:text-[#F3F4F6]'
                             )}
                         >
                             {telemetry.assetsWithoutInvoice}
                         </span>
                     </div>
-                    {(!isOnline || offlinePendingCount > 0) && (
-                        <div className="flex items-center gap-fib-8 text-[#C68346] font-bold">
-                            <span className="material-symbols-outlined text-[16px]">cloud_off</span>
+                </div>
+
+                {/* Right: Always-Visible Offline/DLQ Indicator + Role Guard + Icon-First Contextual Actions */}
+                <div className="flex items-center gap-fib-8 shrink-0">
+                    {(!isOnline || offlinePendingCount > 0 || deadLetterCount > 0) && (
+                        <div
+                            data-testid="supply-offline-status"
+                            className="flex items-center gap-fib-8 px-fib-8 border-l-[3px] border-l-[#C68346] font-mono text-microcopy tabular-nums font-bold text-[#7C3F0E] dark:text-[#C68346]"
+                        >
+                            <span className="material-symbols-outlined text-[18px]">
+                                {deadLetterCount > 0 ? 'warning' : 'cloud_off'}
+                            </span>
                             <span>
                                 {t('supply.telemetry.offline_queue')}: {offlinePendingCount}
                             </span>
+                            {deadLetterCount > 0 && (
+                                <span data-testid="supply-dlq-count">
+                                    · {t('supply.telemetry.dead_letter')}: {deadLetterCount}
+                                </span>
+                            )}
                         </div>
                     )}
-                </div>
 
-                {/* Right: Icon-First Contextual Actions */}
-                <div className="flex items-center gap-fib-8 shrink-0">
+                    {!canMutateSupply && (
+                        <span
+                            data-testid="supply-readonly-indicator"
+                            className="font-mono text-microcopy uppercase font-bold text-[#475569] dark:text-[#8A93A6] border-l border-[#E2E8F0] dark:border-[#12151C] pl-fib-8"
+                        >
+                            {t('supply.common.read_only_mode')}
+                        </span>
+                    )}
+
+                    {isMarketplaceBlocked && (
+                        <span
+                            data-testid="supply-sandbox-marketplace-guard"
+                            title={t('supply.common.sandbox_marketplace_blocked')}
+                            className="hidden md:inline-flex items-center gap-fib-8 font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6] border-l border-[#E2E8F0] dark:border-[#12151C] pl-fib-8"
+                        >
+                            <span className="material-symbols-outlined text-[16px]">lock</span>
+                        </span>
+                    )}
+
                     {canScanAndBuy && (
                         <button
                             type="button"
@@ -440,7 +620,7 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                             }}
                             aria-label={t('supply.nav.scanner')}
                             title={t('supply.nav.scanner')}
-                            className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#C68346] hover:opacity-80 transition-colors cursor-pointer rounded-none shadow-none"
+                            className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#7C3F0E] dark:text-[#C68346] hover:opacity-80 transition-colors cursor-pointer rounded-none shadow-none"
                         >
                             <span className="material-symbols-outlined text-[24px]">
                                 add_a_photo
@@ -456,9 +636,9 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                         className={cn(
                             'bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center transition-colors cursor-pointer rounded-none shadow-none',
                             reconcilerOpen
-                                ? 'text-[#00AEEF]'
+                                ? 'text-[#0369A1] dark:text-[#00AEEF]'
                                 : pendingDraft
-                                  ? 'text-[#C68346]'
+                                  ? 'text-[#7C3F0E] dark:text-[#C68346]'
                                   : 'text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
                         )}
                     >
@@ -479,7 +659,7 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                             className={cn(
                                 'bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center transition-colors cursor-pointer rounded-none shadow-none',
                                 simulatorOpen
-                                    ? 'text-[#00AEEF]'
+                                    ? 'text-[#0369A1] dark:text-[#00AEEF]'
                                     : 'text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
                             )}
                         >
@@ -531,6 +711,7 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                             defaultSiteId={selectedSiteId || sites[0]?.siteId}
                             tenantId={resolvedTenantId}
                             loading={loading}
+                            canMutate={canMutateSupply}
                             canAccessSimulator={canAccessSimulator}
                             simulatorOpen={simulatorOpen}
                             onToggleSimulator={setSimulatorOpen}
@@ -547,6 +728,8 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                             activeSite={activeSite}
                             tenantId={resolvedTenantId}
                             loading={loading}
+                            canMutate={canMutateSupply}
+                            canManageCapex={canManageCapex}
                             onMutated={() => void loadAllData()}
                         />
                     )}
@@ -558,6 +741,8 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                             activeSiteId={selectedSiteId || undefined}
                             tenantId={resolvedTenantId}
                             loading={loading}
+                            canMutate={canMutateSupply}
+                            canApproveExpenseReports={canApproveExpenseReports}
                             onMutated={() => void loadAllData()}
                         />
                     )}
@@ -570,6 +755,7 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                             draft={pendingDraft}
                             openRequisitions={openRequisitions}
                             tenantId={resolvedTenantId}
+                            canMutate={canMutateSupply}
                             onClose={() => setReconcilerOpen(false)}
                             onClearDraft={() => setPendingDraft(null)}
                             onCommitted={() => {
@@ -581,23 +767,25 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                 )}
             </div>
 
-            <ReceiptScannerModal
-                open={scannerOpen}
-                tenantId={resolvedTenantId}
-                sites={sites}
-                defaultSiteId={selectedSiteId || sites[0]?.siteId}
-                defaultBucket={scannerBucket}
-                isExecOwner={isExecOwner}
-                isOnline={isOnline}
-                onClose={() => setScannerOpen(false)}
-                onSendToReconciler={(draft) => {
-                    setPendingDraft(draft);
-                    setReconcilerOpen(true);
-                }}
-                onCommitted={() => {
-                    void loadAllData();
-                }}
-            />
+            {canScanAndBuy && (
+                <ReceiptScannerModal
+                    open={scannerOpen}
+                    tenantId={resolvedTenantId}
+                    sites={sites}
+                    defaultSiteId={selectedSiteId || sites[0]?.siteId}
+                    defaultBucket={scannerBucket}
+                    isExecOwner={canRecordDirectPurchase}
+                    isOnline={isOnline}
+                    onClose={() => setScannerOpen(false)}
+                    onSendToReconciler={(draft) => {
+                        setPendingDraft(draft);
+                        setReconcilerOpen(true);
+                    }}
+                    onCommitted={() => {
+                        void loadAllData();
+                    }}
+                />
+            )}
         </div>
     );
 };

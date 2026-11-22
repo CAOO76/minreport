@@ -1,7 +1,8 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useId, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import M3LinearProgress from '../../../components/common/M3LinearProgress';
 import M3CircularProgress from '../../../components/common/M3CircularProgress';
+import CopyButton from '../../../components/common/CopyButton';
 import { cn } from '../../../utils/cn';
 import { supplyApi } from '../services/supplyApi';
 import {
@@ -20,6 +21,7 @@ export interface ReconciliationHitlDrawerProps {
     draft: SupplyPurchaseDraft | null;
     openRequisitions: SupplyRequisition[];
     tenantId?: string;
+    canMutate?: boolean;
     onClose: () => void;
     onClearDraft: () => void;
     onCommitted: (queuedOffline: boolean) => void;
@@ -56,11 +58,13 @@ export const ReconciliationHitlDrawer: React.FC<ReconciliationHitlDrawerProps> =
     draft,
     openRequisitions,
     tenantId,
+    canMutate = true,
     onClose,
     onClearDraft,
     onCommitted,
 }) => {
     const { t } = useTranslation();
+    const uid = useId();
     const [rows, setRows] = useState<EditableAllocationRow[]>([]);
     const [keywordInput, setKeywordInput] = useState('');
     const [committing, setCommitting] = useState(false);
@@ -171,7 +175,7 @@ export const ReconciliationHitlDrawer: React.FC<ReconciliationHitlDrawerProps> =
 
     const handleCommit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!draft || !isKeywordValid || committing) return;
+        if (!canMutate || !draft || !isKeywordValid || committing) return;
 
         const allocations: FulfillmentAllocationDraft[] = rows.map((row) => {
             if (row.selectedReqKey === 'UNSOLICITED') {
@@ -250,13 +254,13 @@ export const ReconciliationHitlDrawer: React.FC<ReconciliationHitlDrawerProps> =
                     </h3>
                 </div>
                 <div className="flex items-center gap-fib-8 shrink-0">
-                    {draft && (
+                    {draft && canMutate && (
                         <button
                             type="button"
                             onClick={onClearDraft}
                             aria-label={t('supply.reconciler.clear_draft')}
                             title={t('supply.reconciler.clear_draft')}
-                            className="bg-transparent border-0 outline-none p-1 min-w-[40px] min-h-[40px] inline-flex items-center justify-center text-[#475569] dark:text-[#8A93A6] hover:text-[#C68346] cursor-pointer rounded-none shadow-none"
+                            className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#475569] dark:text-[#8A93A6] hover:text-[#7C3F0E] dark:hover:text-[#C68346] cursor-pointer rounded-none shadow-none"
                         >
                             <span className="material-symbols-outlined text-[18px]">delete</span>
                         </button>
@@ -266,7 +270,7 @@ export const ReconciliationHitlDrawer: React.FC<ReconciliationHitlDrawerProps> =
                         onClick={onClose}
                         aria-label={t('supply.common.close')}
                         title={t('supply.common.close')}
-                        className="bg-transparent border-0 outline-none p-1 min-w-[40px] min-h-[40px] inline-flex items-center justify-center text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] cursor-pointer rounded-none shadow-none"
+                        className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] cursor-pointer rounded-none shadow-none"
                     >
                         <span className="material-symbols-outlined text-[20px]">close</span>
                     </button>
@@ -286,8 +290,8 @@ export const ReconciliationHitlDrawer: React.FC<ReconciliationHitlDrawerProps> =
                         className={cn(
                             'border-l-[3px] pl-fib-13 py-fib-8 font-mono text-data-dense tabular-nums',
                             feedback.tone === 'copper'
-                                ? 'border-[#C68346] text-[#C68346]'
-                                : 'border-[#00AEEF] text-[#00AEEF]'
+                                ? 'border-[#C68346] text-[#7C3F0E] dark:text-[#C68346]'
+                                : 'border-[#00AEEF] text-[#0369A1] dark:text-[#00AEEF]'
                         )}
                     >
                         {feedback.text}
@@ -307,11 +311,19 @@ export const ReconciliationHitlDrawer: React.FC<ReconciliationHitlDrawerProps> =
                     <>
                         {/* Financial & CAS Summary */}
                         <div className="border-b border-[#E2E8F0] dark:border-[#12151C] pb-fib-13 space-y-fib-8 font-mono tabular-nums">
-                            <div className="flex items-center justify-between text-data-dense text-[#0F172A] dark:text-[#F3F4F6]">
+                            <div className="flex items-center justify-between gap-fib-8 text-data-dense text-[#0F172A] dark:text-[#F3F4F6]">
                                 <span className="font-bold truncate">{draft.supplierName}</span>
-                                <span className="select-text">
-                                    DTE {draft.documentType} #{draft.folio || '—'}
-                                </span>
+                                <div className="flex items-center gap-fib-8 shrink-0">
+                                    <span className="select-text">
+                                        DTE {draft.documentType} #{draft.folio || '—'}
+                                    </span>
+                                    {draft.folio && (
+                                        <CopyButton
+                                            value={draft.folio}
+                                            title={t('supply.common.copy_folio')}
+                                        />
+                                    )}
+                                </div>
                             </div>
                             <div className="grid grid-cols-3 gap-fib-8 text-microcopy text-[#475569] dark:text-[#8A93A6]">
                                 <div>
@@ -332,7 +344,7 @@ export const ReconciliationHitlDrawer: React.FC<ReconciliationHitlDrawerProps> =
                                         className={cn(
                                             'text-data-dense font-bold',
                                             draft.arithmeticMismatch
-                                                ? 'text-[#C68346]'
+                                                ? 'text-[#7C3F0E] dark:text-[#C68346]'
                                                 : 'text-[#0F172A] dark:text-[#F3F4F6]'
                                         )}
                                     >
@@ -341,7 +353,7 @@ export const ReconciliationHitlDrawer: React.FC<ReconciliationHitlDrawerProps> =
                                 </div>
                             </div>
                             {casTelemetry && (
-                                <div className="text-microcopy text-[#00AEEF] select-text">
+                                <div className="text-microcopy text-[#0369A1] dark:text-[#00AEEF] select-text">
                                     {casTelemetry}
                                 </div>
                             )}
@@ -391,9 +403,11 @@ export const ReconciliationHitlDrawer: React.FC<ReconciliationHitlDrawerProps> =
                                             )}
                                         >
                                             <div className="grid grid-cols-12 gap-fib-8 items-start font-mono text-data-dense tabular-nums">
-                                                <div className="col-span-5 space-y-1">
+                                                <div className="col-span-5 space-y-fib-8">
                                                     <select
                                                         value={row.selectedReqKey}
+                                                        disabled={!canMutate}
+                                                        aria-label={`${t('supply.reconciler.select_requisition')} · ${row.rawDescription}`}
                                                         onChange={(e) => {
                                                             const nextKey = e.target.value;
                                                             const nextMatch = reqMap.get(nextKey);
@@ -414,7 +428,7 @@ export const ReconciliationHitlDrawer: React.FC<ReconciliationHitlDrawerProps> =
                                                                 )
                                                             );
                                                         }}
-                                                        className="w-full min-h-[38px] px-fib-8 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] text-microcopy font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
+                                                        className="w-full min-h-[48px] px-fib-8 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] text-microcopy font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none disabled:opacity-50"
                                                     >
                                                         <option value="UNSOLICITED">
                                                             {t('supply.reconciler.allocation_unsolicited')}
@@ -437,7 +451,7 @@ export const ReconciliationHitlDrawer: React.FC<ReconciliationHitlDrawerProps> =
                                                     )}
                                                 </div>
 
-                                                <div className="col-span-4 space-y-1">
+                                                <div className="col-span-4 space-y-fib-8">
                                                     <div className="text-[#0F172A] dark:text-[#F3F4F6] font-sans font-semibold truncate">
                                                         {row.rawDescription}
                                                     </div>
@@ -447,6 +461,7 @@ export const ReconciliationHitlDrawer: React.FC<ReconciliationHitlDrawerProps> =
                                                             step="any"
                                                             min={0}
                                                             max={row.qtyPurchased}
+                                                            disabled={!canMutate}
                                                             value={row.allocatedQty}
                                                             onChange={(e) => {
                                                                 const val = Math.max(
@@ -467,7 +482,7 @@ export const ReconciliationHitlDrawer: React.FC<ReconciliationHitlDrawerProps> =
                                                             autoComplete="off"
                                                             spellCheck={false}
                                                             aria-label={t('supply.reconciler.allocation_qty')}
-                                                            className="w-20 min-h-[36px] px-fib-8 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-microcopy tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
+                                                            className="w-20 min-h-[48px] px-fib-8 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-microcopy tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text disabled:opacity-50"
                                                         />
                                                         <span className="text-microcopy text-[#475569] dark:text-[#8A93A6]">
                                                             / {row.qtyPurchased} {row.unitSi}
@@ -475,15 +490,15 @@ export const ReconciliationHitlDrawer: React.FC<ReconciliationHitlDrawerProps> =
                                                     </div>
                                                 </div>
 
-                                                <div className="col-span-3 text-right space-y-1">
+                                                <div className="col-span-3 text-right space-y-fib-8">
                                                     <div
                                                         className={cn(
                                                             'text-microcopy font-bold uppercase',
                                                             newStatus === 'FULFILLED'
-                                                                ? 'text-[#00AEEF]'
+                                                                ? 'text-[#0369A1] dark:text-[#00AEEF]'
                                                                 : newStatus === 'PARTIAL' ||
                                                                     newStatus === 'CAPEX_ASSET'
-                                                                  ? 'text-[#C68346]'
+                                                                  ? 'text-[#7C3F0E] dark:text-[#C68346]'
                                                                   : 'text-[#0F172A] dark:text-[#F3F4F6]'
                                                         )}
                                                     >
@@ -517,44 +532,52 @@ export const ReconciliationHitlDrawer: React.FC<ReconciliationHitlDrawerProps> =
                         </div>
 
                         {/* Mandatory HITL "ACTUALIZAR" Commit Gate */}
-                        <form
-                            onSubmit={handleCommit}
-                            autoComplete="off"
-                            spellCheck={false}
-                            className="border-t border-[#E2E8F0] dark:border-[#12151C] pt-fib-21 space-y-fib-13"
-                        >
-                            <label className="block font-mono text-microcopy font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6]">
-                                {t('supply.reconciler.keyword_label')}{' '}
-                                <span className="text-[#C68346] select-text">ACTUALIZAR</span>
-                            </label>
-                            <input
-                                type="text"
-                                value={keywordInput}
-                                onChange={(e) => setKeywordInput(e.target.value)}
+                        {canMutate && (
+                            <form
+                                onSubmit={handleCommit}
                                 autoComplete="off"
                                 spellCheck={false}
-                                placeholder="ACTUALIZAR"
-                                className="w-full min-h-[48px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-data-dense tracking-widest uppercase text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
-                            />
-                            <button
-                                type="submit"
-                                disabled={!isKeywordValid || committing}
-                                className={cn(
-                                    'w-full min-h-[48px] px-fib-21 font-mono text-data-dense font-bold uppercase tracking-wider border rounded-none shadow-none flex items-center justify-center gap-fib-8 transition-colors',
-                                    isKeywordValid && !committing
-                                        ? 'bg-[#C68346] border-[#C68346] text-[#FFFFFF] cursor-pointer hover:opacity-90'
-                                        : 'bg-[#E2E8F0] dark:bg-[#12151C] border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] cursor-not-allowed'
-                                )}
+                                className="border-t border-[#E2E8F0] dark:border-[#12151C] pt-fib-21 space-y-fib-13"
                             >
-                                {committing && (
-                                    <M3CircularProgress
-                                        size={16}
-                                        ariaLabel={t('supply.reconciler.commit_button')}
-                                    />
-                                )}
-                                <span>{t('supply.reconciler.commit_button')}</span>
-                            </button>
-                        </form>
+                                <label
+                                    htmlFor={`${uid}-hitl-keyword`}
+                                    className="block font-mono text-microcopy font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6]"
+                                >
+                                    {t('supply.reconciler.keyword_label')}{' '}
+                                    <span className="text-[#7C3F0E] dark:text-[#C68346] select-text">
+                                        ACTUALIZAR
+                                    </span>
+                                </label>
+                                <input
+                                    id={`${uid}-hitl-keyword`}
+                                    type="text"
+                                    value={keywordInput}
+                                    onChange={(e) => setKeywordInput(e.target.value)}
+                                    autoComplete="off"
+                                    spellCheck={false}
+                                    placeholder="ACTUALIZAR"
+                                    className="w-full min-h-[48px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-data-dense tracking-widest uppercase text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
+                                />
+                                <button
+                                    type="submit"
+                                    disabled={!isKeywordValid || committing}
+                                    className={cn(
+                                        'w-full min-h-[48px] px-fib-21 font-mono text-data-dense font-bold uppercase tracking-wider border rounded-none shadow-none flex items-center justify-center gap-fib-8 transition-colors',
+                                        isKeywordValid && !committing
+                                            ? 'bg-[#C68346] border-[#C68346] text-[#000000] cursor-pointer hover:opacity-90'
+                                            : 'bg-[#E2E8F0] dark:bg-[#12151C] border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] cursor-not-allowed'
+                                    )}
+                                >
+                                    {committing && (
+                                        <M3CircularProgress
+                                            size={16}
+                                            ariaLabel={t('supply.reconciler.commit_button')}
+                                        />
+                                    )}
+                                    <span>{t('supply.reconciler.commit_button')}</span>
+                                </button>
+                            </form>
+                        )}
                     </>
                 )}
             </div>

@@ -2,6 +2,7 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useMinReportSession } from '../../context/MinReportSessionContext';
+import type { CoreModuleId } from '../../core/modules/module-registry';
 import { SYSTEM_MODULES } from '../../constants/modules';
 
 const MobileTools: React.FC = () => {
@@ -10,7 +11,7 @@ const MobileTools: React.FC = () => {
     const navigate = useNavigate();
 
     const activeModules = SYSTEM_MODULES.filter((mod) =>
-        hasModuleAccess(mod.id as 'opermaq' | 'stockpile')
+        hasModuleAccess(mod.id as CoreModuleId)
     );
 
     return (

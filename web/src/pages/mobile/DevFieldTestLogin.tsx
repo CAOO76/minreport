@@ -62,7 +62,7 @@ export const DevFieldTestLogin: React.FC = () => {
             isTestPilot: false,
             isEduSandbox: false,
             isMfaVerified: true,
-            activeModules: { opermaq: true, stockpile: true },
+            activeModules: { opermaq: true, stockpile: true, supply: true },
             permissions: {
                 opermaq: {
                     canInspect: true,
@@ -76,6 +76,13 @@ export const DevFieldTestLogin: React.FC = () => {
                     canCalculate: true,
                     canExportReport: true,
                     canTrainVisionAI: true,
+                },
+                supply: {
+                    canView: true,
+                    canMutate: true,
+                    canRecordDirectPurchase: true,
+                    canApproveExpenseReports: true,
+                    canManageCapex: true,
                 },
                 pilot: {
                     canCommentAndRequestChanges: false,

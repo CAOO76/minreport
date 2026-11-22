@@ -24,6 +24,10 @@
       "expand": "Expand traceability",
       "collapse": "Collapse traceability",
       "copy_folio": "Copy folio / key",
+      "copy_code": "Copy code",
+      "all_origins": "All origins",
+      "read_only_mode": "READ ONLY",
+      "sandbox_marketplace_blocked": "MARKETPLACE LOCKED (SANDBOX)",
       "hitl_keyword": "ACTUALIZAR",
       "sync_dead_letter": "Sync error (review required)"
     },
@@ -33,7 +37,7 @@
       "warehouse": "Warehouse stock and asset vault",
       "sii": "SII tax renditions, receipts and invoices",
       "scanner": "Scan receipt / invoice or direct purchase",
-      "reconciler": "HITL reconciliation drawer (38.2%)",
+      "reconciler": "HITL reconciliation drawer",
       "wa_simulator": "WhatsApp Camp simulator (DEV / PILOT)"
     },
     "telemetry": {
@@ -43,6 +47,7 @@
       "rcv_urgent": "RCV ≤ 8D",
       "assets_no_dte": "ASSETS NO DTE 33",
       "offline_queue": "OFFLINE QUEUE",
+      "dead_letter": "DLQ",
       "water_ds594": "WATER DS 594"
     },
     "buckets": {
@@ -170,6 +175,9 @@
       "origin": "Origin",
       "nature": "Nature",
       "urgency": "Urgency",
+      "urgency_standard": "STD",
+      "urgency_high": "HIGH",
+      "urgency_critical": "CRIT",
       "sku_name": "Description / SKU",
       "qty": "Quantity",
       "unit": "SI Unit",
@@ -220,7 +228,7 @@
       "asset_no_invoice_warn": "CAPEX ASSET WITHOUT DTE 33/34 INVOICE (NO VAT CREDIT)",
       "rut_invalid": "INVALID TAX ID (MOD-11)",
       "rut_valid": "VALID TAX ID",
-      "send_to_reconciler": "Reconcile against Backlog (38.2%)",
+      "send_to_reconciler": "Reconcile against Backlog",
       "commit_direct": "Commit Purchase (HITL)",
       "offline_queued_notice": "Queued offline (CAS + SyncQueueEngine)",
       "barcode_unsupported": "PDF417 BarcodeDetector unavailable; use XML/TED or photo",
@@ -244,8 +252,9 @@
       "err_pending_ai_proposals": "Resolve all pending AI suggestions (1-by-1)"
     },
     "reconciler": {
-      "title": "HITL RECONCILIATION (38.2%)",
+      "title": "HITL RECONCILIATION",
       "empty": "Select or scan a document to reconcile against backlog",
+      "select_requisition": "Assign to requisition",
       "col_requested": "REQUESTED / PENDING",
       "col_detected": "DETECTED IN PURCHASE",
       "col_new_status": "NEW STATUS",

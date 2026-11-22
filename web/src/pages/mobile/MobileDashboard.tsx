@@ -5,6 +5,7 @@ import { collection, getCountFromServer, query, where } from 'firebase/firestore
 import { db } from '../../config/firebase';
 import { useAuth } from '../../context/AuthContext';
 import { useMinReportSession } from '../../context/MinReportSessionContext';
+import type { CoreModuleId } from '../../core/modules/module-registry';
 import { SYSTEM_MODULES, SystemModuleInfo } from '../../constants/modules';
 import { syncQueueEngine } from '../../core/offline/SyncQueueEngine';
 import SecureImage from '../../components/common/SecureImage';
@@ -57,7 +58,7 @@ const MobileDashboard: React.FC = () => {
     }, [activeTenantId]);
 
     const activeModules: SystemModuleInfo[] = SYSTEM_MODULES.filter((mod) =>
-        hasModuleAccess(mod.id as 'opermaq' | 'stockpile')
+        hasModuleAccess(mod.id as CoreModuleId)
     );
 
     const roleLabel =
