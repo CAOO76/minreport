@@ -141,13 +141,34 @@ export interface MockOutboundWhatsAppRecord {
     id: string;
     toMasked: string;
     toE164Hash: string;
-    kind: 'text' | 'interactive_buttons' | 'template';
+    kind: 'text' | 'interactive_buttons' | 'template' | 'flow';
     bodyText?: string;
     buttons?: WhatsAppReplyButton[];
     templateName?: string;
     languageCode?: string;
     templateParams?: string[];
+    flowId?: string;
+    flowToken?: string;
+    flowCta?: string;
+    flowMode?: 'published' | 'draft';
+    flowAction?: 'navigate' | 'data_exchange';
     sentAt: string;
+}
+
+export interface WhatsAppSendFlowParams {
+    flowId: string;
+    flowToken: string;
+    flowCta: string;
+    bodyText: string;
+    headerText?: string;
+    footerText?: string;
+    mode?: 'published' | 'draft';
+    flowAction?: 'navigate' | 'data_exchange';
+    flowActionPayload?: {
+        screen?: string;
+        data?: Record<string, unknown>;
+    };
+    phoneNumberId?: string;
 }
 
 type FetchLike = typeof fetch;
@@ -1074,6 +1095,87 @@ export class MetaWhatsAppCloudAdapter {
         };
 
         return this.postToMetaMessages(payload, normalized, options?.phoneNumberId);
+    }
+
+    /**
+     * Envía un mensaje interactivo Meta WhatsApp Flow v3.0 (`type: 'interactive'`, `interactive.type: 'flow'`,
+     * `flow_message_version: '3'`, `mode: 'published' | 'draft'`).
+     * En modo test/dev registra en `mockOutbox`; en producción jamás permite mock (`isMockMode() === false`).
+     */
+    public static async sendFlowMessage(
+        toE164: string,
+        params: WhatsAppSendFlowParams
+    ): Promise<WhatsAppSendResult> {
+        const normalized = normalizeE164Phone(toE164);
+        const cleanFlowId = String(params.flowId || '').trim();
+        const cleanFlowToken = String(params.flowToken || '').trim();
+        const safeCta = String(params.flowCta || 'ABRIR').trim().slice(0, 20) || 'ABRIR';
+        const cleanBody = String(params.bodyText || '').trim().slice(0, 1024);
+        const flowMode: 'published' | 'draft' = params.mode === 'draft' ? 'draft' : 'published';
+        const flowAction: 'navigate' | 'data_exchange' =
+            params.flowAction === 'navigate' ? 'navigate' : 'data_exchange';
+
+        if (!cleanFlowId || !cleanFlowToken) {
+            return {
+                ok: false,
+                mocked: false,
+                statusCode: 400,
+                retryable: false,
+                error: 'sendFlowMessage requiere flowId y flowToken firmados no vacíos.',
+            };
+        }
+
+        if (this.isMockMode() && !this.customFetch) {
+            return this.recordMockOutbound({
+                toMasked: maskPiiForLog(normalized),
+                toE164Hash: crypto.createHash('sha256').update(normalized).digest('hex').slice(0, 16),
+                kind: 'flow',
+                bodyText: cleanBody,
+                flowId: cleanFlowId,
+                flowToken: cleanFlowToken,
+                flowCta: safeCta,
+                flowMode,
+                flowAction,
+            });
+        }
+
+        const parameters: Record<string, unknown> = {
+            flow_message_version: '3',
+            flow_token: cleanFlowToken,
+            flow_id: cleanFlowId,
+            flow_cta: safeCta,
+            mode: flowMode,
+            flow_action: flowAction,
+        };
+        if (params.flowActionPayload) {
+            parameters.flow_action_payload = params.flowActionPayload;
+        }
+
+        const interactive: Record<string, unknown> = {
+            type: 'flow',
+            body: { text: cleanBody || 'MINREPORT · Flujo Operativo' },
+            action: {
+                name: 'flow',
+                parameters,
+            },
+        };
+
+        if (params.headerText) {
+            interactive.header = { type: 'text', text: params.headerText.trim().slice(0, 60) };
+        }
+        if (params.footerText) {
+            interactive.footer = { text: params.footerText.trim().slice(0, 60) };
+        }
+
+        const payload: Record<string, unknown> = {
+            messaging_product: 'whatsapp',
+            recipient_type: 'individual',
+            to: this.formatRecipientDigits(normalized),
+            type: 'interactive',
+            interactive,
+        };
+
+        return this.postToMetaMessages(payload, normalized, params.phoneNumberId);
     }
 
     /**

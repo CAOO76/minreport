@@ -23,7 +23,13 @@ import {
     type InboundWhatsAppMessage,
     MetaWhatsAppCloudAdapter,
 } from '../adapters/MetaWhatsAppCloudAdapter';
+import {
+    WhatsAppFlowCryptoError,
+    WhatsAppFlowsCrypto,
+    resolveFlowsPrivateKeyMaterial,
+} from '../adapters/WhatsAppFlowsCrypto';
 import { CampChannel, type ResolvedWhatsAppMember } from '../channels/camp.channel';
+import { SupplyFlowsHandler } from '../channels/supply.flows';
 import {
     DEFAULT_ROLE_PROFILES,
     matchCanonicalSkuByText as matchDomainCanonicalSkuByText,
@@ -1131,6 +1137,96 @@ router.post(
         } catch (err) {
             console.error('[SUPPLY-WA-WEBHOOK] Error procesando webhook Meta:', err);
             return res.status(500).json({ error: 'Error interno procesando evento WhatsApp.' });
+        }
+    }
+);
+
+/**
+ * 1.0b META WHATSAPP FLOWS v3.0 DATA ENDPOINT (`POST /api/supply/whatsapp/flow-exchange`)
+ * Registrado ANTES de `requireSupplyTenantScope` porque Meta autentica mediante firma HMAC-SHA256
+ * `X-Hub-Signature-256` sobre `req.rawBody` Buffer + cifrado híbrido RSA-2048 OAEP-SHA256 / AES-GCM
+ * y `flow_token` firmado multi-tenant.
+ */
+router.post(
+    '/whatsapp/flow-exchange',
+    express.json({
+        limit: '2mb',
+        verify: (req: any, _res, buf) => {
+            if (!req.rawBody && buf?.length) {
+                req.rawBody = Buffer.from(buf);
+            }
+        },
+    }),
+    async (req: SupplyRequest, res: Response) => {
+        try {
+            const sigHeader =
+                typeof req.headers['x-hub-signature-256'] === 'string'
+                    ? req.headers['x-hub-signature-256']
+                    : undefined;
+
+            if (!Buffer.isBuffer(req.rawBody) || req.rawBody.length === 0) {
+                return res.status(401).json({
+                    error: 'INVALID_WHATSAPP_SIGNATURE',
+                    message:
+                        'Cuerpo crudo (rawBody) requerido para verificación criptográfica HMAC-SHA256.',
+                });
+            }
+
+            const isValidSig = await MetaWhatsAppCloudAdapter.verifyWebhookSignature(
+                req.rawBody,
+                sigHeader
+            );
+
+            if (!isValidSig) {
+                return res.status(401).json({
+                    error: 'INVALID_WHATSAPP_SIGNATURE',
+                    message: 'Firma criptográfica X-Hub-Signature-256 inválida o ausente.',
+                });
+            }
+
+            const { privateKeyPem, passphrase } = await resolveFlowsPrivateKeyMaterial();
+            if (!privateKeyPem) {
+                throw new WhatsAppFlowCryptoError(
+                    'WHATSAPP_FLOWS_PRIVATE_KEY no configurada en Secret Manager (southamerica-west1).',
+                    421,
+                    'FLOW_PRIVATE_KEY_MISSING'
+                );
+            }
+
+            const { decryptedBody, aesKeyBuffer, initialVectorBuffer } =
+                WhatsAppFlowsCrypto.decryptFlowRequest(
+                    req.body || {},
+                    privateKeyPem,
+                    passphrase
+                );
+
+            const responsePayload = await SupplyFlowsHandler.handle(decryptedBody, {
+                ipAddress: extractClientIp(req),
+            });
+
+            const encryptedResponseBase64 = WhatsAppFlowsCrypto.encryptFlowResponse(
+                responsePayload as unknown as Record<string, unknown>,
+                aesKeyBuffer,
+                initialVectorBuffer
+            );
+
+            res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+            return res.status(200).send(encryptedResponseBase64);
+        } catch (err) {
+            if (err instanceof WhatsAppFlowCryptoError) {
+                return res.status(err.statusCode || 421).json({
+                    error: err.code,
+                    message: err.message,
+                });
+            }
+            console.error(
+                '[SUPPLY-WA-FLOW-EXCHANGE] Error procesando Flow cifrado Meta v3.0:',
+                err instanceof Error ? err.message : 'UnknownError'
+            );
+            return res.status(500).json({
+                error: 'FLOW_EXCHANGE_INTERNAL_ERROR',
+                message: 'Error interno procesando WhatsApp Flow v3.0.',
+            });
         }
     }
 );
