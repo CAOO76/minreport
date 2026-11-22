@@ -288,4 +288,96 @@ export function registerM2mSupplyAdapterRoutes(app: express.Application): void {
             }
         }
     );
+
+    /**
+     * GET /api/m2m/supply/rfq-express-summary
+     * Resumen anónimo por distrito macro compatible con el canal cero-fricción (k >= 5 B2B,
+     * opt-in Ley N° 21.719). Jamás expone tenantId, siteId, RUT ni PII.
+     */
+    app.get(
+        '/api/m2m/supply/rfq-express-summary',
+        x402Gatekeeper({
+            priceMicroUSD: 15000,
+            resourceId: 'supply-rfq-express-summary',
+        }),
+        async (req: X402AuthenticatedRequest, res) => {
+            try {
+                const parsed = M2mSupplyDemandSignalsQuerySchema.safeParse(req.query || {});
+                if (!parsed.success) {
+                    return res.status(400).json({
+                        error: 'Parámetros inválidos para resumen anónimo RFQ cero-fricción.',
+                        details: parsed.error.flatten(),
+                    });
+                }
+
+                const signals = (
+                    await SupplyRepository.listAnonymousDemandSignals({
+                        districtCode: parsed.data.districtCode,
+                        categoryCode: parsed.data.categoryCode,
+                    })
+                ).filter(
+                    (sig) =>
+                        Number(sig.participatingEntitiesCount ?? 0) >= 5 &&
+                        sig.optInVerified === true
+                );
+
+                const byDistrict = new Map<
+                    string,
+                    {
+                        districtCode: string;
+                        activeSignalCount: number;
+                        minParticipatingEntities: number;
+                        categories: Set<string>;
+                    }
+                >();
+
+                for (const sig of signals) {
+                    const district = String(sig.districtCode || 'UNSPECIFIED').toUpperCase();
+                    const prev = byDistrict.get(district);
+                    const count = Number(sig.participatingEntitiesCount ?? 0);
+                    if (!prev) {
+                        byDistrict.set(district, {
+                            districtCode: district,
+                            activeSignalCount: 1,
+                            minParticipatingEntities: count,
+                            categories: new Set([sig.categoryCode]),
+                        });
+                    } else {
+                        prev.activeSignalCount += 1;
+                        prev.minParticipatingEntities = Math.min(prev.minParticipatingEntities, count);
+                        prev.categories.add(sig.categoryCode);
+                    }
+                }
+
+                const districtSummaries = Array.from(byDistrict.values())
+                    .map((entry) => ({
+                        districtCode: entry.districtCode,
+                        activeSignalCount: entry.activeSignalCount,
+                        minParticipatingEntities: entry.minParticipatingEntities,
+                        categories: Array.from(entry.categories).sort(),
+                    }))
+                    .sort((a, b) => a.districtCode.localeCompare(b.districtCode));
+
+                return res.status(200).json({
+                    success: true,
+                    protocol: 'x402 Foundation v1.0',
+                    region: 'southamerica-west1',
+                    privacyCompliance: 'LEY_21719_K_ANONYMITY_GE_5',
+                    settlementMode: req.x402Context?.mode || 'VERIFIED',
+                    zeroFrictionChannel: {
+                        enabled: true,
+                        singleUseSignedToken: true,
+                        inspectRouteTemplate: '/api/supply/rfq-express/:token',
+                        submitRouteTemplate: '/api/supply/rfq-express/:token/submit',
+                    },
+                    timestamp: new Date().toISOString(),
+                    districtCount: districtSummaries.length,
+                    districts: districtSummaries,
+                });
+            } catch (err) {
+                console.error('[M2M-SUPPLY-RFQ-SUMMARY] Error generando resumen anónimo RFQ:', err);
+                return res.status(500).json({ error: 'Error consultando resumen anónimo RFQ.' });
+            }
+        }
+    );
 }

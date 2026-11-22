@@ -10,6 +10,7 @@ import { CasStorageService } from '../../../core/media/CasStorageService';
 import { isDecodedDevRootToken, logThrottledAuthFailure } from '../../../middleware/auth';
 import {
     aiRateLimiter,
+    authRateLimiter,
     extractClientIp,
     mutationRateLimiter,
 } from '../../../middleware/rateLimiter';
@@ -68,6 +69,12 @@ import {
     SupplyTaskQueueService,
     verifySupplyWorkerOidcAuth,
 } from './SupplyTaskQueueService';
+import {
+    CreateExpressRfqInviteSchema,
+    ExpressRfqError,
+    type ExpressRfqInviteStatus,
+    SupplierZeroFrictionRfqService,
+} from './SupplierZeroFrictionRfqService';
 import {
     CanonicalSupplySkuSchema,
     EvidenceCasRefSchema,
@@ -1344,6 +1351,78 @@ router.post(
                 err instanceof Error ? err.message : 'UnknownError'
             );
             return res.status(500).json({ error: 'Error ejecutando flush diferido de sesión WhatsApp.' });
+        }
+    }
+);
+
+/**
+ * 1.2 ONBOARDING CERO-FRICCIÓN PROVEEDORES LOCALES (`/rfq-express/:token`)
+ * Registrado ANTES de `requireSupplyTenantScope` para permitir cotización exprés de un solo uso
+ * sin portal ni licencia previa mediante token HMAC-SHA256 firmado + rate limiting.
+ */
+router.get(
+    '/rfq-express/:token',
+    (req: Request, res: Response, next: NextFunction) => {
+        if (req.params.token === 'invites') {
+            return next('route');
+        }
+        return authRateLimiter(req, res, next);
+    },
+    async (req: Request, res: Response) => {
+        try {
+            const token = String(req.params.token || '').trim();
+            const invite = await SupplierZeroFrictionRfqService.inspectExpressRfqInvite(token);
+            return res.status(200).json({
+                success: true,
+                invite,
+            });
+        } catch (err: any) {
+            if (err instanceof ExpressRfqError) {
+                return res.status(err.statusCode).json({
+                    error: err.message,
+                    code: err.code,
+                });
+            }
+            console.error('[SUPPLY-RFQ-EXPRESS] Error inspeccionando invitación RFQ:', err);
+            return res.status(500).json({ error: 'Error consultando invitación RFQ.' });
+        }
+    }
+);
+
+router.post(
+    '/rfq-express/:token/submit',
+    mutationRateLimiter,
+    async (req: Request, res: Response) => {
+        try {
+            const token = String(req.params.token || '').trim();
+            const result = await SupplierZeroFrictionRfqService.submitExpressRfqQuote(
+                token,
+                req.body || {},
+                { ipAddress: extractClientIp(req) }
+            );
+            return res.status(201).json({
+                success: true,
+                quote: {
+                    quoteId: result.quote.quoteId,
+                    inviteId: result.quote.inviteId,
+                    districtCode: result.quote.districtCode,
+                    currencyCode: result.quote.currencyCode,
+                    totalEstimatedNet: result.quote.totalEstimatedNet,
+                    leadTimeDays: result.quote.leadTimeDays,
+                    validUntilIso: result.quote.validUntilIso,
+                    status: result.quote.status,
+                    submittedAtIso: result.quote.submittedAtIso,
+                },
+            });
+        } catch (err: any) {
+            if (err instanceof ExpressRfqError) {
+                return res.status(err.statusCode).json({
+                    error: err.message,
+                    code: err.code,
+                });
+            }
+            console.error('[SUPPLY-RFQ-EXPRESS] Error enviando cotización RFQ:', err);
+            return res.status(500).json({ error: 'Error procesando cotización RFQ.' });
         }
     }
 );
@@ -2987,6 +3066,111 @@ router.post(
             }
             console.error('[SUPPLY] Error probando webhook ERP:', err);
             return res.status(500).json({ error: 'Error enviando evento de prueba ERP.' });
+        }
+    }
+);
+
+// ---------------------------------------------------------------------------
+// Zero-Friction Supplier RFQ Invites (`/rfq-express/invites` — OWNER_EXEC / SITE_ADMIN / BUYER)
+// ---------------------------------------------------------------------------
+
+function canManageExpressRfqInvites(ctx: SupplySessionContext): boolean {
+    if (ctx.isSystemPrivileged) return true;
+    if (!ctx.canMutate || isReadOnlyB2bRole(ctx.b2bRole)) return false;
+    return (
+        ctx.supplyProfile.role === 'OWNER_EXEC' ||
+        ctx.supplyProfile.role === 'SITE_ADMIN' ||
+        ctx.supplyProfile.role === 'BUYER'
+    );
+}
+
+router.get('/rfq-express/invites', async (req: SupplyRequest, res: Response) => {
+    try {
+        const ctx = req.supplyContext!;
+        if (!canManageExpressRfqInvites(ctx)) {
+            return res.status(403).json({
+                error: 'RFQ_INVITE_ROLE_REQUIRED: Solo OWNER_EXEC, SITE_ADMIN o BUYER puede gestionar invitaciones RFQ.',
+                code: 'RFQ_INVITE_ROLE_REQUIRED',
+            });
+        }
+        const siteId = typeof req.query.siteId === 'string' ? req.query.siteId : undefined;
+        const rawStatus =
+            typeof req.query.status === 'string' ? req.query.status.trim().toUpperCase() : undefined;
+        const status: ExpressRfqInviteStatus | undefined =
+            rawStatus === 'OPEN' ||
+            rawStatus === 'SUBMITTED' ||
+            rawStatus === 'EXPIRED' ||
+            rawStatus === 'REVOKED'
+                ? rawStatus
+                : undefined;
+        const rawLimit =
+            typeof req.query.limit === 'string' && /^\d+$/.test(req.query.limit)
+                ? Number(req.query.limit)
+                : undefined;
+
+        const invites = await SupplierZeroFrictionRfqService.listExpressRfqInvites(ctx.tenantId, {
+            siteId,
+            status,
+            limit: rawLimit,
+        });
+        return res.status(200).json({
+            success: true,
+            count: invites.length,
+            invites,
+        });
+    } catch (err) {
+        console.error('[SUPPLY] Error listando invitaciones RFQ exprés:', err);
+        return res.status(500).json({ error: 'Error consultando invitaciones RFQ.' });
+    }
+});
+
+router.post(
+    '/rfq-express/invites',
+    mutationRateLimiter,
+    async (req: SupplyRequest, res: Response) => {
+        try {
+            const ctx = req.supplyContext!;
+            if (!canManageExpressRfqInvites(ctx)) {
+                return res.status(403).json({
+                    error: 'RFQ_INVITE_ROLE_REQUIRED: Solo OWNER_EXEC, SITE_ADMIN o BUYER puede crear invitaciones RFQ.',
+                    code: 'RFQ_INVITE_ROLE_REQUIRED',
+                });
+            }
+            const parsed = CreateExpressRfqInviteSchema.safeParse(req.body || {});
+            if (!parsed.success) {
+                return res.status(400).json({
+                    error: 'Invitación RFQ inválida.',
+                    details: parsed.error.flatten(),
+                });
+            }
+
+            const created = await SupplierZeroFrictionRfqService.createExpressRfqInvite(
+                {
+                    tenantId: ctx.tenantId,
+                    input: parsed.data,
+                },
+                {
+                    actorUid: ctx.actorUid,
+                    actorEmail: ctx.actorEmail,
+                    ipAddress: extractClientIp(req),
+                }
+            );
+
+            return res.status(201).json({
+                success: true,
+                invite: created.invite,
+                expressPath: created.expressPath,
+                dispatchedChannels: created.dispatchedChannels,
+            });
+        } catch (err: any) {
+            if (err instanceof ExpressRfqError) {
+                return res.status(err.statusCode).json({
+                    error: err.message,
+                    code: err.code,
+                });
+            }
+            console.error('[SUPPLY] Error creando invitación RFQ exprés:', err);
+            return res.status(500).json({ error: 'Error creando invitación RFQ.' });
         }
     }
 );
