@@ -1,11 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Build productivo exclusivo 1º DEV (GEOLAPP) para https://minreport.com y Android fieldtestRelease.
+# Build productivo exclusivo 1º DEV (ACOPIOS + ABASTECIMIENTO) para https://minreport.com y Android fieldtestRelease.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WEB_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ROOT_DIR="$(cd "${WEB_DIR}/.." && pwd)"
 ROOT_ENV_FILE="${ROOT_DIR}/.env"
+
+BUILD_ANDROID=0
+INCLUDE_SUPPLY=0
+for arg in "$@"; do
+    case "$arg" in
+        --android)
+            BUILD_ANDROID=1
+            ;;
+        --with-supply)
+            INCLUDE_SUPPLY=1
+            ;;
+    esac
+done
 
 read_env_key_from_file() {
     local key="$1"
@@ -38,7 +51,11 @@ fi
 
 export NODE_ENV=production
 export VITE_RELEASE_STAGE="${VITE_RELEASE_STAGE:-DEV_PRIVATE}"
-export VITE_DEV_MODULES="${VITE_DEV_MODULES:-geolapp}"
+if [ "${INCLUDE_SUPPLY}" -eq 1 ]; then
+    export VITE_DEV_MODULES="${VITE_DEV_MODULES:-stockpile,supply}"
+else
+    export VITE_DEV_MODULES="${VITE_DEV_MODULES:-geolapp}"
+fi
 export VITE_USE_FIREBASE_EMULATOR="false"
 export VITE_API_URL="${VITE_API_URL:-https://minreport.com}"
 export VITE_CLOUD_API_URL="${VITE_CLOUD_API_URL:-https://minreport.com}"
@@ -49,6 +66,9 @@ export VITE_FIREBASE_STORAGE_BUCKET="${VITE_FIREBASE_STORAGE_BUCKET:-minreport-8
 export VITE_FIREBASE_MESSAGING_SENDER_ID="${VITE_FIREBASE_MESSAGING_SENDER_ID:-493995072778}"
 export VITE_FIREBASE_APP_ID="${VITE_FIREBASE_APP_ID:-1:493995072778:web:41a2917f1e81491a7f6ef3}"
 unset CAP_SERVER_URL
+
+echo "[BUILD-PROD-DEV] Ejecutando auditorías pre-vuelo (Ley 21.719 + HMI Icons)..."
+(cd "${ROOT_DIR}" && npm run audit:privacy && npm run audit:hmi-icons)
 
 cd "${WEB_DIR}"
 
@@ -68,7 +88,7 @@ fi
 
 echo "[BUILD-PROD-DEV] OK: Bundle web compilado limpio (https://minreport.com, cero fake-api-key)."
 
-if [ "${1:-}" = "--android" ]; then
+if [ "${BUILD_ANDROID}" -eq 1 ]; then
     export ANDROID_HOME="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
     if [ -d "/usr/local/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home" ]; then
         export JAVA_HOME="/usr/local/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home"

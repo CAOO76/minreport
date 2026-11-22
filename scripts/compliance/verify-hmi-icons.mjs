@@ -291,6 +291,128 @@ if (hubSrc && (!hubSrc.includes('measuring_tape') || !hubSrc.includes('compass_c
     violations.push('[HUB MÓVIL] MobileAcopiosHub.tsx debe exponer measuring_tape y compass_calibration.');
 }
 
+// 6. Cero regresiones de marca/tokens, WCAG 2.2 AAA Sol Atacama & Paridad i18n en web/src y web/src/modules/supply/**
+function walkCodeFiles(dirPath, exts = ['.tsx', '.ts', '.css']) {
+    const results = [];
+    if (!fs.existsSync(dirPath)) return results;
+    for (const entry of fs.readdirSync(dirPath, { withFileTypes: true })) {
+        if (entry.name === 'node_modules' || entry.name === 'dist' || entry.name.startsWith('.')) {
+            continue;
+        }
+        const full = path.join(dirPath, entry.name);
+        if (entry.isDirectory()) {
+            results.push(...walkCodeFiles(full, exts));
+        } else if (exts.includes(path.extname(entry.name))) {
+            results.push(full);
+        }
+    }
+    return results;
+}
+
+// 6a. Checks globales seguros en web/src (cero #FFCD00, AdminSwitch, material-symbols-rounded)
+for (const absFile of webTsxFiles) {
+    const relFile = path.relative(repoRoot, absFile);
+    if (relFile.includes(`${path.sep}__tests__${path.sep}`)) continue;
+    const content = fs.readFileSync(absFile, 'utf8');
+    if (/#FFCD00/i.test(content)) {
+        violations.push(`[MARCA PROHIBIDA] ${relFile} contiene color externo prohibido #FFCD00.`);
+    }
+    if (/\bAdminSwitch\b/.test(content)) {
+        violations.push(`[COMPONENTE PROHIBIDO] ${relFile} usa AdminSwitch (debe usar M3Switch).`);
+    }
+    if (/material-symbols-rounded/.test(content)) {
+        violations.push(`[ICONOGRAFÍA PROHIBIDA] ${relFile} usa material-symbols-rounded (solo material-symbols-outlined).`);
+    }
+}
+
+// 6b. Checks estrictos en web/src/modules/supply/** (WCAG 2.2 AAA, geometría 0px, fuentes, progreso M3)
+const supplyCodeFiles = walkCodeFiles(path.join(repoRoot, 'web', 'src', 'modules', 'supply'));
+const forbiddenSupplyFontRegex =
+    /\bGoogle\s+Sans\b|\bRoboto\b|font-(?:sans|family)[^;'"\n]*\bInter\b|['"]Inter['"]/;
+const forbiddenCopperWhiteRegex =
+    /bg-\[#C68346\][^'"`\n]*text-(?:white|\[#(?:FFF|FFFFFF)\])|text-(?:white|\[#(?:FFF|FFFFFF)\])[^'"`\n]*bg-\[#C68346\]/i;
+const forbiddenRoundedRegex = /\brounded-(?:sm|md|lg|xl|2xl|3xl|full)\b/;
+
+for (const absFile of supplyCodeFiles) {
+    const relFile = path.relative(repoRoot, absFile);
+    if (relFile.includes(`${path.sep}__tests__${path.sep}`)) continue;
+    const content = fs.readFileSync(absFile, 'utf8');
+
+    if (/#FFCD00/i.test(content)) {
+        violations.push(`[SUPPLY TOKEN] ${relFile} contiene #FFCD00 prohibido.`);
+    }
+    if (forbiddenSupplyFontRegex.test(content)) {
+        violations.push(`[SUPPLY TIPOGRAFÍA] ${relFile} referencia fuente no autorizada (Google Sans/Roboto/Inter).`);
+    }
+    if (/\bAdminSwitch\b/.test(content)) {
+        violations.push(`[SUPPLY SWITCH] ${relFile} usa AdminSwitch prohibido.`);
+    }
+    if (/material-symbols-rounded/.test(content)) {
+        violations.push(`[SUPPLY ICONOS] ${relFile} usa material-symbols-rounded prohibido.`);
+    }
+    if (/progress_activity/.test(content) && /animate-spin/.test(content)) {
+        violations.push(`[SUPPLY PROGRESO] ${relFile} usa progress_activity + animate-spin (debe usar M3LinearProgress / M3CircularProgress).`);
+    }
+    if (forbiddenCopperWhiteRegex.test(content)) {
+        violations.push(`[SUPPLY WCAG AAA] ${relFile} combina bg-[#C68346] con texto blanco (debe usar text-[#000000]).`);
+    }
+    if (forbiddenRoundedRegex.test(content)) {
+        violations.push(`[SUPPLY GEOMETRÍA] ${relFile} usa bordes redondeados no autorizados (geometría estricta rounded-none).`);
+    }
+    if (/\(38\.2%\)/.test(content)) {
+        violations.push(`[SUPPLY CERO PROSA] ${relFile} expone texto decorativo literal '(38.2%)'.`);
+    }
+}
+
+// 6c. Paridad exacta 1:1 de llaves i18n en web/src/modules/supply/locales/{es,en,pt}.json y cero PILHAS
+function flattenJsonKeys(obj, prefix = '') {
+    const keys = [];
+    for (const [k, v] of Object.entries(obj || {})) {
+        const next = prefix ? `${prefix}.${k}` : k;
+        if (v && typeof v === 'object' && !Array.isArray(v)) {
+            keys.push(...flattenJsonKeys(v, next));
+        } else {
+            keys.push(next);
+        }
+    }
+    return keys.sort();
+}
+
+const supplyLocalePaths = {
+    es: 'web/src/modules/supply/locales/es.json',
+    en: 'web/src/modules/supply/locales/en.json',
+    pt: 'web/src/modules/supply/locales/pt.json',
+};
+const supplyLocaleKeys = {};
+for (const [lang, relPath] of Object.entries(supplyLocalePaths)) {
+    const raw = readText(relPath);
+    if (!raw) continue;
+    if (/\bPILHAS\b/i.test(raw)) {
+        violations.push(`[SUPPLY MARCA SOBERANA] ${relPath} contiene cadena legada prohibida 'PILHAS' (usar 'ACOPIOS').`);
+    }
+    if (/\(38\.2%\)/.test(raw)) {
+        violations.push(`[SUPPLY CERO PROSA] ${relPath} contiene texto decorativo literal '(38.2%)'.`);
+    }
+    try {
+        supplyLocaleKeys[lang] = flattenJsonKeys(JSON.parse(raw));
+    } catch (err) {
+        violations.push(`[SUPPLY I18N JSON] ${relPath} inválido: ${err instanceof Error ? err.message : String(err)}`);
+    }
+}
+if (supplyLocaleKeys.es && supplyLocaleKeys.en && supplyLocaleKeys.pt) {
+    const esSet = new Set(supplyLocaleKeys.es);
+    for (const lang of ['en', 'pt']) {
+        const targetSet = new Set(supplyLocaleKeys[lang]);
+        const missing = supplyLocaleKeys.es.filter((k) => !targetSet.has(k));
+        const extra = supplyLocaleKeys[lang].filter((k) => !esSet.has(k));
+        if (missing.length > 0 || extra.length > 0) {
+            violations.push(
+                `[SUPPLY I18N PARIDAD] ${lang}.json desalineado vs es.json (faltantes=${missing.length}, extras=${extra.length}).`
+            );
+        }
+    }
+}
+
 if (violations.length > 0) {
     console.error(`\nFAIL verify-hmi-icons (${violations.length} hallazgos):`);
     for (const v of violations) {
@@ -300,5 +422,5 @@ if (violations.length > 0) {
 }
 
 console.log(
-    `OK verify-hmi-icons: Anti-FOUT, glifos WOFF (${woffGlyphs ? woffGlyphs.size : 0} verificados), Escritorio Solo Lectura e Icon-First conformes.`
+    `OK verify-hmi-icons: Anti-FOUT, glifos WOFF (${woffGlyphs ? woffGlyphs.size : 0} verificados), Escritorio Solo Lectura, Supply WCAG AAA e i18n (${supplyLocaleKeys.es ? supplyLocaleKeys.es.length : 0} llaves es/en/pt) conformes.`
 );

@@ -28,19 +28,37 @@ jobs:
       - name: Install Backend Dependencies
         run: npm ci
 
-      - name: Verify & Build Backend Core (TypeScript Strict & Ley 21.719)
+      - name: Verify & Build Backend Core (TypeScript Strict, Ley 21.719 & 13 Supply Suites)
+        env:
+          NODE_ENV: test
+          MOCK_EMAILS: 'true'
+          MOCK_WHATSAPP: 'true'
         run: |
           npm run audit:privacy
           npx tsc --noEmit
+          npx ts-node src/modules/supply/__tests__/supply-domain.spec.ts
+          npx ts-node src/modules/supply/__tests__/supply-api-whatsapp.spec.ts
+          npx ts-node src/modules/supply/__tests__/supply-security-e01.spec.ts
+          npx ts-node src/modules/supply/__tests__/supply-security-e02.spec.ts
+          npx ts-node src/modules/supply/__tests__/supply-privacy-e03.spec.ts
+          npx ts-node src/modules/supply/__tests__/supply-contracts-e04.spec.ts
+          npx ts-node src/modules/supply/__tests__/supply-whatsapp-cloudrun-e06.spec.ts
+          npx ts-node src/modules/supply/__tests__/supply-whatsapp-v24-e07.spec.ts
+          npx ts-node src/modules/supply/__tests__/supply-consoles-e08.spec.ts
+          npx ts-node src/modules/supply/__tests__/supply-whatsapp-flows-e09.spec.ts
+          npx ts-node src/modules/supply/__tests__/supply-accounting-erp-e10.spec.ts
+          npx ts-node src/modules/supply/__tests__/supply-rfq-scheduler-e11.spec.ts
+          npx ts-node src/modules/supply/__tests__/supply-emulator-security.spec.ts
           npm run build
 
-      - name: Build Cloud Functions Gen 2 (southamerica-west1)
+      - name: Typecheck & Build Cloud Functions Gen 2 (southamerica-west1)
         run: |
           cd services/functions
           npm ci
+          npx tsc --noEmit
           npm run build
 
-      - name: Install, Typecheck, Test & Build Unified Web PWA
+      - name: Install, Audit HMI Icons, Typecheck, Test & Build Unified Web PWA
         env:
           VITE_FIREBASE_AUTH_DOMAIN: 'minreport-8f2a8.firebaseapp.com'
           VITE_FIREBASE_PROJECT_ID: 'minreport-8f2a8'
@@ -49,6 +67,9 @@ jobs:
         run: |
           cd web
           npm ci
+          cd ..
+          npm run audit:hmi-icons
+          cd web
           npx tsc --noEmit
           npx vitest run
           npm run build
