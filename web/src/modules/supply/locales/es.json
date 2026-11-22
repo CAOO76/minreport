@@ -24,7 +24,8 @@
       "expand": "Expandir trazabilidad",
       "collapse": "Contraer trazabilidad",
       "copy_folio": "Copiar folio / llave",
-      "hitl_keyword": "ACTUALIZAR"
+      "hitl_keyword": "ACTUALIZAR",
+      "sync_dead_letter": "Error de sincronización (revisión requerida)"
     },
     "nav": {
       "procurement": "Listas consolidadas y ruta de compra",

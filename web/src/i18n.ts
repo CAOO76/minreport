@@ -5,6 +5,9 @@ import { coreShellLocales } from './locales/coreShellLocales';
 import { coreAccessB2bLocales } from './locales/coreAccessB2bLocales';
 import { coreAdminLocales } from './locales/coreAdminLocales';
 import { coreDevPilotLocales } from './locales/coreDevPilotLocales';
+import supplyEs from './modules/supply/locales/es.json';
+import supplyEn from './modules/supply/locales/en.json';
+import supplyPt from './modules/supply/locales/pt.json';
 
 export type SupportedLang = 'es' | 'en' | 'pt';
 
@@ -107,6 +110,7 @@ i18n
                     ...coreAccessB2bLocales.es,
                     ...coreAdminLocales.es,
                     ...coreDevPilotLocales.es,
+                    ...supplyEs,
                     auth: {
                         title: 'Crear Cuenta',
                         subtitle: 'Registro corporativo MINREPORT',
@@ -214,6 +218,7 @@ i18n
                     ...coreAccessB2bLocales.en,
                     ...coreAdminLocales.en,
                     ...coreDevPilotLocales.en,
+                    ...supplyEn,
                     auth: {
                         title: 'Create Account',
                         subtitle: 'MINREPORT Corporate Registration',
@@ -321,6 +326,7 @@ i18n
                     ...coreAccessB2bLocales.pt,
                     ...coreAdminLocales.pt,
                     ...coreDevPilotLocales.pt,
+                    ...supplyPt,
                     auth: {
                         title: 'Criar Conta',
                         subtitle: 'Registro corporativo MINREPORT',

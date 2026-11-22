@@ -1,5 +1,6 @@
 import { coreAuthFetch } from '../../../core/network/coreAuthFetch';
 import { mediaDigestorClient } from '../../../core/media/MediaDigestorClient';
+import { offlineStorage } from '../../../core/offline/OfflineStorage';
 import { syncQueueEngine } from '../../../core/offline/SyncQueueEngine';
 import {
     computeSavingsPct,
@@ -41,6 +42,12 @@ import {
 } from '../types';
 
 const SUPPLY_API_BASE = '/api/supply';
+
+function isClientOffline(): boolean {
+    if (!syncQueueEngine.isOnlineNow()) return true;
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return true;
+    return false;
+}
 
 function buildHeaders(tenantId?: string, jsonBody: boolean = false): Record<string, string> {
     const headers: Record<string, string> = {};
@@ -820,7 +827,7 @@ export const supplyApi = {
             })),
         };
 
-        if (!syncQueueEngine.isOnlineNow()) {
+        if (isClientOffline()) {
             await syncQueueEngine.enqueueSupplyApiMutation(
                 `${SUPPLY_API_BASE}/requisitions`,
                 { ...payload, tenantId },
@@ -1009,6 +1016,21 @@ export const supplyApi = {
                 }
             }
 
+            await offlineStorage
+                .putCasBlob({
+                    sha256,
+                    blob: xmlBlob,
+                    mimeType: 'application/xml',
+                    profile: 'XML_DTE_DOCUMENT',
+                    scope: 'TENANT_PRIVATE',
+                    tenantId: options.tenantId,
+                    filename: resolvedFilename,
+                    originalBytes,
+                    optimizedBytes,
+                    updatedAt: Date.now(),
+                })
+                .catch(() => {});
+
             return {
                 sha256,
                 downloadUrl: `offline-cas://${sha256}.xml`,
@@ -1158,11 +1180,12 @@ export const supplyApi = {
             clientOriginalBytes: req.draft.evidenceCasRef?.originalBytes,
         };
 
-        if (!syncQueueEngine.isOnlineNow()) {
+        if (isClientOffline()) {
             // Stage 1: Ensure offline CAS blob uploads first on reconnect
             if (req.draft.evidenceCasRef?.sha256) {
                 await syncQueueEngine.enqueueTask('CAS_MEDIA_UPLOAD', {
                     sha256: req.draft.evidenceCasRef.sha256,
+                    module: 'supply',
                     scope: 'TENANT_PRIVATE',
                     profile: req.draft.evidenceCasRef.mimeType.includes('xml')
                         ? 'XML_DTE_DOCUMENT'
@@ -1217,7 +1240,7 @@ export const supplyApi = {
             })),
             confirmationKeyword,
         };
-        if (!syncQueueEngine.isOnlineNow()) {
+        if (isClientOffline()) {
             await syncQueueEngine.enqueueSupplyApiMutation(
                 endpoint,
                 { ...payload, tenantId },
@@ -1283,19 +1306,28 @@ export const supplyApi = {
         confirmationKeyword: 'ACTUALIZAR',
         tenantId?: string,
         options: { opermaqAssetId?: string; createOpermaqFleetUnit?: boolean } = {}
-    ): Promise<{ opermaqAssetId?: string }> {
-        const res = await coreAuthFetch(
-            `${SUPPLY_API_BASE}/assets/${encodeURIComponent(assetId)}/link-opermaq`,
-            {
-                method: 'POST',
-                headers: buildHeaders(tenantId, true),
-                body: JSON.stringify({
-                    opermaqAssetId: options.opermaqAssetId,
-                    createOpermaqFleetUnit: options.createOpermaqFleetUnit ?? !options.opermaqAssetId,
-                    confirmationKeyword,
-                }),
-            }
-        );
+    ): Promise<{ opermaqAssetId?: string; queuedOffline?: boolean }> {
+        const endpoint = `${SUPPLY_API_BASE}/assets/${encodeURIComponent(assetId)}/link-opermaq`;
+        const payload = {
+            opermaqAssetId: options.opermaqAssetId,
+            createOpermaqFleetUnit: options.createOpermaqFleetUnit ?? !options.opermaqAssetId,
+            confirmationKeyword,
+        };
+        if (isClientOffline()) {
+            await syncQueueEngine.enqueueSupplyApiMutation(
+                endpoint,
+                { ...payload, tenantId },
+                'supply:opermaq-link-synced',
+                tenantId,
+                'POST'
+            );
+            return { queuedOffline: true };
+        }
+        const res = await coreAuthFetch(endpoint, {
+            method: 'POST',
+            headers: buildHeaders(tenantId, true),
+            body: JSON.stringify(payload),
+        });
         const json = await parseJsonResponse<Record<string, unknown>>(res);
         return {
             opermaqAssetId:
@@ -1364,7 +1396,7 @@ export const supplyApi = {
     async createSiiExpenseReport(
         input: CreateExpenseReportInput,
         tenantId?: string
-    ): Promise<SiiExpenseReport> {
+    ): Promise<SiiExpenseReport & { queuedOffline?: boolean }> {
         const body = {
             siteId: input.siteId,
             title: input.title,
@@ -1376,6 +1408,34 @@ export const supplyApi = {
             siiDocumentIds: input.siiDocumentIds || [],
             confirmationKeyword: input.confirmationKeyword,
         };
+        if (isClientOffline()) {
+            await syncQueueEngine.enqueueSupplyApiMutation(
+                `${SUPPLY_API_BASE}/sii/expense-reports`,
+                { ...body, tenantId },
+                'supply:sii-expense-report-synced',
+                tenantId,
+                'POST'
+            );
+            return {
+                ...normalizeSiiExpenseReport({
+                    reportId: `offline_rep_${Date.now()}`,
+                    tenantId: tenantId || '',
+                    siteId: body.siteId,
+                    code: body.title,
+                    title: body.title,
+                    costCenter: body.costCenter,
+                    holderName: body.holderName,
+                    periodLabel: body.periodLabel,
+                    paymentMethod: body.paymentMethod,
+                    fundAdvanceClp: body.fundAdvanceClp,
+                    renderedTotalClp: 0,
+                    siiDocumentIds: body.siiDocumentIds,
+                    status: 'OPEN',
+                    createdAt: new Date().toISOString(),
+                }),
+                queuedOffline: true,
+            };
+        }
         const res = await coreAuthFetch(`${SUPPLY_API_BASE}/sii/expense-reports`, {
             method: 'POST',
             headers: buildHeaders(tenantId, true),
@@ -1387,6 +1447,46 @@ export const supplyApi = {
             unknown
         >;
         return normalizeSiiExpenseReport(rawReport);
+    },
+
+    async createExpenseReport(
+        input: CreateExpenseReportInput,
+        tenantId?: string
+    ): Promise<SiiExpenseReport & { queuedOffline?: boolean }> {
+        return this.createSiiExpenseReport(input, tenantId);
+    },
+
+    async updateExpenseReportStatus(
+        reportId: string,
+        status: SiiExpenseReportStatus,
+        confirmationKeyword: 'ACTUALIZAR',
+        tenantId?: string
+    ): Promise<{ report?: SiiExpenseReport; queuedOffline?: boolean }> {
+        const endpoint = `${SUPPLY_API_BASE}/sii/expense-reports/${encodeURIComponent(reportId)}`;
+        const body = { status, confirmationKeyword };
+        if (isClientOffline()) {
+            await syncQueueEngine.enqueueSupplyApiMutation(
+                endpoint,
+                { ...body, tenantId },
+                'supply:sii-expense-report-status-synced',
+                tenantId,
+                'PATCH'
+            );
+            return { queuedOffline: true };
+        }
+        const res = await coreAuthFetch(endpoint, {
+            method: 'PATCH',
+            headers: buildHeaders(tenantId, true),
+            body: JSON.stringify(body),
+        });
+        const json = await parseJsonResponse<Record<string, unknown>>(res);
+        const rawReport = (json?.report || json?.expenseReport || json?.data || json) as Record<
+            string,
+            unknown
+        >;
+        return {
+            report: rawReport ? normalizeSiiExpenseReport(rawReport) : undefined,
+        };
     },
 
     async exportSiiCsv(

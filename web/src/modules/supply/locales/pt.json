@@ -12,7 +12,7 @@
       "save": "Salvar",
       "add": "Adicionar",
       "remove": "Remover",
-      "search_placeholder": "SKU, fólio, RUT, centro de custo...",
+      "search_placeholder": "SKU, fólio, ID fiscal, centro de custo...",
       "site_selector": "Unidade ativa",
       "all_sites": "Todas as unidades",
       "offline_badge": "OFFLINE",
@@ -24,7 +24,8 @@
       "expand": "Expandir rastreabilidade",
       "collapse": "Recolher rastreabilidade",
       "copy_folio": "Copiar fólio / chave",
-      "hitl_keyword": "ACTUALIZAR"
+      "hitl_keyword": "ACTUALIZAR",
+      "sync_dead_letter": "Erro de sincronização (revisão obrigatória)"
     },
     "nav": {
       "procurement": "Listas consolidadas e rota de compra",
@@ -182,11 +183,11 @@
       "sim_send": "Enviar mensagem simulada",
       "sim_reset": "Reiniciar sessão FSM",
       "sim_preset_slots": "S1: SLOTS",
-      "sim_preset_slots_msg": "Mantequilla, 2 kilos de papas y huevos",
+      "sim_preset_slots_msg": "Manteiga, 2 kg de batatas e ovos",
       "sim_preset_deny": "S2: DENY",
-      "sim_preset_deny_msg": "2 cajas de cerveza, un helicóptero y 5 paquetes de tallarines",
+      "sim_preset_deny_msg": "2 caixas de cerveja, um helicóptero e 5 pacotes de macarrão",
       "sim_preset_atypical": "S3: ATÍPICO",
-      "sim_preset_atypical_msg": "10 litros de aceite hidráulico ISO 68",
+      "sim_preset_atypical_msg": "10 litros de óleo hidráulico ISO 68",
       "sim_preset_confirm": "S4: OK",
       "fsm_state": "FSM",
       "hard_denied": "BLOQUEADO DS 132"

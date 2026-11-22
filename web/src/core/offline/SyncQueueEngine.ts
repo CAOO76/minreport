@@ -33,6 +33,7 @@ export type SyncTaskType =
 
 export interface CasMediaSyncPayload {
     sha256: string;
+    module?: 'supply' | 'stockpile' | 'opermaq' | 'core';
     scope?: 'GLOBAL_OEM' | 'TENANT_PRIVATE' | 'SYMBOLOGY_MASTER';
     profile?: string;
     tenantId?: string;
@@ -97,8 +98,114 @@ export interface SyncTask<T = any> {
     payload: T;
     timestamp: string;
     attempts: number;
-    status: 'PENDING' | 'SYNCING' | 'FAILED' | 'COMPLETED';
+    status: 'PENDING' | 'SYNCING' | 'FAILED' | 'DEAD_LETTER' | 'COMPLETED';
     lastError?: string;
+    httpStatus?: number;
+    deadLetterAt?: string;
+}
+
+const NON_RETRYABLE_HTTP_STATUSES = new Set([400, 403, 404, 409, 422]);
+
+export class NonRetryableSyncError extends Error {
+    public readonly httpStatus: number;
+    public readonly isDeadLetter = true;
+
+    constructor(httpStatus: number, message: string) {
+        super(message);
+        this.name = 'NonRetryableSyncError';
+        this.httpStatus = httpStatus;
+    }
+}
+
+function extractNonRetryableHttpStatus(err: unknown): number | null {
+    if (err instanceof NonRetryableSyncError) {
+        return err.httpStatus;
+    }
+    const candidate = Number((err as any)?.httpStatus);
+    if (Number.isInteger(candidate) && NON_RETRYABLE_HTTP_STATUSES.has(candidate)) {
+        return candidate;
+    }
+    return null;
+}
+
+function resolveCasMediaExtension(
+    mimeType?: string,
+    filename?: string,
+    profile?: string
+): string {
+    const lowerMime = String(mimeType || '').toLowerCase();
+    const lowerName = String(filename || '').toLowerCase();
+    const upperProfile = String(profile || '').toUpperCase();
+    if (
+        upperProfile === 'XML_DTE_DOCUMENT' ||
+        lowerMime.includes('xml') ||
+        lowerName.endsWith('.xml')
+    ) {
+        return 'xml';
+    }
+    if (lowerMime.includes('pdf') || lowerName.endsWith('.pdf')) return 'pdf';
+    if (lowerMime.includes('gltf') || lowerName.endsWith('.glb')) return 'glb';
+    if (lowerMime.includes('svg') || lowerName.endsWith('.svg')) return 'svg';
+    if (lowerMime.includes('png') || lowerName.endsWith('.png')) return 'png';
+    if (
+        lowerMime.includes('jpeg') ||
+        lowerMime.includes('jpg') ||
+        lowerName.endsWith('.jpg') ||
+        lowerName.endsWith('.jpeg')
+    ) {
+        return 'jpg';
+    }
+    return 'webp';
+}
+
+function isSupplyCasUpload(
+    mediaPayload: CasMediaSyncPayload,
+    casRecord: { profile?: string; filename?: string; mimeType?: string },
+    allTasks: SyncTask[]
+): boolean {
+    if (mediaPayload.module === 'supply') return true;
+    const profile = String(mediaPayload.profile || casRecord.profile || '').toUpperCase();
+    if (profile === 'XML_DTE_DOCUMENT' || profile.startsWith('SUPPLY_')) return true;
+    const filename = String(mediaPayload.filename || casRecord.filename || '').toLowerCase();
+    if (
+        filename.startsWith('dte_') ||
+        filename.includes('receipt') ||
+        filename.includes('boleta') ||
+        filename.includes('factura') ||
+        filename.endsWith('.xml')
+    ) {
+        return true;
+    }
+    return allTasks.some(
+        (t) =>
+            (t.type === 'SUPPLY_PURCHASE_RECEIPT' || t.type === 'SUPPLY_API_MUTATION') &&
+            ((t.payload as any)?.sha256 === mediaPayload.sha256 ||
+                JSON.stringify(t.payload || {}).includes(mediaPayload.sha256))
+    );
+}
+
+async function parseResponseBodySafe(res: Response): Promise<unknown> {
+    if (typeof res?.json !== 'function') return null;
+    try {
+        return await res.json();
+    } catch {
+        return null;
+    }
+}
+
+function dispatchSyncSuccessEvent(task: SyncTask, eventName: string | undefined, result: unknown): void {
+    if (!eventName || typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') {
+        return;
+    }
+    window.dispatchEvent(
+        new CustomEvent(eventName, {
+            detail: {
+                taskId: task.id,
+                type: task.type,
+                result,
+            },
+        })
+    );
 }
 
 export interface SyncState {
@@ -658,6 +765,24 @@ class SyncQueueEngine {
         );
     }
 
+    public async flushQueue(): Promise<void> {
+        return this.drainQueue();
+    }
+
+    public async getDeadLetterTasks(tenantId?: string): Promise<SyncTask[]> {
+        try {
+            const tasks = await offlineStorage.getAllSyncTasks();
+            return tasks.filter((t) => {
+                if (t.status !== 'DEAD_LETTER') return false;
+                if (!tenantId) return true;
+                const taskTenant = t.payload?.tenantId || t.payload?.accountId;
+                return !taskTenant || taskTenant === tenantId;
+            });
+        } catch {
+            return [];
+        }
+    }
+
     public async drainQueue(): Promise<void> {
         if (this.isSyncing || !this.isOnline) return;
 
@@ -693,6 +818,7 @@ class SyncQueueEngine {
             }
 
             const refreshedTasks: SyncTask[] = await offlineStorage.getAllSyncTasks();
+            // Excluye tareas en DEAD_LETTER (errores cliente 400/403/404/409/422) para evitar loops infinitos
             const pendingTasks = refreshedTasks
                 .filter((t) => t.status === 'PENDING' || t.status === 'FAILED')
                 .sort((a, b) => {
@@ -715,6 +841,50 @@ class SyncQueueEngine {
                     await this.executeTask(task);
                     await offlineStorage.deleteSyncTask(task.id);
                 } catch (err: any) {
+                    const nonRetryableStatus = extractNonRetryableHttpStatus(err);
+                    if (nonRetryableStatus !== null) {
+                        console.error(
+                            `[SYNC-ENGINE] Dead-letter HTTP ${nonRetryableStatus} en tarea ${task.id}:`,
+                            err
+                        );
+                        task.status = 'DEAD_LETTER';
+                        task.httpStatus = nonRetryableStatus;
+                        task.deadLetterAt = new Date().toISOString();
+                        const deadLetterError: string =
+                            typeof err?.message === 'string' && err.message.trim().length > 0
+                                ? err.message
+                                : `HTTP ${nonRetryableStatus}`;
+                        task.lastError = deadLetterError;
+                        this.lastError = deadLetterError;
+                        await offlineStorage.putSyncTask(task);
+
+                        if (
+                            typeof window !== 'undefined' &&
+                            typeof window.dispatchEvent === 'function'
+                        ) {
+                            const payloadObj =
+                                task.payload && typeof task.payload === 'object'
+                                    ? (task.payload as Record<string, unknown>)
+                                    : null;
+                            window.dispatchEvent(
+                                new CustomEvent('minreport:sync-dead-letter', {
+                                    detail: {
+                                        taskId: task.id,
+                                        type: task.type,
+                                        status: nonRetryableStatus,
+                                        taskStatus: task.status,
+                                        error: task.lastError,
+                                        eventName:
+                                            typeof payloadObj?.eventName === 'string'
+                                                ? payloadObj.eventName
+                                                : undefined,
+                                    },
+                                })
+                            );
+                        }
+                        continue;
+                    }
+
                     console.error(`[SYNC-ENGINE] Fallo al procesar tarea ${task.id}:`, err);
                     task.status = 'FAILED';
                     task.lastError = err?.message || 'Error desconocido de red/servidor';
@@ -751,35 +921,84 @@ class SyncQueueEngine {
                 const resolvedTenantId =
                     resolveActiveTenantId(mediaPayload.tenantId || casRecord.tenantId) ||
                     'offline-local';
+                const resolvedProfile = String(
+                    mediaPayload.profile || casRecord.profile || 'IMAGE_FIELD_EVIDENCE'
+                );
+                const resolvedFilename =
+                    mediaPayload.filename || casRecord.filename || `${mediaPayload.sha256}.bin`;
+                const resolvedExt = resolveCasMediaExtension(
+                    casRecord.mimeType,
+                    resolvedFilename,
+                    resolvedProfile
+                );
+                const allQueuedTasks: SyncTask[] = await offlineStorage
+                    .getAllSyncTasks()
+                    .catch(() => []);
+                const isSupplyMedia = isSupplyCasUpload(mediaPayload, casRecord, allQueuedTasks);
                 let remoteUrl: string | null = null;
 
-                try {
-                    const { mediaDigestorClient } = await import('../media/MediaDigestorClient');
-                    const { descriptor } = await mediaDigestorClient.digestAndUploadCas(
-                        casRecord.blob,
-                        {
-                            profile: (mediaPayload.profile || casRecord.profile) as any,
-                            scope: mediaPayload.scope || (casRecord.scope as any) || 'TENANT_PRIVATE',
-                            tenantId: resolvedTenantId,
-                            filename: mediaPayload.filename || casRecord.filename,
+                if (resolvedProfile === 'XML_DTE_DOCUMENT' || resolvedExt === 'xml') {
+                    try {
+                        const form = new FormData();
+                        form.append('file', casRecord.blob, resolvedFilename);
+                        form.append('profile', 'XML_DTE_DOCUMENT');
+                        form.append(
+                            'scope',
+                            mediaPayload.scope || casRecord.scope || 'TENANT_PRIVATE'
+                        );
+                        form.append(
+                            'clientOriginalBytes',
+                            String(casRecord.originalBytes || casRecord.blob.size)
+                        );
+                        const upRes = await coreAuthFetch('/api/media/digest-upload', {
+                            method: 'POST',
+                            headers: { 'X-Active-Account-Id': resolvedTenantId },
+                            body: form,
+                        });
+                        if (upRes.ok) {
+                            const upJson = (await parseResponseBodySafe(upRes)) as {
+                                descriptor?: { downloadUrl?: string };
+                            } | null;
+                            if (isRemoteMediaUrl(upJson?.descriptor?.downloadUrl)) {
+                                remoteUrl = upJson!.descriptor!.downloadUrl!;
+                            }
                         }
-                    );
-                    if (isRemoteMediaUrl(descriptor?.downloadUrl)) {
-                        remoteUrl = descriptor.downloadUrl;
+                    } catch {
+                        remoteUrl = null;
                     }
-                } catch {
-                    remoteUrl = null;
+                } else {
+                    try {
+                        const { mediaDigestorClient } = await import('../media/MediaDigestorClient');
+                        const { descriptor } = await mediaDigestorClient.digestAndUploadCas(
+                            casRecord.blob,
+                            {
+                                profile: resolvedProfile as any,
+                                scope:
+                                    mediaPayload.scope ||
+                                    (casRecord.scope as any) ||
+                                    'TENANT_PRIVATE',
+                                tenantId: resolvedTenantId,
+                                filename: resolvedFilename,
+                            }
+                        );
+                        if (isRemoteMediaUrl(descriptor?.downloadUrl)) {
+                            remoteUrl = descriptor.downloadUrl;
+                        }
+                    } catch {
+                        remoteUrl = null;
+                    }
                 }
 
                 if (!remoteUrl && firebaseStorage) {
-                    const ext = casRecord.mimeType.includes('gltf') ? 'glb' : 'webp';
-                    const storagePath = `tenants/${resolvedTenantId}/stockpiles/cas/${mediaPayload.sha256}.${ext}`;
+                    const storageFolder = isSupplyMedia ? 'supply' : 'stockpiles';
+                    const storagePath = `tenants/${resolvedTenantId}/${storageFolder}/cas/${mediaPayload.sha256}.${resolvedExt}`;
                     const storageRef = ref(firebaseStorage, storagePath);
                     await uploadBytes(storageRef, casRecord.blob, {
                         contentType: casRecord.mimeType,
                         customMetadata: {
                             tenantId: resolvedTenantId,
                             sha256: mediaPayload.sha256,
+                            module: isSupplyMedia ? 'supply' : 'stockpile',
                         },
                     });
                     remoteUrl = await getDownloadURL(storageRef);
@@ -1124,44 +1343,40 @@ class SyncQueueEngine {
             }
             case 'OPERMAQ_API_MUTATION': {
                 const mutation = task.payload as OpermaqApiMutationPayload;
-                const user = auth.currentUser;
-                const devFallbackToken =
-                    typeof window !== 'undefined'
-                        ? localStorage.getItem('dev_auth_token') ||
-                          localStorage.getItem('dev_vault_token')
-                        : null;
-                const idToken = user ? await user.getIdToken() : devFallbackToken;
-                if (!idToken) {
-                    throw new Error('Sesion requerida para drenar mutacion API offline');
-                }
-
-                const normalizedEndpoint = mutation.endpoint.startsWith('/api/')
+                const normalizedEndpoint = mutation.endpoint.startsWith('http')
                     ? mutation.endpoint
-                    : mutation.endpoint.startsWith('/')
-                      ? `/api${mutation.endpoint}`
-                      : `/api/${mutation.endpoint}`;
-                const resolvedUrl = mutation.endpoint.startsWith('http')
-                    ? mutation.endpoint
-                    : getApiUrl(normalizedEndpoint);
+                    : mutation.endpoint.startsWith('/api/')
+                      ? mutation.endpoint
+                      : mutation.endpoint.startsWith('/')
+                        ? `/api${mutation.endpoint}`
+                        : `/api/${mutation.endpoint}`;
 
                 const activeTenantId = resolveActiveTenantId(mutation.tenantId);
                 if (!activeTenantId) {
                     throw new Error('tenantId obligatorio para sincronizar mutacion OPERMAQ');
                 }
 
-                const res = await fetch(resolvedUrl, {
+                const res = await coreAuthFetch(normalizedEndpoint, {
                     method: mutation.method || 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        Authorization: `Bearer ${idToken}`,
                         'X-Active-Account-Id': activeTenantId,
                     },
                     body: JSON.stringify(mutation.body),
                 });
 
+                const resultBody = await parseResponseBodySafe(res);
                 if (!res.ok) {
-                    throw new Error(`HTTP ${res.status} al sincronizar ${mutation.endpoint}`);
+                    const detail =
+                        (resultBody as Record<string, unknown> | null)?.error ||
+                        (resultBody as Record<string, unknown> | null)?.message;
+                    const errMsg = `HTTP ${res.status} al sincronizar ${mutation.endpoint}${detail ? `: ${String(detail)}` : ''}`;
+                    if (NON_RETRYABLE_HTTP_STATUSES.has(res.status)) {
+                        throw new NonRetryableSyncError(res.status, errMsg);
+                    }
+                    throw new Error(errMsg);
                 }
+                dispatchSyncSuccessEvent(task, mutation.eventName, resultBody);
                 break;
             }
             case 'SUPPLY_PURCHASE_RECEIPT': {
@@ -1177,26 +1392,14 @@ class SyncQueueEngine {
                     );
                 }
 
-                const user = auth.currentUser;
-                const devFallbackToken =
-                    typeof window !== 'undefined'
-                        ? localStorage.getItem('dev_auth_token') ||
-                          localStorage.getItem('dev_vault_token')
-                        : null;
-                const idToken = user ? await user.getIdToken() : devFallbackToken;
-                if (!idToken) {
-                    throw new Error('Sesion requerida para drenar SUPPLY_PURCHASE_RECEIPT offline');
-                }
-
                 const rawEndpoint = receiptTask.endpoint || '/api/supply/purchases';
-                const normalizedEndpoint = rawEndpoint.startsWith('/api/')
+                const normalizedEndpoint = rawEndpoint.startsWith('http')
                     ? rawEndpoint
-                    : rawEndpoint.startsWith('/')
-                      ? `/api${rawEndpoint}`
-                      : `/api/${rawEndpoint}`;
-                const resolvedUrl = rawEndpoint.startsWith('http')
-                    ? rawEndpoint
-                    : getApiUrl(normalizedEndpoint);
+                    : rawEndpoint.startsWith('/api/')
+                      ? rawEndpoint
+                      : rawEndpoint.startsWith('/')
+                        ? `/api${rawEndpoint}`
+                        : `/api/${rawEndpoint}`;
 
                 const activeTenantId = resolveActiveTenantId(
                     receiptTask.tenantId ||
@@ -1209,21 +1412,27 @@ class SyncQueueEngine {
                     );
                 }
 
-                const res = await fetch(resolvedUrl, {
+                const res = await coreAuthFetch(normalizedEndpoint, {
                     method: receiptTask.method || 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        Authorization: `Bearer ${idToken}`,
                         'X-Active-Account-Id': activeTenantId,
                     },
                     body: JSON.stringify(resolvedBody),
                 });
 
+                const resultBody = await parseResponseBodySafe(res);
                 if (!res.ok) {
-                    throw new Error(
-                        `HTTP ${res.status} al sincronizar SUPPLY_PURCHASE_RECEIPT en ${rawEndpoint}`
-                    );
+                    const detail =
+                        (resultBody as Record<string, unknown> | null)?.error ||
+                        (resultBody as Record<string, unknown> | null)?.message;
+                    const errMsg = `HTTP ${res.status} al sincronizar SUPPLY_PURCHASE_RECEIPT en ${rawEndpoint}${detail ? `: ${String(detail)}` : ''}`;
+                    if (NON_RETRYABLE_HTTP_STATUSES.has(res.status)) {
+                        throw new NonRetryableSyncError(res.status, errMsg);
+                    }
+                    throw new Error(errMsg);
                 }
+                dispatchSyncSuccessEvent(task, receiptTask.eventName, resultBody);
                 break;
             }
             case 'SUPPLY_API_MUTATION': {
@@ -1236,44 +1445,44 @@ class SyncQueueEngine {
                     );
                 }
 
-                const user = auth.currentUser;
-                const devFallbackToken =
-                    typeof window !== 'undefined'
-                        ? localStorage.getItem('dev_auth_token') ||
-                          localStorage.getItem('dev_vault_token')
-                        : null;
-                const idToken = user ? await user.getIdToken() : devFallbackToken;
-                if (!idToken) {
-                    throw new Error('Sesion requerida para drenar mutacion API SUPPLY offline');
-                }
-
-                const normalizedEndpoint = mutation.endpoint.startsWith('/api/')
+                const normalizedEndpoint = mutation.endpoint.startsWith('http')
                     ? mutation.endpoint
-                    : mutation.endpoint.startsWith('/')
-                      ? `/api${mutation.endpoint}`
-                      : `/api/${mutation.endpoint}`;
-                const resolvedUrl = mutation.endpoint.startsWith('http')
-                    ? mutation.endpoint
-                    : getApiUrl(normalizedEndpoint);
+                    : mutation.endpoint.startsWith('/api/')
+                      ? mutation.endpoint
+                      : mutation.endpoint.startsWith('/')
+                        ? `/api${mutation.endpoint}`
+                        : `/api/${mutation.endpoint}`;
 
-                const activeTenantId = resolveActiveTenantId(mutation.tenantId);
+                const activeTenantId = resolveActiveTenantId(
+                    mutation.tenantId ||
+                        (resolvedBody as any)?.tenantId ||
+                        (resolvedBody as any)?.accountId
+                );
                 if (!activeTenantId) {
                     throw new Error('tenantId obligatorio para sincronizar mutacion SUPPLY');
                 }
 
-                const res = await fetch(resolvedUrl, {
+                const res = await coreAuthFetch(normalizedEndpoint, {
                     method: mutation.method || 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        Authorization: `Bearer ${idToken}`,
                         'X-Active-Account-Id': activeTenantId,
                     },
                     body: JSON.stringify(resolvedBody),
                 });
 
+                const resultBody = await parseResponseBodySafe(res);
                 if (!res.ok) {
-                    throw new Error(`HTTP ${res.status} al sincronizar ${mutation.endpoint}`);
+                    const detail =
+                        (resultBody as Record<string, unknown> | null)?.error ||
+                        (resultBody as Record<string, unknown> | null)?.message;
+                    const errMsg = `HTTP ${res.status} al sincronizar ${mutation.endpoint}${detail ? `: ${String(detail)}` : ''}`;
+                    if (NON_RETRYABLE_HTTP_STATUSES.has(res.status)) {
+                        throw new NonRetryableSyncError(res.status, errMsg);
+                    }
+                    throw new Error(errMsg);
                 }
+                dispatchSyncSuccessEvent(task, mutation.eventName, resultBody);
                 break;
             }
             case 'GEO_REPORT_STAMP': {

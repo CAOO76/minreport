@@ -526,13 +526,73 @@ export const PAYMENT_METHODS: PaymentMethod[] = [
     'EFECTIVO',
 ];
 
-export function formatClp(amount: number | undefined | null): string {
+const ZERO_DECIMAL_CURRENCIES = new Set(['CLP', 'JPY', 'KRW', 'PYG']);
+
+const DEFAULT_LOCALE_BY_CURRENCY: Record<string, string> = {
+    CLP: 'es-CL',
+    USD: 'en-US',
+    PEN: 'es-PE',
+    BRL: 'pt-BR',
+    MXN: 'es-MX',
+    EUR: 'es-ES',
+    AUD: 'en-AU',
+};
+
+function resolveMoneyLocale(currency: string, locale?: string): string {
+    const raw = String(locale || '').trim();
+    if (raw) {
+        const lower = raw.toLowerCase();
+        if (lower === 'es') {
+            if (currency === 'PEN') return 'es-PE';
+            if (currency === 'MXN') return 'es-MX';
+            if (currency === 'EUR') return 'es-ES';
+            return 'es-CL';
+        }
+        if (lower === 'en') {
+            return currency === 'AUD' ? 'en-AU' : 'en-US';
+        }
+        if (lower === 'pt') {
+            return 'pt-BR';
+        }
+        return raw;
+    }
+    return DEFAULT_LOCALE_BY_CURRENCY[currency] || 'es-CL';
+}
+
+export function formatMoney(
+    amount: number | undefined | null,
+    currencyCode: string = 'CLP',
+    locale?: string
+): string {
     if (typeof amount !== 'number' || !Number.isFinite(amount)) return '—';
-    return new Intl.NumberFormat('es-CL', {
-        style: 'currency',
-        currency: 'CLP',
-        maximumFractionDigits: 0,
-    }).format(Math.round(amount));
+    const cleanCode = String(currencyCode || 'CLP')
+        .trim()
+        .toUpperCase()
+        .replace(/[^A-Z]/g, '')
+        .slice(0, 3);
+    const safeCurrency = cleanCode.length === 3 ? cleanCode : 'CLP';
+    const resolvedLocale = resolveMoneyLocale(safeCurrency, locale);
+    const isZeroDecimal = ZERO_DECIMAL_CURRENCIES.has(safeCurrency);
+    const normalizedAmount = isZeroDecimal ? Math.round(amount) : amount;
+
+    try {
+        return new Intl.NumberFormat(resolvedLocale, {
+            style: 'currency',
+            currency: safeCurrency,
+            minimumFractionDigits: isZeroDecimal ? 0 : 2,
+            maximumFractionDigits: isZeroDecimal ? 0 : 2,
+        }).format(normalizedAmount);
+    } catch {
+        return new Intl.NumberFormat('es-CL', {
+            style: 'currency',
+            currency: 'CLP',
+            maximumFractionDigits: 0,
+        }).format(Math.round(amount));
+    }
+}
+
+export function formatClp(amount: number | undefined | null, locale: string = 'es-CL'): string {
+    return formatMoney(amount, 'CLP', locale);
 }
 
 export function formatCasBytes(bytes: number | undefined | null): string {

@@ -24,7 +24,8 @@
       "expand": "Expand traceability",
       "collapse": "Collapse traceability",
       "copy_folio": "Copy folio / key",
-      "hitl_keyword": "ACTUALIZAR"
+      "hitl_keyword": "ACTUALIZAR",
+      "sync_dead_letter": "Sync error (review required)"
     },
     "nav": {
       "procurement": "Consolidated lists and shopping route",
@@ -80,7 +81,7 @@
       "MODULE_PLANNING": "Engineering / Planning",
       "MODULE_HSEC": "HSEC Module",
       "MODULE_OPERMAQ": "OPERMAQ Module",
-      "MODULE_STOCKPILE": "STOCKPILE Module",
+      "MODULE_STOCKPILE": "ACOPIOS Module",
       "DESKTOP_MANUAL": "Manual Entry"
     },
     "natures": {
@@ -182,11 +183,11 @@
       "sim_send": "Send simulated message",
       "sim_reset": "Reset FSM session",
       "sim_preset_slots": "S1: SLOTS",
-      "sim_preset_slots_msg": "Mantequilla, 2 kilos de papas y huevos",
+      "sim_preset_slots_msg": "Butter, 2 kg of potatoes and eggs",
       "sim_preset_deny": "S2: DENY",
-      "sim_preset_deny_msg": "2 cajas de cerveza, un helicóptero y 5 paquetes de tallarines",
+      "sim_preset_deny_msg": "2 cases of beer, a helicopter and 5 packs of pasta",
       "sim_preset_atypical": "S3: ATYPICAL",
-      "sim_preset_atypical_msg": "10 litros de aceite hidráulico ISO 68",
+      "sim_preset_atypical_msg": "10 liters of ISO 68 hydraulic oil",
       "sim_preset_confirm": "S4: OK",
       "fsm_state": "FSM",
       "hard_denied": "BLOCKED DS 132"
