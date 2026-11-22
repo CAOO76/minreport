@@ -154,6 +154,20 @@ export const createTestPilotAccount = async (req: DevRequest, res: Response) => 
                     supply: true,
                 }
             },
+            entitlements: {
+                basePackage: 'FULL_SUITE',
+                baseModules: {
+                    opermaq: true,
+                    stockpile: true,
+                    supply: true,
+                },
+                addonModules: {
+                    opermaq: { active: true, updatedAt: Date.now() },
+                    stockpile: { active: true, updatedAt: Date.now() },
+                    supply: { active: true, updatedAt: Date.now() },
+                },
+                maxProjects: null,
+            },
             enabledPlugins: ['opermaq', 'stockpile', 'supply'],
             createdAt: Date.now(),
             updatedAt: Date.now()
@@ -167,6 +181,11 @@ export const createTestPilotAccount = async (req: DevRequest, res: Response) => 
             fullName: collaboratorName,
             email: normalizedEmail,
             role: 'TEST_PILOT',
+            allowedModules: {
+                opermaq: true,
+                stockpile: true,
+                supply: true,
+            },
             status: 'ACTIVE',
             joinedAt: Date.now()
         });
@@ -192,6 +211,11 @@ export const createTestPilotAccount = async (req: DevRequest, res: Response) => 
                     accountName: accountData.name,
                     role: 'TEST_PILOT',
                     classification: 'test-pilot',
+                    allowedModules: {
+                        opermaq: true,
+                        stockpile: true,
+                        supply: true,
+                    },
                     status: 'ACTIVE',
                     joinedAt: Date.now()
                 }
@@ -772,6 +796,7 @@ export const getDevPilotMetrics = async (_req: DevRequest, res: Response) => {
                 opermaq: 0,
                 geolapp: 0,
                 stockpile: 0,
+                supply: 0,
             },
             byCategory: {
                 BUG_CORRECTION: 0,
@@ -802,6 +827,7 @@ export const getDevPilotMetrics = async (_req: DevRequest, res: Response) => {
             if (mod === 'opermaq') aiInteractions.byModule.opermaq += 1;
             else if (mod === 'geolapp') aiInteractions.byModule.geolapp += 1;
             else if (mod === 'stockpile') aiInteractions.byModule.stockpile += 1;
+            else if (mod === 'supply') aiInteractions.byModule.supply += 1;
             else aiInteractions.byModule.core += 1;
 
             const cat = String(doc.data.category || 'AI_KNOWLEDGE_TRAINING').trim().toUpperCase();

@@ -71,6 +71,7 @@ interface DevPilotAggregatedMetrics {
             opermaq: number;
             geolapp: number;
             stockpile: number;
+            supply?: number;
         };
         byCategory: {
             BUG_CORRECTION: number;
@@ -176,8 +177,15 @@ export const DevVaultGateway: React.FC = () => {
         const handleOpenCatalogAsset = () => {
             setActiveSection('MODULE_OPERMAQ_CATALOG');
         };
+        const handleOpenSupplyModule = () => {
+            setActiveSection('MODULE_SUPPLY');
+        };
         window.addEventListener('opermaq:open-catalog-asset', handleOpenCatalogAsset);
-        return () => window.removeEventListener('opermaq:open-catalog-asset', handleOpenCatalogAsset);
+        window.addEventListener('supply:open-module', handleOpenSupplyModule);
+        return () => {
+            window.removeEventListener('opermaq:open-catalog-asset', handleOpenCatalogAsset);
+            window.removeEventListener('supply:open-module', handleOpenSupplyModule);
+        };
     }, []);
 
     useEffect(() => {
@@ -1266,6 +1274,7 @@ export const DevVaultGateway: React.FC = () => {
                             const moduleRows = [
                                 { key: 'geolapp', label: t('core_dev_vault.pilot_metrics.mod_geolapp'), count: pilotMetrics?.aiInteractions.byModule.geolapp ?? 0 },
                                 { key: 'opermaq', label: t('core_dev_vault.pilot_metrics.mod_opermaq'), count: pilotMetrics?.aiInteractions.byModule.opermaq ?? 0 },
+                                { key: 'supply', label: t('core_dev_vault.pilot_metrics.mod_supply'), count: pilotMetrics?.aiInteractions.byModule.supply ?? 0 },
                                 { key: 'core', label: t('core_dev_vault.pilot_metrics.mod_core'), count: pilotMetrics?.aiInteractions.byModule.core ?? 0 },
                                 { key: 'stockpile', label: t('core_dev_vault.pilot_metrics.mod_stockpile'), count: pilotMetrics?.aiInteractions.byModule.stockpile ?? 0 },
                             ];

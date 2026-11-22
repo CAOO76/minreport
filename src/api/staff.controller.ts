@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { Response, Router } from 'express';
+import { z } from 'zod';
 import { db, auth } from '../config/firebase';
 import { EmailService, maskEmailForLog } from '../services/EmailService';
 import { env, getCanonicalWebUrl } from '../config/env';
@@ -20,6 +21,10 @@ import {
     UpdateB2BMemberPayloadSchema,
     UpsertB2BMemberPayloadSchema,
 } from '../contracts/session.contracts';
+import {
+    MemberNotificationPreferencesSchema,
+    SupplyMemberProfileSchema,
+} from '../contracts/supply.contracts';
 
 const router = Router();
 
@@ -89,6 +94,38 @@ export function normalizeSeatPermissionsForRole(
         canViewBilling: Boolean(canViewBilling),
     };
 }
+
+export type WhatsAppOptInStatus = 'ACTIVE' | 'PENDING_DOUBLE_OPT_IN' | 'REVOKED' | 'UNSET';
+
+export function resolveWhatsappOptInStatus(data: Record<string, any>): WhatsAppOptInStatus {
+    const raw = String(data?.whatsappOptInStatus || '').trim().toUpperCase();
+    if (
+        raw === 'ACTIVE' ||
+        raw === 'PENDING_DOUBLE_OPT_IN' ||
+        raw === 'REVOKED' ||
+        raw === 'UNSET'
+    ) {
+        if (raw === 'UNSET' && data?.whatsappOptInAt) return 'ACTIVE';
+        return raw;
+    }
+    if (data?.whatsappOptInAt) return 'ACTIVE';
+    if (data?.whatsappOptOutAt) return 'REVOKED';
+    if (typeof data?.phoneE164 === 'string' && data.phoneE164.trim()) {
+        return 'PENDING_DOUBLE_OPT_IN';
+    }
+    return 'UNSET';
+}
+
+const SelfSupplyChannelPayloadSchema = z
+    .object({
+        accountId: z.string().trim().min(1).max(128).optional(),
+        confirmationKeyword: z.literal('ACTUALIZAR'),
+        phoneE164: z.string().trim().max(24).nullable().optional().or(z.literal('')),
+        whatsappOptInAccepted: z.boolean().optional(),
+        supplyProfile: SupplyMemberProfileSchema.nullable().optional(),
+        notificationPreferences: MemberNotificationPreferencesSchema.nullable().optional(),
+    })
+    .strict();
 
 function parseOptionalMemberPhoneE164(
     rawPhone: unknown
@@ -434,6 +471,7 @@ router.get('/members', async (req: AuthRequest, res: Response): Promise<any> => 
                         ? d.phoneE164.trim()
                         : null,
                 whatsappOptInAt: d.whatsappOptInAt ?? null,
+                whatsappOptInStatus: resolveWhatsappOptInStatus(d),
                 supplyProfile: d.supplyProfile ?? null,
                 notificationPreferences: d.notificationPreferences ?? null,
                 status: String(d.status || 'ACTIVE').toUpperCase(),
@@ -479,6 +517,10 @@ router.get('/members', async (req: AuthRequest, res: Response): Promise<any> => 
                 canViewBilling: perms.canViewBilling,
                 phoneE164: ownerPhone,
                 whatsappOptInAt: ownerUserData.whatsappOptInAt ?? null,
+                whatsappOptInStatus: resolveWhatsappOptInStatus({
+                    ...ownerUserData,
+                    phoneE164: ownerPhone,
+                }),
                 supplyProfile: ownerUserData.supplyProfile ?? null,
                 notificationPreferences: ownerUserData.notificationPreferences ?? null,
                 status: String(ownerUserData.status || accountData.status || 'ACTIVE').toUpperCase(),
@@ -638,16 +680,32 @@ async function handleUpsertMember(req: AuthRequest, res: Response): Promise<any>
         const normalizedPerms = normalizeSeatPermissionsForRole(role, allowedModules, canViewBilling);
         const nowMs = Date.now();
         const storedTaxId = taxCheck ? taxCheck.formatted : String(existingMemberData.taxId || existingMemberData.run || '');
+        const previousPhoneE164 =
+            typeof existingMemberData.phoneE164 === 'string' && existingMemberData.phoneE164.trim()
+                ? existingMemberData.phoneE164.trim()
+                : null;
         const resolvedPhoneE164 =
-            phoneCheck.value !== undefined
-                ? phoneCheck.value
-                : typeof existingMemberData.phoneE164 === 'string' && existingMemberData.phoneE164.trim()
-                  ? existingMemberData.phoneE164.trim()
-                  : null;
-        const resolvedWhatsappOptInAt =
-            whatsappOptInAt !== undefined
-                ? whatsappOptInAt
-                : (existingMemberData.whatsappOptInAt ?? null);
+            phoneCheck.value !== undefined ? phoneCheck.value : previousPhoneE164;
+
+        // Doble Opt-In Ley N° 21.719 (P0-06): alta o cambio de teléfono de un tercero JAMÁS otorga consentimiento unilateral.
+        let resolvedWhatsappOptInAt: string | number | null = null;
+        let resolvedWhatsappOptInStatus: WhatsAppOptInStatus = 'UNSET';
+        if (!resolvedPhoneE164) {
+            resolvedWhatsappOptInAt = null;
+            resolvedWhatsappOptInStatus = 'UNSET';
+        } else if (
+            !existingMemberSnap.exists ||
+            resolvedPhoneE164 !== previousPhoneE164 ||
+            !existingMemberData.whatsappOptInAt
+        ) {
+            resolvedWhatsappOptInAt = null;
+            resolvedWhatsappOptInStatus = 'PENDING_DOUBLE_OPT_IN';
+        } else {
+            resolvedWhatsappOptInAt = existingMemberData.whatsappOptInAt;
+            resolvedWhatsappOptInStatus = resolveWhatsappOptInStatus(existingMemberData);
+        }
+        void whatsappOptInAt;
+
         const resolvedSupplyProfile =
             supplyProfile !== undefined ? supplyProfile : (existingMemberData.supplyProfile ?? null);
         const resolvedNotificationPreferences =
@@ -669,7 +727,8 @@ async function handleUpsertMember(req: AuthRequest, res: Response): Promise<any>
             allowedModules: normalizedPerms.allowedModules,
             canViewBilling: normalizedPerms.canViewBilling,
             ...(resolvedPhoneE164 !== null ? { phoneE164: resolvedPhoneE164 } : {}),
-            ...(resolvedWhatsappOptInAt !== null ? { whatsappOptInAt: resolvedWhatsappOptInAt } : {}),
+            whatsappOptInAt: resolvedWhatsappOptInAt,
+            whatsappOptInStatus: resolvedWhatsappOptInStatus,
             ...(resolvedSupplyProfile !== null ? { supplyProfile: resolvedSupplyProfile } : {}),
             ...(resolvedNotificationPreferences !== null
                 ? { notificationPreferences: resolvedNotificationPreferences }
@@ -693,8 +752,13 @@ async function handleUpsertMember(req: AuthRequest, res: Response): Promise<any>
                 classification: existingUserData.classification || 'b2b',
                 countryCode: existingUserData.countryCode || countryCode,
                 ...(storedTaxId ? { taxId: existingUserData.taxId || storedTaxId } : {}),
-                ...(phoneCheck.value !== undefined ? { phoneE164: resolvedPhoneE164 } : {}),
-                ...(whatsappOptInAt !== undefined ? { whatsappOptInAt: resolvedWhatsappOptInAt } : {}),
+                ...(phoneCheck.value !== undefined
+                    ? {
+                          phoneE164: resolvedPhoneE164,
+                          whatsappOptInAt: resolvedWhatsappOptInAt,
+                          whatsappOptInStatus: resolvedWhatsappOptInStatus,
+                      }
+                    : {}),
                 memberships: existingMemberships,
                 status: existingUserData.status === 'ACTIVE' ? 'ACTIVE' : 'PENDING',
                 updatedAt: nowMs,
@@ -717,6 +781,7 @@ async function handleUpsertMember(req: AuthRequest, res: Response): Promise<any>
                 canViewBilling: normalizedPerms.canViewBilling,
                 phoneE164: resolvedPhoneE164,
                 whatsappOptInAt: resolvedWhatsappOptInAt,
+                whatsappOptInStatus: resolvedWhatsappOptInStatus,
                 supplyProfile: resolvedSupplyProfile,
                 notificationPreferences: resolvedNotificationPreferences,
                 status: memberStatus,
@@ -893,21 +958,49 @@ router.patch('/members/:memberUid', async (req: AuthRequest, res: Response): Pro
         }
 
         const nextRole: B2BSeatRole = role ?? currentNormalizedRole;
-        const nextModulesInput = allowedModules ?? memberData.allowedModules;
+        const rawAllowedFromBody =
+            req.body?.allowedModules && typeof req.body.allowedModules === 'object'
+                ? (req.body.allowedModules as Record<string, unknown>)
+                : null;
+        // Preservar `allowedModules.supply` existente cuando el caller omita la clave en el PATCH (cero revocación silenciosa)
+        const nextModulesInput = allowedModules
+            ? {
+                  ...allowedModules,
+                  supply:
+                      rawAllowedFromBody && rawAllowedFromBody.supply !== undefined
+                          ? allowedModules.supply
+                          : typeof memberData.allowedModules?.supply === 'boolean'
+                            ? memberData.allowedModules.supply
+                            : allowedModules.supply,
+              }
+            : memberData.allowedModules;
         const nextBillingInput = canViewBilling !== undefined ? canViewBilling : memberData.canViewBilling;
         const normalizedPerms = normalizeSeatPermissionsForRole(nextRole, nextModulesInput, nextBillingInput);
         const nextJobTitle = jobTitle !== undefined ? jobTitle : String(memberData.jobTitle || '');
         const nextStatus = status ?? String(memberData.status || 'ACTIVE').toUpperCase();
+        const existingPhoneE164 =
+            typeof memberData.phoneE164 === 'string' && memberData.phoneE164.trim()
+                ? memberData.phoneE164.trim()
+                : null;
         const nextPhoneE164 =
-            phoneCheck.value !== undefined
-                ? phoneCheck.value
-                : typeof memberData.phoneE164 === 'string' && memberData.phoneE164.trim()
-                  ? memberData.phoneE164.trim()
-                  : null;
-        const nextWhatsappOptInAt =
-            whatsappOptInAt !== undefined
-                ? whatsappOptInAt
-                : (memberData.whatsappOptInAt ?? null);
+            phoneCheck.value !== undefined ? phoneCheck.value : existingPhoneE164;
+
+        // Doble Opt-In Ley N° 21.719 (P0-06): mutación administrativa de teléfono de tercero jamás otorga opt-in unilateral
+        let nextWhatsappOptInAt: string | number | null = memberData.whatsappOptInAt ?? null;
+        let nextWhatsappOptInStatus: WhatsAppOptInStatus = resolveWhatsappOptInStatus(memberData);
+        if (!nextPhoneE164) {
+            nextWhatsappOptInAt = null;
+            nextWhatsappOptInStatus = 'UNSET';
+        } else if (phoneCheck.value !== undefined && nextPhoneE164 !== existingPhoneE164) {
+            nextWhatsappOptInAt = null;
+            nextWhatsappOptInStatus = 'PENDING_DOUBLE_OPT_IN';
+        } else if (!memberData.whatsappOptInAt) {
+            nextWhatsappOptInAt = null;
+            nextWhatsappOptInStatus =
+                nextWhatsappOptInStatus === 'REVOKED' ? 'REVOKED' : 'PENDING_DOUBLE_OPT_IN';
+        }
+        void whatsappOptInAt;
+
         const nextSupplyProfile =
             supplyProfile !== undefined ? supplyProfile : (memberData.supplyProfile ?? null);
         const nextNotificationPreferences =
@@ -929,6 +1022,7 @@ router.patch('/members/:memberUid', async (req: AuthRequest, res: Response): Pro
                 canViewBilling: normalizedPerms.canViewBilling,
                 phoneE164: nextPhoneE164,
                 whatsappOptInAt: nextWhatsappOptInAt,
+                whatsappOptInStatus: nextWhatsappOptInStatus,
                 supplyProfile: nextSupplyProfile,
                 notificationPreferences: nextNotificationPreferences,
                 status: nextStatus,
@@ -954,6 +1048,7 @@ router.patch('/members/:memberUid', async (req: AuthRequest, res: Response): Pro
                     canViewBilling: normalizedPerms.canViewBilling,
                     phoneE164: nextPhoneE164,
                     whatsappOptInAt: nextWhatsappOptInAt,
+                    whatsappOptInStatus: nextWhatsappOptInStatus,
                     supplyProfile: nextSupplyProfile,
                     notificationPreferences: nextNotificationPreferences,
                     status: nextStatus,
@@ -971,6 +1066,7 @@ router.patch('/members/:memberUid', async (req: AuthRequest, res: Response): Pro
                     canViewBilling: normalizedPerms.canViewBilling,
                     phoneE164: nextPhoneE164,
                     whatsappOptInAt: nextWhatsappOptInAt,
+                    whatsappOptInStatus: nextWhatsappOptInStatus,
                     supplyProfile: nextSupplyProfile,
                     notificationPreferences: nextNotificationPreferences,
                     type: 'BUSINESS',
@@ -985,9 +1081,8 @@ router.patch('/members/:memberUid', async (req: AuthRequest, res: Response): Pro
             };
             if (phoneCheck.value !== undefined) {
                 userPatch.phoneE164 = nextPhoneE164;
-            }
-            if (whatsappOptInAt !== undefined) {
                 userPatch.whatsappOptInAt = nextWhatsappOptInAt;
+                userPatch.whatsappOptInStatus = nextWhatsappOptInStatus;
             }
             batch.update(userRef, userPatch);
         }
@@ -1021,6 +1116,309 @@ router.patch('/members/:memberUid', async (req: AuthRequest, res: Response): Pro
     } catch (error: any) {
         console.error('[Staff API] Error actualizando integrante:', error);
         return res.status(500).json({ error: error?.message || 'Error al actualizar integrante' });
+    }
+});
+
+/**
+ * PATCH /api/staff/me/supply-channel
+ * Auto-enrolamiento soberano del propio titular (`OWNER`/`ADMIN`/`OPERATOR`) en su canal WhatsApp
+ * y perfil de Abastecimiento sin `403`, bajo HITL `"ACTUALIZAR"` y Ley N° 21.719.
+ * Bloquea explícitamente cualquier intento de mutar `role`, `status`, `isOwner` o `allowedModules`.
+ */
+router.patch('/me/supply-channel', async (req: AuthRequest, res: Response): Promise<any> => {
+    try {
+        const caller = req.user;
+        if (!caller?.uid) {
+            return res.status(401).json({ error: 'No autorizado: sesión ausente.' });
+        }
+
+        const rawBody = req.body && typeof req.body === 'object' ? (req.body as Record<string, unknown>) : {};
+        const forbiddenPrivilegeKeys = ['role', 'status', 'isOwner', 'allowedModules', 'canViewBilling'];
+        const attemptedPrivilegeKey = forbiddenPrivilegeKeys.find((k) => k in rawBody);
+        if (attemptedPrivilegeKey) {
+            return res.status(403).json({
+                error: `PROHIBIDO: No está permitido modificar '${attemptedPrivilegeKey}' mediante auto-enrolamiento de canal.`,
+                code: 'FORBIDDEN_SELF_PRIVILEGE_MUTATION',
+            });
+        }
+
+        const validation = SelfSupplyChannelPayloadSchema.safeParse(rawBody);
+        if (!validation.success) {
+            return res.status(400).json({
+                error:
+                    validation.error.issues[0]?.message ||
+                    'Validación HITL fallida (se requiere confirmationKeyword=ACTUALIZAR).',
+                details: validation.error.format(),
+            });
+        }
+
+        const {
+            accountId: bodyAccountId,
+            phoneE164,
+            whatsappOptInAccepted,
+            supplyProfile,
+            notificationPreferences,
+        } = validation.data;
+
+        const phoneCheck = parseOptionalMemberPhoneE164(phoneE164);
+        if (!phoneCheck.ok) {
+            return res.status(400).json({ error: phoneCheck.error });
+        }
+
+        const callerUid = String(caller.uid).trim();
+        const callerEmail = String(caller.email || '').trim().toLowerCase();
+
+        const userRef = db.collection('users').doc(callerUid);
+        const userSnap = await userRef.get();
+        const userData = userSnap.exists ? userSnap.data() || {} : {};
+
+        const accountId = String(
+            bodyAccountId ||
+                req.headers['x-active-account-id'] ||
+                req.headers['x-tenant-id'] ||
+                caller.activeAccountId ||
+                userData.lastActiveAccountId ||
+                userData.primaryAccountId ||
+                ''
+        ).trim();
+
+        if (!accountId) {
+            return res.status(400).json({ error: 'El identificador accountId es obligatorio.' });
+        }
+
+        const accountSnap = await db.collection('accounts').doc(accountId).get();
+        if (!accountSnap.exists) {
+            return res.status(404).json({ error: 'Cuenta corporativa no encontrada.' });
+        }
+        const accountData = accountSnap.data() || {};
+
+        const memberRef = db.collection('accounts').doc(accountId).collection('members').doc(callerUid);
+        const memberSnap = await memberRef.get();
+        const memberData = memberSnap.exists ? memberSnap.data() || {} : {};
+
+        const userMembership = Array.isArray(userData.memberships)
+            ? userData.memberships.find((m: any) => m?.accountId === accountId)
+            : undefined;
+
+        const isOwner =
+            (typeof accountData.ownerId === 'string' && accountData.ownerId === callerUid) ||
+            memberData.isOwner === true ||
+            String(memberData.role || '').toUpperCase() === 'OWNER' ||
+            String(userMembership?.role || '').toUpperCase() === 'OWNER';
+
+        const isMemberPresent = isOwner || memberSnap.exists || Boolean(userMembership);
+        if (!isMemberPresent) {
+            return res.status(403).json({
+                error: 'Prohibido: No posees membresía activa en la cuenta especificada.',
+            });
+        }
+
+        const effectiveStatus = String(
+            memberData.status || userMembership?.status || userData.status || 'ACTIVE'
+        ).toUpperCase();
+        if (isInactiveStatus(effectiveStatus)) {
+            return res.status(403).json({
+                error: 'Prohibido: Tu membresía en esta cuenta se encuentra inactiva o suspendida.',
+            });
+        }
+
+        const effectiveSeatRole = normalizeLegacyB2BRole(
+            memberData.role || userMembership?.role || caller.role,
+            isOwner
+        );
+        if (effectiveSeatRole !== 'OWNER' && effectiveSeatRole !== 'ADMIN' && effectiveSeatRole !== 'OPERATOR') {
+            return res.status(403).json({
+                error: 'Prohibido: Solo titulares OWNER, ADMIN u OPERATOR pueden auto-enrolar canal WhatsApp.',
+            });
+        }
+
+        if (supplyProfile !== undefined && effectiveSeatRole !== 'OWNER' && effectiveSeatRole !== 'ADMIN') {
+            return res.status(403).json({
+                error: 'Prohibido: Solo roles OWNER o ADMIN pueden modificar su propio supplyProfile.',
+                code: 'FORBIDDEN_SUPPLY_PROFILE_SELF_MUTATION',
+            });
+        }
+
+        const existingPhone =
+            typeof memberData.phoneE164 === 'string' && memberData.phoneE164.trim()
+                ? memberData.phoneE164.trim()
+                : typeof userData.phoneE164 === 'string' && userData.phoneE164.trim()
+                  ? userData.phoneE164.trim()
+                  : null;
+        const nextPhoneE164 = phoneCheck.value !== undefined ? phoneCheck.value : existingPhone;
+
+        const nowMs = Date.now();
+        const nowIso = new Date(nowMs).toISOString();
+
+        let nextWhatsappOptInAt: string | number | null =
+            memberData.whatsappOptInAt ?? userData.whatsappOptInAt ?? null;
+        let nextWhatsappOptInStatus: WhatsAppOptInStatus = resolveWhatsappOptInStatus({
+            ...userData,
+            ...memberData,
+            phoneE164: nextPhoneE164,
+        });
+        let nextWhatsappOptOutAt: string | null = memberData.whatsappOptOutAt ?? null;
+
+        if (whatsappOptInAccepted === true) {
+            if (!nextPhoneE164) {
+                return res.status(400).json({
+                    error: 'Debe registrar un teléfono E.164 válido para activar el consentimiento WhatsApp.',
+                });
+            }
+            nextWhatsappOptInAt = nowIso;
+            nextWhatsappOptInStatus = 'ACTIVE';
+            nextWhatsappOptOutAt = null;
+        } else if (whatsappOptInAccepted === false) {
+            nextWhatsappOptInAt = null;
+            nextWhatsappOptInStatus = 'REVOKED';
+            nextWhatsappOptOutAt = nowIso;
+        } else if (!nextPhoneE164) {
+            nextWhatsappOptInAt = null;
+            nextWhatsappOptInStatus = 'UNSET';
+        } else if (phoneCheck.value !== undefined && nextPhoneE164 !== existingPhone) {
+            nextWhatsappOptInAt = null;
+            nextWhatsappOptInStatus = 'PENDING_DOUBLE_OPT_IN';
+        }
+
+        const nextSupplyProfile =
+            supplyProfile !== undefined
+                ? supplyProfile
+                : (memberData.supplyProfile ?? userData.supplyProfile ?? null);
+
+        const baseNotifPrefs =
+            notificationPreferences !== undefined
+                ? notificationPreferences
+                : (memberData.notificationPreferences ?? userData.notificationPreferences ?? null);
+        const nextNotificationPreferences =
+            whatsappOptInAccepted === false && baseNotifPrefs
+                ? { ...baseNotifPrefs, whatsappEnabled: false }
+                : whatsappOptInAccepted === false
+                  ? { emailEnabled: true, whatsappEnabled: false }
+                  : baseNotifPrefs;
+
+        const perms = normalizeSeatPermissionsForRole(
+            effectiveSeatRole,
+            memberData.allowedModules ?? userMembership?.allowedModules,
+            memberData.canViewBilling ?? userMembership?.canViewBilling
+        );
+
+        const fullName = String(
+            memberData.fullName ||
+                memberData.displayName ||
+                userData.fullName ||
+                userData.displayName ||
+                accountData.mandatario?.fullName ||
+                callerEmail ||
+                'Titular de Cuenta'
+        ).trim();
+
+        const batch = db.batch();
+
+        batch.set(
+            memberRef,
+            {
+                uid: callerUid,
+                userId: callerUid,
+                email: String(memberData.email || userData.email || callerEmail),
+                fullName,
+                role: effectiveSeatRole,
+                ...(isOwner ? { isOwner: true } : {}),
+                allowedModules: perms.allowedModules,
+                canViewBilling: perms.canViewBilling,
+                phoneE164: nextPhoneE164,
+                whatsappOptInAt: nextWhatsappOptInAt,
+                whatsappOptInStatus: nextWhatsappOptInStatus,
+                whatsappOptOutAt: nextWhatsappOptOutAt,
+                supplyProfile: nextSupplyProfile,
+                notificationPreferences: nextNotificationPreferences,
+                status: memberData.status || 'ACTIVE',
+                updatedAt: nowMs,
+            },
+            { merge: true }
+        );
+
+        if (userSnap.exists) {
+            const existingMemberships = (Array.isArray(userData.memberships) ? userData.memberships : []).map(
+                ({ passwordHash: _ph, ...rest }: any) => rest
+            );
+            let matched = false;
+            const updatedMemberships = existingMemberships.map((m: any) => {
+                if (m?.accountId !== accountId) return m;
+                matched = true;
+                return {
+                    ...m,
+                    phoneE164: nextPhoneE164,
+                    whatsappOptInAt: nextWhatsappOptInAt,
+                    whatsappOptInStatus: nextWhatsappOptInStatus,
+                    supplyProfile: nextSupplyProfile,
+                    notificationPreferences: nextNotificationPreferences,
+                    updatedAt: nowMs,
+                };
+            });
+            if (!matched) {
+                updatedMemberships.push({
+                    accountId,
+                    accountName: String(accountData.name || accountId),
+                    companyName: String(accountData.name || accountId),
+                    role: effectiveSeatRole,
+                    allowedModules: perms.allowedModules,
+                    canViewBilling: perms.canViewBilling,
+                    phoneE164: nextPhoneE164,
+                    whatsappOptInAt: nextWhatsappOptInAt,
+                    whatsappOptInStatus: nextWhatsappOptInStatus,
+                    supplyProfile: nextSupplyProfile,
+                    notificationPreferences: nextNotificationPreferences,
+                    type: 'BUSINESS',
+                    status: 'ACTIVE',
+                    joinedAt: nowMs,
+                    updatedAt: nowMs,
+                });
+            }
+            batch.update(userRef, {
+                phoneE164: nextPhoneE164,
+                whatsappOptInAt: nextWhatsappOptInAt,
+                whatsappOptInStatus: nextWhatsappOptInStatus,
+                supplyProfile: nextSupplyProfile,
+                notificationPreferences: nextNotificationPreferences,
+                memberships: updatedMemberships,
+                updatedAt: nowMs,
+            });
+        }
+
+        await batch.commit();
+
+        await AuditLedger.record({
+            tenantId: accountId,
+            actorUid: callerUid,
+            actorEmail: callerEmail || 'self@minreport.local',
+            action: 'SUPPLY_MEMBER_SELF_ENROLLMENT',
+            module: 'supply',
+            targetEntity: callerUid,
+            details: {
+                seatRole: effectiveSeatRole,
+                hasPhoneE164: Boolean(nextPhoneE164),
+                whatsappOptInStatus: nextWhatsappOptInStatus,
+                hasWhatsappOptIn: Boolean(nextWhatsappOptInAt),
+                supplyRole: nextSupplyProfile?.role ?? null,
+            },
+            ipAddress: extractClientIp(req),
+        });
+
+        return res.status(200).json({
+            success: true,
+            uid: callerUid,
+            accountId,
+            phoneE164: nextPhoneE164,
+            whatsappOptInAt: nextWhatsappOptInAt,
+            whatsappOptInStatus: nextWhatsappOptInStatus,
+            supplyProfile: nextSupplyProfile,
+            notificationPreferences: nextNotificationPreferences,
+        });
+    } catch (error: any) {
+        console.error('[Staff API] Error en auto-enrolamiento de canal Supply:', error);
+        return res.status(500).json({
+            error: error?.message || 'Error actualizando tu canal de Abastecimiento.',
+        });
     }
 });
 

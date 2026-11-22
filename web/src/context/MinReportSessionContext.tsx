@@ -64,6 +64,13 @@ export interface MinReportSession {
             canExportReport: boolean;
             canTrainVisionAI: boolean;
         };
+        supply?: {
+            canView: boolean;
+            canMutate: boolean;
+            canRecordDirectPurchase: boolean;
+            canApproveExpenseReports: boolean;
+            canManageCapex: boolean;
+        };
         pilot: {
             canCommentAndRequestChanges: boolean;
             canSimulateProjects: boolean;
@@ -438,6 +445,44 @@ export const MinReportSessionProvider: React.FC<{ children: React.ReactNode }> =
                   };
 
         const isAdminOrOwner = hasFullSuiteAccess || role === 'OWNER' || role === 'ADMIN';
+        const isBillingSeatRaw =
+            membershipRoleRaw === 'BILLING_ONLY' ||
+            membershipRoleRaw === 'SUBSCRIPTION_ADMIN' ||
+            claimRole === 'BILLING_ONLY' ||
+            claimRole === 'SUBSCRIPTION_ADMIN';
+        const isSupplyReadOnly = pilotExpired || isTenantBlocked || role === 'VIEWER' || isBillingSeatRaw;
+        const memberSupplyProfile =
+            (userMembership as any)?.supplyProfile ?? (profile as any)?.supplyProfile ?? null;
+        const supplyRoleUpper = String(memberSupplyProfile?.role || '').toUpperCase();
+        const canViewSupply =
+            !pilotExpired &&
+            !isTenantBlocked &&
+            (Boolean(activeModules.supply) || isBillingSeatRaw);
+        const canMutateSupply = !isSupplyReadOnly && Boolean(activeModules.supply);
+        const canRecordDirectPurchase =
+            canMutateSupply &&
+            (hasFullSuiteAccess ||
+                role === 'OWNER' ||
+                role === 'ADMIN' ||
+                memberSupplyProfile?.canRecordDirectPurchase === true ||
+                supplyRoleUpper === 'OWNER_EXEC' ||
+                supplyRoleUpper === 'SITE_ADMIN' ||
+                supplyRoleUpper === 'BUYER');
+        const canApproveExpenseReports =
+            canMutateSupply &&
+            (hasFullSuiteAccess ||
+                role === 'OWNER' ||
+                role === 'ADMIN' ||
+                supplyRoleUpper === 'OWNER_EXEC' ||
+                supplyRoleUpper === 'SITE_ADMIN');
+        const canManageCapex =
+            canMutateSupply &&
+            (hasFullSuiteAccess ||
+                role === 'OWNER' ||
+                role === 'ADMIN' ||
+                memberSupplyProfile?.allowCapex === true ||
+                supplyRoleUpper === 'OWNER_EXEC' ||
+                supplyRoleUpper === 'SITE_ADMIN');
         const resolvedTenantId =
             currentAccount?.id ||
             (typeof tokenClaims.activeAccountId === 'string' ? tokenClaims.activeAccountId : '') ||
@@ -519,6 +564,13 @@ export const MinReportSessionProvider: React.FC<{ children: React.ReactNode }> =
                     canCalculate: !pilotExpired,
                     canExportReport: !pilotExpired && (isAdminOrOwner || role === 'VIEWER'),
                     canTrainVisionAI: isDevRoot,
+                },
+                supply: {
+                    canView: canViewSupply,
+                    canMutate: canMutateSupply,
+                    canRecordDirectPurchase,
+                    canApproveExpenseReports,
+                    canManageCapex,
                 },
                 pilot: {
                     canCommentAndRequestChanges: isTestPilot,

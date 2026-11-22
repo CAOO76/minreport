@@ -789,6 +789,7 @@ export const submitAccessOrgApplication = async (req: Request, res: Response) =>
                 activeModules: {
                     opermaq: eduOperational,
                     stockpile: false,
+                    supply: false,
                 },
             },
             entitlements: isEdu
@@ -797,6 +798,7 @@ export const submitAccessOrgApplication = async (req: Request, res: Response) =>
                       addonModules: {
                           opermaq: { active: eduOperational, updatedAt: nowMs },
                           stockpile: { active: false, updatedAt: nowMs },
+                          supply: { active: false, updatedAt: nowMs },
                       },
                       maxProjects: hydratedEduInst?.defaultMaxProjects ?? 3,
                   }
@@ -806,6 +808,7 @@ export const submitAccessOrgApplication = async (req: Request, res: Response) =>
                       addonModules: {
                           opermaq: { active: false },
                           stockpile: { active: false },
+                          supply: { active: false },
                       },
                   },
             enabledPlugins: eduOperational ? ['opermaq'] : [],

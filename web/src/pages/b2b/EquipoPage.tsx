@@ -1,12 +1,20 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../context/AuthContext';
-import { StaffService, type B2BMemberRecord } from '../../services/StaffService';
+import {
+    StaffService,
+    type B2BMemberRecord,
+    type WhatsAppOptInStatus,
+} from '../../services/StaffService';
 import {
     UpsertB2BMemberPayloadSchema,
     UpdateB2BMemberPayloadSchema,
     type B2BSeatRole,
 } from '../../contracts';
+import {
+    SupplyMemberProfileSchema,
+    type SupplyOperationalRole,
+} from '../../contracts/supply.contracts';
 import M3Switch from '../../components/common/M3Switch';
 import CopyButton from '../../components/common/CopyButton';
 
@@ -22,6 +30,17 @@ const COUNTRY_OPTIONS = [
     { code: 'CO', taxPlaceholder: '900123456-1' },
     { code: 'ES', taxPlaceholder: 'ESB12345678' },
     { code: 'INTL', taxPlaceholder: 'TAX-ID-0001' },
+];
+
+const SUPPLY_ROLE_OPTIONS: readonly SupplyOperationalRole[] = [
+    'CAMP_MANAGER',
+    'MECHANIC_TECH',
+    'OPS_FOREMAN',
+    'WAREHOUSE_KEEPER',
+    'HSEC_OFFICER',
+    'BUYER',
+    'SITE_ADMIN',
+    'OWNER_EXEC',
 ];
 
 const LBL = 'block text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6] mb-fib-8';
@@ -56,10 +75,17 @@ const M3LinearBar: React.FC<{ percent?: number; complete?: boolean; ariaLabel?: 
     );
 };
 
+function deriveOptInStatus(member: B2BMemberRecord): WhatsAppOptInStatus {
+    if (member.whatsappOptInStatus) return member.whatsappOptInStatus;
+    if (member.whatsappOptInAt) return 'ACTIVE';
+    if (member.phoneE164) return 'PENDING_DOUBLE_OPT_IN';
+    return 'UNSET';
+}
+
 export const EquipoPage: React.FC = () => {
     const { t } = useTranslation();
     const undeclaredLabel = t('core_equipo.undeclared', '[Información técnica no declarada en ficha]');
-    const { currentAccount } = useAuth();
+    const { user, currentAccount } = useAuth();
 
     const [members, setMembers] = useState<B2BMemberRecord[]>([]);
     const [loading, setLoading] = useState<boolean>(true);
@@ -76,21 +102,42 @@ export const EquipoPage: React.FC = () => {
     const [jobTitle, setJobTitle] = useState<string>('');
     const [modOpermaq, setModOpermaq] = useState<boolean>(true);
     const [modStockpile, setModStockpile] = useState<boolean>(false);
+    const [modSupply, setModSupply] = useState<boolean>(false);
     const [canViewBilling, setCanViewBilling] = useState<boolean>(false);
+    const [createPhoneE164, setCreatePhoneE164] = useState<string>('');
+    const [createSupplyRole, setCreateSupplyRole] = useState<SupplyOperationalRole>('CAMP_MANAGER');
+    const [createCanDirectPurchase, setCreateCanDirectPurchase] = useState<boolean>(false);
+    const [createAllowCapex, setCreateAllowCapex] = useState<boolean>(false);
     const [submittingCreate, setSubmittingCreate] = useState<boolean>(false);
     const [createFeedback, setCreateFeedback] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
 
-    // Estado edición quirúrgica (Modo Informe -> HITL "ACTUALIZAR")
+    // Estado edición quirúrgica de tercero (Modo Informe -> HITL "ACTUALIZAR")
     const [editingMember, setEditingMember] = useState<B2BMemberRecord | null>(null);
     const [editRole, setEditRole] = useState<'ADMIN' | 'OPERATOR' | 'VIEWER'>('OPERATOR');
     const [editJobTitle, setEditJobTitle] = useState<string>('');
     const [editModOpermaq, setEditModOpermaq] = useState<boolean>(true);
     const [editModStockpile, setEditModStockpile] = useState<boolean>(false);
+    const [editModSupply, setEditModSupply] = useState<boolean>(false);
     const [editCanViewBilling, setEditCanViewBilling] = useState<boolean>(false);
     const [editStatus, setEditStatus] = useState<'ACTIVE' | 'SUSPENDED'>('ACTIVE');
+    const [editPhoneE164, setEditPhoneE164] = useState<string>('');
+    const [editSupplyRole, setEditSupplyRole] = useState<SupplyOperationalRole>('CAMP_MANAGER');
+    const [editCanDirectPurchase, setEditCanDirectPurchase] = useState<boolean>(false);
+    const [editAllowCapex, setEditAllowCapex] = useState<boolean>(false);
     const [editConfirmWord, setEditConfirmWord] = useState<string>('');
     const [submittingEdit, setSubmittingEdit] = useState<boolean>(false);
     const [editError, setEditError] = useState<string | null>(null);
+
+    // Estado auto-enrolamiento del propio titular (`OWNER` / `ADMIN` / `OPERATOR` -> `PATCH /api/staff/me/supply-channel`)
+    const [selfPanelOpen, setSelfPanelOpen] = useState<boolean>(false);
+    const [selfPhoneE164, setSelfPhoneE164] = useState<string>('');
+    const [selfOptInAccepted, setSelfOptInAccepted] = useState<boolean>(false);
+    const [selfSupplyRole, setSelfSupplyRole] = useState<SupplyOperationalRole>('OWNER_EXEC');
+    const [selfCanDirectPurchase, setSelfCanDirectPurchase] = useState<boolean>(true);
+    const [selfAllowCapex, setSelfAllowCapex] = useState<boolean>(true);
+    const [selfConfirmWord, setSelfConfirmWord] = useState<string>('');
+    const [submittingSelf, setSubmittingSelf] = useState<boolean>(false);
+    const [selfError, setSelfError] = useState<string | null>(null);
 
     // Estado desvinculación (HITL "ACTUALIZAR")
     const [deletingMember, setDeletingMember] = useState<B2BMemberRecord | null>(null);
@@ -104,6 +151,18 @@ export const EquipoPage: React.FC = () => {
         () => COUNTRY_OPTIONS.find((c) => c.code === countryCode) || COUNTRY_OPTIONS[0],
         [countryCode]
     );
+
+    const currentMemberRecord = useMemo(
+        () => (user?.uid ? members.find((m) => m.uid === user.uid) || null : null),
+        [members, user?.uid]
+    );
+
+    const canCurrentUserEditOwnSupplyProfile = useMemo(() => {
+        if (!currentMemberRecord) {
+            return Boolean(user?.uid && currentAccount?.ownerId === user.uid);
+        }
+        return currentMemberRecord.role === 'OWNER' || currentMemberRecord.role === 'ADMIN';
+    }, [currentMemberRecord, currentAccount?.ownerId, user?.uid]);
 
     const fetchMembers = useCallback(async () => {
         if (!currentAccount?.id) {
@@ -131,6 +190,7 @@ export const EquipoPage: React.FC = () => {
         if (createRole === 'ADMIN') {
             setModOpermaq(true);
             setModStockpile(true);
+            setModSupply(true);
             setCanViewBilling(true);
         } else if (createRole === 'OPERATOR') {
             setCanViewBilling(false);
@@ -141,14 +201,41 @@ export const EquipoPage: React.FC = () => {
         if (editRole === 'ADMIN') {
             setEditModOpermaq(true);
             setEditModStockpile(true);
+            setEditModSupply(true);
             setEditCanViewBilling(true);
         } else if (editRole === 'OPERATOR') {
             setEditCanViewBilling(false);
         }
     }, [editRole]);
 
+    const openSelfEnrollment = (member?: B2BMemberRecord | null) => {
+        const target = member || currentMemberRecord;
+        setEditingMember(null);
+        setDeletingMember(null);
+        setSelfPanelOpen(true);
+        setSelfPhoneE164(target?.phoneE164 || '');
+        setSelfOptInAccepted(Boolean(target?.whatsappOptInAt));
+        const defaultRole: SupplyOperationalRole =
+            target?.supplyProfile?.role ||
+            (target?.role === 'OWNER' ? 'OWNER_EXEC' : target?.role === 'ADMIN' ? 'SITE_ADMIN' : 'CAMP_MANAGER');
+        setSelfSupplyRole(defaultRole);
+        setSelfCanDirectPurchase(
+            target?.supplyProfile?.canRecordDirectPurchase !== undefined
+                ? Boolean(target.supplyProfile.canRecordDirectPurchase)
+                : defaultRole === 'OWNER_EXEC' || defaultRole === 'SITE_ADMIN' || defaultRole === 'BUYER'
+        );
+        setSelfAllowCapex(
+            target?.supplyProfile?.allowCapex !== undefined
+                ? Boolean(target.supplyProfile.allowCapex)
+                : defaultRole === 'OWNER_EXEC' || defaultRole === 'SITE_ADMIN'
+        );
+        setSelfConfirmWord('');
+        setSelfError(null);
+    };
+
     const openEditMember = (member: B2BMemberRecord) => {
         if (member.role === 'OWNER') return;
+        setSelfPanelOpen(false);
         setDeletingMember(null);
         setDeleteConfirmWord('');
         setDeleteError(null);
@@ -159,16 +246,22 @@ export const EquipoPage: React.FC = () => {
         setEditJobTitle(member.jobTitle || '');
         setEditModOpermaq(safeRole === 'ADMIN' ? true : Boolean(member.allowedModules?.opermaq ?? true));
         setEditModStockpile(safeRole === 'ADMIN' ? true : Boolean(member.allowedModules?.stockpile ?? false));
+        setEditModSupply(safeRole === 'ADMIN' ? true : Boolean(member.allowedModules?.supply ?? false));
         setEditCanViewBilling(
             safeRole === 'ADMIN' ? true : safeRole === 'VIEWER' ? Boolean(member.canViewBilling) : false
         );
         setEditStatus(String(member.status || '').toUpperCase() === 'SUSPENDED' ? 'SUSPENDED' : 'ACTIVE');
+        setEditPhoneE164(member.phoneE164 || '');
+        setEditSupplyRole(member.supplyProfile?.role || (safeRole === 'ADMIN' ? 'SITE_ADMIN' : 'CAMP_MANAGER'));
+        setEditCanDirectPurchase(Boolean(member.supplyProfile?.canRecordDirectPurchase));
+        setEditAllowCapex(Boolean(member.supplyProfile?.allowCapex));
         setEditConfirmWord('');
         setEditError(null);
     };
 
     const openDeleteMember = (member: B2BMemberRecord) => {
         if (member.role === 'OWNER') return;
+        setSelfPanelOpen(false);
         setEditingMember(null);
         setEditConfirmWord('');
         setEditError(null);
@@ -186,6 +279,18 @@ export const EquipoPage: React.FC = () => {
 
         const accountName =
             currentAccount.name || (currentAccount as any).companyName || currentAccount.id;
+        const effectiveSupplyEnabled = createRole === 'ADMIN' ? true : modSupply;
+        const trimmedPhone = createPhoneE164.trim();
+
+        const resolvedSupplyProfile =
+            effectiveSupplyEnabled || trimmedPhone
+                ? SupplyMemberProfileSchema.parse({
+                      role: createSupplyRole,
+                      canRecordDirectPurchase: createCanDirectPurchase,
+                      autoApproveDirectPurchase: createSupplyRole === 'OWNER_EXEC',
+                      allowCapex: createAllowCapex,
+                  })
+                : undefined;
 
         const rawPayload = {
             accountId: currentAccount.id,
@@ -198,9 +303,11 @@ export const EquipoPage: React.FC = () => {
             jobTitle: jobTitle.trim(),
             allowedModules:
                 createRole === 'ADMIN'
-                    ? { opermaq: true, stockpile: true }
-                    : { opermaq: modOpermaq, stockpile: modStockpile },
+                    ? { opermaq: true, stockpile: true, supply: true }
+                    : { opermaq: modOpermaq, stockpile: modStockpile, supply: modSupply },
             canViewBilling: createRole === 'ADMIN' ? true : createRole === 'VIEWER' ? canViewBilling : false,
+            ...(trimmedPhone ? { phoneE164: trimmedPhone } : {}),
+            ...(resolvedSupplyProfile ? { supplyProfile: resolvedSupplyProfile } : {}),
         };
 
         const validated = UpsertB2BMemberPayloadSchema.safeParse(rawPayload);
@@ -224,9 +331,14 @@ export const EquipoPage: React.FC = () => {
             setDisplayName('');
             setTaxId('');
             setJobTitle('');
+            setCreatePhoneE164('');
+            setCreateSupplyRole('CAMP_MANAGER');
+            setCreateCanDirectPurchase(false);
+            setCreateAllowCapex(false);
             if (createRole !== 'ADMIN') {
                 setModOpermaq(true);
                 setModStockpile(false);
+                setModSupply(false);
                 setCanViewBilling(false);
             }
             await fetchMembers();
@@ -245,6 +357,19 @@ export const EquipoPage: React.FC = () => {
         if (!currentAccount?.id || !editingMember) return;
         setEditError(null);
 
+        const trimmedPhone = editPhoneE164.trim();
+        const effectiveSupplyEnabled = editRole === 'ADMIN' ? true : editModSupply;
+        const resolvedSupplyProfile =
+            effectiveSupplyEnabled || trimmedPhone || editingMember.supplyProfile
+                ? SupplyMemberProfileSchema.parse({
+                      ...(editingMember.supplyProfile || {}),
+                      role: editSupplyRole,
+                      canRecordDirectPurchase: editCanDirectPurchase,
+                      autoApproveDirectPurchase: editSupplyRole === 'OWNER_EXEC',
+                      allowCapex: editAllowCapex,
+                  })
+                : undefined;
+
         const rawUpdate = {
             accountId: currentAccount.id,
             confirmationKeyword: editConfirmWord.trim(),
@@ -252,10 +377,12 @@ export const EquipoPage: React.FC = () => {
             jobTitle: editJobTitle.trim(),
             allowedModules:
                 editRole === 'ADMIN'
-                    ? { opermaq: true, stockpile: true }
-                    : { opermaq: editModOpermaq, stockpile: editModStockpile },
+                    ? { opermaq: true, stockpile: true, supply: true }
+                    : { opermaq: editModOpermaq, stockpile: editModStockpile, supply: editModSupply },
             canViewBilling: editRole === 'ADMIN' ? true : editRole === 'VIEWER' ? editCanViewBilling : false,
             status: editStatus,
+            phoneE164: trimmedPhone || null,
+            ...(resolvedSupplyProfile ? { supplyProfile: resolvedSupplyProfile } : {}),
         };
 
         const parsed = UpdateB2BMemberPayloadSchema.safeParse(rawUpdate);
@@ -279,6 +406,48 @@ export const EquipoPage: React.FC = () => {
             setEditError(err?.message || t('core_equipo.err_update_member'));
         } finally {
             setSubmittingEdit(false);
+        }
+    };
+
+    const handleSaveSelfSupplyChannel = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!currentAccount?.id) return;
+        setSelfError(null);
+
+        if (selfConfirmWord.trim() !== 'ACTUALIZAR') {
+            setSelfError(t('core_supply_console.self_enroll_hitl_err'));
+            return;
+        }
+
+        setSubmittingSelf(true);
+        try {
+            const trimmedPhone = selfPhoneE164.trim();
+            const nextProfile = canCurrentUserEditOwnSupplyProfile
+                ? SupplyMemberProfileSchema.parse({
+                      ...(currentMemberRecord?.supplyProfile || {}),
+                      role: selfSupplyRole,
+                      canRecordDirectPurchase: selfCanDirectPurchase,
+                      autoApproveDirectPurchase: selfSupplyRole === 'OWNER_EXEC',
+                      allowCapex: selfAllowCapex,
+                  })
+                : undefined;
+
+            await StaffService.updateSelfSupplyChannel({
+                accountId: currentAccount.id,
+                confirmationKeyword: 'ACTUALIZAR',
+                phoneE164: trimmedPhone || null,
+                whatsappOptInAccepted: selfOptInAccepted,
+                ...(nextProfile ? { supplyProfile: nextProfile } : {}),
+            });
+
+            setListNotice(t('core_supply_console.self_enroll_saved'));
+            setSelfPanelOpen(false);
+            setSelfConfirmWord('');
+            await fetchMembers();
+        } catch (err: any) {
+            setSelfError(err?.message || t('core_supply_console.self_enroll_err'));
+        } finally {
+            setSubmittingSelf(false);
         }
     };
 
@@ -325,6 +494,19 @@ export const EquipoPage: React.FC = () => {
         }
     };
 
+    const optInStatusClass = (status: WhatsAppOptInStatus): string => {
+        switch (status) {
+            case 'ACTIVE':
+                return 'text-[#00AEEF]';
+            case 'PENDING_DOUBLE_OPT_IN':
+                return 'text-[#C68346]';
+            case 'REVOKED':
+                return 'text-red-500';
+            default:
+                return 'text-[#94A3B8] dark:text-[#5A6072]';
+        }
+    };
+
     if (!currentAccount) return null;
 
     return (
@@ -348,6 +530,15 @@ export const EquipoPage: React.FC = () => {
                         {t('core_equipo.tenant_prefix')}: {currentAccount.id}
                     </span>
                     <CopyButton value={currentAccount.id} title={t('core_equipo.copy_tenant_id')} />
+                    <button
+                        type="button"
+                        onClick={() => openSelfEnrollment(currentMemberRecord)}
+                        title={t('core_supply_console.self_enroll_open_btn')}
+                        aria-label={t('core_supply_console.self_enroll_open_btn')}
+                        className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-[#C68346] transition-colors cursor-pointer rounded-none shadow-none"
+                    >
+                        <span className="material-symbols-outlined text-[20px]">tune</span>
+                    </button>
                     <button
                         type="button"
                         onClick={() => void fetchMembers()}
@@ -428,10 +619,13 @@ export const EquipoPage: React.FC = () => {
                                     <tbody className="divide-y divide-[#E2E8F0] dark:divide-[#12151C]">
                                         {members.map((member) => {
                                             const isOwner = member.role === 'OWNER';
+                                            const isSelfRow = Boolean(user?.uid && member.uid === user.uid);
                                             const opermaqEnabled = Boolean(member.allowedModules?.opermaq);
                                             const stockpileEnabled = Boolean(member.allowedModules?.stockpile);
+                                            const supplyEnabled = Boolean(member.allowedModules?.supply);
                                             const billingEnabled = Boolean(member.canViewBilling);
                                             const memberStatus = String(member.status || 'ACTIVE').toUpperCase();
+                                            const optInStatus = deriveOptInStatus(member);
 
                                             return (
                                                 <tr
@@ -450,6 +644,23 @@ export const EquipoPage: React.FC = () => {
                                                             {member.jobTitle ? member.jobTitle : undeclaredLabel}
                                                             {member.taxId ? ` · ${member.countryCode || 'CL'} ${member.taxId}` : ''}
                                                         </div>
+                                                        {(member.phoneE164 || member.supplyProfile?.role) && (
+                                                            <div className="text-microcopy mt-0.5 flex flex-wrap items-center gap-fib-8">
+                                                                {member.phoneE164 && (
+                                                                    <span className="text-[#475569] dark:text-[#8A93A6] select-text">
+                                                                        {member.phoneE164}
+                                                                    </span>
+                                                                )}
+                                                                <span className={optInStatusClass(optInStatus)}>
+                                                                    {t(`core_supply_console.optin_${optInStatus}`)}
+                                                                </span>
+                                                                {member.supplyProfile?.role && (
+                                                                    <span className="text-[#475569] dark:text-[#8A93A6]">
+                                                                        · {t(`core_supply_console.role_${member.supplyProfile.role}`, member.supplyProfile.role)}
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                        )}
                                                     </td>
                                                     <td className="py-fib-13 px-fib-13 align-top">
                                                         <span className={roleTextClass(member.role)}>
@@ -468,6 +679,14 @@ export const EquipoPage: React.FC = () => {
                                                                 <span className="text-[#475569] dark:text-[#8A93A6]">STK: </span>
                                                                 <span className={stockpileEnabled ? 'text-[#00AEEF]' : 'text-[#94A3B8] dark:text-[#5A6072]'}>
                                                                     {stockpileEnabled ? t('core_equipo.mod_on') : t('core_equipo.mod_off')}
+                                                                </span>
+                                                            </div>
+                                                            <div>
+                                                                <span className="text-[#475569] dark:text-[#8A93A6]">
+                                                                    {t('core_supply_console.sup_short')}:{' '}
+                                                                </span>
+                                                                <span className={supplyEnabled ? 'text-[#00AEEF]' : 'text-[#94A3B8] dark:text-[#5A6072]'}>
+                                                                    {supplyEnabled ? t('core_equipo.mod_on') : t('core_equipo.mod_off')}
                                                                 </span>
                                                             </div>
                                                         </div>
@@ -498,6 +717,17 @@ export const EquipoPage: React.FC = () => {
                                                     </td>
                                                     <td className="py-fib-13 px-fib-13 align-top text-right">
                                                         <div className="inline-flex items-center gap-fib-8">
+                                                            {isSelfRow && (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => openSelfEnrollment(member)}
+                                                                    title={t('core_supply_console.self_enroll_open_btn')}
+                                                                    aria-label={t('core_supply_console.self_enroll_open_btn')}
+                                                                    className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-[#C68346] transition-colors cursor-pointer"
+                                                                >
+                                                                    <span className="material-symbols-outlined text-[18px]">tune</span>
+                                                                </button>
+                                                            )}
                                                             <button
                                                                 type="button"
                                                                 disabled={isOwner}
@@ -528,6 +758,144 @@ export const EquipoPage: React.FC = () => {
                             </div>
                         )}
                     </div>
+
+                    {/* PANEL QUIRÚRGICO DE AUTO-ENROLAMIENTO PROPIO (OWNER / TITULAR -> PATCH /api/staff/me/supply-channel) */}
+                    {selfPanelOpen && (
+                        <form
+                            onSubmit={handleSaveSelfSupplyChannel}
+                            autoComplete="off"
+                            spellCheck={false}
+                            className="border border-[#00AEEF] bg-[#F8FAFC] dark:bg-[#07090D] p-fib-21 rounded-none shadow-none space-y-fib-13"
+                        >
+                            <div className="flex items-center justify-between border-b border-[#E2E8F0] dark:border-[#12151C] pb-fib-13">
+                                <div>
+                                    <span className="text-microcopy font-mono uppercase text-[#00AEEF] block">
+                                        {t('core_supply_console.self_enroll_kicker')}
+                                    </span>
+                                    <h3 className="text-h2-section font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                                        {t('core_supply_console.self_enroll_title')}
+                                    </h3>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setSelfPanelOpen(false);
+                                        setSelfConfirmWord('');
+                                        setSelfError(null);
+                                    }}
+                                    title={t('core_equipo.btn_close_edit')}
+                                    aria-label={t('core_equipo.btn_close_edit')}
+                                    className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
+                                >
+                                    <span className="material-symbols-outlined text-[20px]">close</span>
+                                </button>
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-fib-13">
+                                <div>
+                                    <label htmlFor="equipo_self_phone" className={LBL}>
+                                        {t('core_supply_console.phone_e164_label')}
+                                    </label>
+                                    <input
+                                        id="equipo_self_phone"
+                                        type="tel"
+                                        value={selfPhoneE164}
+                                        onChange={(e) => setSelfPhoneE164(e.target.value)}
+                                        placeholder={t('core_supply_console.phone_e164_placeholder')}
+                                        autoComplete="off"
+                                        spellCheck={false}
+                                        className={INP}
+                                    />
+                                </div>
+
+                                <div className="flex items-center justify-between gap-fib-8 p-fib-13 border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000]">
+                                    <span className="text-microcopy font-mono uppercase text-[#0F172A] dark:text-[#F3F4F6]">
+                                        {t('core_supply_console.self_enroll_optin_label')}
+                                    </span>
+                                    <M3Switch
+                                        checked={selfOptInAccepted}
+                                        onChange={setSelfOptInAccepted}
+                                        aria-label={t('core_supply_console.self_enroll_optin_aria')}
+                                    />
+                                </div>
+                            </div>
+
+                            {canCurrentUserEditOwnSupplyProfile && (
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-fib-13 pt-fib-8 border-t border-[#E2E8F0] dark:border-[#12151C]">
+                                    <div>
+                                        <label htmlFor="equipo_self_supply_role" className={LBL}>
+                                            {t('core_supply_console.supply_role_label')}
+                                        </label>
+                                        <select
+                                            id="equipo_self_supply_role"
+                                            value={selfSupplyRole}
+                                            onChange={(e) => setSelfSupplyRole(e.target.value as SupplyOperationalRole)}
+                                            className={INP}
+                                        >
+                                            {SUPPLY_ROLE_OPTIONS.map((sr) => (
+                                                <option key={sr} value={sr}>
+                                                    {t(`core_supply_console.role_${sr}`, sr)}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <div className="flex items-center justify-between gap-fib-8 p-fib-13 border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000]">
+                                        <span className="text-microcopy font-mono uppercase">
+                                            {t('core_supply_console.can_direct_purchase')}
+                                        </span>
+                                        <M3Switch
+                                            checked={selfCanDirectPurchase}
+                                            onChange={setSelfCanDirectPurchase}
+                                            aria-label={t('core_supply_console.aria_toggle_direct_purchase')}
+                                        />
+                                    </div>
+                                    <div className="flex items-center justify-between gap-fib-8 p-fib-13 border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000]">
+                                        <span className="text-microcopy font-mono uppercase">
+                                            {t('core_supply_console.allow_capex')}
+                                        </span>
+                                        <M3Switch
+                                            checked={selfAllowCapex}
+                                            onChange={setSelfAllowCapex}
+                                            aria-label={t('core_supply_console.aria_toggle_allow_capex')}
+                                        />
+                                    </div>
+                                </div>
+                            )}
+
+                            {selfError && (
+                                <p className="text-data-dense font-mono text-red-600 dark:text-red-400">{selfError}</p>
+                            )}
+
+                            {submittingSelf && <M3LinearBar percent={75} ariaLabel={t('core_equipo.saving_aria')} />}
+
+                            <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-fib-13 pt-fib-8 border-t border-[#E2E8F0] dark:border-[#12151C]">
+                                <div className="flex-1">
+                                    <label htmlFor="equipo_self_confirm" className={LBL}>
+                                        {t('core_equipo.hitl_edit_prefix')}{' '}
+                                        <span className="text-[#C68346]">ACTUALIZAR</span>{' '}
+                                        {t('core_equipo.hitl_edit_suffix')}
+                                    </label>
+                                    <input
+                                        id="equipo_self_confirm"
+                                        type="text"
+                                        value={selfConfirmWord}
+                                        onChange={(e) => setSelfConfirmWord(e.target.value)}
+                                        placeholder="ACTUALIZAR"
+                                        autoComplete="off"
+                                        spellCheck={false}
+                                        className={INP}
+                                    />
+                                </div>
+                                <button
+                                    type="submit"
+                                    disabled={submittingSelf || selfConfirmWord.trim() !== 'ACTUALIZAR'}
+                                    className="px-fib-21 py-fib-13 bg-[#C68346] hover:bg-[#B0743E] text-white text-microcopy font-mono uppercase rounded-none shadow-none border-0 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                                >
+                                    {submittingSelf ? t('core_equipo.btn_processing') : t('core_supply_console.self_enroll_save_btn')}
+                                </button>
+                            </div>
+                        </form>
+                    )}
 
                     {/* PANEL QUIRÚRGICO DE EDICIÓN (HITL "ACTUALIZAR") */}
                     {editingMember && (
@@ -608,7 +976,7 @@ export const EquipoPage: React.FC = () => {
                                 </div>
                             </div>
 
-                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-fib-13 pt-fib-8 border-t border-[#E2E8F0] dark:border-[#12151C]">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-fib-13 pt-fib-8 border-t border-[#E2E8F0] dark:border-[#12151C]">
                                 <div className="flex items-center justify-between gap-fib-8 p-fib-13 border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000]">
                                     <span className="text-microcopy font-mono uppercase">OPERMAQ</span>
                                     <M3Switch
@@ -619,12 +987,23 @@ export const EquipoPage: React.FC = () => {
                                     />
                                 </div>
                                 <div className="flex items-center justify-between gap-fib-8 p-fib-13 border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000]">
-                                    <span className="text-microcopy font-mono uppercase">STOCKPILE</span>
+                                    <span className="text-microcopy font-mono uppercase">ACOPIOS</span>
                                     <M3Switch
                                         checked={editRole === 'ADMIN' ? true : editModStockpile}
                                         disabled={editRole === 'ADMIN'}
                                         onChange={setEditModStockpile}
                                         aria-label={t('core_equipo.aria_toggle_stockpile')}
+                                    />
+                                </div>
+                                <div className="flex items-center justify-between gap-fib-8 p-fib-13 border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000]">
+                                    <span className="text-microcopy font-mono uppercase">
+                                        {t('core_supply_console.supply_module_label')}
+                                    </span>
+                                    <M3Switch
+                                        checked={editRole === 'ADMIN' ? true : editModSupply}
+                                        disabled={editRole === 'ADMIN'}
+                                        onChange={setEditModSupply}
+                                        aria-label={t('core_supply_console.aria_toggle_supply')}
                                     />
                                 </div>
                                 <div className="flex items-center justify-between gap-fib-8 p-fib-13 border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000]">
@@ -636,6 +1015,80 @@ export const EquipoPage: React.FC = () => {
                                         aria-label={t('core_equipo.aria_toggle_billing')}
                                     />
                                 </div>
+                            </div>
+
+                            {/* Sección Canal WhatsApp & Perfil Abastecimiento */}
+                            <div className="space-y-fib-13 pt-fib-13 border-t border-[#E2E8F0] dark:border-[#12151C]">
+                                <div className="flex items-center justify-between">
+                                    <span className="text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6]">
+                                        {t('core_supply_console.section_supply_title')}
+                                    </span>
+                                    <span className={`text-microcopy font-mono uppercase ${optInStatusClass(deriveOptInStatus(editingMember))}`}>
+                                        {t(`core_supply_console.optin_${deriveOptInStatus(editingMember)}`)}
+                                    </span>
+                                </div>
+
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-fib-13">
+                                    <div>
+                                        <label htmlFor="equipo_edit_phone" className={LBL}>
+                                            {t('core_supply_console.phone_e164_label')}
+                                        </label>
+                                        <input
+                                            id="equipo_edit_phone"
+                                            type="tel"
+                                            value={editPhoneE164}
+                                            onChange={(e) => setEditPhoneE164(e.target.value)}
+                                            placeholder={t('core_supply_console.phone_e164_placeholder')}
+                                            autoComplete="off"
+                                            spellCheck={false}
+                                            className={INP}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label htmlFor="equipo_edit_supply_role" className={LBL}>
+                                            {t('core_supply_console.supply_role_label')}
+                                        </label>
+                                        <select
+                                            id="equipo_edit_supply_role"
+                                            value={editSupplyRole}
+                                            onChange={(e) => setEditSupplyRole(e.target.value as SupplyOperationalRole)}
+                                            className={INP}
+                                        >
+                                            {SUPPLY_ROLE_OPTIONS.map((sr) => (
+                                                <option key={sr} value={sr}>
+                                                    {t(`core_supply_console.role_${sr}`, sr)}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-fib-13">
+                                    <div className="flex items-center justify-between gap-fib-8 p-fib-13 border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000]">
+                                        <span className="text-microcopy font-mono uppercase">
+                                            {t('core_supply_console.can_direct_purchase')}
+                                        </span>
+                                        <M3Switch
+                                            checked={editCanDirectPurchase}
+                                            onChange={setEditCanDirectPurchase}
+                                            aria-label={t('core_supply_console.aria_toggle_direct_purchase')}
+                                        />
+                                    </div>
+                                    <div className="flex items-center justify-between gap-fib-8 p-fib-13 border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000]">
+                                        <span className="text-microcopy font-mono uppercase">
+                                            {t('core_supply_console.allow_capex')}
+                                        </span>
+                                        <M3Switch
+                                            checked={editAllowCapex}
+                                            onChange={setEditAllowCapex}
+                                            aria-label={t('core_supply_console.aria_toggle_allow_capex')}
+                                        />
+                                    </div>
+                                </div>
+
+                                <p className="text-microcopy font-mono text-[#475569] dark:text-[#8A93A6]">
+                                    {t('core_supply_console.double_optin_notice')}
+                                </p>
                             </div>
 
                             {editError && (
@@ -885,12 +1338,23 @@ export const EquipoPage: React.FC = () => {
                                 />
                             </div>
                             <div className="flex items-center justify-between p-fib-13 border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000]">
-                                <span className="text-data-dense font-mono">STOCKPILE CONTROL</span>
+                                <span className="text-data-dense font-mono">ACOPIOS</span>
                                 <M3Switch
                                     checked={createRole === 'ADMIN' ? true : modStockpile}
                                     disabled={createRole === 'ADMIN'}
                                     onChange={setModStockpile}
                                     aria-label={t('core_equipo.aria_toggle_stockpile')}
+                                />
+                            </div>
+                            <div className="flex items-center justify-between p-fib-13 border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000]">
+                                <span className="text-data-dense font-mono">
+                                    {t('core_supply_console.supply_module_label')}
+                                </span>
+                                <M3Switch
+                                    checked={createRole === 'ADMIN' ? true : modSupply}
+                                    disabled={createRole === 'ADMIN'}
+                                    onChange={setModSupply}
+                                    aria-label={t('core_supply_console.aria_toggle_supply')}
                                 />
                             </div>
 
@@ -911,6 +1375,69 @@ export const EquipoPage: React.FC = () => {
                                     />
                                 </div>
                             )}
+                        </div>
+
+                        {/* Canal Terreno WhatsApp & Perfil Abastecimiento */}
+                        <div className="space-y-fib-8 pt-fib-8 border-t border-[#E2E8F0] dark:border-[#12151C]">
+                            <span className={LBL}>{t('core_supply_console.section_supply_title')}</span>
+                            <div>
+                                <label htmlFor="equipo_create_phone" className={LBL}>
+                                    {t('core_supply_console.phone_e164_label')}
+                                </label>
+                                <input
+                                    id="equipo_create_phone"
+                                    type="tel"
+                                    value={createPhoneE164}
+                                    onChange={(e) => setCreatePhoneE164(e.target.value)}
+                                    placeholder={t('core_supply_console.phone_e164_placeholder')}
+                                    autoComplete="off"
+                                    spellCheck={false}
+                                    className={INP}
+                                />
+                            </div>
+
+                            <div>
+                                <label htmlFor="equipo_create_supply_role" className={LBL}>
+                                    {t('core_supply_console.supply_role_label')}
+                                </label>
+                                <select
+                                    id="equipo_create_supply_role"
+                                    value={createSupplyRole}
+                                    onChange={(e) => setCreateSupplyRole(e.target.value as SupplyOperationalRole)}
+                                    className={INP}
+                                >
+                                    {SUPPLY_ROLE_OPTIONS.map((sr) => (
+                                        <option key={sr} value={sr}>
+                                            {t(`core_supply_console.role_${sr}`, sr)}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+
+                            <div className="flex items-center justify-between p-fib-13 border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000]">
+                                <span className="text-microcopy font-mono uppercase">
+                                    {t('core_supply_console.can_direct_purchase')}
+                                </span>
+                                <M3Switch
+                                    checked={createCanDirectPurchase}
+                                    onChange={setCreateCanDirectPurchase}
+                                    aria-label={t('core_supply_console.aria_toggle_direct_purchase')}
+                                />
+                            </div>
+                            <div className="flex items-center justify-between p-fib-13 border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000]">
+                                <span className="text-microcopy font-mono uppercase">
+                                    {t('core_supply_console.allow_capex')}
+                                </span>
+                                <M3Switch
+                                    checked={createAllowCapex}
+                                    onChange={setCreateAllowCapex}
+                                    aria-label={t('core_supply_console.aria_toggle_allow_capex')}
+                                />
+                            </div>
+
+                            <p className="text-microcopy font-mono text-[#475569] dark:text-[#8A93A6]">
+                                {t('core_supply_console.double_optin_notice')}
+                            </p>
                         </div>
 
                         {createFeedback && (

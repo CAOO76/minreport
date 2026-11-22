@@ -48,7 +48,7 @@ interface TenantRecord {
     gatekeeperStatus?: string;
     gatekeeperFindings?: Record<string, any>;
     entitlements?: AccountEntitlements | null;
-    contract?: { activeModules?: { opermaq?: boolean; stockpile?: boolean } };
+    contract?: { activeModules?: { opermaq?: boolean; stockpile?: boolean; supply?: boolean } };
     institution?: string;
     academicDomain?: string;
     documentUrl?: string;
@@ -58,7 +58,7 @@ interface TenantRecord {
 }
 
 interface ModuleStatusEntry {
-    id: 'opermaq' | 'stockpile';
+    id: 'opermaq' | 'stockpile' | 'supply';
     name: string;
     code: string;
     description: string;
@@ -174,6 +174,7 @@ export const SuperAdminConsole: React.FC = () => {
     const [entBasePackage, setEntBasePackage] = useState<BasePackageTier>('CORE_BASE');
     const [entAddonOpermaq, setEntAddonOpermaq] = useState(false);
     const [entAddonStockpile, setEntAddonStockpile] = useState(false);
+    const [entAddonSupply, setEntAddonSupply] = useState(false);
     const [entMaxProjects, setEntMaxProjects] = useState<string>('');
     const [entEduInstitutionId, setEntEduInstitutionId] = useState<string>('');
     const [entKeyword, setEntKeyword] = useState('');
@@ -204,7 +205,7 @@ export const SuperAdminConsole: React.FC = () => {
     const [metricsSummary, setMetricsSummary] = useState<TenantMetricsSummary | null>(null);
     const [selectedMetricItem, setSelectedMetricItem] = useState<TenantMetricItem | null>(null);
 
-    // Disponibilidad global de modulos (exclusivamente opermaq y stockpile)
+    // Disponibilidad global de modulos (opermaq, stockpile y supply)
     const [modulesState, setModulesState] = useState<ModuleStatusEntry[]>([
         {
             id: 'opermaq',
@@ -215,14 +216,21 @@ export const SuperAdminConsole: React.FC = () => {
         },
         {
             id: 'stockpile',
-            name: 'STOCKPILE CONTROL',
+            name: 'ACOPIOS',
             code: 'MOD-STOCKPILE',
             description: 'Cubicacion volumetrica 3D, fotogrametria y balance de tonelaje mineral.',
             enabled: true,
         },
+        {
+            id: 'supply',
+            name: 'ABASTECIMIENTO',
+            code: 'MOD-SUPPLY',
+            description: 'Demanda multi-origen, compras consolidadas, bodega faena, activos CAPEX y rendiciones SII.',
+            enabled: true,
+        },
     ]);
     const [pendingModuleToggle, setPendingModuleToggle] = useState<{
-        moduleId: 'opermaq' | 'stockpile';
+        moduleId: 'opermaq' | 'stockpile' | 'supply';
         current: boolean;
         next: boolean;
     } | null>(null);
@@ -244,7 +252,7 @@ export const SuperAdminConsole: React.FC = () => {
         targetUid?: string;
         currentStatus?: string;
         nextStatus?: 'ACTIVE' | 'SUSPENDED' | 'REJECTED';
-        moduleId?: 'opermaq' | 'stockpile';
+        moduleId?: 'opermaq' | 'stockpile' | 'supply';
         moduleName?: string;
         currentEnabled?: boolean;
         nextEnabled?: boolean;
@@ -274,8 +282,27 @@ export const SuperAdminConsole: React.FC = () => {
             Boolean(tenant.isEduSandbox);
         const defaultTier: BasePackageTier = isEdu ? 'ACADEMIC_SANDBOX' : 'CORE_BASE';
         setEntBasePackage(tenant.entitlements?.basePackage || defaultTier);
-        setEntAddonOpermaq(Boolean(tenant.entitlements?.addonModules?.opermaq?.active));
-        setEntAddonStockpile(Boolean(tenant.entitlements?.addonModules?.stockpile?.active));
+        setEntAddonOpermaq(
+            Boolean(
+                tenant.entitlements?.addonModules?.opermaq?.active ??
+                    tenant.contract?.activeModules?.opermaq ??
+                    false
+            )
+        );
+        setEntAddonStockpile(
+            Boolean(
+                tenant.entitlements?.addonModules?.stockpile?.active ??
+                    tenant.contract?.activeModules?.stockpile ??
+                    false
+            )
+        );
+        setEntAddonSupply(
+            Boolean(
+                tenant.entitlements?.addonModules?.supply?.active ??
+                    tenant.contract?.activeModules?.supply ??
+                    false
+            )
+        );
         const maxProjVal = tenant.entitlements?.maxProjects;
         setEntMaxProjects(
             typeof maxProjVal === 'number' && Number.isFinite(maxProjVal)
@@ -376,7 +403,7 @@ export const SuperAdminConsole: React.FC = () => {
             const map: Record<string, { enabled: boolean; updatedAt?: string; updatedBy?: string }> = {};
             snap.forEach((d) => {
                 const raw = d.data();
-                if (d.id === 'opermaq' || d.id === 'stockpile') {
+                if (d.id === 'opermaq' || d.id === 'stockpile' || d.id === 'supply') {
                     map[d.id] = {
                         enabled: typeof raw.enabled === 'boolean' ? raw.enabled : true,
                         updatedAt: raw.updatedAt,
@@ -652,6 +679,7 @@ export const SuperAdminConsole: React.FC = () => {
             addonModules: {
                 opermaq: entAddonOpermaq,
                 stockpile: entAddonStockpile,
+                supply: entAddonSupply,
             },
             maxProjects: parsedMaxProj,
             ...(activeTab === 'EDU' ? { eduInstitutionId: entEduInstitutionId.trim() || null } : {}),
@@ -1084,7 +1112,16 @@ export const SuperAdminConsole: React.FC = () => {
                                                     Boolean(tenant.entitlements?.addonModules?.opermaq?.active);
                                                 const stkActive =
                                                     pkg === 'FULL_SUITE' ||
-                                                    Boolean(tenant.entitlements?.addonModules?.stockpile?.active);
+                                                    Boolean(
+                                                        tenant.entitlements?.addonModules?.stockpile?.active ??
+                                                            tenant.contract?.activeModules?.stockpile
+                                                    );
+                                                const supActive =
+                                                    pkg === 'FULL_SUITE' ||
+                                                    Boolean(
+                                                        tenant.entitlements?.addonModules?.supply?.active ??
+                                                            tenant.contract?.activeModules?.supply
+                                                    );
                                                 const maxProj = tenant.entitlements?.maxProjects;
 
                                                 return (
@@ -1131,7 +1168,7 @@ export const SuperAdminConsole: React.FC = () => {
                                                         <td className="py-fib-13 px-fib-8 text-microcopy">
                                                             <span className="block font-bold text-[#C68346]">{pkg}</span>
                                                             <span className="text-[#475569] dark:text-[#8A93A6]">
-                                                                {opqActive ? 'OPQ' : '—'} · {stkActive ? 'STK' : '—'}
+                                                                {opqActive ? 'OPQ' : '—'} · {stkActive ? 'STK' : '—'} · {supActive ? t('core_supply_console.sup_short') : '—'}
                                                                 {activeTab === 'EDU'
                                                                     ? ` · ${t('core_superadmin.tenants.max_projects_edu', {
                                                                           count: maxProj ?? 3,
@@ -1942,6 +1979,24 @@ export const SuperAdminConsole: React.FC = () => {
                                                 </div>
                                                 <div className="flex items-center justify-between">
                                                     <dt className="text-[#475569] dark:text-[#8A93A6]">
+                                                        {t('core_supply_console.addon_supply')}
+                                                    </dt>
+                                                    <dd
+                                                        className={
+                                                            (selectedTenant.entitlements?.addonModules?.supply?.active ??
+                                                                selectedTenant.contract?.activeModules?.supply)
+                                                                ? 'text-[#00AEEF]'
+                                                                : 'text-[#94A3B8] dark:text-[#5A6072]'
+                                                        }
+                                                    >
+                                                        {(selectedTenant.entitlements?.addonModules?.supply?.active ??
+                                                            selectedTenant.contract?.activeModules?.supply)
+                                                            ? t('core_superadmin.status.ENABLED')
+                                                            : t('core_superadmin.status.DISABLED')}
+                                                    </dd>
+                                                </div>
+                                                <div className="flex items-center justify-between">
+                                                    <dt className="text-[#475569] dark:text-[#8A93A6]">
                                                         {t('core_superadmin.entitlements.max_projects')}
                                                     </dt>
                                                     <dd className="text-[#0F172A] dark:text-[#F3F4F6]">
@@ -2003,6 +2058,17 @@ export const SuperAdminConsole: React.FC = () => {
                                                         checked={entAddonStockpile}
                                                         onChange={setEntAddonStockpile}
                                                         aria-label={t('core_superadmin.entitlements.addon_stockpile_full')}
+                                                    />
+                                                </div>
+
+                                                <div className="flex items-center justify-between py-1">
+                                                    <span className="text-xs text-[#475569] dark:text-[#8A93A6]">
+                                                        {t('core_supply_console.addon_supply_full')}
+                                                    </span>
+                                                    <M3Switch
+                                                        checked={entAddonSupply}
+                                                        onChange={setEntAddonSupply}
+                                                        aria-label={t('core_supply_console.addon_supply_full')}
                                                     />
                                                 </div>
 

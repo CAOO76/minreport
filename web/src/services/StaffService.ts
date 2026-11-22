@@ -7,6 +7,12 @@ import {
     UpsertB2BMemberPayloadSchema,
     type B2BSeatRole,
 } from '../contracts';
+import type {
+    MemberNotificationPreferences,
+    SupplyMemberProfile,
+} from '../contracts/supply.contracts';
+
+export type WhatsAppOptInStatus = 'ACTIVE' | 'PENDING_DOUBLE_OPT_IN' | 'REVOKED' | 'UNSET';
 
 export interface B2BMemberRecord {
     uid: string;
@@ -20,8 +26,14 @@ export interface B2BMemberRecord {
     allowedModules: {
         opermaq: boolean;
         stockpile: boolean;
+        supply?: boolean;
     };
     canViewBilling: boolean;
+    phoneE164?: string | null;
+    whatsappOptInAt?: number | string | null;
+    whatsappOptInStatus?: WhatsAppOptInStatus;
+    supplyProfile?: SupplyMemberProfile | null;
+    notificationPreferences?: MemberNotificationPreferences | null;
     status: string;
     invitedAt?: number | string | null;
     updatedAt?: number | string | null;
@@ -31,6 +43,26 @@ export type UpsertMemberInput = z.input<typeof UpsertB2BMemberPayloadSchema>;
 export type UpdateMemberInput = Omit<z.input<typeof UpdateB2BMemberPayloadSchema>, 'accountId'> & {
     accountId?: string;
 };
+
+export interface SelfSupplyChannelInput {
+    accountId: string;
+    confirmationKeyword: 'ACTUALIZAR';
+    phoneE164?: string | null;
+    whatsappOptInAccepted?: boolean;
+    supplyProfile?: SupplyMemberProfile | null;
+    notificationPreferences?: MemberNotificationPreferences | null;
+}
+
+export interface SelfSupplyChannelResponse {
+    success: boolean;
+    uid: string;
+    accountId: string;
+    phoneE164: string | null;
+    whatsappOptInAt: string | number | null;
+    whatsappOptInStatus: WhatsAppOptInStatus;
+    supplyProfile: SupplyMemberProfile | null;
+    notificationPreferences: MemberNotificationPreferences | null;
+}
 
 export interface UpsertMemberResponse {
     uid: string;
@@ -127,6 +159,27 @@ export class StaffService {
         }
 
         return body as MutateMemberResponse;
+    }
+
+    static async updateSelfSupplyChannel(
+        payload: SelfSupplyChannelInput
+    ): Promise<SelfSupplyChannelResponse> {
+        const headers = await this.getAuthHeaders(payload.accountId);
+        const url = getApiUrl('/api/staff/me/supply-channel');
+        const response = await fetch(url, {
+            method: 'PATCH',
+            headers,
+            body: JSON.stringify(payload),
+        });
+
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(
+                body?.error || `Error HTTP ${response.status} al actualizar canal propio de Abastecimiento.`
+            );
+        }
+
+        return body as SelfSupplyChannelResponse;
     }
 
     static async removeMember(
