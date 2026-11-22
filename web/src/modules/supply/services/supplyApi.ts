@@ -14,6 +14,9 @@ import {
     type ProcurementBucket,
     type PurchaseLineDestination,
     type PurchaseMode,
+    type ReceiptAnalysisDraft,
+    type ReceiptAnalysisSource,
+    type ReceiptArithmeticCheckSummary,
     type RequisitionUrgency,
     type SiiDocumentRcvStatus,
     type SiiDocumentRecord,
@@ -28,6 +31,7 @@ import {
     type SupplyOperationalRole,
     type SupplyPurchaseDraft,
     type SupplyPurchaseLineDraft,
+    type SupplyPurchaseReceptionStatus,
     type SupplyPurchaseRecord,
     type SupplyRequisition,
     type SupplyRequisitionLine,
@@ -125,16 +129,25 @@ function normalizeRequisition(raw: Record<string, unknown>): SupplyRequisition {
     };
 }
 
-function normalizePurchaseLineFromServer(raw: Record<string, unknown>): SupplyPurchaseLineDraft {
+export function normalizePurchaseLineFromServer(
+    raw: Record<string, unknown>
+): SupplyPurchaseLineDraft {
     const id = String(
         raw.purchaseLineId || raw.lineId || `pl_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
     );
-    const qty = Number(raw.qtyPurchased ?? raw.qty ?? 1) || 1;
+    const qty = Number(raw.qtyPurchased ?? raw.qty ?? raw.quantity ?? 1) || 1;
     const total = Number(raw.lineTotalClp ?? raw.subtotalClp ?? 0) || 0;
     const unitGross =
         Number(raw.unitPriceGrossClp ?? raw.unitPriceClp ?? (qty > 0 ? Math.round(total / qty) : 0)) ||
         0;
-    const desc = String(raw.rawDescription || raw.normalizedName || raw.name || '');
+    const desc = String(
+        raw.rawDescription ||
+            raw.description ||
+            raw.normalizedName ||
+            raw.name ||
+            raw.itemName ||
+            ''
+    ).trim();
 
     return {
         lineId: id,
@@ -146,7 +159,7 @@ function normalizePurchaseLineFromServer(raw: Record<string, unknown>): SupplyPu
         procurementBucket: raw.procurementBucket as ProcurementBucket | undefined,
         qty,
         qtyPurchased: qty,
-        qtyReceived: Number(raw.qtyReceived ?? 0) || 0,
+        qtyReceived: Number(raw.qtyReceivedSoFar ?? raw.qtyReceived ?? 0) || 0,
         unitSi: (raw.unitSi as SupplyUnitSi) || 'un',
         unitPriceClp: unitGross,
         unitPriceNetClp: typeof raw.unitPriceNetClp === 'number' ? raw.unitPriceNetClp : undefined,
@@ -161,6 +174,156 @@ function normalizePurchaseLineFromServer(raw: Record<string, unknown>): SupplyPu
         atypicalFlags: Array.isArray(raw.atypicalFlags)
             ? (raw.atypicalFlags as AtypicalFlagCode[])
             : [],
+    };
+}
+
+export function normalizePurchaseRecord(raw: Record<string, unknown>): SupplyPurchaseRecord {
+    const rawReceptionStatus =
+        typeof raw.receptionStatus === 'string' && raw.receptionStatus.trim().length > 0
+            ? (raw.receptionStatus.trim() as SupplyPurchaseReceptionStatus)
+            : undefined;
+    return {
+        ...(raw as unknown as SupplyPurchaseRecord),
+        folio: String(raw.folio ?? ''),
+        receptionStatus: rawReceptionStatus,
+        lines: Array.isArray(raw.lines)
+            ? (raw.lines as Record<string, unknown>[]).map(normalizePurchaseLineFromServer)
+            : [],
+    };
+}
+
+function mapReceiptExtractionSource(rawSource: unknown): ReceiptAnalysisSource | undefined {
+    const upper = String(rawSource || '').trim().toUpperCase();
+    if (!upper) return undefined;
+    if (upper === 'XML_DTE') return 'XML_DTE';
+    if (
+        upper === 'TED_XML' ||
+        upper === 'TED_PDF417' ||
+        upper === 'TED_ONLY' ||
+        upper === 'TED_PLUS_AI' ||
+        upper === 'HYBRID_TED_OCR'
+    ) {
+        return 'TED_XML';
+    }
+    if (upper === 'OCR_GEMINI' || upper === 'AI_VISION_OCR' || upper === 'GEMINI_VISION_OCR') {
+        return 'OCR_GEMINI';
+    }
+    return undefined;
+}
+
+export function normalizeReceiptAnalysisDraft(
+    json: Record<string, unknown>,
+    fallback?: Partial<AnalyzeReceiptRequest>
+): ReceiptAnalysisDraft {
+    const rawDraft = (json?.draft || json?.analysis || json?.data || json) as Record<
+        string,
+        unknown
+    >;
+    const rawLines = Array.isArray(rawDraft.lines)
+        ? (rawDraft.lines as Record<string, unknown>[])
+        : [];
+    const normalizedLines = rawLines.map(normalizePurchaseLineFromServer);
+
+    const rawCheck =
+        rawDraft.arithmeticCheck && typeof rawDraft.arithmeticCheck === 'object'
+            ? (rawDraft.arithmeticCheck as Record<string, unknown>)
+            : null;
+    const rawCheckValid =
+        typeof rawCheck?.valid === 'boolean'
+            ? rawCheck.valid
+            : typeof rawCheck?.verified === 'boolean'
+              ? rawCheck.verified
+              : typeof rawDraft.arithmeticValid === 'boolean'
+                ? rawDraft.arithmeticValid
+                : undefined;
+    const arithmeticDeltaClp =
+        typeof rawCheck?.deltaClp === 'number'
+            ? rawCheck.deltaClp
+            : typeof rawDraft.arithmeticMismatchClp === 'number'
+              ? rawDraft.arithmeticMismatchClp
+              : typeof rawDraft.arithmeticDeltaClp === 'number'
+                ? rawDraft.arithmeticDeltaClp
+                : 0;
+    const arithmeticMismatch =
+        rawCheckValid !== undefined
+            ? !rawCheckValid
+            : Boolean(rawDraft.arithmeticMismatch || Math.abs(arithmeticDeltaClp) > 2);
+
+    const linesSumClp =
+        typeof rawCheck?.linesSumClp === 'number'
+            ? rawCheck.linesSumClp
+            : normalizedLines.reduce((acc, l) => acc + (Number(l.subtotalClp ?? l.lineTotalClp) || 0), 0);
+    const totalAmountClp = Number(rawDraft.totalAmountClp ?? 0) || 0;
+    const expectedTotalClp =
+        typeof rawCheck?.expectedTotalClp === 'number' ? rawCheck.expectedTotalClp : totalAmountClp;
+    const pricingBasis =
+        rawCheck?.pricingBasis === 'GROSS' ||
+        rawCheck?.pricingBasis === 'NET_PLUS_VAT' ||
+        rawCheck?.pricingBasis === 'MISMATCH'
+            ? rawCheck.pricingBasis
+            : arithmeticMismatch
+              ? 'MISMATCH'
+              : 'GROSS';
+
+    const arithmeticCheck: ReceiptArithmeticCheckSummary = {
+        valid: !arithmeticMismatch,
+        verified: !arithmeticMismatch,
+        linesSumClp,
+        expectedTotalClp,
+        deltaClp: arithmeticDeltaClp,
+        pricingBasis,
+    };
+
+    const supplierTaxIdValid =
+        typeof rawDraft.supplierTaxIdValid === 'boolean'
+            ? rawDraft.supplierTaxIdValid
+            : typeof rawDraft.supplierRutValid === 'boolean'
+              ? rawDraft.supplierRutValid
+              : undefined;
+    const duplicateDetected = Boolean(rawDraft.isDuplicate ?? rawDraft.duplicateDetected);
+    const missingInvoiceAlert = Boolean(rawDraft.missingInvoiceAlert);
+    const atypicalFlags = Array.isArray(rawDraft.atypicalFlags)
+        ? (rawDraft.atypicalFlags as AtypicalFlagCode[])
+        : [];
+    const warnings = new Set<string>(
+        Array.isArray(rawDraft.warnings)
+            ? rawDraft.warnings.filter((w): w is string => typeof w === 'string' && w.trim().length > 0)
+            : []
+    );
+    if (arithmeticMismatch) warnings.add('ARITHMETIC_MISMATCH');
+    if (duplicateDetected) warnings.add('SII_DUPLICATE_DOCUMENT');
+    if (missingInvoiceAlert) warnings.add('CAPEX_MISSING_INVOICE');
+    if (supplierTaxIdValid === false) warnings.add('SUPPLIER_TAX_ID_INVALID');
+
+    const rawSource = rawDraft.source ?? rawDraft.extractionSource;
+
+    return {
+        siteId: String(rawDraft.siteId || fallback?.siteId || ''),
+        purchaseMode: (rawDraft.purchaseMode as PurchaseMode) || fallback?.purchaseMode || 'REQUISITION_FULFILLMENT',
+        supplierTaxId: String(rawDraft.supplierTaxId || ''),
+        supplierTaxIdValid,
+        supplierName: String(rawDraft.supplierName || ''),
+        documentType: Number(rawDraft.documentType ?? 39) as SiiDteType,
+        folio: String(rawDraft.folio ?? ''),
+        issueDate: String(rawDraft.issueDate || new Date().toISOString().slice(0, 10)),
+        netAmountClp: Number(rawDraft.netAmountClp ?? 0) || 0,
+        vatAmountClp: Number(rawDraft.vatAmountClp ?? 0) || 0,
+        totalAmountClp,
+        paymentMethod: (rawDraft.paymentMethod as PaymentMethod) || 'FONDO_POR_RENDIR',
+        evidenceCasRef:
+            (rawDraft.evidenceCasRef as CasEvidenceRef | undefined) || fallback?.evidenceCasRef,
+        tedRawXml: typeof rawDraft.tedRawXml === 'string' ? rawDraft.tedRawXml : fallback?.tedRawXml,
+        source: mapReceiptExtractionSource(rawSource),
+        extractionSource: typeof rawSource === 'string' ? rawSource : undefined,
+        arithmeticCheck,
+        arithmeticMismatch,
+        arithmeticDeltaClp,
+        duplicateDetected,
+        dedupeKey: typeof rawDraft.dedupeKey === 'string' ? rawDraft.dedupeKey : undefined,
+        missingInvoiceAlert,
+        atypicalFlags,
+        warnings: Array.from(warnings),
+        lines: normalizedLines,
     };
 }
 
@@ -290,25 +453,49 @@ function normalizeConsolidatedBucket(raw: Record<string, unknown>): Consolidated
     };
 }
 
-function normalizeInventoryItem(raw: Record<string, unknown>): SupplyInventoryItem {
+export function normalizeInventoryItem(raw: Record<string, unknown>): SupplyInventoryItem {
+    const itemId = String(raw.itemId || raw.inventoryKey || raw.canonicalSkuId || '');
+    const qtyInTransit = Number(raw.qtyInTransit ?? 0) || 0;
+    const qtyInWarehouse = Number(raw.qtyInWarehouse ?? raw.qtyOnHand ?? 0) || 0;
+    const minSafetyQty = Number(raw.minSafetyStock ?? raw.minSafetyQty ?? 0) || 0;
+    const ewmaDailyRate =
+        Number(
+            raw.ewmaDailyConsumption ??
+                raw.ewmaDailyRatePerPax ??
+                raw.ewmaDailyRate ??
+                raw.dailyBurnRatePerPax ??
+                0
+        ) || 0;
+    const doiDays =
+        typeof raw.estimatedDoiDays === 'number'
+            ? raw.estimatedDoiDays
+            : typeof raw.doiDays === 'number'
+              ? raw.doiDays
+              : ewmaDailyRate > 0
+                ? Number(((qtyInWarehouse + qtyInTransit) / ewmaDailyRate).toFixed(1))
+                : null;
+
     return {
-        itemId: String(raw.itemId || raw.canonicalSkuId || ''),
+        itemId,
+        inventoryKey: typeof raw.inventoryKey === 'string' ? raw.inventoryKey : itemId,
         tenantId: String(raw.tenantId || ''),
         siteId: String(raw.siteId || ''),
         canonicalSkuId: String(raw.canonicalSkuId || ''),
         name: String(raw.name || raw.normalizedName || raw.itemName || ''),
         categoryCode: (raw.categoryCode as SupplyCategoryCode) || 'OTROS_OPERACIONAL',
+        procurementBucket: raw.procurementBucket as ProcurementBucket | undefined,
         unitSi: (raw.unitSi as SupplyUnitSi) || 'un',
-        qtyInTransit: Number(raw.qtyInTransit ?? 0) || 0,
-        qtyInWarehouse: Number(raw.qtyInWarehouse ?? 0) || 0,
-        minSafetyQty: Number(raw.minSafetyStock ?? raw.minSafetyQty ?? 0) || 0,
-        ewmaDailyRate: Number(raw.ewmaDailyRatePerPax ?? raw.ewmaDailyRate ?? 0) || 0,
-        doiDays:
-            typeof raw.estimatedDoiDays === 'number'
-                ? raw.estimatedDoiDays
-                : typeof raw.doiDays === 'number'
-                  ? raw.doiDays
-                  : null,
+        qtyInTransit,
+        qtyInWarehouse,
+        minSafetyQty,
+        ewmaDailyRate,
+        doiDays,
+        avgUnitCostClp:
+            typeof raw.avgUnitCostClp === 'number'
+                ? raw.avgUnitCostClp
+                : typeof raw.weightedAvgUnitCostClp === 'number'
+                  ? raw.weightedAvgUnitCostClp
+                  : undefined,
         pendingPurchaseIds: Array.isArray(raw.pendingPurchaseIds)
             ? (raw.pendingPurchaseIds as string[])
             : undefined,
@@ -343,7 +530,7 @@ function normalizeSiiDocument(raw: Record<string, unknown>): SiiDocumentRecord {
     };
 }
 
-function normalizeSiiExpenseReport(raw: Record<string, unknown>): SiiExpenseReport {
+export function normalizeSiiExpenseReport(raw: Record<string, unknown>): SiiExpenseReport {
     const docIds = Array.isArray(raw.siiDocumentIds)
         ? (raw.siiDocumentIds as string[])
         : Array.isArray(raw.documentIds)
@@ -352,6 +539,21 @@ function normalizeSiiExpenseReport(raw: Record<string, unknown>): SiiExpenseRepo
     const title = String(raw.title || raw.code || raw.reportId || '');
     const code = String(raw.code || raw.title || raw.reportId || '');
     const rawStatus = String(raw.status || 'OPEN') as SiiExpenseReportStatus;
+    const resolvedHolderName = String(raw.holderName || raw.custodianName || '');
+    const resolvedHolderUid =
+        typeof raw.holderUid === 'string'
+            ? raw.holderUid
+            : typeof raw.custodianUid === 'string'
+              ? raw.custodianUid
+              : undefined;
+    const fundAdvanceClp = Number(raw.fundAdvanceClp ?? raw.advanceAmountClp ?? 0) || 0;
+    const renderedTotalClp = Number(raw.renderedTotalClp ?? raw.totalRenderedClp ?? 0) || 0;
+    const balanceClp =
+        typeof raw.balanceClp === 'number'
+            ? raw.balanceClp
+            : typeof raw.balanceDueClp === 'number'
+              ? raw.balanceDueClp
+              : fundAdvanceClp - renderedTotalClp;
 
     return {
         reportId: String(raw.reportId || code),
@@ -360,70 +562,123 @@ function normalizeSiiExpenseReport(raw: Record<string, unknown>): SiiExpenseRepo
         code,
         title,
         costCenter: String(raw.costCenter || 'CC-CAMPAMENTO'),
-        holderName: String(raw.holderName || ''),
-        holderUid: typeof raw.holderUid === 'string' ? raw.holderUid : undefined,
+        holderName: resolvedHolderName,
+        holderUid: resolvedHolderUid,
+        custodianName: resolvedHolderName,
+        custodianUid: resolvedHolderUid,
         periodLabel: String(raw.periodLabel || ''),
         paymentMethod: (raw.paymentMethod as PaymentMethod) || 'FONDO_POR_RENDIR',
-        fundAdvanceClp: Number(raw.fundAdvanceClp ?? 0) || 0,
-        renderedTotalClp: Number(raw.renderedTotalClp ?? 0) || 0,
-        balanceClp: Number(raw.balanceClp ?? 0) || 0,
+        fundAdvanceClp,
+        renderedTotalClp,
+        balanceClp,
         documentCount: Number(raw.documentCount ?? docIds.length) || docIds.length,
         documentIds: docIds,
         status: rawStatus,
+        retentionUntil: typeof raw.retentionUntil === 'string' ? raw.retentionUntil : undefined,
         createdAt: String(raw.createdAt || ''),
     };
 }
 
-function normalizeForecast(raw: Record<string, unknown>): DemandForecastSummary {
+export function normalizeForecast(raw: Record<string, unknown>): DemandForecastSummary {
     const guardrail =
         raw.waterCoverageGuardrail && typeof raw.waterCoverageGuardrail === 'object'
             ? (raw.waterCoverageGuardrail as Record<string, unknown>)
             : null;
     const headcount = Number(raw.headcountBasis ?? raw.headcount ?? 0) || 0;
     const leadTimeDays = Number(raw.leadTimeDays ?? 7) || 7;
-    const ds594PerPax = Number(guardrail?.ds594TargetLPerPaxDay ?? 120) || 120;
-    const waterStoredL = Number(guardrail?.availableWaterL ?? raw.waterStoredL ?? 0) || 0;
+    const altitudeM = typeof raw.altitudeM === 'number' ? raw.altitudeM : 0;
+    const altitudeMultiplier =
+        Number(
+            guardrail?.altitudeFactorApplied ??
+                raw.altitudeMultiplier ??
+                (altitudeM > 3000 ? 1.15 : 1)
+        ) || 1;
+    const ds594PerPax =
+        Number(
+            guardrail?.ds594TargetLPerPaxDay ??
+                raw.ds594WaterTargetLPerPax ??
+                raw.ds594DailyWaterTargetLPerPax ??
+                120
+        ) || 120;
+    const waterStoredL =
+        Number(
+            guardrail?.availableWaterL ??
+                raw.waterAvailableL ??
+                raw.waterStorageCapacityL ??
+                raw.waterStoredL ??
+                0
+        ) || 0;
     const waterDailyTargetL =
-        Number(raw.waterDailyTargetL ?? headcount * ds594PerPax) || 0;
+        Number(
+            raw.dailyWaterRequirementL ??
+                raw.waterDailyTargetL ??
+                Math.round(headcount * ds594PerPax * altitudeMultiplier)
+        ) || 0;
     const waterRequiredLeadL =
-        Number(guardrail?.requiredWaterL ?? raw.waterRequiredLeadL ?? waterDailyTargetL * leadTimeDays) ||
-        0;
+        Number(
+            guardrail?.requiredWaterL ??
+                raw.requiredWaterReserveL ??
+                raw.waterRequiredLeadL ??
+                Math.round(waterDailyTargetL * leadTimeDays)
+        ) || 0;
     const waterCoverageDays =
         Number(
             guardrail?.coverageDays ??
                 raw.waterCoverageDays ??
                 (waterDailyTargetL > 0 ? Math.round((waterStoredL / waterDailyTargetL) * 10) / 10 : 0)
         ) || 0;
+    const waterAlertLevel =
+        raw.waterAlertLevel === 'CRITICAL' ||
+        raw.waterAlertLevel === 'WARNING' ||
+        raw.waterAlertLevel === 'NOMINAL'
+            ? raw.waterAlertLevel
+            : undefined;
     const waterCompliantDs594 =
         typeof guardrail?.compliant === 'boolean'
             ? guardrail.compliant
-            : typeof raw.waterCompliantDs594 === 'boolean'
-              ? raw.waterCompliantDs594
-              : waterRequiredLeadL > 0
-                ? waterStoredL >= waterRequiredLeadL
-                : true;
+            : typeof raw.ds594Compliant === 'boolean'
+              ? raw.ds594Compliant
+              : typeof raw.waterCompliantDs594 === 'boolean'
+                ? raw.waterCompliantDs594
+                : waterAlertLevel !== undefined
+                  ? waterAlertLevel === 'NOMINAL'
+                  : waterRequiredLeadL > 0
+                    ? waterStoredL >= waterRequiredLeadL
+                    : true;
+
+    const dailyOpexPerPaxClp =
+        typeof raw.opexDailyPerPaxClp === 'number'
+            ? raw.opexDailyPerPaxClp
+            : typeof raw.dailyFoodOpexClpPerPax === 'number'
+              ? raw.dailyFoodOpexClpPerPax
+              : typeof raw.dailyOpexPerPaxClp === 'number'
+                ? raw.dailyOpexPerPaxClp
+                : undefined;
+    const monthlyProjectedClp =
+        typeof raw.projectedMonthlyOpexClp === 'number'
+            ? raw.projectedMonthlyOpexClp
+            : typeof raw.projectedOpexTotalClp === 'number'
+              ? raw.projectedOpexTotalClp
+              : typeof raw.monthlyProjectedClp === 'number'
+                ? raw.monthlyProjectedClp
+                : typeof dailyOpexPerPaxClp === 'number' && headcount > 0
+                  ? Math.round(dailyOpexPerPaxClp * headcount * 30)
+                  : undefined;
 
     return {
         siteId: String(raw.siteId || ''),
         headcount,
         leadTimeDays,
+        altitudeM: typeof raw.altitudeM === 'number' ? raw.altitudeM : undefined,
+        altitudeMultiplier,
         waterStoredL,
         waterDailyTargetL,
         waterRequiredLeadL,
         waterCoverageDays,
         waterCompliantDs594,
-        dailyOpexPerPaxClp:
-            typeof raw.opexDailyPerPaxClp === 'number'
-                ? raw.opexDailyPerPaxClp
-                : typeof raw.dailyOpexPerPaxClp === 'number'
-                  ? raw.dailyOpexPerPaxClp
-                  : undefined,
-        monthlyProjectedClp:
-            typeof raw.projectedOpexTotalClp === 'number'
-                ? raw.projectedOpexTotalClp
-                : typeof raw.monthlyProjectedClp === 'number'
-                  ? raw.monthlyProjectedClp
-                  : undefined,
+        waterAlertLevel,
+        dailyOpexPerPaxClp,
+        monthlyProjectedClp,
     };
 }
 
@@ -495,6 +750,22 @@ export interface WhatsAppSimulateResponse {
     atypicalFlags?: WhatsAppSimMessage['atypicalFlags'];
     missingSlots?: string[];
     committedReqId?: string;
+}
+
+export function buildWhatsAppSimulateRequestPayload(
+    input: WhatsAppSimulateInput
+): Record<string, unknown> {
+    const trimmedText = String(input.text || '').trim();
+    const isResetIntent = Boolean(input.resetSession) || trimmedText.toLowerCase() === '/reset';
+    return {
+        phoneE164: input.phoneE164,
+        siteId: input.siteId,
+        // `supply.controller.ts` expone exclusivamente `POST /api/supply/whatsapp/simulate`;
+        // traducir `/reset` o `resetSession: true` a `CANCELAR` limpia la sesión FSM sin crear un ítem ficticio.
+        text: isResetIntent ? 'CANCELAR' : trimmedText,
+        simulateSenderRole: input.simulateSenderRole,
+        flushImmediately: true,
+    };
 }
 
 export const supplyApi = {
@@ -668,7 +939,7 @@ export const supplyApi = {
     async analyzeReceipt(
         payload: AnalyzeReceiptRequest,
         tenantId?: string
-    ): Promise<SupplyPurchaseDraft> {
+    ): Promise<ReceiptAnalysisDraft> {
         const body = {
             siteId: payload.siteId,
             purchaseMode: payload.purchaseMode,
@@ -685,45 +956,7 @@ export const supplyApi = {
             body: JSON.stringify(body),
         });
         const json = await parseJsonResponse<Record<string, unknown>>(res);
-        const rawDraft = (json?.draft || json?.analysis || json?.data || json) as Record<
-            string,
-            unknown
-        >;
-        const rawLines = Array.isArray(rawDraft.lines)
-            ? (rawDraft.lines as Record<string, unknown>[])
-            : [];
-        const arithmeticDeltaClp =
-            typeof rawDraft.arithmeticMismatchClp === 'number'
-                ? rawDraft.arithmeticMismatchClp
-                : typeof rawDraft.arithmeticDeltaClp === 'number'
-                  ? rawDraft.arithmeticDeltaClp
-                  : 0;
-        const arithmeticMismatch =
-            typeof rawDraft.arithmeticValid === 'boolean'
-                ? !rawDraft.arithmeticValid
-                : Boolean(rawDraft.arithmeticMismatch || Math.abs(arithmeticDeltaClp) > 2);
-
-        return {
-            siteId: String(rawDraft.siteId || payload.siteId),
-            purchaseMode: (rawDraft.purchaseMode as PurchaseMode) || payload.purchaseMode,
-            supplierTaxId: String(rawDraft.supplierTaxId || ''),
-            supplierName: String(rawDraft.supplierName || ''),
-            documentType: (Number(rawDraft.documentType ?? 39) as SiiDteType),
-            folio: String(rawDraft.folio ?? ''),
-            issueDate: String(rawDraft.issueDate || new Date().toISOString().slice(0, 10)),
-            netAmountClp: Number(rawDraft.netAmountClp ?? 0) || 0,
-            vatAmountClp: Number(rawDraft.vatAmountClp ?? 0) || 0,
-            totalAmountClp: Number(rawDraft.totalAmountClp ?? 0) || 0,
-            paymentMethod: (rawDraft.paymentMethod as PaymentMethod) || 'FONDO_POR_RENDIR',
-            evidenceCasRef:
-                (rawDraft.evidenceCasRef as CasEvidenceRef | undefined) || payload.evidenceCasRef,
-            tedRawXml: typeof rawDraft.tedRawXml === 'string' ? rawDraft.tedRawXml : payload.tedRawXml,
-            arithmeticMismatch,
-            arithmeticDeltaClp,
-            duplicateDetected: Boolean(rawDraft.isDuplicate ?? rawDraft.duplicateDetected),
-            dedupeKey: typeof rawDraft.dedupeKey === 'string' ? rawDraft.dedupeKey : undefined,
-            lines: rawLines.map(normalizePurchaseLineFromServer),
-        };
+        return normalizeReceiptAnalysisDraft(json, payload);
     },
 
     async listPurchases(
@@ -736,13 +969,7 @@ export const supplyApi = {
             headers: buildHeaders(tenantId),
         });
         const json = await parseJsonResponse<unknown>(res);
-        return unwrapArray<Record<string, unknown>>(json, 'purchases').map((raw) => ({
-            ...(raw as unknown as SupplyPurchaseRecord),
-            folio: String(raw.folio ?? ''),
-            lines: Array.isArray(raw.lines)
-                ? (raw.lines as Record<string, unknown>[]).map(normalizePurchaseLineFromServer)
-                : [],
-        }));
+        return unwrapArray<Record<string, unknown>>(json, 'purchases').map(normalizePurchaseRecord);
     },
 
     async commitPurchase(
@@ -826,7 +1053,12 @@ export const supplyApi = {
         receivedLines: ReceivedLineInput[],
         confirmationKeyword: 'ACTUALIZAR',
         tenantId?: string
-    ): Promise<void> {
+    ): Promise<{
+        purchase?: SupplyPurchaseRecord;
+        receptionOutcome?: 'RECEIVED_OK' | 'PARTIAL_DISCREPANCY';
+        receivedItemCount?: number;
+        queuedOffline?: boolean;
+    }> {
         const endpoint = `${SUPPLY_API_BASE}/purchases/${encodeURIComponent(purchaseId)}/confirm-reception`;
         const payload = {
             receivedLines: receivedLines.map((rl) => ({
@@ -844,14 +1076,29 @@ export const supplyApi = {
                 tenantId,
                 'POST'
             );
-            return;
+            return { queuedOffline: true };
         }
         const res = await coreAuthFetch(endpoint, {
             method: 'POST',
             headers: buildHeaders(tenantId, true),
             body: JSON.stringify(payload),
         });
-        await parseJsonResponse(res);
+        const json = await parseJsonResponse<Record<string, unknown>>(res);
+        const rawPurchase =
+            json?.purchase && typeof json.purchase === 'object'
+                ? (json.purchase as Record<string, unknown>)
+                : null;
+        const receptionOutcome =
+            json?.receptionOutcome === 'PARTIAL_DISCREPANCY' ||
+            json?.receptionOutcome === 'RECEIVED_OK'
+                ? json.receptionOutcome
+                : undefined;
+        return {
+            purchase: rawPurchase ? normalizePurchaseRecord(rawPurchase) : undefined,
+            receptionOutcome,
+            receivedItemCount:
+                typeof json?.receivedItemCount === 'number' ? json.receivedItemCount : undefined,
+        };
     },
 
     async listInventory(
@@ -1023,13 +1270,7 @@ export const supplyApi = {
         input: WhatsAppSimulateInput,
         tenantId?: string
     ): Promise<WhatsAppSimulateResponse> {
-        const body = {
-            phoneE164: input.phoneE164,
-            siteId: input.siteId,
-            text: input.text,
-            simulateSenderRole: input.simulateSenderRole,
-            resetSession: input.resetSession,
-        };
+        const body = buildWhatsAppSimulateRequestPayload(input);
         const res = await coreAuthFetch(`${SUPPLY_API_BASE}/whatsapp/simulate`, {
             method: 'POST',
             headers: buildHeaders(tenantId, true),

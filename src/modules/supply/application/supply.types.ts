@@ -1,184 +1,140 @@
 import { z } from 'zod';
+import {
+    AtypicalFlagCodeSchema,
+    type AtypicalFlagCode,
+    EvidenceCasRefSchema,
+    type EvidenceCasRef,
+    FulfillmentChannelSchema,
+    type FulfillmentChannel,
+    Gs1GtinSchema,
+    type Gs1Gtin,
+    IanaTimezoneSchema,
+    type IanaTimezone,
+    InternationalPhoneE164Schema,
+    type InternationalPhoneE164,
+    IsoCurrencyCodeSchema,
+    type IsoCurrencyCode,
+    MoneyAmountSchema,
+    type MoneyAmount,
+    ProcurementBucketSchema,
+    type ProcurementBucket,
+    PurchaseModeSchema,
+    type PurchaseMode,
+    SiiDteTypeSchema,
+    type SiiDteType,
+    SupplyCategoryCodeSchema,
+    type SupplyCategoryCode,
+    SupplyCommunicationDialectSchema,
+    SupplyCommunicationRegisterSchema,
+    SupplyCommunicationStyleSchema,
+    type SupplyCommunicationStyle,
+    SupplyDemandNatureSchema,
+    type SupplyDemandNature,
+    SupplyDemandOriginSchema,
+    type SupplyDemandOrigin,
+    SupplyEvidenceCasRefSchema,
+    type SupplyEvidenceCasRef,
+    SupplyMemberProfileSchema,
+    type SupplyMemberProfile,
+    SupplyOperationalRoleSchema,
+    type SupplyOperationalRole,
+    SupplyPaymentMethodSchema as PaymentMethodSchema,
+    type SupplyPaymentMethod as PaymentMethod,
+    SupplyPreferredModalitySchema,
+    SupplyPurchaseDestinationSchema as PurchaseLineDestinationSchema,
+    type SupplyPurchaseDestination as PurchaseLineDestination,
+    SupplyRequisitionStatusSchema as RequisitionStatusSchema,
+    type SupplyRequisitionStatus as RequisitionStatus,
+    SupplyUnitSiSchema,
+    type SupplyUnitSi,
+    TaxIdentifierSchema,
+    type TaxIdentifier,
+    TaxIdentifierSchemeSchema,
+    type TaxIdentifierScheme,
+    UnCefactRec20CodeSchema,
+    type UnCefactRec20Code,
+    UNIT_SI_TO_UNCEFACT_REC20,
+    UnspscCodeSchema,
+    type UnspscCode,
+} from '../../../contracts/supply.contracts';
 import type { AuditLedgerModule } from '../../../core/audit-ledger';
 import type { AIModuleScope } from '../../../core/resilient-ai-client';
 import { validateChileanRut } from '../../../utils/taxIdValidator';
 
 /**
- * MINREPORT · ABASTECIMIENTO (`supply`) — Local Application Bridge Types, Schemas & Deterministic Helpers
+ * MINREPORT · ABASTECIMIENTO (`supply`) — Application Domain Types & Deterministic Helpers
  *
- * Bridges canonical shapes matching `@contracts-core` (`src/contracts/supply.contracts.ts`)
- * and `@domain-engines` (`src/modules/supply/domain/*`) so the API & WhatsApp workspace
- * compiles and executes standalone prior to final branch landing.
+ * Converged 1:1 on the single canonical contract (`src/contracts/supply.contracts.ts`):
+ * ZERO split-brain schemas for `SupplyCommunicationStyleSchema`, `SupplyMemberProfileSchema`,
+ * `SupplyEvidenceCasRefSchema` / `EvidenceCasRefSchema` or core supply enums.
  */
 
 export const SUPPLY_AI_MODULE: AIModuleScope = 'supply';
 export const SUPPLY_AUDIT_MODULE: AuditLedgerModule = 'supply';
 
-// ---------------------------------------------------------------------------
-// Canonical Enums (1:1 parity with supply.contracts.ts)
-// ---------------------------------------------------------------------------
-
-export const SupplyCategoryCodeSchema = z.enum([
-    'VIVERES_ALIMENTACION',
-    'AGUA_POTABLE',
-    'ASEO_HIGIENE',
-    'GAS_ENERGIA_CAMP',
-    'EPP_SEGURIDAD',
-    'FERRETERIA_CONSTRUCCION',
-    'MANTENCION_CAMP',
-    'REPUESTOS_MAQUINARIA',
-    'LUBRICANTES_FILTROS',
-    'PERFORACION_ACEROS',
-    'FORTIFICACION',
-    'COMBUSTIBLE_FAENA',
-    'HERRAMIENTAS',
-    'ACTIVO_EQUIPAMIENTO',
-    'EXPLOSIVOS_REGULADO',
-    'OTROS_OPERACIONAL',
-]);
-export type SupplyCategoryCode = z.infer<typeof SupplyCategoryCodeSchema>;
-
-export const ProcurementBucketSchema = z.enum([
-    'VERDULERIA',
-    'SUPERMERCADO',
-    'FERRETERIA',
-    'REPUESTOS_OPERMAQ',
-    'EPP_SEGURIDAD',
-    'GAS_AGUA_COMBUSTIBLE',
-    'MANTENCION_EQUIPAMIENTO',
-]);
-export type ProcurementBucket = z.infer<typeof ProcurementBucketSchema>;
-
-export const SupplyUnitSiSchema = z.enum(['kg', 'L', 'un', 'par', 'm', 'm3', 'caja', 'bolsa']);
-export type SupplyUnitSi = z.infer<typeof SupplyUnitSiSchema>;
-
-export const SupplyOperationalRoleSchema = z.enum([
-    'CAMP_MANAGER',
-    'MECHANIC_TECH',
-    'OPS_FOREMAN',
-    'WAREHOUSE_KEEPER',
-    'HSEC_OFFICER',
-    'BUYER',
-    'SITE_ADMIN',
-    'OWNER_EXEC',
-]);
-export type SupplyOperationalRole = z.infer<typeof SupplyOperationalRoleSchema>;
-
-export const SupplyDemandOriginSchema = z.enum([
-    'WA_CAMP',
-    'WA_MECHANIC',
-    'WA_OPS',
-    'WA_WAREHOUSE_HSEC',
-    'WA_EXEC_DIRECT',
-    'MODULE_PLANNING',
-    'MODULE_HSEC',
-    'MODULE_OPERMAQ',
-    'MODULE_STOCKPILE',
-    'DESKTOP_MANUAL',
-]);
-export type SupplyDemandOrigin = z.infer<typeof SupplyDemandOriginSchema>;
-
-export const SupplyDemandNatureSchema = z.enum([
-    'PLANNED_ENGINEERING',
-    'REACTIVE_FIELD',
-    'SAFETY_REPLENISHMENT',
-    'AUTONOMOUS_PURCHASE',
-]);
-export type SupplyDemandNature = z.infer<typeof SupplyDemandNatureSchema>;
-
-export const AtypicalFlagCodeSchema = z.enum([
-    'ATYPICAL_ROLE_MISMATCH',
-    'ATYPICAL_VOLUME_SPIKE',
-    'ATYPICAL_DUPLICATE_FREQ',
-    'ATYPICAL_HIGH_VALUE_OR_CAPEX',
-    'ATYPICAL_UNPLANNED_DRIFT',
-    'ATYPICAL_ASSET_WITHOUT_INVOICE',
-]);
-export type AtypicalFlagCode = z.infer<typeof AtypicalFlagCodeSchema>;
-
-export const FulfillmentChannelSchema = z.enum([
-    'MANUAL_LOCAL_PURCHASE',
-    'INTERNAL_WAREHOUSE_TRANSFER',
-    'MARKETPLACE_RFQ_SINGLE',
-    'MARKETPLACE_CONSOLIDATED_POOL',
-    'M2M_X402_AUTOPROCURE',
-]);
-export type FulfillmentChannel = z.infer<typeof FulfillmentChannelSchema>;
-
-export const PurchaseModeSchema = z.enum([
-    'REQUISITION_FULFILLMENT',
-    'DIRECT_AUTONOMOUS',
-    'MIXED_FULFILLMENT_AND_DIRECT',
-]);
-export type PurchaseMode = z.infer<typeof PurchaseModeSchema>;
-
-export const SiiDteTypeSchema = z.union([
-    z.literal(33),
-    z.literal(34),
-    z.literal(39),
-    z.literal(41),
-    z.literal(52),
-    z.literal(61),
-    z.literal(0),
-]);
-export type SiiDteType = z.infer<typeof SiiDteTypeSchema>;
-
-export const PurchaseLineDestinationSchema = z.enum([
-    'STOCK_IN_TRANSIT',
-    'STOCK_IN_WAREHOUSE',
-    'CAPEX_ASSET',
-    'DIRECT_EXPENSE',
-]);
-export type PurchaseLineDestination = z.infer<typeof PurchaseLineDestinationSchema>;
+export {
+    AtypicalFlagCodeSchema,
+    type AtypicalFlagCode,
+    EvidenceCasRefSchema,
+    type EvidenceCasRef,
+    FulfillmentChannelSchema,
+    type FulfillmentChannel,
+    Gs1GtinSchema,
+    type Gs1Gtin,
+    IanaTimezoneSchema,
+    type IanaTimezone,
+    InternationalPhoneE164Schema,
+    type InternationalPhoneE164,
+    IsoCurrencyCodeSchema,
+    type IsoCurrencyCode,
+    MoneyAmountSchema,
+    type MoneyAmount,
+    PaymentMethodSchema,
+    type PaymentMethod,
+    ProcurementBucketSchema,
+    type ProcurementBucket,
+    PurchaseLineDestinationSchema,
+    type PurchaseLineDestination,
+    PurchaseModeSchema,
+    type PurchaseMode,
+    RequisitionStatusSchema,
+    type RequisitionStatus,
+    SiiDteTypeSchema,
+    type SiiDteType,
+    SupplyCategoryCodeSchema,
+    type SupplyCategoryCode,
+    SupplyCommunicationDialectSchema,
+    SupplyCommunicationRegisterSchema,
+    SupplyCommunicationStyleSchema,
+    type SupplyCommunicationStyle,
+    SupplyDemandNatureSchema,
+    type SupplyDemandNature,
+    SupplyDemandOriginSchema,
+    type SupplyDemandOrigin,
+    SupplyEvidenceCasRefSchema,
+    type SupplyEvidenceCasRef,
+    SupplyMemberProfileSchema,
+    type SupplyMemberProfile,
+    SupplyOperationalRoleSchema,
+    type SupplyOperationalRole,
+    SupplyPreferredModalitySchema,
+    SupplyUnitSiSchema,
+    type SupplyUnitSi,
+    TaxIdentifierSchema,
+    type TaxIdentifier,
+    TaxIdentifierSchemeSchema,
+    type TaxIdentifierScheme,
+    UnCefactRec20CodeSchema,
+    type UnCefactRec20Code,
+    UNIT_SI_TO_UNCEFACT_REC20,
+    UnspscCodeSchema,
+    type UnspscCode,
+};
 
 export const SupplyUrgencySchema = z.enum(['CRITICAL', 'HIGH', 'STANDARD', 'PLANNED', 'LOW']);
 export type SupplyUrgency = z.infer<typeof SupplyUrgencySchema>;
 
-export const PaymentMethodSchema = z.enum([
-    'CAJA_CHICA',
-    'FONDO_POR_RENDIR',
-    'REEMBOLSO_GERENCIA',
-    'TRANSFERENCIA',
-    'CREDITO_PROVEEDOR',
-    'TARJETA_CORPORATIVA',
-    'EFECTIVO',
-]);
-export type PaymentMethod = z.infer<typeof PaymentMethodSchema>;
-
-export const RequisitionStatusSchema = z.enum(['DRAFT', 'OPEN', 'PARTIAL', 'FULFILLED', 'CLOSED', 'CANCELLED']);
-export type RequisitionStatus = z.infer<typeof RequisitionStatusSchema>;
-
 export const HitlConfirmationKeywordSchema = z.literal('ACTUALIZAR');
-
-// ---------------------------------------------------------------------------
-// Core Entities & CAS Evidence Reference
-// ---------------------------------------------------------------------------
-
-export const EvidenceCasRefSchema = z.object({
-    sha256: z.string().regex(/^[a-f0-9]{64}$/i),
-    phashHex: z.string().regex(/^[a-f0-9]{16}$/i).optional(),
-    storagePath: z.string().min(1).max(512).optional(),
-    downloadUrl: z
-        .string()
-        .min(1)
-        .max(1024)
-        .refine(
-            (val) => !val.toLowerCase().includes('data:') && !val.toLowerCase().includes(';base64,'),
-            'Prohibido Base64 inline en evidenceCasRef.downloadUrl'
-        ),
-    mimeType: z.string().min(3).max(120),
-    extension: z.string().min(1).max(16),
-    profile: z.string().min(1).max(64).optional(),
-    originalBytes: z.number().int().nonnegative(),
-    optimizedBytes: z.number().int().nonnegative(),
-    savingsRatio: z.number().min(0).max(1).optional(),
-    savingsPct: z.number().min(0).max(100),
-    originalFilename: z.string().max(240).optional(),
-    deduplicatedHit: z.boolean().optional(),
-    capturedAt: z.string().optional(),
-    createdAt: z.string().optional(),
-});
-export type EvidenceCasRef = z.infer<typeof EvidenceCasRefSchema>;
 
 export const NotificationPreferencesSchema = z.object({
     emailEnabled: z.boolean().optional(),
@@ -192,27 +148,6 @@ export const NotificationPreferencesSchema = z.object({
 });
 export type NotificationPreferences = z.infer<typeof NotificationPreferencesSchema>;
 
-export const SupplyMemberProfileSchema = z.object({
-    role: SupplyOperationalRoleSchema.default('CAMP_MANAGER'),
-    allowedCategories: z.array(SupplyCategoryCodeSchema).default([]),
-    deniedCategories: z.array(SupplyCategoryCodeSchema).default([]),
-    maxRequisitionClp: z.number().nonnegative().nullable().default(null),
-    canRecordDirectPurchase: z.boolean().default(false),
-    autoApproveDirectPurchase: z.boolean().default(false),
-    allowCapex: z.boolean().default(false),
-    licensedForControlledItems: z.boolean().default(false),
-    defaultCostCenter: z.string().trim().max(64).default('CC-CAMPAMENTO'),
-    assignedSiteIds: z.array(z.string().trim().min(1).max(128)).default([]),
-    communicationStyle: z
-        .object({
-            register: z.enum(['TERRENO_DIRECTO', 'TECNICO_FORMAL', 'EJECUTIVO']).default('TERRENO_DIRECTO'),
-            preferredModality: z.enum(['TEXT', 'AUDIO', 'MIXED']).default('MIXED'),
-            dialect: z.enum(['ES_CL', 'ES_PE', 'ES_AR', 'PT_BR', 'EN_US']).default('ES_CL'),
-        })
-        .default({ register: 'TERRENO_DIRECTO', preferredModality: 'MIXED', dialect: 'ES_CL' }),
-});
-export type SupplyMemberProfile = z.infer<typeof SupplyMemberProfileSchema>;
-
 export const CanonicalSupplySkuSchema = z.object({
     canonicalSkuId: z.string().trim().min(1).max(128),
     name: z.string().trim().min(1).max(200),
@@ -220,6 +155,9 @@ export const CanonicalSupplySkuSchema = z.object({
     procurementBucket: ProcurementBucketSchema,
     baseUnitSi: SupplyUnitSiSchema,
     unspscCode: z.string().trim().max(32).optional(),
+    gtin: Gs1GtinSchema.optional(),
+    unCefactCode: UnCefactRec20CodeSchema.optional(),
+    iso14224AssetClass: z.string().trim().min(2).max(64).optional(),
     requiredSlots: z.array(z.string().trim().min(1).max(64)).default(['quantity']),
     defaultPackToSi: z.number().positive().optional(),
     isCapexAsset: z.boolean().default(false),
@@ -236,6 +174,9 @@ export const SupplySiteSchema = z.object({
     tenantId: z.string().trim().min(1).max(128),
     name: z.string().trim().min(1).max(160),
     districtCode: z.string().trim().min(1).max(64),
+    countryCode: z.string().trim().regex(/^[A-Z]{2}$/).default('CL').optional(),
+    currencyCode: IsoCurrencyCodeSchema.default('CLP').optional(),
+    timezoneIana: IanaTimezoneSchema.default('America/Santiago').optional(),
     geoFix: z
         .object({
             latitude: z.number().min(-90).max(90),
@@ -274,7 +215,7 @@ export const SupplyRequisitionLineSchema = z.object({
     fulfillmentChannel: FulfillmentChannelSchema.default('MANUAL_LOCAL_PURCHASE'),
     urgency: SupplyUrgencySchema.default('STANDARD'),
     estimatedUnitClp: z.number().nonnegative().optional(),
-    attributes: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
+    attributes: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
     evidenceCasRef: EvidenceCasRefSchema.optional(),
 });
 export type SupplyRequisitionLine = z.infer<typeof SupplyRequisitionLineSchema>;

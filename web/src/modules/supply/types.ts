@@ -3,6 +3,17 @@
  * 1:1 parity with `web/src/contracts/supply.contracts.ts` (#9) and `/api/supply/*`.
  */
 
+export {
+    UNIT_SI_TO_UNCEFACT_REC20,
+    type IsoCurrencyCode,
+    type MoneyAmount,
+    type SupplyCommunicationStyle,
+    type SupplyMemberProfile,
+    type TaxIdentifier,
+    type TaxIdentifierScheme,
+    type UnCefactRec20Code,
+} from '../../contracts/supply.contracts';
+
 export type SupplyDomainMode =
     | 'DEMAND'
     | 'WAREHOUSE'
@@ -150,6 +161,9 @@ export interface SupplySite {
     tenantId: string;
     name: string;
     districtCode?: string;
+    countryCode?: string;
+    currencyCode?: string;
+    timezoneIana?: string;
     shiftPattern?: string;
     currentHeadcount: number;
     waterStorageCapacityL: number;
@@ -167,6 +181,9 @@ export interface CanonicalSupplySku {
     procurementBucket: ProcurementBucket;
     baseUnitSi: SupplyUnitSi;
     unspscCode?: string;
+    gtin?: string;
+    unCefactCode?: string;
+    iso14224AssetClass?: string;
     requiredSlots?: string[];
     isCapexAsset?: boolean;
     isControlled?: boolean;
@@ -277,11 +294,23 @@ export interface SupplyPurchaseLineDraft {
     matchedReqId?: string;
 }
 
+export interface ReceiptArithmeticCheckSummary {
+    valid: boolean;
+    verified: boolean;
+    linesSumClp: number;
+    expectedTotalClp: number;
+    deltaClp: number;
+    pricingBasis?: 'GROSS' | 'NET_PLUS_VAT' | 'MISMATCH';
+}
+
+export type ReceiptAnalysisSource = 'XML_DTE' | 'TED_XML' | 'OCR_GEMINI';
+
 export interface SupplyPurchaseDraft {
     purchaseId?: string;
     siteId: string;
     purchaseMode: PurchaseMode;
     supplierTaxId: string;
+    supplierTaxIdValid?: boolean;
     supplierName: string;
     documentType: SiiDteType;
     folio: string;
@@ -292,12 +321,30 @@ export interface SupplyPurchaseDraft {
     paymentMethod: PaymentMethod;
     evidenceCasRef?: CasEvidenceRef;
     tedRawXml?: string | null;
+    source?: ReceiptAnalysisSource;
+    extractionSource?: string;
+    arithmeticCheck?: ReceiptArithmeticCheckSummary;
     arithmeticMismatch?: boolean;
     arithmeticDeltaClp?: number;
     duplicateDetected?: boolean;
     dedupeKey?: string;
+    missingInvoiceAlert?: boolean;
+    atypicalFlags?: AtypicalFlagCode[];
+    warnings?: string[];
     lines: SupplyPurchaseLineDraft[];
 }
+
+export type ReceiptAnalysisDraft = SupplyPurchaseDraft;
+
+export type SupplyPurchaseReceptionStatus =
+    | 'IN_TRANSIT'
+    | 'PARTIAL_DISCREPANCY'
+    | 'PARTIALLY_RECEIVED'
+    | 'RECEIVED_AT_SITE'
+    | 'DIRECT_CONSUMED'
+    | 'RECEIVED'
+    | 'PARTIAL'
+    | 'NOT_APPLICABLE';
 
 export interface SupplyPurchaseRecord extends SupplyPurchaseDraft {
     purchaseId: string;
@@ -305,13 +352,7 @@ export interface SupplyPurchaseRecord extends SupplyPurchaseDraft {
     buyerUid: string;
     buyerRole: SupplyOperationalRole;
     authorizedByAuthority?: boolean | string;
-    receptionStatus?:
-        | 'IN_TRANSIT'
-        | 'PARTIALLY_RECEIVED'
-        | 'RECEIVED_AT_SITE'
-        | 'DIRECT_CONSUMED'
-        | 'RECEIVED'
-        | 'PARTIAL';
+    receptionStatus?: SupplyPurchaseReceptionStatus;
     createdAt: string;
 }
 
@@ -328,17 +369,20 @@ export interface FulfillmentAllocationDraft {
 
 export interface SupplyInventoryItem {
     itemId: string;
+    inventoryKey?: string;
     tenantId: string;
     siteId: string;
     canonicalSkuId: string;
     name: string;
     categoryCode: SupplyCategoryCode;
+    procurementBucket?: ProcurementBucket;
     unitSi: SupplyUnitSi;
     qtyInTransit: number;
     qtyInWarehouse: number;
     minSafetyQty: number;
     ewmaDailyRate: number;
     doiDays: number | null;
+    avgUnitCostClp?: number;
     pendingPurchaseIds?: string[];
     updatedAt?: string;
 }
@@ -397,6 +441,8 @@ export interface SiiExpenseReport {
     costCenter: string;
     holderName: string;
     holderUid?: string;
+    custodianName?: string;
+    custodianUid?: string;
     periodLabel: string;
     paymentMethod: PaymentMethod;
     fundAdvanceClp: number;
@@ -405,6 +451,7 @@ export interface SiiExpenseReport {
     documentCount: number;
     documentIds: string[];
     status: SiiExpenseReportStatus;
+    retentionUntil?: string;
     createdAt: string;
 }
 
@@ -412,11 +459,14 @@ export interface DemandForecastSummary {
     siteId: string;
     headcount: number;
     leadTimeDays: number;
+    altitudeM?: number;
+    altitudeMultiplier?: number;
     waterStoredL: number;
     waterDailyTargetL: number;
     waterRequiredLeadL: number;
     waterCoverageDays: number;
     waterCompliantDs594: boolean;
+    waterAlertLevel?: 'CRITICAL' | 'WARNING' | 'NOMINAL';
     dailyOpexPerPaxClp?: number;
     monthlyProjectedClp?: number;
 }

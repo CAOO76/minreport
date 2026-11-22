@@ -244,27 +244,137 @@ export const STANDARD_SUPPLY_COST_CENTERS = [
     'CC-ADMINISTRACION',
 ] as const;
 
+// ── 1b. Primitivas Global-Ready (ISO 4217, Tax IDs, E.164, IANA, UNSPSC, GS1 GTIN, UN/CEFACT) ──
+
+export const IsoCurrencyCodeSchema = z
+    .string()
+    .trim()
+    .regex(/^[A-Z]{3}$/, 'Código de moneda ISO 4217 debe tener exactamente 3 letras mayúsculas.');
+export type IsoCurrencyCode = z.infer<typeof IsoCurrencyCodeSchema>;
+
+export const MoneyAmountSchema = z.object({
+    amountMinor: z.number().int(),
+    currencyCode: IsoCurrencyCodeSchema,
+    minorUnitDigits: z.number().int().min(0).max(4).default(0),
+    fxRateToBase: z.number().positive().optional(),
+    fxDateIso: z.string().trim().min(8).max(32).optional(),
+    baseCurrencyCode: IsoCurrencyCodeSchema.optional(),
+});
+export type MoneyAmount = z.infer<typeof MoneyAmountSchema>;
+
+export const TaxIdentifierSchemeSchema = z.enum([
+    'CL_RUT',
+    'PE_RUC',
+    'BR_CNPJ',
+    'BR_CPF',
+    'MX_RFC',
+    'CO_NIT',
+    'AR_CUIT',
+    'AU_ABN',
+    'EU_VAT',
+    'US_EIN',
+    'INTL_TIN',
+]);
+export type TaxIdentifierScheme = z.infer<typeof TaxIdentifierSchemeSchema>;
+
+export const TaxIdentifierSchema = z.object({
+    countryCode: z
+        .string()
+        .trim()
+        .regex(/^[A-Z]{2}$/, 'Código país ISO-3166-1 alpha-2 inválido.'),
+    scheme: TaxIdentifierSchemeSchema,
+    value: z.string().trim().min(3).max(64),
+    normalized: z.string().trim().min(3).max(64),
+});
+export type TaxIdentifier = z.infer<typeof TaxIdentifierSchema>;
+
+export const InternationalPhoneE164Schema = z
+    .string()
+    .trim()
+    .regex(/^\+[1-9]\d{6,14}$/, 'Teléfono E.164 internacional inválido.');
+export type InternationalPhoneE164 = z.infer<typeof InternationalPhoneE164Schema>;
+
+export const IanaTimezoneSchema = z
+    .string()
+    .trim()
+    .min(3)
+    .max(64)
+    .regex(/^(?:UTC|[A-Za-z_]+(?:\/[A-Za-z0-9_+-]+)+)$/, 'Zona horaria IANA inválida.');
+export type IanaTimezone = z.infer<typeof IanaTimezoneSchema>;
+
+export const UnspscCodeSchema = z
+    .string()
+    .trim()
+    .regex(/^\d{8}$/, 'Código UNSPSC debe tener exactamente 8 dígitos.');
+export type UnspscCode = z.infer<typeof UnspscCodeSchema>;
+
+export const Gs1GtinSchema = z
+    .string()
+    .trim()
+    .regex(/^(?:\d{8}|\d{12}|\d{13}|\d{14})$/, 'Código GS1 GTIN debe tener 8, 12, 13 o 14 dígitos.');
+export type Gs1Gtin = z.infer<typeof Gs1GtinSchema>;
+
+export const UnCefactRec20CodeSchema = z.enum([
+    'KGM',
+    'LTR',
+    'EA',
+    'PR',
+    'MTR',
+    'MTQ',
+    'BX',
+    'BG',
+]);
+export type UnCefactRec20Code = z.infer<typeof UnCefactRec20CodeSchema>;
+
+export const UNIT_SI_TO_UNCEFACT_REC20: Record<SupplyUnitSi, UnCefactRec20Code> = {
+    kg: 'KGM',
+    L: 'LTR',
+    un: 'EA',
+    par: 'PR',
+    m: 'MTR',
+    m3: 'MTQ',
+    caja: 'BX',
+    bolsa: 'BG',
+};
+
 // ── 2. Referencia de Evidencia CAS Obligatoria (MINREPORT-MEDIA-DIGESTOR-CAS) ──
+
+function isAllowedCasDownloadUrl(rawUrl: string): boolean {
+    const trimmed = String(rawUrl || '').trim();
+    const lower = trimmed.toLowerCase();
+    if (
+        !trimmed ||
+        lower.startsWith('javascript:') ||
+        lower.startsWith('http:') ||
+        lower.startsWith('file:') ||
+        lower.startsWith('data:') ||
+        lower.includes(';base64,')
+    ) {
+        return false;
+    }
+    return (
+        trimmed.startsWith('/api/media/') ||
+        trimmed.startsWith('https://') ||
+        trimmed.startsWith('offline-cas://')
+    );
+}
 
 export const SupplyEvidenceCasRefSchema = z.object({
     sha256: z.string().regex(/^[a-f0-9]{64}$/i, 'SHA-256 CAS inválido (64 hex).'),
     phashHex: z.string().regex(/^[a-f0-9]{16}$/i).optional(),
     downloadUrl: z
         .string()
+        .trim()
         .min(5)
         .max(1024)
         .refine(
-            (url) =>
-                !url.toLowerCase().startsWith('data:') &&
-                !url.toLowerCase().includes(';base64,') &&
-                (url.startsWith('/api/media/') ||
-                    url.startsWith('https://') ||
-                    url.startsWith('offline-cas://')),
-            'Evidencia CAS debe referenciar /api/media/, https:// u offline-cas:// sin base64 inline.'
+            isAllowedCasDownloadUrl,
+            'Evidencia CAS debe referenciar /api/media/, https:// u offline-cas:// sin esquemas peligrosos ni base64 inline.'
         ),
     storagePath: z.string().min(1).max(512).optional(),
     mimeType: z.string().min(3).max(120),
-    extension: z.string().min(2).max(12),
+    extension: z.string().min(1).max(16),
+    profile: z.string().min(1).max(64).optional(),
     originalFilename: z.string().max(240).optional(),
     originalBytes: z.number().int().nonnegative(),
     optimizedBytes: z.number().int().nonnegative(),
@@ -272,22 +382,89 @@ export const SupplyEvidenceCasRefSchema = z.object({
     savingsRatio: z.number().min(0).max(1).optional(),
     deduplicatedHit: z.boolean().optional(),
     capturedAt: z.string().min(10).optional(),
+    createdAt: z.string().optional(),
 });
 export type SupplyEvidenceCasRef = z.infer<typeof SupplyEvidenceCasRefSchema>;
+export const EvidenceCasRefSchema = SupplyEvidenceCasRefSchema;
+export type EvidenceCasRef = SupplyEvidenceCasRef;
 
 // ── 3. Perfil Operativo de Integrante y Preferencias de Notificación ─────────
 
+const LEGACY_REGISTER_MAP: Record<string, 'COLLOQUIAL_FIELD' | 'TECHNICAL_DIRECT' | 'EXECUTIVE_BRIEF'> = {
+    TERRENO_DIRECTO: 'COLLOQUIAL_FIELD',
+    COLLOQUIAL_FIELD: 'COLLOQUIAL_FIELD',
+    TECNICO_FORMAL: 'TECHNICAL_DIRECT',
+    TECHNICAL_DIRECT: 'TECHNICAL_DIRECT',
+    EJECUTIVO: 'EXECUTIVE_BRIEF',
+    EXECUTIVE_BRIEF: 'EXECUTIVE_BRIEF',
+};
+
+const LEGACY_MODALITY_MAP: Record<string, 'TEXT' | 'AUDIO_VOICE' | 'HYBRID'> = {
+    TEXT: 'TEXT',
+    AUDIO: 'AUDIO_VOICE',
+    AUDIO_VOICE: 'AUDIO_VOICE',
+    MIXED: 'HYBRID',
+    HYBRID: 'HYBRID',
+};
+
+const LEGACY_DIALECT_MAP: Record<
+    string,
+    'es-CL' | 'es-PE' | 'es-AR' | 'es-MX' | 'es-CO' | 'pt-BR' | 'en-US' | 'en-AU'
+> = {
+    es_cl: 'es-CL',
+    'es-cl': 'es-CL',
+    es_pe: 'es-PE',
+    'es-pe': 'es-PE',
+    es_ar: 'es-AR',
+    'es-ar': 'es-AR',
+    es_mx: 'es-MX',
+    'es-mx': 'es-MX',
+    es_co: 'es-CO',
+    'es-co': 'es-CO',
+    pt_br: 'pt-BR',
+    'pt-br': 'pt-BR',
+    en_us: 'en-US',
+    'en-us': 'en-US',
+    en_au: 'en-AU',
+    'en-au': 'en-AU',
+};
+
+export const SupplyCommunicationRegisterSchema = z.preprocess(
+    (raw) => {
+        if (raw === undefined || raw === null || raw === '') return undefined;
+        if (typeof raw !== 'string') return raw;
+        return LEGACY_REGISTER_MAP[raw.trim().toUpperCase()] ?? raw;
+    },
+    z.enum(['COLLOQUIAL_FIELD', 'TECHNICAL_DIRECT', 'EXECUTIVE_BRIEF']).default('TECHNICAL_DIRECT')
+);
+
+export const SupplyPreferredModalitySchema = z.preprocess(
+    (raw) => {
+        if (raw === undefined || raw === null || raw === '') return undefined;
+        if (typeof raw !== 'string') return raw;
+        return LEGACY_MODALITY_MAP[raw.trim().toUpperCase()] ?? raw;
+    },
+    z.enum(['TEXT', 'AUDIO_VOICE', 'HYBRID']).default('HYBRID')
+);
+
+export const SupplyCommunicationDialectSchema = z.preprocess(
+    (raw) => {
+        if (raw === undefined || raw === null || raw === '') return undefined;
+        if (typeof raw !== 'string') return raw;
+        return LEGACY_DIALECT_MAP[raw.trim().toLowerCase()] ?? raw;
+    },
+    z.enum(['es-CL', 'es-PE', 'es-AR', 'es-MX', 'es-CO', 'pt-BR', 'en-US', 'en-AU']).default('es-CL')
+);
+
 export const SupplyCommunicationStyleSchema = z.object({
-    register: z
-        .enum(['COLLOQUIAL_FIELD', 'TECHNICAL_DIRECT', 'EXECUTIVE_BRIEF'])
-        .default('TECHNICAL_DIRECT'),
-    preferredModality: z.enum(['TEXT', 'AUDIO_VOICE', 'HYBRID']).default('HYBRID'),
-    dialect: z.enum(['es-CL', 'es-PE', 'es-AR', 'pt-BR', 'en-US']).default('es-CL'),
+    register: SupplyCommunicationRegisterSchema,
+    preferredModality: SupplyPreferredModalitySchema,
+    dialect: SupplyCommunicationDialectSchema,
 });
 export type SupplyCommunicationStyle = z.infer<typeof SupplyCommunicationStyleSchema>;
 
 export const SupplyMemberProfileSchema = z.object({
-    role: SupplyOperationalRoleSchema,
+    role: SupplyOperationalRoleSchema.default('CAMP_MANAGER'),
     allowedCategories: z.array(SupplyCategoryCodeSchema).default([]),
     deniedCategories: z.array(SupplyCategoryCodeSchema).default([]),
     maxRequisitionClp: z.number().nonnegative().nullable().default(null),
@@ -345,11 +522,10 @@ export const CanonicalSupplySkuSchema = z.object({
     categoryCode: SupplyCategoryCodeSchema,
     procurementBucket: ProcurementBucketSchema,
     baseUnitSi: SupplyUnitSiSchema,
-    unspscCode: z
-        .string()
-        .trim()
-        .regex(/^\d{8}$/, 'Código UNSPSC debe tener 8 dígitos.')
-        .optional(),
+    unspscCode: UnspscCodeSchema.optional(),
+    gtin: Gs1GtinSchema.optional(),
+    unCefactCode: UnCefactRec20CodeSchema.optional(),
+    iso14224AssetClass: z.string().trim().min(2).max(64).optional(),
     requiredSlots: z.array(z.string().trim().min(1).max(64)).default(['quantity']),
     defaultPackToSi: SupplyPackToSiSchema.optional(),
     isCapexAsset: z.boolean().default(false),
@@ -370,6 +546,9 @@ export const SupplySiteSchema = z.object({
     tenantId: z.string().trim().min(1).max(128),
     name: z.string().trim().min(2).max(180),
     districtCode: z.string().trim().min(2).max(64),
+    countryCode: z.string().trim().regex(/^[A-Z]{2}$/).default('CL'),
+    currencyCode: IsoCurrencyCodeSchema.default('CLP'),
+    timezoneIana: IanaTimezoneSchema.default('America/Santiago'),
     altitudeM: z.number().min(-500).max(6500).optional(),
     geoFix: CanonicalGeoFixSchema.nullable().optional(),
     shiftPattern: z.string().trim().min(1).max(40).default('7x7'),
@@ -438,6 +617,7 @@ export const SupplyRequisitionSchema = z.object({
     lines: z.array(SupplyRequisitionLineSchema).min(1),
     atypicalSummaryFlags: z.array(AtypicalFlagCodeSchema).default([]),
     rejectedItems: z.array(SupplyRejectedItemSchema).optional(),
+    estimatedTotalMoney: MoneyAmountSchema.optional(),
     notes: z.string().trim().max(1000).optional(),
     createdAt: z.union([z.number(), z.string()]),
     updatedAt: z.union([z.number(), z.string()]),
@@ -530,6 +710,7 @@ export const SupplyPurchaseSchema = z.object({
     purchaseMode: PurchaseModeSchema,
     authorizedByAuthority: z.boolean().default(false),
     supplierTaxId: z.string().trim().min(3).max(32),
+    supplierTaxIdentifier: TaxIdentifierSchema.optional(),
     supplierName: z.string().trim().min(1).max(200),
     supplierId: z.string().trim().max(128).nullable().optional(),
     documentType: SiiDteTypeSchema,
@@ -539,6 +720,9 @@ export const SupplyPurchaseSchema = z.object({
     netAmountClp: z.number().nonnegative(),
     vatAmountClp: z.number().nonnegative(),
     totalAmountClp: z.number().nonnegative(),
+    netMoney: MoneyAmountSchema.optional(),
+    vatMoney: MoneyAmountSchema.optional(),
+    totalMoney: MoneyAmountSchema.optional(),
     vatRecoverable: z.boolean().default(false),
     arithmeticMismatchClp: z.number().default(0),
     paymentMethod: SupplyPaymentMethodSchema,
@@ -546,8 +730,17 @@ export const SupplyPurchaseSchema = z.object({
     evidenceCasRef: SupplyEvidenceCasRefSchema,
     tedRawXml: z.string().max(16384).nullable().optional(),
     receptionStatus: z
-        .enum(['IN_TRANSIT', 'PARTIALLY_RECEIVED', 'RECEIVED_AT_SITE', 'DIRECT_CONSUMED'])
+        .enum([
+            'IN_TRANSIT',
+            'PARTIAL_DISCREPANCY',
+            'PARTIALLY_RECEIVED',
+            'RECEIVED',
+            'RECEIVED_AT_SITE',
+            'DIRECT_CONSUMED',
+            'NOT_APPLICABLE',
+        ])
         .default('IN_TRANSIT'),
+    retentionUntil: z.string().trim().max(64).optional(),
     lines: z.array(SupplyPurchaseLineSchema).min(1),
     atypicalFlags: z.array(AtypicalFlagCodeSchema).default([]),
     createdAt: z.union([z.number(), z.string()]),
@@ -621,6 +814,7 @@ export const SiiDocumentRecordSchema = z.object({
         .max(128)
         .regex(/^[^#]+#\d+#[^#]+$/, 'dedupeKey debe seguir formato rutEmisor#tipoDte#folio.'),
     emitterTaxId: z.string().trim().min(3).max(32),
+    emitterTaxIdentifier: TaxIdentifierSchema.optional(),
     emitterName: z.string().trim().min(1).max(200),
     receiverTaxId: z.string().trim().max(32).optional(),
     documentType: SiiDteTypeSchema,
@@ -630,6 +824,10 @@ export const SiiDocumentRecordSchema = z.object({
     exemptAmountClp: z.number().nonnegative().default(0),
     vatAmountClp: z.number().nonnegative(),
     totalAmountClp: z.number().nonnegative(),
+    netMoney: MoneyAmountSchema.optional(),
+    vatMoney: MoneyAmountSchema.optional(),
+    totalMoney: MoneyAmountSchema.optional(),
+    retentionUntil: z.string().trim().max(64).optional(),
     vatRecoverable: z.boolean().default(false),
     rcvDeadlineDate: z.string().trim().max(32).nullable().optional(),
     rcvDaysRemaining: z.number().int().nullable().optional(),
@@ -656,6 +854,10 @@ export const SiiExpenseReportSchema = z.object({
     renderedTotalClp: z.number().nonnegative().default(0),
     recoverableVatClp: z.number().nonnegative().default(0),
     balanceClp: z.number(),
+    fundAdvanceMoney: MoneyAmountSchema.optional(),
+    renderedTotalMoney: MoneyAmountSchema.optional(),
+    balanceMoney: MoneyAmountSchema.optional(),
+    retentionUntil: z.string().trim().max(64).optional(),
     siiDocumentIds: z.array(z.string().trim().min(1).max(128)).default([]),
     purchaseIds: z.array(z.string().trim().min(1).max(128)).default([]),
     status: SiiExpenseReportStatusSchema.default('OPEN'),
@@ -806,6 +1008,9 @@ export type DemandPoolSignal = z.infer<typeof DemandPoolSignalSchema>;
 export const CreateSupplySitePayloadSchema = z.object({
     name: z.string().trim().min(2).max(180),
     districtCode: z.string().trim().min(2).max(64),
+    countryCode: z.string().trim().regex(/^[A-Z]{2}$/).default('CL'),
+    currencyCode: IsoCurrencyCodeSchema.default('CLP'),
+    timezoneIana: IanaTimezoneSchema.default('America/Santiago'),
     altitudeM: z.number().min(-500).max(6500).optional(),
     geoFix: CanonicalGeoFixSchema.nullable().optional(),
     shiftPattern: z.string().trim().min(1).max(40).default('7x7'),
@@ -1020,7 +1225,7 @@ export type RecordCashLedgerEntryPayloadOutput = z.infer<
 >;
 
 export const SimulateWhatsAppTurnPayloadSchema = z.object({
-    phoneE164: z.string().trim().regex(/^\+[1-9]\d{6,14}$/, 'Teléfono E.164 inválido.'),
+    phoneE164: InternationalPhoneE164Schema,
     siteId: z.string().trim().min(1).max(128).optional(),
     text: z.string().trim().max(4000).default(''),
     audioTranscript: z.string().trim().max(4000).optional(),
