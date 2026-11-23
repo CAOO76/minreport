@@ -717,6 +717,15 @@ export const BRIDGE_CATALOG_RULES: CatalogRule[] = [
         packConversions: [{ regex: /\b(paquete|paquetes)\b/i, factor: 0.4, label: 'paquete (400 g)' }],
     },
     {
+        canonicalSkuId: 'SKU-SUP-ARROZ',
+        itemName: 'Arroz',
+        regex: /\b(arroz|arroces)\b/i,
+        categoryCode: 'VIVERES_ALIMENTACION',
+        procurementBucket: 'SUPERMERCADO',
+        unitSi: 'kg',
+        requiredSlots: ['quantity'],
+    },
+    {
         canonicalSkuId: 'SKU-ASEO-CLORO',
         itemName: 'Cloro Industrial / Desinfectante',
         regex: /\b(cloro|hipoclorito|lavandina)\b/i,
@@ -757,7 +766,7 @@ export const BRIDGE_CATALOG_RULES: CatalogRule[] = [
     {
         canonicalSkuId: 'SKU-OPM-FILTRO-ACEITE',
         itemName: 'Repuesto / Filtro Hidráulico Maquinaria',
-        regex: /\b(filtro\s+hidr[aá]ulico|filtro\s+aceite|cilindro\s+hidr[aá]ulico|botella\s+hidr[aá]ulica|repuesto|caterpillar|komatsu|inyector|manguera\s+hidr[aá]ulica)\b/i,
+        regex: /\b(filtro\s+hidr[aá]ulico|filtro\s+(?:de\s+)?aceite|cilindro\s+hidr[aá]ulico|botella\s+hidr[aá]ulica|repuesto|caterpillar|komatsu|inyector|manguera\s+hidr[aá]ulica)\b/i,
         categoryCode: 'REPUESTOS_MAQUINARIA',
         procurementBucket: 'REPUESTOS_LUBRICANTES',
         unitSi: 'un',

@@ -21,9 +21,22 @@ import {
     type AnalyzedReceiptResult,
     ReceiptIntelligencePipeline,
 } from '../application/ReceiptIntelligencePipeline';
-import { SUPPLY_COLLECTIONS, SupplyRepository } from '../application/SupplyRepository';
+import {
+    ConversationAuditService,
+} from '../application/ConversationAuditService';
+import {
+    hashPhoneE164,
+    maskPhoneE164,
+    SUPPLY_COLLECTIONS,
+    SupplyRepository,
+} from '../application/SupplyRepository';
 import { SupplyTaskQueueService } from '../application/SupplyTaskQueueService';
 import { matchCanonicalSkuByText } from '../catalog/DefaultSupplyCatalogSeed';
+import {
+    DynamicChannelScopeResolver,
+    type ResolvedDynamicChannelScope,
+} from './DynamicChannelScopeResolver';
+import { evaluateRequisitionPolicy } from '../domain/SupplyPolicyAndAnomalyEngine';
 import {
     applySlotAnswersToDraft,
     type DraftConversationItem,
@@ -112,9 +125,11 @@ export interface WhatsAppCampSession {
     tenantId: string;
     siteId: string;
     memberUid: string;
+    profileId?: string;
     memberName: string;
     memberRole: SupplyOperationalRole;
-    phoneE164: string;
+    phoneMasked?: string;
+    phoneHashSha256?: string;
     fsmState: CampFsmState;
     draftItems: CampDraftItem[];
     deniedNotices: string[];
@@ -156,6 +171,7 @@ export interface ResolvedWhatsAppMember {
     tenantId: string;
     siteId: string;
     uid: string;
+    profileId?: string;
     displayName: string;
     email: string;
     phoneE164: string;
@@ -192,6 +208,7 @@ export interface HandleInboundOptions {
     overrideMember?: ResolvedWhatsAppMember;
     skipOutboundSend?: boolean;
     dispatchToken?: string;
+    nowIso?: string;
 }
 
 const DEFAULT_DEBOUNCE_MS = 10_000;
@@ -216,6 +233,7 @@ const AiMessageExtractionSchema = z.object({
                 size: z.string().max(32).nullable().optional(),
                 location: z.string().max(120).nullable().optional(),
                 linkedAssetId: z.string().max(80).nullable().optional(),
+                inScope: z.boolean().nullable().optional(),
             })
         )
         .optional(),
@@ -850,6 +868,133 @@ export class CampChannel {
             };
         }
 
+        // 3. Fallback V3-E02/E03: perfil independiente en `supply_channel_grants` (sin registro en `accounts/*/members`)
+        try {
+            const grantEval = await ProvisionalSupplyProfileAdapter.resolveEffectiveProfileByPhone(
+                normalizedE164,
+                undefined,
+                { includeDispatchPhone: true }
+            );
+            if (
+                grantEval &&
+                grantEval.profile.status === 'ACTIVE' &&
+                grantEval.profile.optInStatus === 'ACTIVE' &&
+                grantEval.whatsappDispatchAllowed
+            ) {
+                const siteId =
+                    grantEval.effectiveAllowedSiteIds[0] ||
+                    grantEval.profile.allowedSiteIds[0] ||
+                    'default-site';
+                const uid = grantEval.profile.linkedMemberUid || grantEval.profile.profileId;
+                const supplyProfile = SupplyMemberProfileSchema.parse({
+                    role: grantEval.profile.role,
+                    assignedSiteIds:
+                        grantEval.effectiveAllowedSiteIds.length > 0
+                            ? grantEval.effectiveAllowedSiteIds
+                            : [siteId],
+                    maxDirectPurchaseClp: grantEval.effectiveMaxAmountClp,
+                    licensedForControlledItems: grantEval.hasValidDgmnLicense,
+                    whatsappOptInAt: grantEval.profile.optInConfirmedAtIso || grantEval.profile.updatedAtIso,
+                });
+                return {
+                    tenantId: grantEval.profile.tenantId,
+                    siteId,
+                    uid,
+                    profileId: grantEval.profile.profileId,
+                    displayName: grantEval.profile.displayName,
+                    email: '',
+                    phoneE164: grantEval.dispatchPhoneE164 || normalizedE164,
+                    whatsappOptInAt: grantEval.profile.optInConfirmedAtIso || grantEval.profile.updatedAtIso,
+                    b2bRole: grantEval.profile.role,
+                    supplyProfile,
+                };
+            }
+        } catch {
+            // Sin perfil independiente activo
+        }
+
+        return null;
+    }
+
+    /**
+     * Resuelve el miembro activo para una sesión sin depender de `phoneE164` guardado en `supply_whatsapp_sessions`.
+     */
+    private static async resolveMemberForSession(
+        session: WhatsAppCampSession
+    ): Promise<ResolvedWhatsAppMember | null> {
+        if (session.profileId) {
+            try {
+                const eff = await ProvisionalSupplyProfileAdapter.resolveEffectiveProfileById(
+                    session.tenantId,
+                    session.profileId,
+                    undefined,
+                    { includeDispatchPhone: true }
+                );
+                if (
+                    eff &&
+                    eff.profile.status === 'ACTIVE' &&
+                    eff.profile.optInStatus === 'ACTIVE' &&
+                    eff.whatsappDispatchAllowed &&
+                    eff.dispatchPhoneE164
+                ) {
+                    const siteId = eff.effectiveAllowedSiteIds[0] || session.siteId || 'default-site';
+                    const supplyProfile = SupplyMemberProfileSchema.parse({
+                        role: eff.profile.role,
+                        assignedSiteIds:
+                            eff.effectiveAllowedSiteIds.length > 0
+                                ? eff.effectiveAllowedSiteIds
+                                : [siteId],
+                        maxDirectPurchaseClp: eff.effectiveMaxAmountClp,
+                        licensedForControlledItems: eff.hasValidDgmnLicense,
+                        whatsappOptInAt: eff.profile.optInConfirmedAtIso || eff.profile.updatedAtIso,
+                    });
+                    return {
+                        tenantId: eff.profile.tenantId,
+                        siteId,
+                        uid: eff.profile.linkedMemberUid || eff.profile.profileId,
+                        profileId: eff.profile.profileId,
+                        displayName: eff.profile.displayName,
+                        email: '',
+                        phoneE164: eff.dispatchPhoneE164,
+                        whatsappOptInAt: eff.profile.optInConfirmedAtIso || eff.profile.updatedAtIso,
+                        b2bRole: eff.profile.role,
+                        supplyProfile,
+                    };
+                }
+            } catch {
+                // Intentar por repositorio / membresía
+            }
+        }
+
+        try {
+            const activePhone = await SupplyRepository.resolveActiveMemberPhoneE164(
+                session.tenantId,
+                session.memberUid
+            );
+            if (activePhone) {
+                return await this.resolveMemberByPhone(activePhone);
+            }
+        } catch {
+            // Intentar lectura directa del documento de membresía
+        }
+
+        try {
+            const memberSnap = await db
+                .collection('accounts')
+                .doc(session.tenantId)
+                .collection('members')
+                .doc(session.memberUid)
+                .get();
+            if (memberSnap.exists) {
+                const phone = memberSnap.data()?.phoneE164;
+                if (typeof phone === 'string' && phone.trim()) {
+                    return await this.resolveMemberByPhone(phone);
+                }
+            }
+        } catch {
+            // Sin teléfono resolvible
+        }
+
         return null;
     }
 
@@ -1192,18 +1337,23 @@ export class CampChannel {
                     actorEmail: member.email,
                 }).catch(() => {});
 
+                const sessionMaskedPhone = maskPhoneE164(member.phoneE164);
+                const sessionPhoneHash = hashPhoneE164(member.phoneE164);
                 await this.runSessionTransaction(sessionId, async (tx) => {
                     const snap = await tx.get(sessionRef);
                     const prev = (snap.exists ? snap.data() : {}) as Partial<WhatsAppCampSession>;
+                    const { phoneE164: _legacyPhoneDrop, ...prevClean } = prev as Record<string, unknown>;
                     tx.set(sessionRef, {
-                        ...prev,
+                        ...prevClean,
                         sessionId,
                         tenantId: member.tenantId,
                         siteId: member.siteId,
                         memberUid: member.uid,
+                        ...(member.profileId ? { profileId: member.profileId } : {}),
                         memberName: member.displayName,
                         memberRole: member.supplyProfile.role,
-                        phoneE164: member.phoneE164,
+                        phoneMasked: sessionMaskedPhone,
+                        phoneHashSha256: sessionPhoneHash,
                         fsmState: 'COLLECTING' as CampFsmState,
                         draftItems: [],
                         deniedNotices: [],
@@ -1325,21 +1475,36 @@ export class CampChannel {
             const debounceMs = clampDebounceMs(options.debounceWindowMs);
             const targetDebounceUntilMs = isImmediateAction ? null : Date.now() + debounceMs;
 
-            // 3. Append atómico en `supply_whatsapp_sessions/{sessionId}` con `version` optimista + TTL 24h
+            const sessionMaskedPhone = maskPhoneE164(member.phoneE164);
+            const sessionPhoneHash = hashPhoneE164(member.phoneE164);
+
+            // 3. Append atómico en `supply_whatsapp_sessions/{sessionId}` con `version` optimista + TTL 24h (cero `phoneE164` en texto plano)
             const appendOutcome = await this.runSessionTransaction(sessionId, async (tx) => {
                 const sessionSnap = await tx.get(sessionRef);
-                const nowIso = new Date().toISOString();
+                const nowIso = options.nowIso || new Date().toISOString();
 
-                const session: WhatsAppCampSession = sessionSnap.exists
-                    ? (sessionSnap.data() as WhatsAppCampSession)
+                const rawPrevSession = sessionSnap.exists
+                    ? (sessionSnap.data() as WhatsAppCampSession & { phoneE164?: string })
+                    : null;
+                const { phoneE164: _legacyPhoneDrop, ...cleanPrevSession } = (rawPrevSession || {}) as Record<string, unknown>;
+
+                const session: WhatsAppCampSession = rawPrevSession
+                    ? ({
+                          ...(cleanPrevSession as unknown as WhatsAppCampSession),
+                          ...(member.profileId && !rawPrevSession.profileId ? { profileId: member.profileId } : {}),
+                          phoneMasked: rawPrevSession.phoneMasked || sessionMaskedPhone,
+                          phoneHashSha256: rawPrevSession.phoneHashSha256 || sessionPhoneHash,
+                      } as WhatsAppCampSession)
                     : {
                           sessionId,
                           tenantId: member.tenantId,
                           siteId: member.siteId,
                           memberUid: member.uid,
+                          ...(member.profileId ? { profileId: member.profileId } : {}),
                           memberName: member.displayName,
                           memberRole: member.supplyProfile.role,
-                          phoneE164: member.phoneE164,
+                          phoneMasked: sessionMaskedPhone,
+                          phoneHashSha256: sessionPhoneHash,
                           fsmState: 'COLLECTING',
                           draftItems: [],
                           deniedNotices: [],
@@ -1396,6 +1561,7 @@ export class CampChannel {
             const flushResult = await this.flushDebouncedSession(sessionId, member, {
                 skipOutboundSend: options.skipOutboundSend,
                 forceFlush: true,
+                nowIso: options.nowIso,
             });
             await this.markWamidDone(message.wamid, member.tenantId);
             return flushResult;
@@ -1448,6 +1614,7 @@ export class CampChannel {
             skipOutboundSend?: boolean;
             forceFlush?: boolean;
             expectedDebounceUntilMs?: number;
+            nowIso?: string;
         } = {}
     ): Promise<CampChannelProcessResult> {
         const sessionRef = db.collection(SUPPLY_COLLECTIONS.WHATSAPP_SESSIONS).doc(sessionId);
@@ -1479,7 +1646,7 @@ export class CampChannel {
                 debounceUntilMs: null,
                 version: Number(current.version || 0) + 1,
                 ttlExpiresAt: SupplyRepository.computeWhatsAppSessionTtl(),
-                updatedAt: new Date().toISOString(),
+                updatedAt: options.nowIso || new Date().toISOString(),
             };
             tx.set(sessionRef, drainedSession);
             return {
@@ -1502,15 +1669,99 @@ export class CampChannel {
         const { session, bufferedTurns } = drainResult;
 
         const member =
-            memberOverride || (await this.resolveMemberByPhone(session.phoneE164));
+            memberOverride || (await this.resolveMemberForSession(session));
         if (!member) {
             return { handled: false, unauthorized: true, sessionId };
         }
 
+        const nowIso = options.nowIso || new Date().toISOString();
+        const scope = await DynamicChannelScopeResolver.resolveScope({
+            tenantId: member.tenantId,
+            siteId: member.siteId,
+            uid: member.uid,
+            displayName: member.displayName,
+            role: member.supplyProfile.role,
+            phoneE164: member.phoneE164,
+            profileId: session.profileId || member.profileId,
+            licensedForControlledItems: member.supplyProfile.licensedForControlledItems,
+            nowIso,
+        });
+
+        const inboundAuditContent =
+            bufferedTurns
+                .map((t) => [t.text, t.caption, t.interactiveReplyId].filter(Boolean).join(' '))
+                .filter(Boolean)
+                .join('\n') || `[MEDIA:${bufferedTurns[0]?.type || 'unknown'}]`;
+        const inboundCasMedia = bufferedTurns
+            .map((t) => t.evidenceCasRef)
+            .filter((r): r is EvidenceCasRef => Boolean(r));
+        const inboundWamid = bufferedTurns[0]?.wamid;
+        const primaryChannelSource = 'WHATSAPP_CLOUD' as const;
+
+        let inboundAuditPersisted = false;
+        const recordFlushAudit = async (auditParams: {
+            replyText?: string;
+            direction?: 'OUTBOUND' | 'SYSTEM_POLICY';
+            policyAuditRefs?: string[];
+            linkedRequisitionIds?: string[];
+            linkedPurchaseIds?: string[];
+            linkedDteIds?: string[];
+            aiModelUsed?: string;
+            overrideScope?: ResolvedDynamicChannelScope;
+        }): Promise<void> => {
+            const effectiveScope = auditParams.overrideScope || scope;
+            try {
+                if (!inboundAuditPersisted) {
+                    inboundAuditPersisted = true;
+                    await ConversationAuditService.appendTurn({
+                        tenantId: member.tenantId,
+                        profileId: effectiveScope.profileId,
+                        displayName: member.displayName,
+                        role: member.supplyProfile.role,
+                        phoneE164: member.phoneE164,
+                        siteId: member.siteId,
+                        direction: 'INBOUND',
+                        channelSource: primaryChannelSource,
+                        wamid: inboundWamid,
+                        rawContent: inboundAuditContent,
+                        scopeSnapshot: effectiveScope.scopeSnapshot,
+                        casMedia: inboundCasMedia,
+                        nowIso,
+                    });
+                }
+                if (auditParams.replyText) {
+                    await ConversationAuditService.appendTurn({
+                        tenantId: member.tenantId,
+                        profileId: effectiveScope.profileId,
+                        displayName: member.displayName,
+                        role: member.supplyProfile.role,
+                        phoneE164: member.phoneE164,
+                        siteId: member.siteId,
+                        direction: auditParams.direction || 'OUTBOUND',
+                        channelSource: 'SYSTEM',
+                        rawContent: auditParams.replyText,
+                        scopeSnapshot: effectiveScope.scopeSnapshot,
+                        policyAuditRefs: auditParams.policyAuditRefs,
+                        aiModelUsed: auditParams.aiModelUsed,
+                        linkedRequisitionIds: auditParams.linkedRequisitionIds,
+                        linkedPurchaseIds: auditParams.linkedPurchaseIds,
+                        linkedDteIds: auditParams.linkedDteIds,
+                        nowIso,
+                    });
+                }
+            } catch {
+                // La auditoría no bloquea respuesta de emergencia si falla un mock unitario parcial
+            }
+        };
+
         // 1. Verificar atajo Ejecutivo de Compra Directa (foto/PDF/XML reenviado por OWNER/BUYER/ADMIN)
         const directTurn = bufferedTurns.find((t) => this.isExecutiveDirectPurchaseTurn(member, t));
         if (directTurn) {
-            return this.processExecutiveDirectPurchaseIntake(session, sessionRef, member, directTurn, options);
+            await recordFlushAudit({});
+            return this.processExecutiveDirectPurchaseIntake(session, sessionRef, member, directTurn, {
+                ...options,
+                scope,
+            });
         }
 
         // 2. Verificar confirmación o cancelación sobre un borrador de Compra Directa pendiente
@@ -1531,11 +1782,16 @@ export class CampChannel {
                 if (!options.skipOutboundSend) {
                     await MetaWhatsAppCloudAdapter.sendTextMessage(member.phoneE164, replyText);
                 }
+                await recordFlushAudit({ replyText });
                 return { handled: true, sessionId, fsmState: 'COLLECTING', replyText };
             }
 
             if (CONFIRM_REGEX.test(combinedCommands)) {
-                return this.commitExecutiveDirectPurchase(session, sessionRef, member, options);
+                await recordFlushAudit({});
+                return this.commitExecutiveDirectPurchase(session, sessionRef, member, {
+                    ...options,
+                    scope,
+                });
             }
         }
 
@@ -1551,12 +1807,18 @@ export class CampChannel {
             if (!options.skipOutboundSend) {
                 await MetaWhatsAppCloudAdapter.sendTextMessage(member.phoneE164, replyText);
             }
+            await recordFlushAudit({ replyText });
             return { handled: true, sessionId, fsmState: 'COLLECTING', replyText };
         }
 
-        // 4. Verificar confirmación explícita en REVIEW_GATE -> COMMITTED
+        // 4. Verificar confirmación explícita en REVIEW_GATE -> COMMITTED (revalidando alcance vigente)
         if (session.fsmState === 'REVIEW_GATE' && CONFIRM_REGEX.test(combinedCommands)) {
-            return this.commitCampRequisition(session, sessionRef, member, options);
+            await recordFlushAudit({});
+            return this.commitCampRequisition(session, sessionRef, member, {
+                ...options,
+                scope,
+                nowIso,
+            });
         }
 
         // 5. Extraer ítems desde todos los turnos acumulados (texto + audio .ogg CAS + foto/PDF CAS)
@@ -1582,6 +1844,7 @@ export class CampChannel {
             | 'UNKNOWN'
             | null = null;
         let latestAttachmentCasRef: EvidenceCasRef | undefined;
+        let lastAiModelUsed: string | undefined;
         const backupAttachmentTurns: Array<{ turn: PendingBufferedTurn; casRef: EvidenceCasRef }> = [];
 
         for (const turn of bufferedTurns) {
@@ -1613,7 +1876,9 @@ export class CampChannel {
                             'Transcribe este audio de terreno minero chileno, detecta la intención real (ADD_ITEMS, FILL_SLOTS, CONFIRM_COMMIT, CANCEL, STATUS_QUERY) y extrae cada insumo solicitado con su cantidad, unidad/envase y atributos (talla/equipo/ubicación).',
                         untrustedUserInput: turn.caption || '',
                         media: [{ mimeType: audioMime, dataBase64: audioBuf.toString('base64') }],
+                        systemInstruction: scope.systemInstruction,
                     });
+                    lastAiModelUsed = aiAudio.modelUsed || lastAiModelUsed;
 
                     if (aiAudio.intent && aiAudio.intent !== 'UNKNOWN') {
                         detectedAudioIntent = aiAudio.intent;
@@ -1688,7 +1953,9 @@ export class CampChannel {
                         'Identifica el insumo, repuesto, cotización o falla de campamento visible en esta foto de terreno minero.',
                     untrustedUserInput: turn.caption || '',
                     media: ocrBuf ? [{ mimeType: ocrMime, dataBase64: ocrBuf.toString('base64') }] : undefined,
+                    systemInstruction: scope.systemInstruction,
                 });
+                lastAiModelUsed = aiPhoto.modelUsed || lastAiModelUsed;
                 for (const it of aiPhoto.items) {
                     extractedItems.push({
                         rawText: it.rawText,
@@ -1755,7 +2022,9 @@ export class CampChannel {
                         docBuf && docBuf.length > 0 && docMime.includes('pdf')
                             ? [{ mimeType: docMime, dataBase64: docBuf.toString('base64') }]
                             : undefined,
+                    systemInstruction: scope.systemInstruction,
                 });
+                lastAiModelUsed = aiDoc.modelUsed || lastAiModelUsed;
                 for (const it of aiDoc.items) {
                     extractedItems.push({
                         rawText: it.rawText,
@@ -1779,10 +2048,19 @@ export class CampChannel {
         if (extractedItems.length === 0 && textFragments.length === 0 && detectedAudioIntent) {
             if (detectedAudioIntent === 'CONFIRM_COMMIT') {
                 if (session.pendingDirectPurchaseDraft) {
-                    return this.commitExecutiveDirectPurchase(session, sessionRef, member, options);
+                    await recordFlushAudit({ aiModelUsed: lastAiModelUsed });
+                    return this.commitExecutiveDirectPurchase(session, sessionRef, member, {
+                        ...options,
+                        scope,
+                    });
                 }
                 if (session.fsmState === 'REVIEW_GATE') {
-                    return this.commitCampRequisition(session, sessionRef, member, options);
+                    await recordFlushAudit({ aiModelUsed: lastAiModelUsed });
+                    return this.commitCampRequisition(session, sessionRef, member, {
+                        ...options,
+                        scope,
+                        nowIso,
+                    });
                 }
             }
 
@@ -1800,6 +2078,7 @@ export class CampChannel {
                 if (!options.skipOutboundSend) {
                     await MetaWhatsAppCloudAdapter.sendTextMessage(member.phoneE164, replyText);
                 }
+                await recordFlushAudit({ replyText, aiModelUsed: lastAiModelUsed });
                 return { handled: true, sessionId, fsmState: 'COLLECTING', replyText };
             }
 
@@ -1820,6 +2099,7 @@ export class CampChannel {
                 if (!options.skipOutboundSend) {
                     await MetaWhatsAppCloudAdapter.sendTextMessage(member.phoneE164, replyText);
                 }
+                await recordFlushAudit({ replyText, aiModelUsed: lastAiModelUsed });
                 return { handled: true, sessionId, fsmState: session.fsmState, replyText };
             }
         }
@@ -1874,7 +2154,9 @@ export class CampChannel {
                     taskInstruction:
                         'Extrae los insumos solicitados del mensaje de campamento minero delimitado en <untrusted_field_message>.',
                     untrustedUserInput: remainingTextForExtraction,
+                    systemInstruction: scope.systemInstruction,
                 });
+                lastAiModelUsed = aiText.modelUsed || lastAiModelUsed;
                 for (const it of aiText.items) {
                     extractedItems.push({
                         rawText: it.rawText,
@@ -1908,6 +2190,7 @@ export class CampChannel {
                 if (!options.skipOutboundSend) {
                     await MetaWhatsAppCloudAdapter.sendTextMessage(member.phoneE164, replyText);
                 }
+                await recordFlushAudit({ replyText, aiModelUsed: lastAiModelUsed });
                 return {
                     handled: true,
                     sessionId,
@@ -1931,13 +2214,30 @@ export class CampChannel {
             });
         }
 
+        const policyAuditRefs: string[] = [];
+
         for (const ext of extractedItems) {
             // 6.a GLOBAL_HARD_DENY (DS 132 inviolable)
             const hardDeny = checkGlobalHardDeny(`${ext.rawText} ${ext.itemName}`);
             if (hardDeny.denied) {
+                const reason = hardDeny.reason || 'Ítem no permitido por normativa minera DS 132.';
+                const audit = await SupplyRepository.recordPolicyAudit({
+                    tenantId: member.tenantId,
+                    siteId: member.siteId,
+                    actorUid: member.uid,
+                    eventType: 'POLICY_HARD_DENY',
+                    policyCode: hardDeny.code || 'DS132_ALCOHOL',
+                    severity: 'CRITICAL',
+                    rawItemText: ext.rawText,
+                    details: {
+                        channel: 'WHATSAPP_CAMP_V3',
+                        reasonSpanish: reason,
+                    },
+                });
+                policyAuditRefs.push(audit.auditId);
                 deniedItems.push({
                     rawText: ext.rawText,
-                    reason: hardDeny.reason || 'Ítem no permitido por normativa minera DS 132.',
+                    reason,
                 });
                 continue;
             }
@@ -1947,6 +2247,105 @@ export class CampChannel {
                 ext.quantity,
                 ext.unitRaw || ext.packagingUnit
             );
+            const itemIsControlled =
+                normalized.categoryCode === 'EXPLOSIVOS_REGULADO' ||
+                normalized.categoryCode === 'QUIMICOS_REGULADOS';
+
+            // 6.b Validación unificada DGMN / DS 132 (incluye de-obfuscación leetspeak en `SupplyPolicyAndAnomalyEngine`)
+            const unifiedPolicy = evaluateRequisitionPolicy(
+                [
+                    {
+                        itemKey: normalized.canonicalSkuId,
+                        rawText: ext.rawText,
+                        canonicalSkuId: normalized.canonicalSkuId,
+                        categoryCode: normalized.categoryCode,
+                        quantitySi: normalized.qtySi ?? 1,
+                        unitSi: normalized.unitSi,
+                        isCapexAsset: normalized.isCapexAsset,
+                        isControlled: itemIsControlled,
+                    },
+                ],
+                {
+                    memberProfile: {
+                        ...member.supplyProfile,
+                        maxRequisitionClp: member.supplyProfile.maxRequisitionClp ?? undefined,
+                    } as NonNullable<Parameters<typeof evaluateRequisitionPolicy>[1]['memberProfile']>,
+                    requesterRole: member.supplyProfile.role,
+                    demandNature: 'REACTIVE_FIELD',
+                    roleMismatchMode,
+                    nowIso,
+                }
+            );
+            if (unifiedPolicy.rejectedItems.length > 0) {
+                const rej = unifiedPolicy.rejectedItems[0];
+                const isDgmn =
+                    rej.rejectionCode === 'DGMN_EXPLOSIVES_BLOCK' ||
+                    rej.rejectionCode === 'CONTROLLED_LICENSE_REQUIRED';
+                const audit = await SupplyRepository.recordPolicyAudit({
+                    tenantId: member.tenantId,
+                    siteId: member.siteId,
+                    actorUid: member.uid,
+                    eventType: isDgmn
+                        ? 'DGMN_EXPLOSIVES_BLOCK'
+                        : rej.rejectionCode === 'ROLE_MISMATCH_STRICT_BLOCK'
+                          ? 'ROLE_MISMATCH_BLOCK'
+                          : 'POLICY_HARD_DENY',
+                    policyCode: rej.rejectionCode,
+                    severity: isDgmn ? 'CRITICAL' : 'HIGH',
+                    rawItemText: ext.rawText,
+                    details: {
+                        channel: 'WHATSAPP_CAMP_V3',
+                        matchedTerm: rej.matchedTerm || null,
+                        reasonSpanish: rej.reasonSpanish,
+                    },
+                });
+                policyAuditRefs.push(audit.auditId);
+                deniedItems.push({
+                    rawText: ext.rawText,
+                    reason: rej.reasonSpanish,
+                });
+                continue;
+            }
+
+            // 6.c Guardrail dinámico por turno (`DynamicChannelScopeResolver`) — evalúa canales permanentes + grants temporales vigentes
+            const scopeEval = DynamicChannelScopeResolver.evaluateItemAgainstScope({
+                canonicalSkuId: normalized.canonicalSkuId,
+                categoryCode: normalized.categoryCode,
+                isControlled: itemIsControlled,
+                isCapexAsset: normalized.isCapexAsset,
+                scope,
+            });
+            if (!scopeEval.allowed) {
+                const rejectionCode = scopeEval.rejectionCode || 'CHANNEL_SCOPE_DENIED';
+                const isDgmnScope =
+                    rejectionCode === 'DGMN_EXPLOSIVES_BLOCK' ||
+                    rejectionCode === 'CONTROLLED_LICENSE_REQUIRED';
+                const reason =
+                    scopeEval.reasonSpanish ||
+                    `El ítem requiere canal ${scopeEval.requiredChannel}, no habilitado actualmente para tu perfil.`;
+                const audit = await SupplyRepository.recordPolicyAudit({
+                    tenantId: member.tenantId,
+                    siteId: member.siteId,
+                    actorUid: member.uid,
+                    eventType: isDgmnScope ? 'DGMN_EXPLOSIVES_BLOCK' : 'POLICY_HARD_DENY',
+                    policyCode: rejectionCode,
+                    severity: isDgmnScope ? 'CRITICAL' : 'HIGH',
+                    rawItemText: ext.rawText,
+                    details: {
+                        channel: 'WHATSAPP_CAMP_V3',
+                        requiredChannel: scopeEval.requiredChannel,
+                        effectiveChannels: scope.effectiveChannels,
+                        scopeFingerprint: scope.scopeFingerprint,
+                        reasonSpanish: reason,
+                    },
+                });
+                policyAuditRefs.push(audit.auditId);
+                deniedItems.push({
+                    rawText: ext.rawText,
+                    reason,
+                });
+                continue;
+            }
 
             const flags = evaluateAtypicalFlagsForLine({
                 role: member.supplyProfile.role,
@@ -2036,6 +2435,12 @@ export class CampChannel {
             if (!options.skipOutboundSend) {
                 await MetaWhatsAppCloudAdapter.sendTextMessage(member.phoneE164, denyBlock);
             }
+            await recordFlushAudit({
+                replyText: denyBlock,
+                direction: policyAuditRefs.length > 0 ? 'SYSTEM_POLICY' : 'OUTBOUND',
+                policyAuditRefs,
+                aiModelUsed: lastAiModelUsed,
+            });
             return {
                 handled: true,
                 sessionId,
@@ -2084,6 +2489,12 @@ export class CampChannel {
             if (!options.skipOutboundSend) {
                 await MetaWhatsAppCloudAdapter.sendTextMessage(member.phoneE164, replyText);
             }
+            await recordFlushAudit({
+                replyText,
+                direction: 'OUTBOUND',
+                policyAuditRefs,
+                aiModelUsed: lastAiModelUsed,
+            });
             return {
                 handled: true,
                 sessionId,
@@ -2117,6 +2528,12 @@ export class CampChannel {
         if (!options.skipOutboundSend) {
             await MetaWhatsAppCloudAdapter.sendInteractiveButtons(member.phoneE164, replyText, replyButtons);
         }
+        await recordFlushAudit({
+            replyText,
+            direction: 'OUTBOUND',
+            policyAuditRefs,
+            aiModelUsed: lastAiModelUsed,
+        });
 
         return {
             handled: true,
@@ -2133,12 +2550,145 @@ export class CampChannel {
         session: WhatsAppCampSession,
         _sessionRef: FirebaseFirestore.DocumentReference,
         member: ResolvedWhatsAppMember,
-        options: { skipOutboundSend?: boolean }
+        options: { skipOutboundSend?: boolean; nowIso?: string; scope?: ResolvedDynamicChannelScope }
     ): Promise<CampChannelProcessResult> {
         const draftItems = session.draftItems || [];
         if (draftItems.length === 0) {
             await this.persistSessionFsmUpdate(session.sessionId, { fsmState: 'COLLECTING' });
             return { handled: false, sessionId: session.sessionId, fsmState: 'COLLECTING' };
+        }
+
+        // Re-evaluación live pre-commit contra permisos vigentes (`nowIso` exacto al momento de `OK`)
+        const commitNowIso = options.nowIso || new Date().toISOString();
+        const commitScope = await DynamicChannelScopeResolver.resolveScope({
+            tenantId: member.tenantId,
+            siteId: member.siteId,
+            uid: member.uid,
+            displayName: member.displayName,
+            role: member.supplyProfile.role,
+            phoneE164: member.phoneE164,
+            profileId: session.profileId || member.profileId,
+            licensedForControlledItems: member.supplyProfile.licensedForControlledItems,
+            nowIso: commitNowIso,
+        });
+
+        const validDrafts: CampDraftItem[] = [];
+        const removedDrafts: Array<{ rawText: string; reason: string; code: string }> = [];
+        const preCommitAuditIds: string[] = [];
+
+        for (const item of draftItems) {
+            const reEval = DynamicChannelScopeResolver.evaluateItemAgainstScope({
+                canonicalSkuId: item.canonicalSkuId,
+                categoryCode: item.categoryCode,
+                isCapexAsset: item.isCapexAsset,
+                scope: commitScope,
+            });
+            if (!reEval.allowed) {
+                const code = reEval.rejectionCode || 'TEMPORARY_GRANT_EXPIRED_ATTEMPT';
+                const reason =
+                    reEval.reasonSpanish ||
+                    `El permiso para ${item.itemName} (canal ${reEval.requiredChannel}) expiró o fue revocado antes de confirmar.`;
+                const audit = await SupplyRepository.recordPolicyAudit({
+                    tenantId: member.tenantId,
+                    siteId: member.siteId,
+                    actorUid: member.uid,
+                    eventType:
+                        code === 'DGMN_EXPLOSIVES_BLOCK' || code === 'CONTROLLED_LICENSE_REQUIRED'
+                            ? 'DGMN_EXPLOSIVES_BLOCK'
+                            : 'POLICY_HARD_DENY',
+                    policyCode: code,
+                    severity: 'HIGH',
+                    rawItemText: item.rawText,
+                    details: {
+                        channel: 'WHATSAPP_CAMP_V3_PRE_COMMIT',
+                        requiredChannel: reEval.requiredChannel,
+                        effectiveChannels: commitScope.effectiveChannels,
+                        scopeFingerprint: commitScope.scopeFingerprint,
+                        reasonSpanish: reason,
+                    },
+                });
+                preCommitAuditIds.push(audit.auditId);
+                removedDrafts.push({ rawText: item.rawText, reason, code });
+                continue;
+            }
+            validDrafts.push(item);
+        }
+
+        if (removedDrafts.length > 0) {
+            const removedNoticeLines = removedDrafts.map((d) => `- ${d.rawText}: ${d.reason}`).join('\n');
+            if (validDrafts.length === 0) {
+                const replyText = `No se confirmó el pedido porque los siguientes ítems quedaron fuera de tu alcance vigente:\n${removedNoticeLines}`;
+                await this.persistSessionFsmUpdate(session.sessionId, {
+                    fsmState: 'COLLECTING',
+                    draftItems: [],
+                    deniedNotices: removedDrafts.map((d) => `${d.rawText}: ${d.reason}`),
+                    lastReplyText: replyText,
+                });
+                if (!options.skipOutboundSend) {
+                    await MetaWhatsAppCloudAdapter.sendTextMessage(member.phoneE164, replyText);
+                }
+                await ConversationAuditService.appendTurn({
+                    tenantId: member.tenantId,
+                    profileId: commitScope.profileId,
+                    displayName: member.displayName,
+                    role: member.supplyProfile.role,
+                    phoneE164: member.phoneE164,
+                    siteId: member.siteId,
+                    direction: 'SYSTEM_POLICY',
+                    channelSource: 'SYSTEM',
+                    rawContent: replyText,
+                    scopeSnapshot: commitScope.scopeSnapshot,
+                    policyAuditRefs: preCommitAuditIds,
+                    nowIso: commitNowIso,
+                }).catch(() => {});
+                return {
+                    handled: true,
+                    sessionId: session.sessionId,
+                    fsmState: 'COLLECTING',
+                    replyText,
+                    deniedItems: removedDrafts.map(({ rawText, reason }) => ({ rawText, reason })),
+                };
+            }
+
+            const remainingLines = validDrafts.map(
+                (it, idx) => `${idx + 1}. ${it.itemName}: ${it.qtySi} ${it.unitSi}`
+            );
+            const replyText = `Ítems removidos antes de confirmar por vencimiento o cambio de canal:\n${removedNoticeLines}\n\nÍtems vigentes (${member.siteId}):\n${remainingLines.join('\n')}\n\nResponde OK o presiona Confirmar para enviar los ${validDrafts.length} ítem(s) vigentes.`;
+            const replyButtons = [
+                { id: 'REQ_CONFIRM', title: 'Confirmar Pedido' },
+                { id: 'REQ_CANCEL', title: 'Cancelar' },
+            ];
+            await this.persistSessionFsmUpdate(session.sessionId, {
+                fsmState: 'REVIEW_GATE',
+                draftItems: validDrafts,
+                deniedNotices: removedDrafts.map((d) => `${d.rawText}: ${d.reason}`),
+                lastReplyText: replyText,
+            });
+            if (!options.skipOutboundSend) {
+                await MetaWhatsAppCloudAdapter.sendInteractiveButtons(member.phoneE164, replyText, replyButtons);
+            }
+            await ConversationAuditService.appendTurn({
+                tenantId: member.tenantId,
+                profileId: commitScope.profileId,
+                displayName: member.displayName,
+                role: member.supplyProfile.role,
+                phoneE164: member.phoneE164,
+                siteId: member.siteId,
+                direction: 'SYSTEM_POLICY',
+                channelSource: 'SYSTEM',
+                rawContent: replyText,
+                scopeSnapshot: commitScope.scopeSnapshot,
+                policyAuditRefs: preCommitAuditIds,
+                nowIso: commitNowIso,
+            }).catch(() => {});
+            return {
+                handled: true,
+                sessionId: session.sessionId,
+                fsmState: 'REVIEW_GATE',
+                replyText,
+                replyButtons,
+                deniedItems: removedDrafts.map(({ rawText, reason }) => ({ rawText, reason })),
+            };
         }
 
         const requisition = await SupplyRepository.createRequisition(
@@ -2152,8 +2702,8 @@ export class CampChannel {
                 demandOrigin: resolveOriginForRole(member.supplyProfile.role),
                 demandNature: 'REACTIVE_FIELD',
                 costCenter: member.supplyProfile.defaultCostCenter || 'CC-CAMP-ALIMENTACION',
-                atypicalFlags: Array.from(new Set(draftItems.flatMap((d) => d.atypicalFlags))),
-                lines: draftItems.map((d, idx) => ({
+                atypicalFlags: Array.from(new Set(validDrafts.flatMap((d) => d.atypicalFlags))),
+                lines: validDrafts.map((d, idx) => ({
                     lineId: `line_${idx + 1}_${crypto.randomBytes(2).toString('hex')}`,
                     canonicalSkuId: d.canonicalSkuId,
                     itemName: d.itemName,
@@ -2213,6 +2763,21 @@ export class CampChannel {
             await MetaWhatsAppCloudAdapter.sendTextMessage(member.phoneE164, replyText);
         }
 
+        await ConversationAuditService.appendTurn({
+            tenantId: member.tenantId,
+            profileId: commitScope.profileId,
+            displayName: member.displayName,
+            role: member.supplyProfile.role,
+            phoneE164: member.phoneE164,
+            siteId: member.siteId,
+            direction: 'OUTBOUND',
+            channelSource: 'SYSTEM',
+            rawContent: replyText,
+            scopeSnapshot: commitScope.scopeSnapshot,
+            linkedRequisitionIds: [requisition.reqId],
+            nowIso: commitNowIso,
+        }).catch(() => {});
+
         return {
             handled: true,
             sessionId: session.sessionId,
@@ -2232,7 +2797,7 @@ export class CampChannel {
         _sessionRef: FirebaseFirestore.DocumentReference,
         member: ResolvedWhatsAppMember,
         turn: PendingBufferedTurn,
-        options: { skipOutboundSend?: boolean }
+        options: { skipOutboundSend?: boolean; scope?: ResolvedDynamicChannelScope }
     ): Promise<CampChannelProcessResult> {
         let rawBuffer: Buffer | undefined;
         let mimeType = turn.mimeType || 'image/jpeg';
@@ -2359,12 +2924,26 @@ export class CampChannel {
         session: WhatsAppCampSession,
         _sessionRef: FirebaseFirestore.DocumentReference,
         member: ResolvedWhatsAppMember,
-        options: { skipOutboundSend?: boolean }
+        options: { skipOutboundSend?: boolean; nowIso?: string; scope?: ResolvedDynamicChannelScope }
     ): Promise<CampChannelProcessResult> {
         const draft = session.pendingDirectPurchaseDraft;
         if (!draft) {
             return { handled: false, sessionId: session.sessionId, fsmState: session.fsmState };
         }
+
+        const commitScope =
+            options.scope ||
+            (await DynamicChannelScopeResolver.resolveScope({
+                tenantId: member.tenantId,
+                siteId: member.siteId,
+                uid: member.uid,
+                displayName: member.displayName,
+                role: member.supplyProfile.role,
+                phoneE164: member.phoneE164,
+                profileId: session.profileId || member.profileId,
+                licensedForControlledItems: member.supplyProfile.licensedForControlledItems,
+                nowIso: options.nowIso,
+            }));
 
         const { analysis, purchaseMode, paymentMethod } = draft;
         const result = await SupplyRepository.createPurchaseWithReconciliation(
@@ -2440,6 +3019,22 @@ export class CampChannel {
             await MetaWhatsAppCloudAdapter.sendTextMessage(member.phoneE164, replyText);
         }
 
+        await ConversationAuditService.appendTurn({
+            tenantId: member.tenantId,
+            profileId: commitScope.profileId,
+            displayName: member.displayName,
+            role: member.supplyProfile.role,
+            phoneE164: member.phoneE164,
+            siteId: member.siteId,
+            direction: 'OUTBOUND',
+            channelSource: 'SYSTEM',
+            rawContent: replyText,
+            scopeSnapshot: commitScope.scopeSnapshot,
+            linkedPurchaseIds: [result.purchase.purchaseId],
+            linkedDteIds: result.siiDocument?.docId ? [result.siiDocument.docId] : [],
+            nowIso: options.nowIso,
+        }).catch(() => {});
+
         return {
             handled: true,
             sessionId: session.sessionId,
@@ -2455,10 +3050,12 @@ export class CampChannel {
         taskInstruction: string;
         untrustedUserInput?: string;
         media?: Array<{ mimeType: string; dataBase64: string }>;
+        systemInstruction?: string;
     }): Promise<{
         transcript: string;
         intent: 'ADD_ITEMS' | 'FILL_SLOTS' | 'CONFIRM_COMMIT' | 'CANCEL' | 'STATUS_QUERY' | 'UNKNOWN';
         items: NonNullable<z.infer<typeof AiMessageExtractionSchema>['items']>;
+        modelUsed?: string;
     }> {
         const scrubbedUserText = ConfidentialityAirlockService.scrubDeterministicPii(
             String(params.untrustedUserInput || ''),
@@ -2472,22 +3069,24 @@ export class CampChannel {
             : `${params.taskInstruction}\n<untrusted_field_message></untrusted_field_message>`;
 
         try {
-            const { data } = await ResilientAIClient.generateStructured(
+            const aiResult = await ResilientAIClient.generateStructured(
                 {
                     module: SUPPLY_AI_MODULE,
                     preferredTier: 'SECONDARY',
                     temperature: 0,
                     tenantId: params.tenantId,
-                    systemInstruction: SUPPLY_FIELD_SYSTEM_INSTRUCTION,
+                    dataClassification: 'TENANT_PRIVATE',
+                    systemInstruction: params.systemInstruction || SUPPLY_FIELD_SYSTEM_INSTRUCTION,
                     prompt: promptBody,
                     media: params.media,
                 },
                 AiMessageExtractionSchema
             );
             return {
-                transcript: data.transcript || '',
-                intent: data.intent || 'ADD_ITEMS',
-                items: data.items || [],
+                transcript: aiResult.data.transcript || '',
+                intent: aiResult.data.intent || 'ADD_ITEMS',
+                items: aiResult.data.items || [],
+                modelUsed: (aiResult as { modelUsed?: string }).modelUsed,
             };
         } catch {
             return { transcript: '', intent: 'UNKNOWN', items: [] };

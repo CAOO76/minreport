@@ -35,6 +35,8 @@ import {
     type PolicyItemCandidate,
     evaluateRequisitionPolicy,
 } from '../domain/SupplyPolicyAndAnomalyEngine';
+import { DynamicChannelScopeResolver } from './DynamicChannelScopeResolver';
+import { ConversationAuditService } from '../application/ConversationAuditService';
 
 /**
  * WHATSAPP FLOWS v3.0 DISPATCHER — MINREPORT · ABASTECIMIENTO
@@ -761,13 +763,31 @@ async function handleCampOrderFlow(
         );
     }
 
+    const flowScope = await DynamicChannelScopeResolver.resolveScope({
+        tenantId: claims.tenantId,
+        siteId: claims.siteId,
+        uid: member.memberUid,
+        displayName: member.displayName,
+        role: member.supplyProfile.role,
+        phoneE164: member.phoneE164,
+        licensedForControlledItems: member.supplyProfile.licensedForControlledItems,
+    });
+
     const recentReqs = await SupplyRepository.listRequisitions(claims.tenantId, {
         siteId: claims.siteId,
         limit: 25,
     });
     const nonCancelledReqs = recentReqs.filter((r) => r.status !== 'CANCELLED');
     const lastConfirmedReq = nonCancelledReqs[0] || null;
-    const frequentSkus = summarizeFrequentSkus(nonCancelledReqs);
+    const allFrequentSkus = summarizeFrequentSkus(nonCancelledReqs);
+    const frequentSkus = allFrequentSkus.filter(
+        (sku) =>
+            DynamicChannelScopeResolver.evaluateItemAgainstScope({
+                canonicalSkuId: sku.canonicalSkuId,
+                categoryCode: sku.categoryCode,
+                scope: flowScope,
+            }).allowed
+    );
 
     if (action === 'INIT' || action === 'BACK') {
         return {
@@ -1048,29 +1068,95 @@ async function handleCampOrderFlow(
     }
 
     const acceptedByKey = new Map(policyEval.acceptedItems.map((a) => [a.itemKey, a]));
-    const acceptedOrderLines = orderCandidates
-        .filter((c) => acceptedByKey.has(c.itemKey))
-        .map((c, idx) => {
-            const evalItem = acceptedByKey.get(c.itemKey)!;
-            return {
-                lineId: `fline_${idx + 1}_${crypto.randomBytes(2).toString('hex')}`,
-                canonicalSkuId: c.canonicalSkuId,
-                itemName: c.itemName,
-                categoryCode: c.categoryCode,
-                procurementBucket: c.procurementBucket,
-                unitSi: c.unitSi,
-                rawRequestedText: c.rawText,
-                qtyRequested: c.qtyRequested,
-                qtyPurchased: 0,
-                qtyReceived: 0,
-                qtyPending: c.qtyRequested,
-                lineStatus: 'OPEN' as const,
-                atypicalFlags: [...evalItem.atypicalFlags] as AtypicalFlagCode[],
-                fulfillmentChannel: 'MANUAL_LOCAL_PURCHASE' as const,
-                urgency: c.urgency,
-                estimatedUnitClp: c.estimatedUnitClp,
-            };
+    const scopeRejectedItems: Array<{
+        itemKey: string;
+        rawText: string;
+        rejectionCode: string;
+        reasonSpanish: string;
+        matchedTerm?: string;
+    }> = [...policyEval.rejectedItems];
+    const scopeAuditIds: string[] = [];
+
+    const scopeFilteredCandidates = [];
+    for (const c of orderCandidates) {
+        if (!acceptedByKey.has(c.itemKey)) continue;
+        const scopeCheck = DynamicChannelScopeResolver.evaluateItemAgainstScope({
+            canonicalSkuId: c.canonicalSkuId,
+            categoryCode: c.categoryCode,
+            isCapexAsset: c.isCapexAsset,
+            scope: flowScope,
         });
+        if (!scopeCheck.allowed) {
+            const code = scopeCheck.rejectionCode || 'CHANNEL_SCOPE_DENIED';
+            const audit = await SupplyRepository.recordPolicyAudit({
+                tenantId: claims.tenantId,
+                siteId: claims.siteId,
+                actorUid: member.memberUid,
+                eventType:
+                    code === 'DGMN_EXPLOSIVES_BLOCK' || code === 'CONTROLLED_LICENSE_REQUIRED'
+                        ? 'DGMN_EXPLOSIVES_BLOCK'
+                        : 'POLICY_HARD_DENY',
+                policyCode: code,
+                severity: code === 'DGMN_EXPLOSIVES_BLOCK' ? 'CRITICAL' : 'HIGH',
+                rawItemText: c.rawText,
+                details: {
+                    channel: 'WHATSAPP_FLOW_V3',
+                    flowId: SUPPLY_WHATSAPP_FLOW_IDS.CAMP_ORDER,
+                    requiredChannel: scopeCheck.requiredChannel,
+                    effectiveChannels: flowScope.effectiveChannels,
+                    scopeFingerprint: flowScope.scopeFingerprint,
+                    reasonSpanish: scopeCheck.reasonSpanish,
+                },
+            });
+            scopeAuditIds.push(audit.auditId);
+            scopeRejectedItems.push({
+                itemKey: c.itemKey,
+                rawText: c.rawText,
+                rejectionCode: code,
+                reasonSpanish:
+                    scopeCheck.reasonSpanish ||
+                    `Ítem fuera de los canales habilitados para tu perfil.`,
+                matchedTerm: scopeCheck.requiredChannel,
+            });
+            continue;
+        }
+        scopeFilteredCandidates.push(c);
+    }
+
+    if (scopeFilteredCandidates.length === 0) {
+        const firstRej = scopeRejectedItems[0];
+        return buildFlowErrorResponse(
+            'CAMP_REORDER_SELECT',
+            firstRej?.rejectionCode || 'CHANNEL_SCOPE_DENIED',
+            firstRej?.reasonSpanish ||
+                'Los ítems seleccionados no pertenecen a tus canales habilitados.',
+            {
+                rejected_items: scopeRejectedItems,
+            }
+        );
+    }
+
+    const acceptedOrderLines = scopeFilteredCandidates.map((c, idx) => {
+        const evalItem = acceptedByKey.get(c.itemKey)!;
+        return {
+            lineId: `fline_${idx + 1}_${crypto.randomBytes(2).toString('hex')}`,
+            canonicalSkuId: c.canonicalSkuId,
+            itemName: c.itemName,
+            categoryCode: c.categoryCode,
+            procurementBucket: c.procurementBucket,
+            unitSi: c.unitSi,
+            rawRequestedText: c.rawText,
+            qtyRequested: c.qtyRequested,
+            qtyPurchased: 0,
+            qtyReceived: 0,
+            qtyPending: c.qtyRequested,
+            lineStatus: 'OPEN' as const,
+            atypicalFlags: [...evalItem.atypicalFlags] as AtypicalFlagCode[],
+            fulfillmentChannel: 'MANUAL_LOCAL_PURCHASE' as const,
+            urgency: c.urgency,
+            estimatedUnitClp: c.estimatedUnitClp,
+        };
+    });
 
     const aggregateFlags = Array.from(
         new Set(acceptedOrderLines.flatMap((l) => l.atypicalFlags))
@@ -1101,6 +1187,21 @@ async function handleCampOrderFlow(
         buildActor(member, options.ipAddress)
     );
 
+    await ConversationAuditService.appendTurn({
+        tenantId: claims.tenantId,
+        profileId: flowScope.profileId,
+        displayName: member.displayName,
+        role: member.supplyProfile.role,
+        phoneE164: member.phoneE164,
+        siteId: claims.siteId,
+        direction: 'OUTBOUND',
+        channelSource: 'WHATSAPP_FLOW_V3',
+        rawContent: `Flow ${SUPPLY_WHATSAPP_FLOW_IDS.CAMP_ORDER} confirmado: ${createdReq.reqId} (${createdReq.lines.length} líneas).`,
+        scopeSnapshot: flowScope.scopeSnapshot,
+        policyAuditRefs: scopeAuditIds,
+        linkedRequisitionIds: [createdReq.reqId],
+    }).catch(() => {});
+
     return {
         version: '3.0',
         screen: 'SUCCESS',
@@ -1112,7 +1213,7 @@ async function handleCampOrderFlow(
             lineCount: createdReq.lines.length,
             oneTapReorder: isOneTapReorder,
             atypicalFlags: createdReq.atypicalFlags,
-            rejected_items: policyEval.rejectedItems,
+            rejected_items: scopeRejectedItems,
             extension_message_response: {
                 params: {
                     flow_token: body.flow_token || '',

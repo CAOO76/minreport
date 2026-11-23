@@ -78,11 +78,14 @@ import {
 } from './SupplierZeroFrictionRfqService';
 import {
     ConfirmSupplyProfileOptInRequestSchema,
+    ExportConversationQuerySchema,
     GrantTemporaryChannelRequestSchema,
     RevokeTemporaryChannelRequestSchema,
+    SupplyWhatsAppChannelIdSchema,
     UpdateSupplyProfileChannelsRequestSchema,
     UpsertSupplyProfileRequestSchema,
 } from '../../../contracts/supply.contracts';
+import { ConversationAuditService } from './ConversationAuditService';
 import {
     CanonicalSupplySkuSchema,
     EvidenceCasRefSchema,
@@ -3636,6 +3639,171 @@ router.post(
             });
         } catch (err) {
             return handleProfilePortError(res, err, 'Error procesando Doble Opt-In de perfil.');
+        }
+    }
+);
+
+// ---------------------------------------------------------------------------
+// V3-E03: Archivo Inmutable de Conversaciones WhatsApp (SHA-256 + RBAC + CSV/JSON)
+// ---------------------------------------------------------------------------
+
+router.get(
+    '/conversations',
+    requireSupplyTenantScope,
+    async (req: SupplyRequest, res: Response) => {
+        try {
+            const ctx = req.supplyContext!;
+            const profileId =
+                typeof req.query.profileId === 'string' && req.query.profileId.trim()
+                    ? req.query.profileId.trim()
+                    : undefined;
+            const channelIdRaw =
+                typeof req.query.channelId === 'string' && req.query.channelId.trim()
+                    ? req.query.channelId.trim().toUpperCase()
+                    : undefined;
+            let channelId: z.infer<typeof SupplyWhatsAppChannelIdSchema> | undefined;
+            if (channelIdRaw) {
+                const parsedCh = SupplyWhatsAppChannelIdSchema.safeParse(channelIdRaw);
+                if (!parsedCh.success) {
+                    return res.status(400).json({
+                        error: `channelId inválido: ${channelIdRaw}`,
+                        code: 'INVALID_CHANNEL_ID',
+                    });
+                }
+                channelId = parsedCh.data;
+            }
+            const limitRaw = req.query.limit ? Number(req.query.limit) : undefined;
+            const allThreads = await ConversationAuditService.listThreads(ctx.tenantId, {
+                profileId,
+                channelId,
+                limit: limitRaw,
+            });
+            const isAdmin = canAdministerSupplyProfiles(ctx);
+            const threads = isAdmin
+                ? allThreads
+                : allThreads.filter((t) => t.profileId === ctx.actorUid);
+
+            return res.status(200).json({
+                threads,
+                count: threads.length,
+            });
+        } catch (err) {
+            return handleProfilePortError(res, err, 'Error listando hilos de conversación.');
+        }
+    }
+);
+
+router.get(
+    '/conversations/:threadId/turns',
+    requireSupplyTenantScope,
+    async (req: SupplyRequest, res: Response) => {
+        try {
+            const ctx = req.supplyContext!;
+            const threadId = String(req.params.threadId || '').trim();
+            const thread = await ConversationAuditService.getThread(ctx.tenantId, threadId);
+            if (!thread) {
+                return res.status(404).json({
+                    error: `Hilo de conversación ${threadId} no encontrado.`,
+                    code: 'CONVERSATION_THREAD_NOT_FOUND',
+                });
+            }
+
+            let isLinkedOwner = thread.profileId === ctx.actorUid;
+            if (!isLinkedOwner) {
+                const profileEv = await ProvisionalSupplyProfileAdapter.resolveEffectiveProfileById(
+                    ctx.tenantId,
+                    thread.profileId
+                ).catch(() => null);
+                isLinkedOwner = Boolean(profileEv?.profile.linkedMemberUid === ctx.actorUid);
+            }
+            if (!canAdministerSupplyProfiles(ctx) && !isLinkedOwner) {
+                return res.status(403).json({
+                    error: 'CONVERSATION_FORBIDDEN: No autorizado para consultar turnos de este hilo.',
+                    code: 'CONVERSATION_FORBIDDEN',
+                });
+            }
+
+            const limitRaw = req.query.limit ? Number(req.query.limit) : undefined;
+            const turns = await ConversationAuditService.listTurns(ctx.tenantId, threadId, limitRaw);
+            const chainVerification = ConversationAuditService.verifyTurnChain(turns);
+            return res.status(200).json({
+                thread,
+                turns,
+                chainVerification,
+            });
+        } catch (err) {
+            return handleProfilePortError(res, err, 'Error listando turnos de conversación.');
+        }
+    }
+);
+
+router.post(
+    '/conversations/:threadId/export',
+    requireSupplyTenantScope,
+    mutationRateLimiter,
+    async (req: SupplyRequest, res: Response) => {
+        try {
+            const ctx = req.supplyContext!;
+            const threadId = String(req.params.threadId || '').trim();
+            const parsed = ExportConversationQuerySchema.safeParse({
+                format: req.body?.format ?? req.query?.format,
+            });
+            if (!parsed.success) {
+                return res.status(400).json({
+                    error: 'Formato de exportación inválido (usa JSON o CSV).',
+                    code: 'INVALID_EXPORT_FORMAT',
+                    details: parsed.error.flatten(),
+                });
+            }
+
+            const thread = await ConversationAuditService.getThread(ctx.tenantId, threadId);
+            if (!thread) {
+                return res.status(404).json({
+                    error: `Hilo de conversación ${threadId} no encontrado.`,
+                    code: 'CONVERSATION_THREAD_NOT_FOUND',
+                });
+            }
+
+            let isLinkedOwner = thread.profileId === ctx.actorUid;
+            if (!isLinkedOwner) {
+                const profileEv = await ProvisionalSupplyProfileAdapter.resolveEffectiveProfileById(
+                    ctx.tenantId,
+                    thread.profileId
+                ).catch(() => null);
+                isLinkedOwner = Boolean(profileEv?.profile.linkedMemberUid === ctx.actorUid);
+            }
+            if (!canAdministerSupplyProfiles(ctx) && !isLinkedOwner) {
+                return res.status(403).json({
+                    error: 'CONVERSATION_EXPORT_FORBIDDEN: Solo administradores o titular autorizado pueden exportar la conversación.',
+                    code: 'CONVERSATION_EXPORT_FORBIDDEN',
+                });
+            }
+
+            const exported = await ConversationAuditService.exportThread(
+                ctx.tenantId,
+                threadId,
+                parsed.data.format,
+                {
+                    actorUid: ctx.actorUid,
+                    actorEmail: ctx.actorEmail,
+                    ipAddress: extractClientIp(req),
+                }
+            );
+            res.setHeader('X-Content-SHA256', exported.sha256);
+            if (parsed.data.format === 'CSV') {
+                res.setHeader('Content-Type', exported.contentType);
+                res.setHeader('Content-Disposition', `attachment; filename="${exported.filename}"`);
+                return res.status(200).send(exported.body);
+            }
+            return res.status(200).json({
+                filename: exported.filename,
+                sha256: exported.sha256,
+                turnCount: exported.turnCount,
+                chainVerification: exported.chainVerification,
+                payload: JSON.parse(exported.body),
+            });
+        } catch (err) {
+            return handleProfilePortError(res, err, 'Error exportando historial de conversación.');
         }
     }
 );

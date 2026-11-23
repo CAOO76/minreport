@@ -1609,3 +1609,85 @@ export const ConfirmSupplyProfileOptInRequestSchema = z.object({
     action: z.enum(['CONFIRM', 'REVOKE_STOP']).default('CONFIRM'),
 });
 export type ConfirmSupplyProfileOptInRequest = z.input<typeof ConfirmSupplyProfileOptInRequestSchema>;
+
+// ── 16. Archivo Inmutable de Conversaciones WhatsApp (SHA-256, V3-E03) ─────
+
+export const ConversationTurnDirectionSchema = z.enum(['INBOUND', 'OUTBOUND', 'SYSTEM_POLICY']);
+export type ConversationTurnDirection = z.infer<typeof ConversationTurnDirectionSchema>;
+
+export const ConversationRetentionPolicySchema = z.enum([
+    'OPERATIONAL_24M',
+    'TAX_HOLD_6Y',
+    'LEGAL_HOLD_PSEUDONYMIZED',
+]);
+export type ConversationRetentionPolicy = z.infer<typeof ConversationRetentionPolicySchema>;
+
+export const ConversationScopeSnapshotSchema = z.object({
+    evaluatedAtIso: z.string().min(10).max(40),
+    scopeFingerprint: z.string().trim().regex(/^[a-f0-9]{64}$/),
+    permanentChannels: z.array(SupplyWhatsAppChannelIdSchema).default([]),
+    temporaryChannels: z.array(SupplyWhatsAppChannelIdSchema).default([]),
+    effectiveChannels: z.array(SupplyWhatsAppChannelIdSchema).default([]),
+    activeGrantItemIds: z.array(z.string().trim().min(1).max(128)).default([]),
+    hasValidDgmnLicense: z.boolean().default(false),
+});
+export type ConversationScopeSnapshot = z.infer<typeof ConversationScopeSnapshotSchema>;
+
+export const SupplyConversationThreadSchema = z.object({
+    threadId: z.string().trim().min(1).max(160),
+    tenantId: z.string().trim().min(1).max(128),
+    profileId: z.string().trim().min(1).max(128),
+    displayName: z.string().trim().min(1).max(160),
+    role: SupplyOperationalRoleSchema,
+    phoneMasked: z.string().trim().min(4).max(32),
+    phoneHashSha256: z.string().trim().regex(/^[a-f0-9]{64}$/),
+    headSeq: z.number().int().nonnegative().default(0),
+    headHashSha256: z.string().trim().regex(/^[a-f0-9]{64}$/),
+    turnCount: z.number().int().nonnegative().default(0),
+    activeEffectiveChannels: z.array(SupplyWhatsAppChannelIdSchema).default([]),
+    linkedRequisitionIds: z.array(z.string().trim().min(1).max(128)).default([]),
+    linkedPurchaseIds: z.array(z.string().trim().min(1).max(128)).default([]),
+    linkedDteIds: z.array(z.string().trim().min(1).max(128)).default([]),
+    retentionPolicy: ConversationRetentionPolicySchema.default('OPERATIONAL_24M'),
+    legalHoldTaxYears: z.number().int().min(0).max(10).default(0),
+    retentionExpiresAtIso: z.string().min(10).max(40),
+    pseudonymizedAtIso: z.string().min(10).max(40).nullable().optional(),
+    lastTurnAtIso: z.string().min(10).max(40),
+    createdAtIso: z.string().min(10).max(40),
+    updatedAtIso: z.string().min(10).max(40),
+});
+export type SupplyConversationThread = z.infer<typeof SupplyConversationThreadSchema>;
+
+export const SupplyConversationTurnSchema = z.object({
+    turnId: z.string().trim().min(1).max(160),
+    threadId: z.string().trim().min(1).max(160),
+    tenantId: z.string().trim().min(1).max(128),
+    profileId: z.string().trim().min(1).max(128),
+    siteId: z.string().trim().max(128).nullable().optional(),
+    seq: z.number().int().positive(),
+    prevHash: z.string().trim().regex(/^[a-f0-9]{64}$/),
+    turnHash: z.string().trim().regex(/^[a-f0-9]{64}$/),
+    direction: ConversationTurnDirectionSchema,
+    channelSource: z.enum(['WHATSAPP_CLOUD', 'WHATSAPP_FLOW_V3', 'SIMULATOR', 'SYSTEM']).default('WHATSAPP_CLOUD'),
+    wamid: z.string().trim().max(200).nullable().optional(),
+    contentScrubbed: z.string().max(8000),
+    redactedCategories: z.array(z.string().trim().max(64)).default([]),
+    scopeSnapshot: ConversationScopeSnapshotSchema,
+    casMedia: z.array(SupplyEvidenceCasRefSchema).default([]),
+    policyAuditRefs: z.array(z.string().trim().min(1).max(160)).default([]),
+    aiModelUsed: z.string().trim().max(80).nullable().optional(),
+    linkedRequisitionIds: z.array(z.string().trim().min(1).max(128)).default([]),
+    linkedPurchaseIds: z.array(z.string().trim().min(1).max(128)).default([]),
+    linkedDteIds: z.array(z.string().trim().min(1).max(128)).default([]),
+    legalHoldTaxYears: z.number().int().min(0).max(10).default(0),
+    retentionExpiresAtIso: z.string().min(10).max(40),
+    ttlExpiresAt: z.unknown().optional(),
+    createdAtIso: z.string().min(10).max(40),
+});
+export type SupplyConversationTurn = z.infer<typeof SupplyConversationTurnSchema>;
+
+export const ExportConversationQuerySchema = z.object({
+    format: z.enum(['JSON', 'CSV']).default('JSON'),
+    confirmationKeyword: z.literal('ACTUALIZAR').optional(),
+});
+export type ExportConversationQuery = z.input<typeof ExportConversationQuerySchema>;

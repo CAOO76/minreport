@@ -107,6 +107,8 @@ export const SUPPLY_COLLECTIONS = {
     WHATSAPP_SESSIONS: 'supply_whatsapp_sessions',
     WHATSAPP_WAMIDS: 'supply_whatsapp_wamids',
     CHANNEL_GRANTS: 'supply_channel_grants',
+    CONVERSATION_THREADS: 'supply_conversation_threads',
+    CONVERSATION_TURNS: 'supply_conversation_turns',
 } as const;
 
 export interface SupplyPolicyAuditEntry {

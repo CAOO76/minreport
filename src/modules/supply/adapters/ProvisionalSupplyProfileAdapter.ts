@@ -345,7 +345,8 @@ export class ProvisionalSupplyProfileAdapterImpl implements IHumanResourcesProfi
     public async resolveEffectiveProfileById(
         tenantId: string,
         profileId: string,
-        nowIso?: string
+        nowIso?: string,
+        options: { includeDispatchPhone?: boolean } = {}
     ): Promise<EffectiveSupplyProfileEvaluation | null> {
         const docId = buildProfileGrantDocId(tenantId, profileId);
         const snap = await db.collection(SUPPLY_CHANNEL_GRANTS_COLLECTION).doc(docId).get();
@@ -357,16 +358,20 @@ export class ProvisionalSupplyProfileAdapterImpl implements IHumanResourcesProfi
         const publicProfile = toPublicProfileGrant(stored, evalRes);
         const decryptedPhone = decryptPhoneE164(stored.phoneCiphertext);
         const devAllowlist = await resolveEffectiveDevAllowlistSet();
+        const whatsappDispatchAllowed = evaluateWhatsappDispatchEligibility({
+            status: publicProfile.status,
+            optInStatus: publicProfile.optInStatus,
+            phoneE164: decryptedPhone,
+            devAllowlist,
+        });
 
         return {
             profile: publicProfile,
             ...evalRes,
-            whatsappDispatchAllowed: evaluateWhatsappDispatchEligibility({
-                status: publicProfile.status,
-                optInStatus: publicProfile.optInStatus,
-                phoneE164: decryptedPhone,
-                devAllowlist,
-            }),
+            whatsappDispatchAllowed,
+            ...(options.includeDispatchPhone && whatsappDispatchAllowed
+                ? { dispatchPhoneE164: decryptedPhone }
+                : {}),
         };
     }
 
