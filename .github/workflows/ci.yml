@@ -28,7 +28,7 @@ jobs:
       - name: Install Backend Dependencies
         run: npm ci
 
-      - name: Verify & Build Backend Core (TypeScript Strict, Ley 21.719 & 13 Supply Suites)
+      - name: Verify & Build Backend Core (TypeScript Strict, Ley 21.719 & 17 Supply Suites)
         env:
           NODE_ENV: test
           MOCK_EMAILS: 'true'
@@ -49,6 +49,10 @@ jobs:
           npx ts-node src/modules/supply/__tests__/supply-accounting-erp-e10.spec.ts
           npx ts-node src/modules/supply/__tests__/supply-rfq-scheduler-e11.spec.ts
           npx ts-node src/modules/supply/__tests__/supply-emulator-security.spec.ts
+          npx ts-node src/modules/supply/__tests__/supply-profiles-v3-e02.spec.ts
+          npx ts-node src/modules/supply/__tests__/supply-conversations-v3-e03.spec.ts
+          npx ts-node src/modules/supply/__tests__/supply-warehouse-kardex-v3-e04.spec.ts
+          npx ts-node src/modules/supply/__tests__/supply-reconciler-v3-e05.spec.ts
           npm run build
 
       - name: Typecheck & Build Cloud Functions Gen 2 (southamerica-west1)

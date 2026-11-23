@@ -4,12 +4,19 @@ import M3LinearProgress from '../../../components/common/M3LinearProgress';
 import M3CircularProgress from '../../../components/common/M3CircularProgress';
 import CopyButton from '../../../components/common/CopyButton';
 import { cn } from '../../../utils/cn';
+import type {
+    ReconciliationProposal,
+    ReconciliationProposedLineMatch,
+    SupplyAnomalyAlert,
+} from '../../../contracts/supply.contracts';
 import { supplyApi } from '../services/supplyApi';
 import {
     formatCasTelemetry,
     formatClp,
     type FulfillmentAllocationDraft,
+    type LandedCostProrationMode,
     type PurchaseLineDestination,
+    type SemanticMatchClassification,
     type SupplyPurchaseDraft,
     type SupplyRequisition,
     type SupplyRequisitionLine,
@@ -37,13 +44,21 @@ interface FlatPendingReqLine {
 interface EditableAllocationRow {
     purchaseLineId: string;
     rawDescription: string;
+    canonicalSkuId: string;
     qtyPurchased: number;
     unitSi: SupplyUnitSi;
+    unitPriceClp: number;
     subtotalClp: number;
     selectedReqKey: string; // `${reqId}::${lineId}` or 'UNSOLICITED'
     allocatedQty: number;
     destination: PurchaseLineDestination;
+    costCenter?: string;
+    classification: SemanticMatchClassification;
+    accepted: boolean;
+    proposedMatch?: ReconciliationProposedLineMatch;
 }
+
+const PRORATION_MODES: LandedCostProrationMode[] = ['NET_VALUE', 'WEIGHT_KG', 'VOLUME_L'];
 
 function normalizeMatchText(s: string): string {
     return String(s || '')
@@ -66,6 +81,11 @@ export const ReconciliationHitlDrawer: React.FC<ReconciliationHitlDrawerProps> =
     const { t } = useTranslation();
     const uid = useId();
     const [rows, setRows] = useState<EditableAllocationRow[]>([]);
+    const [backlogSearch, setBacklogSearch] = useState('');
+    const [prorationMode, setProrationMode] = useState<LandedCostProrationMode>('NET_VALUE');
+    const [freightOrAdjustmentClp, setFreightOrAdjustmentClp] = useState<number>(0);
+    const [proposing, setProposing] = useState(false);
+    const [proposal, setProposal] = useState<ReconciliationProposal | null>(null);
     const [keywordInput, setKeywordInput] = useState('');
     const [committing, setCommitting] = useState(false);
     const [feedback, setFeedback] = useState<{ tone: 'copper' | 'cyan'; text: string } | null>(null);
@@ -95,6 +115,9 @@ export const ReconciliationHitlDrawer: React.FC<ReconciliationHitlDrawerProps> =
     useEffect(() => {
         setKeywordInput('');
         setFeedback(null);
+        setProposal(null);
+        setBacklogSearch('');
+        setFreightOrAdjustmentClp(0);
         if (!draft) {
             setRows([]);
             return;
@@ -131,19 +154,28 @@ export const ReconciliationHitlDrawer: React.FC<ReconciliationHitlDrawerProps> =
             return {
                 purchaseLineId: pLine.lineId,
                 rawDescription: pLine.rawDescription,
+                canonicalSkuId: pLine.canonicalSkuId || 'SKU-OTROS-OPERACIONAL',
                 qtyPurchased: pLine.qty,
                 unitSi: pLine.unitSi,
+                unitPriceClp: pLine.unitPriceClp,
                 subtotalClp: pLine.subtotalClp,
                 selectedReqKey: bestKey,
                 allocatedQty,
                 destination: pLine.destination,
+                classification:
+                    pLine.destination === 'CAPEX_ASSET'
+                        ? 'UNSOLICITED_OR_CAPEX'
+                        : bestKey === 'UNSOLICITED'
+                          ? 'UNSOLICITED_OR_CAPEX'
+                          : 'EXACT_EQUIVALENT',
+                accepted: true,
             };
         });
 
         setRows(initialRows);
     }, [draft, pendingReqLines]);
 
-    // Compute comparative state per row & untouched pending lines
+    // Compute comparative state per row & untouched pending lines (FULL backlog, zero .slice(0, 6))
     const reqMap = useMemo(() => {
         const m = new Map<string, FlatPendingReqLine>();
         for (const item of pendingReqLines) {
@@ -162,55 +194,188 @@ export const ReconciliationHitlDrawer: React.FC<ReconciliationHitlDrawerProps> =
         return m;
     }, [rows]);
 
-    const untouchedPendingLines = useMemo(
-        () =>
-            pendingReqLines.filter(
-                (item) => (allocatedTotalsByReqKey.get(`${item.reqId}::${item.line.lineId}`) || 0) === 0
-            ),
-        [pendingReqLines, allocatedTotalsByReqKey]
-    );
+    const untouchedPendingLines = useMemo(() => {
+        const base = pendingReqLines.filter(
+            (item) => (allocatedTotalsByReqKey.get(`${item.reqId}::${item.line.lineId}`) || 0) === 0
+        );
+        const q = backlogSearch.trim().toLowerCase();
+        if (!q) return base;
+        return base.filter((item) =>
+            `${item.reqId} ${item.costCenter} ${item.line.name} ${item.line.canonicalSkuId || ''}`
+                .toLowerCase()
+                .includes(q)
+        );
+    }, [pendingReqLines, allocatedTotalsByReqKey, backlogSearch]);
+
+    const combinedAnomalies = useMemo<SupplyAnomalyAlert[]>(() => {
+        if (!proposal) return [];
+        const list: SupplyAnomalyAlert[] = [];
+        if (proposal.ruralDuplicateAlert) list.push(proposal.ruralDuplicateAlert);
+        for (const a of proposal.anomalies || []) list.push(a);
+        return list;
+    }, [proposal]);
 
     const isKeywordValid = keywordInput.trim().toUpperCase() === 'ACTUALIZAR';
     const casTelemetry = useMemo(() => formatCasTelemetry(draft?.evidenceCasRef), [draft]);
+
+    const handlePropose4Way = async () => {
+        if (!draft || proposing) return;
+        setProposing(true);
+        setFeedback(null);
+        try {
+            const reqIds = Array.from(new Set(openRequisitions.map((r) => r.reqId)));
+            const res = await supplyApi.proposeReconciliation4Way(
+                {
+                    siteId: draft.siteId || 'site-main',
+                    supplierTaxId: draft.supplierTaxId,
+                    supplierName: draft.supplierName,
+                    documentType: draft.documentType,
+                    folio: draft.folio || '0',
+                    issueDate: draft.issueDate,
+                    totalAmountClp: draft.totalAmountClp,
+                    globalDiscountOrChargeClp: freightOrAdjustmentClp || 0,
+                    prorationMode,
+                    requisitionIds: reqIds,
+                    lines: draft.lines.map((l, idx) => ({
+                        purchaseLineId: l.lineId,
+                        lineNumber: idx + 1,
+                        rawDescription: l.rawDescription,
+                        quantity: Math.max(0.0001, Number(l.qty) || 1),
+                        rawUnit: l.unitSi,
+                        unitPriceClp: Math.max(0, Number(l.unitPriceClp) || 0),
+                        subtotalClp: Math.max(0, Number(l.subtotalClp) || 0),
+                        isCapexAsset: l.destination === 'CAPEX_ASSET',
+                    })),
+                },
+                tenantId
+            );
+            setProposal(res);
+            const matchById = new Map(
+                (res.proposedLines || []).map((m) => [m.purchaseLineId, m])
+            );
+            setRows((prev) =>
+                prev.map((row) => {
+                    const m = matchById.get(row.purchaseLineId);
+                    if (!m) return row;
+                    const candidateReqId = m.candidateRequisitionIds?.[0];
+                    const matchingPending = candidateReqId
+                        ? pendingReqLines.find((p) => p.reqId === candidateReqId)
+                        : undefined;
+                    return {
+                        ...row,
+                        canonicalSkuId: m.matchedCanonicalSkuId || row.canonicalSkuId,
+                        classification: m.classification,
+                        proposedMatch: m,
+                        accepted:
+                            m.classification === 'EXACT_EQUIVALENT' ||
+                            m.classification === 'ACCESSORY_CHARGE',
+                        selectedReqKey: matchingPending
+                            ? `${matchingPending.reqId}::${matchingPending.line.lineId}`
+                            : row.selectedReqKey,
+                    };
+                })
+            );
+        } catch (err) {
+            setFeedback({
+                tone: 'copper',
+                text: err instanceof Error ? err.message : 'PROPOSE_4WAY_ERROR',
+            });
+        } finally {
+            setProposing(false);
+        }
+    };
 
     const handleCommit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!canMutate || !draft || !isKeywordValid || committing) return;
 
-        const allocations: FulfillmentAllocationDraft[] = rows.map((row) => {
-            if (row.selectedReqKey === 'UNSOLICITED') {
-                return {
-                    purchaseLineId: row.purchaseLineId,
-                    allocationKind: 'UNSOLICITED_PURCHASE',
-                    requisitionId: null,
-                    requisitionLineId: null,
-                    qtyAllocated: Math.max(0.0001, Number(row.qtyPurchased) || 1),
-                    unitSi: row.unitSi,
-                    destination: row.destination,
-                    resultingRequisitionLineStatus: null,
-                };
-            }
-            const [reqId, reqLineId] = row.selectedReqKey.split('::');
-            const target = reqMap.get(row.selectedReqKey);
-            const totalAlloc = allocatedTotalsByReqKey.get(row.selectedReqKey) || row.allocatedQty;
-            const pending = target?.line.qtyPending || 0;
-            const resultingRequisitionLineStatus =
-                totalAlloc >= pending ? 'FULFILLED' : totalAlloc > 0 ? 'PARTIAL' : 'OPEN';
-            return {
-                purchaseLineId: row.purchaseLineId,
-                allocationKind: 'REQUISITION_MATCH',
-                requisitionId: reqId || null,
-                requisitionLineId: reqLineId || null,
-                qtyAllocated: Math.max(0.0001, Number(row.allocatedQty) || 1),
-                unitSi: row.unitSi,
-                destination: row.destination,
-                resultingRequisitionLineStatus,
-            };
-        });
-
         setCommitting(true);
         setFeedback(null);
         try {
+            if (proposal) {
+                const reqIds = Array.from(
+                    new Set(
+                        rows
+                            .filter((r) => r.selectedReqKey !== 'UNSOLICITED')
+                            .map((r) => r.selectedReqKey.split('::')[0])
+                            .filter(Boolean)
+                    )
+                );
+                await supplyApi.commitReconciliation4Way(
+                    {
+                        proposalId: proposal.proposalId,
+                        siteId: draft.siteId || 'site-main',
+                        supplierTaxId: draft.supplierTaxId,
+                        supplierName: draft.supplierName,
+                        documentType: draft.documentType,
+                        folio: draft.folio || '0',
+                        issueDate: draft.issueDate,
+                        paymentMethod: draft.paymentMethod,
+                        purchaseMode: draft.purchaseMode,
+                        prorationMode,
+                        globalDiscountOrChargeClp: freightOrAdjustmentClp || 0,
+                        iepOrIecFuelTaxClp: proposal.siiTaxes?.iepOrIecClp || 0,
+                        requisitionIds: reqIds,
+                        confirmationKeyword: 'ACTUALIZAR',
+                        lines: rows.map((row) => ({
+                            purchaseLineId: row.purchaseLineId,
+                            rawDescription: row.rawDescription,
+                            canonicalSkuId: row.canonicalSkuId.trim() || 'SKU-OTROS-OPERACIONAL',
+                            classification: row.classification,
+                            unitSi: row.unitSi,
+                            qtyPurchased: Math.max(0.0001, Number(row.qtyPurchased) || 1),
+                            unitPriceClp: Math.max(0, Number(row.unitPriceClp) || 0),
+                            subtotalClp: Math.max(0, Number(row.subtotalClp) || 0),
+                            linePricingBasis: proposal.siiTaxes?.linePricingBasis || 'NET',
+                            destination: row.destination,
+                            costCenter: row.costCenter,
+                            isCapexAsset: row.destination === 'CAPEX_ASSET',
+                            learnSupplierMapping: row.accepted,
+                            accepted: row.accepted,
+                        })),
+                    },
+                    tenantId
+                );
+                setFeedback({
+                    tone: 'cyan',
+                    text: t('supply.reconciler.committed_ok'),
+                });
+                setKeywordInput('');
+                onCommitted(false);
+                return;
+            }
+
+            const allocations: FulfillmentAllocationDraft[] = rows.map((row) => {
+                if (row.selectedReqKey === 'UNSOLICITED') {
+                    return {
+                        purchaseLineId: row.purchaseLineId,
+                        allocationKind: 'UNSOLICITED_PURCHASE',
+                        requisitionId: null,
+                        requisitionLineId: null,
+                        qtyAllocated: Math.max(0.0001, Number(row.qtyPurchased) || 1),
+                        unitSi: row.unitSi,
+                        destination: row.destination,
+                        resultingRequisitionLineStatus: null,
+                    };
+                }
+                const [reqId, reqLineId] = row.selectedReqKey.split('::');
+                const target = reqMap.get(row.selectedReqKey);
+                const totalAlloc = allocatedTotalsByReqKey.get(row.selectedReqKey) || row.allocatedQty;
+                const pending = target?.line.qtyPending || 0;
+                const resultingRequisitionLineStatus =
+                    totalAlloc >= pending ? 'FULFILLED' : totalAlloc > 0 ? 'PARTIAL' : 'OPEN';
+                return {
+                    purchaseLineId: row.purchaseLineId,
+                    allocationKind: 'REQUISITION_MATCH',
+                    requisitionId: reqId || null,
+                    requisitionLineId: reqLineId || null,
+                    qtyAllocated: Math.max(0.0001, Number(row.allocatedQty) || 1),
+                    unitSi: row.unitSi,
+                    destination: row.destination,
+                    resultingRequisitionLineStatus,
+                };
+            });
+
             const res = await supplyApi.commitPurchase(
                 {
                     draft,
@@ -277,7 +442,7 @@ export const ReconciliationHitlDrawer: React.FC<ReconciliationHitlDrawerProps> =
                 </div>
             </header>
 
-            {committing && (
+            {(committing || proposing) && (
                 <M3LinearProgress
                     indeterminate
                     ariaLabel={t('supply.reconciler.commit_button')}
@@ -358,6 +523,109 @@ export const ReconciliationHitlDrawer: React.FC<ReconciliationHitlDrawerProps> =
                                 </div>
                             )}
                         </div>
+
+                        {/* 4-Way Semantic Proposal, Proration Mode & Freight Adjustment Controls */}
+                        <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] p-fib-13 space-y-fib-13">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-fib-8">
+                                <div className="space-y-1">
+                                    <label
+                                        htmlFor={`${uid}-proration`}
+                                        className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]"
+                                    >
+                                        {t('supply.reconciler.proration_label')}
+                                    </label>
+                                    <select
+                                        id={`${uid}-proration`}
+                                        value={prorationMode}
+                                        onChange={(e) =>
+                                            setProrationMode(
+                                                e.target.value as LandedCostProrationMode
+                                            )
+                                        }
+                                        data-testid="reconciler-proration-select"
+                                        className="w-full min-h-[48px] px-fib-8 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-microcopy text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
+                                    >
+                                        {PRORATION_MODES.map((pm) => (
+                                            <option key={pm} value={pm}>
+                                                {t(`supply.reconciler.proration_${pm}`)}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div className="space-y-1">
+                                    <label
+                                        htmlFor={`${uid}-freight`}
+                                        className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]"
+                                    >
+                                        {t('supply.reconciler.freight_clp_label')}
+                                    </label>
+                                    <input
+                                        id={`${uid}-freight`}
+                                        type="number"
+                                        value={freightOrAdjustmentClp}
+                                        onChange={(e) =>
+                                            setFreightOrAdjustmentClp(Number(e.target.value) || 0)
+                                        }
+                                        autoComplete="off"
+                                        spellCheck={false}
+                                        data-testid="reconciler-freight-input"
+                                        className="w-full min-h-[48px] px-fib-13 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-data-dense tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
+                                    />
+                                </div>
+                            </div>
+
+                            {canMutate && (
+                                <button
+                                    type="button"
+                                    disabled={proposing}
+                                    onClick={() => void handlePropose4Way()}
+                                    data-testid="reconciler-propose-4way-btn"
+                                    className="w-full min-h-[48px] px-fib-13 bg-transparent border border-[#00AEEF] text-[#0369A1] dark:text-[#00AEEF] font-mono text-microcopy font-bold uppercase tracking-wider inline-flex items-center justify-center gap-fib-8 rounded-none shadow-none cursor-pointer hover:opacity-80 disabled:opacity-40"
+                                >
+                                    <span className="material-symbols-outlined text-[18px]">
+                                        auto_awesome
+                                    </span>
+                                    <span>{t('supply.reconciler.propose_4way_btn')}</span>
+                                </button>
+                            )}
+                        </div>
+
+                        {/* Anomaly Alerts (Shrinkflation, Price Variance, OPERMAQ Fuel, Rural dHash) */}
+                        {combinedAnomalies.length > 0 && (
+                            <div className="space-y-fib-8">
+                                <div className="font-mono text-microcopy uppercase font-bold text-[#7C3F0E] dark:text-[#C68346]">
+                                    {t('supply.reconciler.anomalies_title')} ({combinedAnomalies.length})
+                                </div>
+                                <div className="divide-y divide-[#E2E8F0] dark:divide-[#12151C] border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000]">
+                                    {combinedAnomalies.map((anom) => (
+                                        <div
+                                            key={anom.alertId}
+                                            data-testid={`reconciler-anomaly-${anom.alertId}`}
+                                            className={cn(
+                                                'p-fib-8 border-l-[3px] font-mono text-microcopy space-y-1 tabular-nums',
+                                                anom.severity === 'INFO'
+                                                    ? 'border-l-[#00AEEF]'
+                                                    : 'border-l-[#C68346]'
+                                            )}
+                                        >
+                                            <div className="flex items-center justify-between gap-fib-8 font-bold text-[#7C3F0E] dark:text-[#C68346]">
+                                                <span>
+                                                    {t(
+                                                        `supply.reconciler.anomaly_${anom.alertType}`
+                                                    )}
+                                                </span>
+                                                {typeof anom.variancePct === 'number' && (
+                                                    <span>{anom.variancePct.toFixed(1)}%</span>
+                                                )}
+                                            </div>
+                                            <div className="text-[#0F172A] dark:text-[#F3F4F6]">
+                                                {anom.messageSpanish}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
 
                         {/* Comparative Table: [Solicitado/Pendiente] -> [Detectado] -> [Nuevo Estado] */}
                         <div className="space-y-fib-13">
@@ -509,25 +777,206 @@ export const ReconciliationHitlDrawer: React.FC<ReconciliationHitlDrawerProps> =
                                                     </div>
                                                 </div>
                                             </div>
+
+                                            {/* 4-Way AI 1-to-1 Semantic Diff, SKU Override & Landed Unit Cost Preview */}
+                                            {row.proposedMatch && (
+                                                <div className="border-t border-[#E2E8F0] dark:border-[#12151C] pt-fib-8 space-y-fib-8 font-mono text-microcopy tabular-nums">
+                                                    <div className="flex flex-wrap items-center justify-between gap-fib-8">
+                                                        <span
+                                                            data-testid={`reconciler-class-${row.purchaseLineId}`}
+                                                            className={cn(
+                                                                'px-fib-8 py-0.5 border font-bold uppercase',
+                                                                row.classification === 'SUBSTITUTE_CANDIDATE' ||
+                                                                    row.classification === 'UNSOLICITED_OR_CAPEX'
+                                                                    ? 'border-[#C68346] text-[#7C3F0E] dark:text-[#C68346]'
+                                                                    : 'border-[#00AEEF] text-[#0369A1] dark:text-[#00AEEF]'
+                                                            )}
+                                                        >
+                                                            {t(
+                                                                `supply.reconciler.class_${row.classification}`
+                                                            )}
+                                                        </span>
+                                                        <span className="text-[#475569] dark:text-[#8A93A6]">
+                                                            {row.proposedMatch.matchTier} ·{' '}
+                                                            {Math.round(
+                                                                row.proposedMatch.confidence * 100
+                                                            )}
+                                                            %
+                                                        </span>
+                                                    </div>
+
+                                                    <div className="flex flex-wrap items-center justify-between gap-fib-8 text-[#0F172A] dark:text-[#F3F4F6]">
+                                                        <span>
+                                                            [{row.rawDescription}] ➔ [
+                                                            {row.proposedMatch.matchedSkuName ||
+                                                                row.canonicalSkuId}
+                                                            ]
+                                                        </span>
+                                                        <span
+                                                            data-testid={`reconciler-landed-${row.purchaseLineId}`}
+                                                            className="font-bold text-[#0369A1] dark:text-[#00AEEF]"
+                                                        >
+                                                            {t(
+                                                                'supply.reconciler.landed_unit_preview'
+                                                            )}
+                                                            :{' '}
+                                                            {formatClp(
+                                                                row.proposedMatch.landedUnitCostNetClp
+                                                            )}
+                                                        </span>
+                                                    </div>
+
+                                                    <div className="flex flex-wrap items-center justify-between gap-fib-8">
+                                                        <input
+                                                            type="text"
+                                                            value={row.canonicalSkuId}
+                                                            disabled={!canMutate}
+                                                            onChange={(e) =>
+                                                                setRows((prev) =>
+                                                                    prev.map((r) =>
+                                                                        r.purchaseLineId ===
+                                                                        row.purchaseLineId
+                                                                            ? {
+                                                                                  ...r,
+                                                                                  canonicalSkuId:
+                                                                                      e.target.value,
+                                                                              }
+                                                                            : r
+                                                                    )
+                                                                )
+                                                            }
+                                                            autoComplete="off"
+                                                            spellCheck={false}
+                                                            aria-label={t(
+                                                                'supply.reconciler.sku_override'
+                                                            )}
+                                                            className="flex-1 min-w-[140px] min-h-[48px] px-fib-8 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-microcopy text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
+                                                        />
+                                                        {canMutate && (
+                                                            <div className="flex items-center gap-fib-8">
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() =>
+                                                                        setRows((prev) =>
+                                                                            prev.map((r) =>
+                                                                                r.purchaseLineId ===
+                                                                                row.purchaseLineId
+                                                                                    ? {
+                                                                                          ...r,
+                                                                                          accepted: true,
+                                                                                      }
+                                                                                    : r
+                                                                            )
+                                                                        )
+                                                                    }
+                                                                    aria-label={t(
+                                                                        'supply.reconciler.accept_line'
+                                                                    )}
+                                                                    title={t(
+                                                                        'supply.reconciler.accept_line'
+                                                                    )}
+                                                                    data-testid={`reconciler-line-accept-${row.purchaseLineId}`}
+                                                                    className={cn(
+                                                                        'bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center cursor-pointer rounded-none shadow-none',
+                                                                        row.accepted
+                                                                            ? 'text-[#0369A1] dark:text-[#00AEEF]'
+                                                                            : 'text-[#475569] dark:text-[#8A93A6]'
+                                                                    )}
+                                                                >
+                                                                    <span className="material-symbols-outlined text-[20px]">
+                                                                        check_circle
+                                                                    </span>
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() =>
+                                                                        setRows((prev) =>
+                                                                            prev.map((r) =>
+                                                                                r.purchaseLineId ===
+                                                                                row.purchaseLineId
+                                                                                    ? {
+                                                                                          ...r,
+                                                                                          accepted: false,
+                                                                                      }
+                                                                                    : r
+                                                                            )
+                                                                        )
+                                                                    }
+                                                                    aria-label={t(
+                                                                        'supply.reconciler.reject_line'
+                                                                    )}
+                                                                    title={t(
+                                                                        'supply.reconciler.reject_line'
+                                                                    )}
+                                                                    data-testid={`reconciler-line-reject-${row.purchaseLineId}`}
+                                                                    className={cn(
+                                                                        'bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center cursor-pointer rounded-none shadow-none',
+                                                                        !row.accepted
+                                                                            ? 'text-[#7C3F0E] dark:text-[#C68346]'
+                                                                            : 'text-[#475569] dark:text-[#8A93A6]'
+                                                                    )}
+                                                                >
+                                                                    <span className="material-symbols-outlined text-[20px]">
+                                                                        cancel
+                                                                    </span>
+                                                                </button>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            )}
                                         </div>
                                     );
                                 })}
 
-                                {/* Remaining untouched pending backlog items for complete visibility */}
-                                {untouchedPendingLines.slice(0, 6).map((item) => (
-                                    <div
-                                        key={`${item.reqId}::${item.line.lineId}`}
-                                        className="py-fib-8 pl-fib-8 border-l-[3px] border-transparent grid grid-cols-12 gap-fib-8 items-center font-mono text-microcopy tabular-nums text-[#475569] dark:text-[#8A93A6]"
-                                    >
-                                        <div className="col-span-5 truncate">
-                                            {item.line.name} ({item.line.qtyPending} {item.line.unitSi})
+                                {/* Full Scrollable Pending Backlog (no .slice(0, 6) truncation) */}
+                                {(untouchedPendingLines.length > 0 || backlogSearch.trim().length > 0) && (
+                                    <div className="pt-fib-13 space-y-fib-8">
+                                        <div className="flex flex-wrap items-center justify-between gap-fib-8">
+                                            <span className="font-mono text-microcopy uppercase font-bold text-[#475569] dark:text-[#8A93A6]">
+                                                {t('supply.reconciler.backlog_open_title')} (
+                                                {untouchedPendingLines.length})
+                                            </span>
                                         </div>
-                                        <div className="col-span-4">0 {item.line.unitSi}</div>
-                                        <div className="col-span-3 text-right uppercase">
-                                            {t('supply.status.OPEN')}
+                                        <input
+                                            type="text"
+                                            value={backlogSearch}
+                                            onChange={(e) => setBacklogSearch(e.target.value)}
+                                            autoComplete="off"
+                                            spellCheck={false}
+                                            aria-label={t(
+                                                'supply.reconciler.backlog_search_placeholder'
+                                            )}
+                                            placeholder={t(
+                                                'supply.reconciler.backlog_search_placeholder'
+                                            )}
+                                            data-testid="reconciler-backlog-search"
+                                            className="w-full min-h-[48px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-microcopy text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
+                                        />
+                                        <div
+                                            data-testid="reconciler-backlog-full-list"
+                                            className="max-h-64 overflow-y-auto divide-y divide-[#E2E8F0] dark:divide-[#12151C] border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000]"
+                                        >
+                                            {untouchedPendingLines.map((item) => (
+                                                <div
+                                                    key={`${item.reqId}::${item.line.lineId}`}
+                                                    className="p-fib-8 border-l-[3px] border-transparent grid grid-cols-12 gap-fib-8 items-center font-mono text-microcopy tabular-nums text-[#475569] dark:text-[#8A93A6]"
+                                                >
+                                                    <div className="col-span-6 truncate text-[#0F172A] dark:text-[#F3F4F6]">
+                                                        {item.line.name} ({item.line.qtyPending}{' '}
+                                                        {item.line.unitSi}) · {item.reqId}
+                                                    </div>
+                                                    <div className="col-span-3 truncate">
+                                                        {item.costCenter}
+                                                    </div>
+                                                    <div className="col-span-3 text-right uppercase">
+                                                        {t('supply.status.OPEN')}
+                                                    </div>
+                                                </div>
+                                            ))}
                                         </div>
                                     </div>
-                                ))}
+                                )}
                             </div>
                         </div>
 

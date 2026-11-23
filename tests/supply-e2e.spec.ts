@@ -31,13 +31,20 @@ test.describe('MINREPORT · ABASTECIMIENTO — E2E Contract-Driven Suite', () =>
         expect(bodyText).not.toContain('(38.2%)');
 
         const navButtons = page.locator('header nav button');
-        if ((await navButtons.count()) >= 4) {
-            await navButtons.nth(1).click();
+        if ((await navButtons.count()) >= 7) {
+            await expect(page.getByTestId('supply-telemetry-strip')).toBeVisible();
+            await page.getByTestId('supply-tab-CONTROL').click();
+            await expect(page).toHaveURL(/tab=CONTROL/);
+            await page.getByTestId('supply-tab-DEMAND').click();
             await expect(page).toHaveURL(/tab=DEMAND/);
-            await navButtons.nth(2).click();
+            await page.getByTestId('supply-tab-WAREHOUSE').click();
             await expect(page).toHaveURL(/tab=WAREHOUSE/);
-            await navButtons.nth(3).click();
-            await expect(page).toHaveURL(/tab=SII_EXPENSES/);
+            await page.getByTestId('supply-tab-CONVERSATIONS').click();
+            await expect(page).toHaveURL(/tab=CONVERSATIONS/);
+            await page.getByTestId('supply-tab-FINANCE_SII').click();
+            await expect(page).toHaveURL(/tab=FINANCE_SII/);
+            await page.getByTestId('supply-tab-PROFILES_WS').click();
+            await expect(page).toHaveURL(/tab=PROFILES_WS/);
         }
     });
 
@@ -134,6 +141,26 @@ test.describe('MINREPORT · ABASTECIMIENTO — E2E Contract-Driven Suite', () =>
         if (await root.isVisible()) {
             const attr = await root.getAttribute('data-marketplace-opt-in');
             expect(['allowed', 'blocked']).toContain(attr);
+        }
+    });
+
+    test('6. ReconciliationHitlDrawer: apertura de cabina 4-Way y validación autocomplete=off', async ({
+        page,
+    }) => {
+        await page.goto(`${SUPPLY_ROUTE}?tab=FINANCE_RECON`, { waitUntil: 'domcontentloaded' });
+        if (page.url().includes('/login') || page.url().includes('/access')) {
+            await expect(page.locator('body')).toBeVisible();
+            return;
+        }
+
+        const drawer = page.locator('aside[aria-label*="CONCILIACI"]').first();
+        if (await drawer.isVisible()) {
+            const invalidInputs = await drawer.evaluate((root) =>
+                Array.from(root.querySelectorAll('input:not([type="hidden"])')).filter(
+                    (inp) => inp.getAttribute('autocomplete') !== 'off'
+                ).length
+            );
+            expect(invalidInputs).toBe(0);
         }
     });
 });

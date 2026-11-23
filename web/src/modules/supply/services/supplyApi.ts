@@ -3,6 +3,7 @@ import { mediaDigestorClient } from '../../../core/media/MediaDigestorClient';
 import { offlineStorage } from '../../../core/offline/OfflineStorage';
 import { syncQueueEngine } from '../../../core/offline/SyncQueueEngine';
 import type {
+    ReconciliationProposal,
     StockLedgerEntry,
     SupplyReceptionDiscrepancy,
 } from '../../../contracts/supply.contracts';
@@ -25,6 +26,8 @@ import {
     type ReceiptAnalysisDraft,
     type ReceiptAnalysisSource,
     type ReceiptArithmeticCheckSummary,
+    type ReconciliationCommit4WayRequest,
+    type ReconciliationProposeRequest,
     type RecordStockMovementRequest,
     type RequisitionUrgency,
     type SiiDocumentRcvStatus,
@@ -1906,7 +1909,47 @@ export const supplyApi = {
         if (!json?.kpis || typeof json.kpis !== 'object') return null;
         return json.kpis as SupplyBusinessUnitKpis;
     },
+
+    async proposeReconciliation4Way(
+        payload: ReconciliationProposeRequest,
+        tenantId?: string
+    ): Promise<ReconciliationProposal> {
+        const res = await coreAuthFetch(`${SUPPLY_API_BASE}/reconciliation/propose`, {
+            method: 'POST',
+            headers: buildHeaders(tenantId, true),
+            body: JSON.stringify(payload),
+        });
+        const json = await parseJsonResponse<Record<string, unknown>>(res);
+        return (json?.proposal || json) as ReconciliationProposal;
+    },
+
+    async commitReconciliation4Way(
+        payload: ReconciliationCommit4WayRequest,
+        tenantId?: string
+    ): Promise<Commit4WayReconciliationResult> {
+        const res = await coreAuthFetch(`${SUPPLY_API_BASE}/reconciliation/commit-4way`, {
+            method: 'POST',
+            headers: buildHeaders(tenantId, true),
+            body: JSON.stringify(payload),
+        });
+        const json = await parseJsonResponse<Record<string, unknown>>(res);
+        return {
+            success: json?.success !== false,
+            purchase: json?.purchase as SupplyPurchaseRecord | undefined,
+            anomaliesCount: Number(json?.anomaliesCount ?? 0) || 0,
+            learnedMappingsCount: Number(json?.learnedMappingsCount ?? 0) || 0,
+            cashEntriesCount: Number(json?.cashEntriesCount ?? 0) || 0,
+        };
+    },
 };
+
+export interface Commit4WayReconciliationResult {
+    success: boolean;
+    purchase?: SupplyPurchaseRecord;
+    anomaliesCount: number;
+    learnedMappingsCount: number;
+    cashEntriesCount: number;
+}
 
 export interface SupplyWarehouseListResult {
     warehouses: SupplyWarehouse[];
