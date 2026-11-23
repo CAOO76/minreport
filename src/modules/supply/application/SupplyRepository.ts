@@ -106,6 +106,7 @@ export const SUPPLY_COLLECTIONS = {
     EVENT_LEDGER: 'event_ledger',
     WHATSAPP_SESSIONS: 'supply_whatsapp_sessions',
     WHATSAPP_WAMIDS: 'supply_whatsapp_wamids',
+    CHANNEL_GRANTS: 'supply_channel_grants',
 } as const;
 
 export interface SupplyPolicyAuditEntry {

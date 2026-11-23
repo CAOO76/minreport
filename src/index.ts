@@ -295,23 +295,30 @@ const DEV_PRIVATE_BLOCKED_PREFIXES = [
 
 const DEV_PRIVATE_SUPPLY_WHATSAPP_WEBHOOK_PREFIX = '/api/supply/whatsapp/webhook';
 
-app.use((req, res, next) => {
-    if (isDevPrivateReleaseStage()) {
-        const reqPath = (req.path || '').replace(/\/{2,}/g, '/').toLowerCase();
-        const isBlockedCommercialRoute = DEV_PRIVATE_BLOCKED_PREFIXES.some(
-            (prefix) => reqPath === prefix || reqPath.startsWith(`${prefix}/`)
-        );
-        const isBlockedDevWhatsAppWebhook =
-            (reqPath === DEV_PRIVATE_SUPPLY_WHATSAPP_WEBHOOK_PREFIX ||
-                reqPath.startsWith(`${DEV_PRIVATE_SUPPLY_WHATSAPP_WEBHOOK_PREFIX}/`)) &&
-            !isSupplyWhatsAppDevEnabled();
+/**
+ * Evalúa si una ruta HTTP debe bloquearse en etapa `DEV_PRIVATE`:
+ * - Mantiene `/api/staff` y rutas comerciales bloqueadas.
+ * - Permite explícitamente `/api/supply/profiles*` para `DEV_ROOT` sin abrir `/api/staff`.
+ */
+export function isBlockedInDevPrivateStage(rawPath: string): boolean {
+    if (!isDevPrivateReleaseStage()) return false;
+    const reqPath = String(rawPath || '').replace(/\/{2,}/g, '/').toLowerCase();
+    const isBlockedCommercialRoute = DEV_PRIVATE_BLOCKED_PREFIXES.some(
+        (prefix) => reqPath === prefix || reqPath.startsWith(`${prefix}/`)
+    );
+    const isBlockedDevWhatsAppWebhook =
+        (reqPath === DEV_PRIVATE_SUPPLY_WHATSAPP_WEBHOOK_PREFIX ||
+            reqPath.startsWith(`${DEV_PRIVATE_SUPPLY_WHATSAPP_WEBHOOK_PREFIX}/`)) &&
+        !isSupplyWhatsAppDevEnabled();
+    return isBlockedCommercialRoute || isBlockedDevWhatsAppWebhook;
+}
 
-        if (isBlockedCommercialRoute || isBlockedDevWhatsAppWebhook) {
-            return res.status(403).json({
-                error: 'RELEASE_STAGE_DEV_ONLY: Funcionalidad comercial no habilitada en etapa privada DEV.',
-                code: 'RELEASE_STAGE_DEV_ONLY',
-            });
-        }
+app.use((req, res, next) => {
+    if (isBlockedInDevPrivateStage(req.path || '')) {
+        return res.status(403).json({
+            error: 'RELEASE_STAGE_DEV_ONLY: Funcionalidad comercial no habilitada en etapa privada DEV.',
+            code: 'RELEASE_STAGE_DEV_ONLY',
+        });
     }
     return next();
 });

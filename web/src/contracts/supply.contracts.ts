@@ -1492,3 +1492,120 @@ export const SimulateWhatsAppTurnPayloadSchema = z.object({
 });
 export type SimulateWhatsAppTurnPayload = z.input<typeof SimulateWhatsAppTurnPayloadSchema>;
 export type SimulateWhatsAppTurnPayloadOutput = z.infer<typeof SimulateWhatsAppTurnPayloadSchema>;
+
+// ── 15. Submódulo Provisorio Perfiles & Canales WS + Puente RRHH (V3-E02) ──
+
+export const SupplyProfileOptInStatusSchema = z.enum([
+    'PENDING_DOUBLE_OPT_IN',
+    'ACTIVE',
+    'REVOKED_STOP',
+]);
+export type SupplyProfileOptInStatus = z.infer<typeof SupplyProfileOptInStatusSchema>;
+
+export const SupplyProfileStatusSchema = z.enum(['ACTIVE', 'SUSPENDED']);
+export type SupplyProfileStatus = z.infer<typeof SupplyProfileStatusSchema>;
+
+export const ControlledLicenseMetadataSchema = z.object({
+    resolutionCode: z.string().trim().min(2).max(80),
+    issuedBy: z.string().trim().min(2).max(80).default('DGMN'),
+    expiresAtIso: z.string().min(10).max(40),
+    verifiedByUid: z.string().trim().max(128).optional(),
+});
+export type ControlledLicenseMetadata = z.infer<typeof ControlledLicenseMetadataSchema>;
+
+export const TemporaryChannelGrantSchema = z.object({
+    grantItemId: z.string().trim().min(1).max(128),
+    channelId: SupplyWhatsAppChannelIdSchema,
+    validFromIso: z.string().min(10).max(40),
+    validUntilIso: z.string().min(10).max(40),
+    timezoneIana: IanaTimezoneSchema.default('America/Santiago'),
+    reason: z.string().trim().min(2).max(240),
+    maxAmountClpOverride: z.number().nonnegative().nullable().optional(),
+    allowedSiteIdsOverride: z.array(z.string().trim().min(1).max(128)).nullable().optional(),
+    revokedAtIso: z.string().min(10).max(40).nullable().optional(),
+    grantedByUid: z.string().trim().max(128).optional(),
+    createdAtIso: z.string().min(10).max(40).optional(),
+});
+export type TemporaryChannelGrant = z.infer<typeof TemporaryChannelGrantSchema>;
+
+export const SupplyProfileGrantSchema = z.object({
+    profileId: z.string().trim().min(1).max(128),
+    tenantId: z.string().trim().min(1).max(128),
+    displayName: z.string().trim().min(2).max(160),
+    role: SupplyOperationalRoleSchema,
+    phoneMasked: z.string().trim().min(4).max(32),
+    phoneHashSha256: z.string().trim().regex(/^[a-f0-9]{64}$/),
+    optInStatus: SupplyProfileOptInStatusSchema.default('PENDING_DOUBLE_OPT_IN'),
+    optInConfirmedAtIso: z.string().min(10).max(40).nullable().optional(),
+    optInRevokedAtIso: z.string().min(10).max(40).nullable().optional(),
+    status: SupplyProfileStatusSchema.default('ACTIVE'),
+    permanentChannels: z.array(SupplyWhatsAppChannelIdSchema).default([]),
+    temporaryGrants: z.array(TemporaryChannelGrantSchema).default([]),
+    allowedSiteIds: z.array(z.string().trim().min(1).max(128)).default([]),
+    allowedWarehouseIds: z.array(z.string().trim().min(1).max(128)).default([]),
+    maxAmountClp: z.number().nonnegative().default(500_000),
+    allowCapex: z.boolean().default(false),
+    controlledLicense: ControlledLicenseMetadataSchema.nullable().optional(),
+    linkedMemberUid: z.string().trim().max(128).nullable().optional(),
+    hrPersonId: z.string().trim().max(128).nullable().optional(),
+    effectiveChannels: z.array(SupplyWhatsAppChannelIdSchema).optional(),
+    createdAtIso: z.string().min(10).max(40),
+    updatedAtIso: z.string().min(10).max(40),
+});
+export type SupplyProfileGrant = z.infer<typeof SupplyProfileGrantSchema>;
+
+export const UpsertSupplyProfileRequestSchema = z.object({
+    profileId: z.string().trim().min(2).max(128).optional(),
+    displayName: z.string().trim().min(2).max(160),
+    role: SupplyOperationalRoleSchema,
+    phoneE164: InternationalPhoneE164Schema.optional(),
+    status: SupplyProfileStatusSchema.default('ACTIVE'),
+    permanentChannels: z.array(SupplyWhatsAppChannelIdSchema).default([]),
+    allowedSiteIds: z.array(z.string().trim().min(1).max(128)).default([]),
+    allowedWarehouseIds: z.array(z.string().trim().min(1).max(128)).default([]),
+    maxAmountClp: z.number().nonnegative().default(500_000),
+    allowCapex: z.boolean().default(false),
+    controlledLicense: ControlledLicenseMetadataSchema.nullable().optional(),
+    linkedMemberUid: z.string().trim().max(128).nullable().optional(),
+    hrPersonId: z.string().trim().max(128).nullable().optional(),
+    sendOptInTemplate: z.boolean().default(true),
+    confirmationKeyword: z.literal('ACTUALIZAR'),
+});
+export type UpsertSupplyProfileRequest = z.input<typeof UpsertSupplyProfileRequestSchema>;
+
+export const UpdateSupplyProfileChannelsRequestSchema = z.object({
+    permanentChannels: z.array(SupplyWhatsAppChannelIdSchema),
+    maxAmountClp: z.number().nonnegative().optional(),
+    allowCapex: z.boolean().optional(),
+    allowedSiteIds: z.array(z.string().trim().min(1).max(128)).optional(),
+    allowedWarehouseIds: z.array(z.string().trim().min(1).max(128)).optional(),
+    controlledLicense: ControlledLicenseMetadataSchema.nullable().optional(),
+    status: SupplyProfileStatusSchema.optional(),
+    confirmationKeyword: z.literal('ACTUALIZAR'),
+});
+export type UpdateSupplyProfileChannelsRequest = z.infer<
+    typeof UpdateSupplyProfileChannelsRequestSchema
+>;
+
+export const GrantTemporaryChannelRequestSchema = z.object({
+    channelId: SupplyWhatsAppChannelIdSchema,
+    validFromIso: z.string().min(10).max(40),
+    validUntilIso: z.string().min(10).max(40),
+    timezoneIana: IanaTimezoneSchema.default('America/Santiago'),
+    reason: z.string().trim().min(2).max(240),
+    maxAmountClpOverride: z.number().nonnegative().nullable().optional(),
+    allowedSiteIdsOverride: z.array(z.string().trim().min(1).max(128)).nullable().optional(),
+    confirmationKeyword: z.literal('ACTUALIZAR'),
+});
+export type GrantTemporaryChannelRequest = z.input<typeof GrantTemporaryChannelRequestSchema>;
+
+export const RevokeTemporaryChannelRequestSchema = z.object({
+    confirmationKeyword: z.literal('ACTUALIZAR'),
+});
+export type RevokeTemporaryChannelRequest = z.infer<typeof RevokeTemporaryChannelRequestSchema>;
+
+export const ConfirmSupplyProfileOptInRequestSchema = z.object({
+    confirmationKeyword: z.literal('ACTUALIZAR'),
+    action: z.enum(['CONFIRM', 'REVOKE_STOP']).default('CONFIRM'),
+});
+export type ConfirmSupplyProfileOptInRequest = z.input<typeof ConfirmSupplyProfileOptInRequestSchema>;

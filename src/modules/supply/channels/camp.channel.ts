@@ -16,6 +16,7 @@ import {
     type InboundWhatsAppMessage,
     MetaWhatsAppCloudAdapter,
 } from '../adapters/MetaWhatsAppCloudAdapter';
+import { ProvisionalSupplyProfileAdapter } from '../adapters/ProvisionalSupplyProfileAdapter';
 import {
     type AnalyzedReceiptResult,
     ReceiptIntelligencePipeline,
@@ -1185,6 +1186,11 @@ export class CampChannel {
                     },
                     { merge: true }
                 );
+
+                await ProvisionalSupplyProfileAdapter.revokeOptInByPhone(member.phoneE164, {
+                    actorUid: member.uid,
+                    actorEmail: member.email,
+                }).catch(() => {});
 
                 await this.runSessionTransaction(sessionId, async (tx) => {
                     const snap = await tx.get(sessionRef);

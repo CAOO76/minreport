@@ -26,6 +26,7 @@ import {
     type InboundWhatsAppMessage,
     MetaWhatsAppCloudAdapter,
 } from '../adapters/MetaWhatsAppCloudAdapter';
+import { ProvisionalSupplyProfileAdapter } from '../adapters/ProvisionalSupplyProfileAdapter';
 import {
     ErpWebhookEventSchema,
     SignedErpWebhookDispatcher,
@@ -75,6 +76,13 @@ import {
     type ExpressRfqInviteStatus,
     SupplierZeroFrictionRfqService,
 } from './SupplierZeroFrictionRfqService';
+import {
+    ConfirmSupplyProfileOptInRequestSchema,
+    GrantTemporaryChannelRequestSchema,
+    RevokeTemporaryChannelRequestSchema,
+    UpdateSupplyProfileChannelsRequestSchema,
+    UpsertSupplyProfileRequestSchema,
+} from '../../../contracts/supply.contracts';
 import {
     CanonicalSupplySkuSchema,
     EvidenceCasRefSchema,
@@ -3352,5 +3360,284 @@ router.post('/whatsapp/simulate', aiRateLimiter, async (req: SupplyRequest, res:
         });
     }
 });
+
+// ---------------------------------------------------------------------------
+// V3-E02: Submódulo Provisorio `Perfiles & Canales WS` (`IHumanResourcesProfilePort`)
+// ---------------------------------------------------------------------------
+
+function canAdministerSupplyProfiles(ctx: SupplySessionContext): boolean {
+    if (ctx.isSystemPrivileged) return true;
+    return ctx.supplyProfile.role === 'OWNER_EXEC' || ctx.supplyProfile.role === 'SITE_ADMIN';
+}
+
+function handleProfilePortError(res: Response, err: any, fallbackMessage: string) {
+    if (err instanceof SupplyValidationError) {
+        return res.status(400).json({ error: err.message, code: err.code });
+    }
+    if (err instanceof SupplyNotFoundError) {
+        return res.status(404).json({ error: err.message, code: 'PROFILE_OR_GRANT_NOT_FOUND' });
+    }
+    if (err instanceof SupplyConflictError) {
+        return res.status(409).json({ error: err.message, code: err.code });
+    }
+    console.error('[SUPPLY-PROFILES] Error:', err);
+    return res.status(500).json({ error: fallbackMessage });
+}
+
+router.get('/profiles', requireSupplyTenantScope, async (req: SupplyRequest, res: Response) => {
+    try {
+        const ctx = req.supplyContext!;
+        const atIsoRaw = typeof req.query.atIso === 'string' ? req.query.atIso.trim() : undefined;
+        const atIso = atIsoRaw && Number.isFinite(Date.parse(atIsoRaw)) ? atIsoRaw : undefined;
+        const evaluations = await ProvisionalSupplyProfileAdapter.listTenantProfiles(ctx.tenantId, atIso);
+        return res.status(200).json({
+            profiles: evaluations.map((ev) => ({
+                ...ev.profile,
+                effectiveChannels: ev.effectiveChannels,
+                activeTemporaryGrants: ev.activeTemporaryGrants,
+                expiredTemporaryGrantsCount: ev.expiredTemporaryGrantsCount,
+                effectiveMaxAmountClp: ev.effectiveMaxAmountClp,
+                effectiveAllowedSiteIds: ev.effectiveAllowedSiteIds,
+                hasValidDgmnLicense: ev.hasValidDgmnLicense,
+                whatsappDispatchAllowed: Boolean(ev.whatsappDispatchAllowed),
+            })),
+            count: evaluations.length,
+        });
+    } catch (err) {
+        return handleProfilePortError(res, err, 'Error listando perfiles de canales WhatsApp.');
+    }
+});
+
+router.post(
+    '/profiles',
+    requireSupplyTenantScope,
+    requireSupplyMutationAllowed,
+    mutationRateLimiter,
+    async (req: SupplyRequest, res: Response) => {
+        try {
+            const ctx = req.supplyContext!;
+            if (!canAdministerSupplyProfiles(ctx)) {
+                return res.status(403).json({
+                    error: 'PROFILE_ADMIN_FORBIDDEN: Solo OWNER_EXEC, SITE_ADMIN o DEV/ADMIN pueden gestionar perfiles y canales WhatsApp.',
+                    code: 'PROFILE_ADMIN_FORBIDDEN',
+                });
+            }
+            const parsed = UpsertSupplyProfileRequestSchema.safeParse(req.body);
+            if (!parsed.success) {
+                return res.status(400).json({
+                    error: 'Payload inválido o falta confirmación HITL "ACTUALIZAR".',
+                    code: 'INVALID_PROFILE_GRANT_PAYLOAD',
+                    details: parsed.error.flatten(),
+                });
+            }
+            const ev = await ProvisionalSupplyProfileAdapter.upsertProfileGrant(
+                ctx.tenantId,
+                parsed.data,
+                {
+                    actorUid: ctx.actorUid,
+                    actorEmail: ctx.actorEmail,
+                    ipAddress: extractClientIp(req),
+                }
+            );
+            return res.status(200).json({
+                success: true,
+                profile: ev.profile,
+                effectiveChannels: ev.effectiveChannels,
+                hasValidDgmnLicense: ev.hasValidDgmnLicense,
+                whatsappDispatchAllowed: Boolean(ev.whatsappDispatchAllowed),
+            });
+        } catch (err) {
+            return handleProfilePortError(res, err, 'Error guardando perfil de canales WhatsApp.');
+        }
+    }
+);
+
+router.patch(
+    '/profiles/:profileId/channels',
+    requireSupplyTenantScope,
+    requireSupplyMutationAllowed,
+    mutationRateLimiter,
+    async (req: SupplyRequest, res: Response) => {
+        try {
+            const ctx = req.supplyContext!;
+            if (!canAdministerSupplyProfiles(ctx)) {
+                return res.status(403).json({
+                    error: 'PROFILE_ADMIN_FORBIDDEN: Solo OWNER_EXEC, SITE_ADMIN o DEV/ADMIN pueden editar casillas WhatsApp.',
+                    code: 'PROFILE_ADMIN_FORBIDDEN',
+                });
+            }
+            const parsed = UpdateSupplyProfileChannelsRequestSchema.safeParse(req.body);
+            if (!parsed.success) {
+                return res.status(400).json({
+                    error: 'Payload inválido o falta confirmación HITL "ACTUALIZAR".',
+                    code: 'INVALID_CHANNEL_MATRIX_PAYLOAD',
+                    details: parsed.error.flatten(),
+                });
+            }
+            const ev = await ProvisionalSupplyProfileAdapter.updateProfileChannels(
+                ctx.tenantId,
+                String(req.params.profileId),
+                parsed.data,
+                {
+                    actorUid: ctx.actorUid,
+                    actorEmail: ctx.actorEmail,
+                    ipAddress: extractClientIp(req),
+                }
+            );
+            return res.status(200).json({
+                success: true,
+                profile: ev.profile,
+                effectiveChannels: ev.effectiveChannels,
+                hasValidDgmnLicense: ev.hasValidDgmnLicense,
+            });
+        } catch (err) {
+            return handleProfilePortError(res, err, 'Error actualizando casillas del perfil WhatsApp.');
+        }
+    }
+);
+
+router.post(
+    '/profiles/:profileId/temporary-grants',
+    requireSupplyTenantScope,
+    requireSupplyMutationAllowed,
+    mutationRateLimiter,
+    async (req: SupplyRequest, res: Response) => {
+        try {
+            const ctx = req.supplyContext!;
+            if (!canAdministerSupplyProfiles(ctx)) {
+                return res.status(403).json({
+                    error: 'PROFILE_ADMIN_FORBIDDEN: Solo OWNER_EXEC, SITE_ADMIN o DEV/ADMIN pueden otorgar permisos temporales.',
+                    code: 'PROFILE_ADMIN_FORBIDDEN',
+                });
+            }
+            const parsed = GrantTemporaryChannelRequestSchema.safeParse(req.body);
+            if (!parsed.success) {
+                return res.status(400).json({
+                    error: 'Payload inválido o falta confirmación HITL "ACTUALIZAR".',
+                    code: 'INVALID_TEMP_GRANT_PAYLOAD',
+                    details: parsed.error.flatten(),
+                });
+            }
+            const ev = await ProvisionalSupplyProfileAdapter.grantTemporaryChannel(
+                ctx.tenantId,
+                String(req.params.profileId),
+                parsed.data,
+                {
+                    actorUid: ctx.actorUid,
+                    actorEmail: ctx.actorEmail,
+                    ipAddress: extractClientIp(req),
+                }
+            );
+            return res.status(201).json({
+                success: true,
+                profile: ev.profile,
+                effectiveChannels: ev.effectiveChannels,
+                activeTemporaryGrants: ev.activeTemporaryGrants,
+            });
+        } catch (err) {
+            return handleProfilePortError(res, err, 'Error creando permiso temporal de canal WhatsApp.');
+        }
+    }
+);
+
+router.delete(
+    '/profiles/:profileId/temporary-grants/:grantItemId',
+    requireSupplyTenantScope,
+    requireSupplyMutationAllowed,
+    mutationRateLimiter,
+    async (req: SupplyRequest, res: Response) => {
+        try {
+            const ctx = req.supplyContext!;
+            if (!canAdministerSupplyProfiles(ctx)) {
+                return res.status(403).json({
+                    error: 'PROFILE_ADMIN_FORBIDDEN: Solo OWNER_EXEC, SITE_ADMIN o DEV/ADMIN pueden revocar permisos temporales.',
+                    code: 'PROFILE_ADMIN_FORBIDDEN',
+                });
+            }
+            const parsed = RevokeTemporaryChannelRequestSchema.safeParse(req.body || {});
+            if (!parsed.success) {
+                return res.status(400).json({
+                    error: 'Se requiere confirmación HITL "ACTUALIZAR" para revocar el permiso temporal.',
+                    code: 'HITL_CONFIRMATION_REQUIRED',
+                });
+            }
+            const ev = await ProvisionalSupplyProfileAdapter.revokeTemporaryChannel(
+                ctx.tenantId,
+                String(req.params.profileId),
+                String(req.params.grantItemId),
+                {
+                    actorUid: ctx.actorUid,
+                    actorEmail: ctx.actorEmail,
+                    ipAddress: extractClientIp(req),
+                }
+            );
+            return res.status(200).json({
+                success: true,
+                profile: ev.profile,
+                effectiveChannels: ev.effectiveChannels,
+                activeTemporaryGrants: ev.activeTemporaryGrants,
+            });
+        } catch (err) {
+            return handleProfilePortError(res, err, 'Error revocando permiso temporal.');
+        }
+    }
+);
+
+router.post(
+    '/profiles/:profileId/opt-in/confirm',
+    requireSupplyTenantScope,
+    requireSupplyMutationAllowed,
+    mutationRateLimiter,
+    async (req: SupplyRequest, res: Response) => {
+        try {
+            const ctx = req.supplyContext!;
+            const existing = await ProvisionalSupplyProfileAdapter.resolveEffectiveProfileById(
+                ctx.tenantId,
+                String(req.params.profileId)
+            );
+            if (!existing) {
+                return res.status(404).json({
+                    error: `Perfil ${req.params.profileId} no encontrado.`,
+                    code: 'PROFILE_OR_GRANT_NOT_FOUND',
+                });
+            }
+            const isLinkedSelf =
+                Boolean(existing.profile.linkedMemberUid) &&
+                existing.profile.linkedMemberUid === ctx.actorUid;
+            if (!canAdministerSupplyProfiles(ctx) && !isLinkedSelf) {
+                return res.status(403).json({
+                    error: 'PROFILE_ADMIN_FORBIDDEN: No autorizado para confirmar o revocar consentimiento de este perfil.',
+                    code: 'PROFILE_ADMIN_FORBIDDEN',
+                });
+            }
+            const parsed = ConfirmSupplyProfileOptInRequestSchema.safeParse(req.body);
+            if (!parsed.success) {
+                return res.status(400).json({
+                    error: 'Payload inválido o falta confirmación HITL "ACTUALIZAR".',
+                    code: 'INVALID_OPT_IN_PAYLOAD',
+                    details: parsed.error.flatten(),
+                });
+            }
+            const ev = await ProvisionalSupplyProfileAdapter.confirmOrRevokeOptIn(
+                ctx.tenantId,
+                String(req.params.profileId),
+                parsed.data,
+                {
+                    actorUid: ctx.actorUid,
+                    actorEmail: ctx.actorEmail,
+                    ipAddress: extractClientIp(req),
+                }
+            );
+            return res.status(200).json({
+                success: true,
+                profile: ev.profile,
+                effectiveChannels: ev.effectiveChannels,
+                whatsappDispatchAllowed: Boolean(ev.whatsappDispatchAllowed),
+            });
+        } catch (err) {
+            return handleProfilePortError(res, err, 'Error procesando Doble Opt-In de perfil.');
+        }
+    }
+);
 
 export default router;

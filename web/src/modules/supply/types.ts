@@ -19,6 +19,8 @@ export {
     normalizeLegacyProcurementBucket,
     normalizeLegacyStockMovementType,
     normalizeLegacySupplyCategoryCode,
+    type ControlledLicenseMetadata,
+    type GrantTemporaryChannelRequest,
     type IsoCurrencyCode,
     type LinePricingBasis,
     type MoneyAmount,
@@ -28,13 +30,19 @@ export {
     type SupplyCategoryCode,
     type SupplyCommunicationStyle,
     type SupplyMemberProfile,
+    type SupplyProfileGrant,
+    type SupplyProfileOptInStatus,
+    type SupplyProfileStatus,
     type SupplyTankTelemetry,
     type SupplyWarehouse,
     type SupplyWarehouseClass,
     type SupplyWhatsAppChannelId,
     type TaxIdentifier,
     type TaxIdentifierScheme,
+    type TemporaryChannelGrant,
     type UnCefactRec20Code,
+    type UpdateSupplyProfileChannelsRequest,
+    type UpsertSupplyProfileRequest,
 } from '../../contracts/supply.contracts';
 
 import type {
