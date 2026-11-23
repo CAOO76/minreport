@@ -1912,3 +1912,212 @@ export const SupplyBusinessUnitKpisSchema = z.object({
     }),
 });
 export type SupplyBusinessUnitKpis = z.infer<typeof SupplyBusinessUnitKpisSchema>;
+
+// ── 18. Conciliación Inteligente 4-Way v3.0, Landed Cost y Anomalías (V3-E05) ──
+
+export const SemanticMatchClassificationSchema = z.enum([
+    'EXACT_EQUIVALENT',
+    'SUBSTITUTE_CANDIDATE',
+    'ACCESSORY_CHARGE',
+    'UNSOLICITED_OR_CAPEX',
+]);
+export type SemanticMatchClassification = z.infer<typeof SemanticMatchClassificationSchema>;
+
+export const LandedCostProrationModeSchema = z.enum([
+    'NET_VALUE',
+    'WEIGHT_KG',
+    'VOLUME_L',
+]);
+export type LandedCostProrationMode = z.infer<typeof LandedCostProrationModeSchema>;
+
+export const SupplyAnomalyAlertTypeSchema = z.enum([
+    'ANOMALY_PRICE_VARIANCE',
+    'ANOMALY_SHRINKFLATION',
+    'ANOMALY_HOROMETER_ROLLBACK',
+    'ANOMALY_TANK_OVERFILL',
+    'ANOMALY_FUEL_EXCESS_LPH',
+    'ANOMALY_FUEL_SHRINKAGE_THEFT',
+    'ANOMALY_RURAL_DUPLICATE_DHASH',
+]);
+export type SupplyAnomalyAlertType = z.infer<typeof SupplyAnomalyAlertTypeSchema>;
+
+export const SupplyAnomalySeveritySchema = z.enum(['INFO', 'WARNING', 'CRITICAL']);
+export type SupplyAnomalySeverity = z.infer<typeof SupplyAnomalySeveritySchema>;
+
+export const SupplyAnomalyAlertSchema = z.object({
+    alertId: z.string().trim().min(1).max(160),
+    alertType: SupplyAnomalyAlertTypeSchema,
+    severity: SupplyAnomalySeveritySchema,
+    canonicalSkuId: z.string().trim().max(128).nullable().optional(),
+    opermaqAssetId: z.string().trim().max(128).nullable().optional(),
+    warehouseId: z.string().trim().max(128).nullable().optional(),
+    messageSpanish: z.string().trim().min(1).max(600),
+    observedValue: z.number().nullable().optional(),
+    baselineValue: z.number().nullable().optional(),
+    variancePct: z.number().nullable().optional(),
+    evidenceRef: z.string().trim().max(200).nullable().optional(),
+    aiSummary: z.string().trim().max(800).nullable().optional(),
+    detectedAtIso: z.string().min(10).max(40),
+});
+export type SupplyAnomalyAlert = z.infer<typeof SupplyAnomalyAlertSchema>;
+
+export const TenantSupplierSkuMapSchema = z.object({
+    mapId: z.string().trim().min(1).max(180),
+    tenantId: z.string().trim().min(1).max(128),
+    supplierRutNormalized: z.string().trim().min(3).max(32),
+    supplierItemCode: z.string().trim().max(120).nullable().optional(),
+    supplierDescriptionNorm: z.string().trim().min(1).max(300),
+    supplierGtin: z.string().trim().max(64).nullable().optional(),
+    canonicalSkuId: z.string().trim().min(1).max(128),
+    classification: SemanticMatchClassificationSchema.default('EXACT_EQUIVALENT'),
+    unitConversionFactor: z.number().positive().default(1),
+    targetUnitSi: SupplyUnitSiSchema.optional(),
+    confidence: z.number().min(0).max(1).default(1),
+    embedding768: z.array(z.number()).length(768).optional(),
+    source: z
+        .enum(['DETERMINISTIC_GTIN', 'TENANT_LEARNED_HITL', 'VECTOR_EMBEDDING', 'AI_DECIDE'])
+        .default('TENANT_LEARNED_HITL'),
+    confirmedByUid: z.string().trim().min(1).max(128),
+    updatedAt: z.string().min(10).max(40),
+});
+export type TenantSupplierSkuMap = z.infer<typeof TenantSupplierSkuMapSchema>;
+
+export const ReconciliationProposeLineSchema = z.object({
+    purchaseLineId: z.string().trim().max(128).optional(),
+    lineNumber: z.number().int().positive().optional(),
+    rawDescription: z.string().trim().min(1).max(400),
+    supplierItemCode: z.string().trim().max(120).optional(),
+    gtin: z.string().trim().max(64).optional(),
+    quantity: z.number().positive(),
+    rawUnit: z.string().trim().max(40).optional(),
+    unitPriceClp: z.number().nonnegative(),
+    subtotalClp: z.number().nonnegative(),
+    linePricingBasis: LinePricingBasisSchema.optional(),
+    weightKg: z.number().nonnegative().optional(),
+    volumeL: z.number().nonnegative().optional(),
+    observedUnitSizeSi: z.number().positive().optional(),
+    isCapexAsset: z.boolean().optional(),
+    opermaqAssetId: z.string().trim().max(128).optional(),
+    costCenter: z.string().trim().max(64).optional(),
+});
+export type ReconciliationProposeLine = z.infer<typeof ReconciliationProposeLineSchema>;
+
+export const ReconciliationProposeRequestSchema = z.object({
+    siteId: z.string().trim().min(1).max(128),
+    supplierTaxId: z.string().trim().min(3).max(32),
+    supplierName: z.string().trim().max(180).optional(),
+    documentType: SiiDteTypeSchema.default(33),
+    folio: z.string().trim().max(40).default('0'),
+    issueDate: z.string().trim().max(40).optional(),
+    xmlContent: z.string().max(1_000_000).optional(),
+    tedRawXml: z.string().max(100_000).optional(),
+    phashHex: z.string().regex(/^[a-f0-9]{16}$/i).optional(),
+    totalAmountClp: z.number().optional(),
+    globalDiscountOrChargeClp: z.number().optional(),
+    prorationMode: LandedCostProrationModeSchema.default('NET_VALUE'),
+    lines: z.array(ReconciliationProposeLineSchema).default([]),
+    requisitionIds: z.array(z.string().trim().min(1).max(128)).default([]),
+    costCenter: z.string().trim().max(64).optional(),
+});
+export type ReconciliationProposeRequest = z.infer<typeof ReconciliationProposeRequestSchema>;
+
+export const ReconciliationProposedLineMatchSchema = z.object({
+    purchaseLineId: z.string().trim().min(1).max(128),
+    rawDescription: z.string().trim().min(1).max(400),
+    classification: SemanticMatchClassificationSchema,
+    matchedCanonicalSkuId: z.string().trim().max(128).nullable(),
+    matchedSkuName: z.string().trim().max(200).nullable(),
+    confidence: z.number().min(0).max(1),
+    matchTier: z.enum([
+        'LEVEL_1_DETERMINISTIC',
+        'LEVEL_2_VECTOR_768D',
+        'LEVEL_3_AI_DECIDE',
+        'UNMATCHED',
+    ]),
+    candidateRequisitionIds: z.array(z.string().trim().min(1).max(128)).default([]),
+    unitCostNetClp: z.number(),
+    landedUnitCostNetClp: z.number(),
+    allocatedFreightOrDiscountClp: z.number().default(0),
+    requiresHitlConfirmation: z.boolean().default(true),
+    reasoning: z.string().trim().max(400).optional(),
+});
+export type ReconciliationProposedLineMatch = z.infer<typeof ReconciliationProposedLineMatchSchema>;
+
+export const ReconciliationProposalSchema = z.object({
+    proposalId: z.string().trim().min(1).max(160),
+    tenantId: z.string().trim().min(1).max(128),
+    siteId: z.string().trim().min(1).max(128),
+    supplierTaxIdNormalized: z.string().trim().min(3).max(32),
+    documentType: SiiDteTypeSchema,
+    folio: z.string().trim().max(40),
+    issueDate: z.string().trim().max(40),
+    dteReferences: z
+        .array(
+            z.object({
+                lineNo: z.number().int(),
+                refType: z.string().trim().min(1).max(16),
+                folioRef: z.string().trim().max(40),
+                dateRef: z.string().trim().max(40).optional(),
+                reasonCode: z.number().int().optional(),
+                reasonText: z.string().trim().max(240).optional(),
+            })
+        )
+        .default([]),
+    siiTaxes: z
+        .object({
+            iepOrIecClp: z.number().default(0),
+            globalAdjustmentNetClp: z.number().default(0),
+            linePricingBasis: LinePricingBasisSchema,
+        })
+        .optional(),
+    ruralDuplicateAlert: SupplyAnomalyAlertSchema.nullable().optional(),
+    proposedLines: z.array(ReconciliationProposedLineMatchSchema),
+    anomalies: z.array(SupplyAnomalyAlertSchema).default([]),
+    createdAtIso: z.string().min(10).max(40),
+});
+export type ReconciliationProposal = z.infer<typeof ReconciliationProposalSchema>;
+
+export const ReconciliationCommitLineOverrideSchema = z.object({
+    purchaseLineId: z.string().trim().min(1).max(128),
+    rawDescription: z.string().trim().min(1).max(400),
+    supplierItemCode: z.string().trim().max(120).optional(),
+    gtin: z.string().trim().max(64).optional(),
+    canonicalSkuId: z.string().trim().min(1).max(128),
+    classification: SemanticMatchClassificationSchema.default('EXACT_EQUIVALENT'),
+    unitSi: SupplyUnitSiSchema.default('un'),
+    categoryCode: SupplyCategoryCodeSchema.optional(),
+    qtyPurchased: z.number().positive(),
+    unitPriceClp: z.number().nonnegative(),
+    subtotalClp: z.number().nonnegative(),
+    linePricingBasis: LinePricingBasisSchema.default('NET'),
+    weightKg: z.number().nonnegative().optional(),
+    volumeL: z.number().nonnegative().optional(),
+    observedUnitSizeSi: z.number().positive().optional(),
+    destination: SupplyPurchaseDestinationSchema.default('STOCK_IN_TRANSIT'),
+    costCenter: z.string().trim().min(2).max(64).optional(),
+    isCapexAsset: z.boolean().optional(),
+    opermaqAssetId: z.string().trim().max(128).optional(),
+    learnSupplierMapping: z.boolean().default(true),
+    accepted: z.boolean().default(true),
+});
+export type ReconciliationCommitLineOverride = z.infer<typeof ReconciliationCommitLineOverrideSchema>;
+
+export const ReconciliationCommit4WayRequestSchema = z.object({
+    proposalId: z.string().trim().min(1).max(160).optional(),
+    siteId: z.string().trim().min(1).max(128),
+    supplierTaxId: z.string().trim().min(3).max(32),
+    supplierName: z.string().trim().min(2).max(180),
+    documentType: SiiDteTypeSchema.default(33),
+    folio: z.string().trim().max(40).default('0'),
+    issueDate: z.string().min(8).max(40),
+    paymentMethod: SupplyPaymentMethodSchema.default('TRANSFERENCIA'),
+    purchaseMode: PurchaseModeSchema.default('MIXED_FULFILLMENT_AND_DIRECT'),
+    prorationMode: LandedCostProrationModeSchema.default('NET_VALUE'),
+    globalDiscountOrChargeClp: z.number().default(0),
+    iepOrIecFuelTaxClp: z.number().nonnegative().default(0),
+    phashHex: z.string().regex(/^[a-f0-9]{16}$/i).optional(),
+    lines: z.array(ReconciliationCommitLineOverrideSchema).min(1),
+    requisitionIds: z.array(z.string().trim().min(1).max(128)).default([]),
+    confirmationKeyword: z.literal('ACTUALIZAR'),
+});
+export type ReconciliationCommit4WayRequest = z.infer<typeof ReconciliationCommit4WayRequestSchema>;

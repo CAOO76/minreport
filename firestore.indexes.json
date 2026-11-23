@@ -367,6 +367,23 @@
           "order": "ASCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "tenant_supplier_sku_map",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "tenantId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "embedding768",
+          "vectorConfig": {
+            "dimension": 768,
+            "flat": {}
+          }
+        }
+      ]
     }
   ],
   "fieldOverrides": [

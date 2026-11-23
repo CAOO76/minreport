@@ -67,6 +67,34 @@ export interface ParsedSiiXmlDteLine {
     quantity: number;
     unitPriceClp: number;
     subtotalClp: number;
+    supplierItemCode?: string;
+    isExempt?: boolean;
+}
+
+export interface ParsedSiiDscRcgGlobal {
+    lineNo: number;
+    movementType: 'D' | 'R';
+    valueType: '%' | '$';
+    valueRaw: number;
+    computedNetClp: number;
+    description?: string;
+    isExempt: boolean;
+}
+
+export interface ParsedSiiImptoReten {
+    taxCode: string;
+    taxRatePct?: number;
+    amountClp: number;
+    isFuelTaxIepOrIec: boolean;
+}
+
+export interface ParsedSiiReferencia {
+    lineNo: number;
+    refType: string;
+    folioRef: string;
+    dateRef?: string;
+    reasonCode?: number;
+    reasonText?: string;
 }
 
 export interface ParsedSiiXmlDte {
@@ -88,6 +116,13 @@ export interface ParsedSiiXmlDte {
     exemptAmountClp: number;
     vatAmountClp: number;
     totalAmountClp: number;
+    linePricingBasis: 'NET' | 'GROSS';
+    globalAdjustments: ParsedSiiDscRcgGlobal[];
+    globalAdjustmentNetClp: number;
+    retainedTaxes: ParsedSiiImptoReten[];
+    fuelTaxIepIecClp: number;
+    specificTaxesTotalClp: number;
+    references: ParsedSiiReferencia[];
     lines: ParsedSiiXmlDteLine[];
     embeddedTed?: ParsedSiiTedPdf417;
     tedRsaVerified: boolean | null;
@@ -131,6 +166,7 @@ export interface ValidateSiiDocumentInput {
     };
     expectedReceiverTaxId?: string;
     lineSubtotalsGrossClp?: readonly number[];
+    specificTaxesClp?: number;
     hasCapexAsset?: boolean;
     existingDedupeKeys?: readonly string[] | ReadonlySet<string>;
     referenceDateIso?: string;
@@ -148,6 +184,11 @@ export interface SiiDocumentValidationOutcome {
     arithmetic: ArithmeticGuardrailResult;
     rcvDeadline: RcvDeadlineResult;
     record: SiiDocumentRecord;
+    globalAdjustmentNetClp?: number;
+    fuelTaxIepIecClp?: number;
+    specificTaxesTotalClp?: number;
+    references?: ParsedSiiReferencia[];
+    linePricingBasis?: 'NET' | 'GROSS';
 }
 
 function decodeXmlEntities(text: string): string {
@@ -637,14 +678,98 @@ export function parseSiiXmlDte(xmlString: string): ParsedSiiXmlDte {
         const qty = Number(extractXmlTagValue(block, 'QtyItem') || '1');
         const prc = Number(extractXmlTagValue(block, 'PrcItem') || '0');
         const monto = Number(extractXmlTagValue(block, 'MontoItem') || '0');
+        const cdgItemBlock = extractXmlTagValue(block, 'CdgItem');
+        const supplierItemCode = cdgItemBlock
+            ? extractXmlTagValue(cdgItemBlock, 'VlrCodigo')
+            : extractXmlTagValue(block, 'VlrCodigo');
+        const indExe = extractXmlTagValue(block, 'IndExe') === '1';
         return {
             lineNumber: Number.isFinite(nro) ? nro : idx + 1,
             name,
             quantity: Number.isFinite(qty) && qty > 0 ? qty : 1,
             unitPriceClp: Number.isFinite(prc) ? roundClp(prc) : 0,
             subtotalClp: Number.isFinite(monto) ? roundClp(monto) : 0,
+            ...(supplierItemCode ? { supplierItemCode } : {}),
+            ...(indExe ? { isExempt: true } : {}),
         };
     });
+
+    const linesSubtotalSum = lines.reduce((acc, l) => acc + (l.isExempt ? 0 : l.subtotalClp), 0);
+
+    // Descuentos o Recargos Globales (<DscRcgGlobal>)
+    const dscRcgBlocks = extractAllXmlTagBlocks(xml, 'DscRcgGlobal');
+    const globalAdjustments: ParsedSiiDscRcgGlobal[] = dscRcgBlocks.map((block, idx) => {
+        const lineNo = Number(extractXmlTagValue(block, 'NroLinDR') || String(idx + 1));
+        const tpoMovRaw = (extractXmlTagValue(block, 'TpoMov') || 'D').toUpperCase();
+        const movementType: 'D' | 'R' = tpoMovRaw === 'R' ? 'R' : 'D';
+        const tpoValorRaw = (extractXmlTagValue(block, 'TpoValor') || '$').trim();
+        const valueType: '%' | '$' = tpoValorRaw === '%' ? '%' : '$';
+        const valueRaw = Number(extractXmlTagValue(block, 'ValorDR') || '0');
+        const description = extractXmlTagValue(block, 'GlosaDR');
+        const isExempt = extractXmlTagValue(block, 'IndExeDR') === '1';
+        const baseAbs =
+            valueType === '%'
+                ? roundClp(((linesSubtotalSum || mntNeto) * (Number.isFinite(valueRaw) ? valueRaw : 0)) / 100)
+                : roundClp(Number.isFinite(valueRaw) ? valueRaw : 0);
+        const computedNetClp = movementType === 'D' ? -Math.abs(baseAbs) : Math.abs(baseAbs);
+        return {
+            lineNo: Number.isFinite(lineNo) ? lineNo : idx + 1,
+            movementType,
+            valueType,
+            valueRaw: Number.isFinite(valueRaw) ? valueRaw : 0,
+            computedNetClp,
+            ...(description ? { description } : {}),
+            isExempt,
+        };
+    });
+    const globalAdjustmentNetClp = roundClp(
+        globalAdjustments.filter((g) => !g.isExempt).reduce((acc, g) => acc + g.computedNetClp, 0)
+    );
+
+    // Impuestos Adicionales / Retenidos (<ImptoReten> — ej. 28 IEP Gasolina, 29/35 IEC Diésel Ley N° 18.502)
+    const imptoBlocks = extractAllXmlTagBlocks(totalesBlock, 'ImptoReten');
+    const retainedTaxes: ParsedSiiImptoReten[] = imptoBlocks.map((block) => {
+        const taxCode = (extractXmlTagValue(block, 'TipoImp') || '').trim();
+        const tasaRaw = extractXmlTagValue(block, 'TasaImp');
+        const tasa = tasaRaw ? Number(tasaRaw) : undefined;
+        const monto = Number(extractXmlTagValue(block, 'MontoImp') || '0');
+        const isFuelTaxIepOrIec = taxCode === '28' || taxCode === '29' || taxCode === '35';
+        return {
+            taxCode,
+            ...(typeof tasa === 'number' && Number.isFinite(tasa) ? { taxRatePct: tasa } : {}),
+            amountClp: Number.isFinite(monto) ? roundClp(monto) : 0,
+            isFuelTaxIepOrIec,
+        };
+    });
+    const fuelTaxIepIecClp = roundClp(
+        retainedTaxes.filter((t) => t.isFuelTaxIepOrIec).reduce((acc, t) => acc + t.amountClp, 0)
+    );
+    const specificTaxesTotalClp = roundClp(
+        retainedTaxes.reduce((acc, t) => acc + t.amountClp, 0)
+    );
+
+    // Referencias cruzadas (<Referencia> — 52 Guía Despacho, 801 Orden de Compra, 33 en NC 61)
+    const refBlocks = extractAllXmlTagBlocks(xml, 'Referencia');
+    const references: ParsedSiiReferencia[] = refBlocks.map((block, idx) => {
+        const lineNo = Number(extractXmlTagValue(block, 'NroLinRef') || String(idx + 1));
+        const refType = (extractXmlTagValue(block, 'TpoDocRef') || '').trim();
+        const folioRef = normalizeFolio(extractXmlTagValue(block, 'FolioRef') || '');
+        const dateRef = extractXmlTagValue(block, 'FchRef');
+        const codRefRaw = extractXmlTagValue(block, 'CodRef');
+        const reasonCode = codRefRaw && Number.isFinite(Number(codRefRaw)) ? Number(codRefRaw) : undefined;
+        const reasonText = extractXmlTagValue(block, 'RazonRef');
+        return {
+            lineNo: Number.isFinite(lineNo) ? lineNo : idx + 1,
+            refType,
+            folioRef,
+            ...(dateRef ? { dateRef } : {}),
+            ...(reasonCode !== undefined ? { reasonCode } : {}),
+            ...(reasonText ? { reasonText } : {}),
+        };
+    });
+
+    const linePricingBasis: 'NET' | 'GROSS' =
+        dteType === 33 || dteType === 52 || dteType === 61 ? 'NET' : 'GROSS';
 
     const tedMatch = xml.match(/<TED\b[\s\S]*?<\/TED>/i);
     const embeddedTed = tedMatch ? parseSiiTedPdf417(tedMatch[0]) : undefined;
@@ -674,6 +799,13 @@ export function parseSiiXmlDte(xmlString: string): ParsedSiiXmlDte {
         exemptAmountClp: Number.isFinite(mntExe) ? roundClp(mntExe) : 0,
         vatAmountClp: Number.isFinite(iva) ? roundClp(iva) : 0,
         totalAmountClp: Number.isFinite(mntTotal) ? roundClp(mntTotal) : 0,
+        linePricingBasis,
+        globalAdjustments,
+        globalAdjustmentNetClp,
+        retainedTaxes,
+        fuelTaxIepIecClp,
+        specificTaxesTotalClp,
+        references,
         lines,
         embeddedTed,
         tedRsaVerified,
@@ -745,6 +877,7 @@ export function verifyDocumentArithmetic(params: {
     dteType?: SiiDteType;
     netAmountClp?: number;
     vatAmountClp?: number;
+    specificTaxesClp?: number;
     toleranceClp?: number;
 }): ArithmeticGuardrailResult {
     const toleranceClp = params.toleranceClp ?? DEFAULT_ARITHMETIC_TOLERANCE_CLP;
@@ -767,13 +900,16 @@ export function verifyDocumentArithmetic(params: {
         params.netAmountClp !== undefined &&
         params.vatAmountClp !== undefined
     ) {
+        const specificTaxes = roundClp(params.specificTaxesClp || 0);
         const expectedVat = roundClp(params.netAmountClp * CHILE_VAT_RATE);
-        const netPlusVatDelta = Math.abs(params.netAmountClp + params.vatAmountClp - documentTotalClp);
+        const netPlusVatDelta = Math.abs(
+            params.netAmountClp + params.vatAmountClp + specificTaxes - documentTotalClp
+        );
         const vatDelta = Math.abs(params.vatAmountClp - expectedVat);
         if (netPlusVatDelta > toleranceClp || vatDelta > Math.max(toleranceClp, 5)) {
             vatCoherent = false;
             errors.push(
-                `IVA 19% incoherente en DTE 33: neto ${params.netAmountClp} + IVA ${params.vatAmountClp} vs total ${documentTotalClp} (IVA esperado ${expectedVat}).`
+                `IVA 19% incoherente en DTE 33: neto ${params.netAmountClp} + IVA ${params.vatAmountClp} + imp. esp. ${specificTaxes} vs total ${documentTotalClp} (IVA esperado ${expectedVat}).`
             );
         }
     }
@@ -813,6 +949,11 @@ export function validateSiiDocumentForPurchase(
     let tedVerified = false;
     let tedRsaVerified: boolean | null = null;
     let receiverTaxIdMismatch = false;
+    let globalAdjustmentNetClp = 0;
+    let fuelTaxIepIecClp = 0;
+    let specificTaxesTotalClp = 0;
+    let references: ParsedSiiReferencia[] = [];
+    let linePricingBasis: 'NET' | 'GROSS' = 'GROSS';
     let lineSubtotalsForCheck: number[] = input.lineSubtotalsGrossClp
         ? [...input.lineSubtotalsGrossClp]
         : [];
@@ -832,12 +973,20 @@ export function validateSiiDocumentForPurchase(
         totalAmountClp = parsedXml.totalAmountClp;
         tedRsaVerified = parsedXml.tedRsaVerified;
         tedVerified = Boolean(parsedXml.embeddedTed?.valid) && tedRsaVerified !== false;
+        globalAdjustmentNetClp = parsedXml.globalAdjustmentNetClp;
+        fuelTaxIepIecClp = parsedXml.fuelTaxIepIecClp;
+        specificTaxesTotalClp = parsedXml.specificTaxesTotalClp;
+        references = parsedXml.references;
+        linePricingBasis = parsedXml.linePricingBasis;
 
-        // Si el caller no entregó subtotales explícitos, usar las líneas del XML (en DTE 33 los Detalles son netos)
+        // Si el caller no entregó subtotales explícitos, usar las líneas del XML
+        // (en DTE 33/61 los Detalles son netos y pueden incluir <DscRcgGlobal> + <ImptoReten> IEP/IEC)
         if (lineSubtotalsForCheck.length === 0 && parsedXml.lines.length > 0) {
-            const sumNet = parsedXml.lines.reduce((s, l) => s + l.subtotalClp, 0);
+            const sumNet = parsedXml.lines.reduce((s, l) => s + l.subtotalClp, 0) + globalAdjustmentNetClp;
             lineSubtotalsForCheck =
-                dteType === 33 ? [roundClp(sumNet + parsedXml.vatAmountClp)] : parsedXml.lines.map((l) => l.subtotalClp);
+                dteType === 33 || dteType === 61
+                    ? [roundClp(sumNet + parsedXml.vatAmountClp + specificTaxesTotalClp)]
+                    : parsedXml.lines.map((l) => l.subtotalClp);
         }
     } else if (input.tedRawXml && input.tedRawXml.trim()) {
         sourceFormat = 'TED_PDF417';
@@ -910,6 +1059,7 @@ export function validateSiiDocumentForPurchase(
         dteType,
         netAmountClp: rawNet !== undefined ? vat.netAmountClp : undefined,
         vatAmountClp: rawVat !== undefined ? vat.vatAmountClp : undefined,
+        specificTaxesClp: specificTaxesTotalClp,
         toleranceClp: input.arithmeticToleranceClp,
     });
     if (!arithmetic.valid) {
@@ -974,6 +1124,11 @@ export function validateSiiDocumentForPurchase(
         arithmetic,
         rcvDeadline,
         record,
+        globalAdjustmentNetClp,
+        fuelTaxIepIecClp,
+        specificTaxesTotalClp,
+        references,
+        linePricingBasis,
     };
 }
 

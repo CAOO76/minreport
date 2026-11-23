@@ -761,3 +761,143 @@ export function evaluateDirectPurchaseAuthority(params: {
             : undefined,
     };
 }
+
+// ── V3-E05: PriceAndShrinkflationDetector (CLP_neto / unit_SI) ────────────────────────
+
+export interface PriceAndShrinkflationInput {
+    canonicalSkuId: string;
+    itemName?: string;
+    unitSi: SupplyUnitSi;
+    /** Cantidad comprada en unidades de empaque o SI */
+    quantity: number;
+    /** Monto neto total de la línea en CLP */
+    netTotalClp: number;
+    /** Contenido unitario observado por empaque en unidad SI (ej. 850 cuando antes era 1000) */
+    observedUnitSizeSi?: number;
+    /** Contenido histórico/canónico esperado por empaque en unidad SI (ej. 1000) */
+    expectedUnitSizeSi?: number;
+    /** Mediana histórica 90 días del tenant en CLP neto / unidad SI */
+    tenantMedian90dNetPerSiClp?: number;
+    /** Benchmark de distrito con k-anonimato (solo se utiliza si marketPeerCount >= 5) */
+    marketMedianNetPerSiClp?: number;
+    marketPeerCount?: number;
+    detectedAtIso?: string;
+}
+
+export interface PriceAndShrinkflationFinding {
+    alertId: string;
+    alertType: 'ANOMALY_PRICE_VARIANCE' | 'ANOMALY_SHRINKFLATION';
+    severity: 'WARNING' | 'CRITICAL';
+    canonicalSkuId: string;
+    messageSpanish: string;
+    observedValue: number;
+    baselineValue: number;
+    variancePct: number;
+    detectedAtIso: string;
+}
+
+export interface PriceAndShrinkflationResult {
+    canonicalSkuId: string;
+    observedNetPerSiClp: number;
+    baselineNetPerSiClp: number | null;
+    effectiveSizeRatio: number;
+    findings: PriceAndShrinkflationFinding[];
+}
+
+/**
+ * `PriceAndShrinkflationDetector`:
+ * Normaliza a `CLP_neto / unit_SI` para detectar reduflación (menor contenido neto por envase
+ * al mismo precio) y variaciones de precio > +15% (WARNING) / > +30% (CRITICAL)
+ * respecto de la mediana 90d del tenant y benchmark `k >= 5`.
+ */
+export function detectPriceAndShrinkflationAnomalies(
+    input: PriceAndShrinkflationInput
+): PriceAndShrinkflationResult {
+    const nowIso = input.detectedAtIso || new Date().toISOString();
+    const qty = Math.max(0.0001, Number(input.quantity || 1));
+    const observedSize =
+        typeof input.observedUnitSizeSi === 'number' && input.observedUnitSizeSi > 0
+            ? input.observedUnitSizeSi
+            : 1;
+    const expectedSize =
+        typeof input.expectedUnitSizeSi === 'number' && input.expectedUnitSizeSi > 0
+            ? input.expectedUnitSizeSi
+            : observedSize;
+
+    const totalEffectiveSi = qty * observedSize;
+    const observedNetPerSiClp = Math.round(Math.max(0, input.netTotalClp) / totalEffectiveSi);
+    const effectiveSizeRatio = Number((observedSize / expectedSize).toFixed(4));
+
+    const validMarketBenchmark =
+        typeof input.marketMedianNetPerSiClp === 'number' &&
+        input.marketMedianNetPerSiClp > 0 &&
+        Number(input.marketPeerCount || 0) >= 5
+            ? input.marketMedianNetPerSiClp
+            : null;
+    const tenantBaseline =
+        typeof input.tenantMedian90dNetPerSiClp === 'number' && input.tenantMedian90dNetPerSiClp > 0
+            ? input.tenantMedian90dNetPerSiClp
+            : null;
+    const baselineNetPerSiClp = tenantBaseline ?? validMarketBenchmark;
+
+    const findings: PriceAndShrinkflationFinding[] = [];
+
+    // 1. Detección determinística de Reduflación (`ANOMALY_SHRINKFLATION`)
+    if (
+        typeof input.observedUnitSizeSi === 'number' &&
+        typeof input.expectedUnitSizeSi === 'number' &&
+        input.expectedUnitSizeSi > 0 &&
+        input.observedUnitSizeSi < input.expectedUnitSizeSi * 0.98
+    ) {
+        const shrinkPct = Number(
+            (((input.expectedUnitSizeSi - input.observedUnitSizeSi) / input.expectedUnitSizeSi) * 100).toFixed(1)
+        );
+        const priceVarianceVsBaseline =
+            baselineNetPerSiClp && baselineNetPerSiClp > 0
+                ? Number((((observedNetPerSiClp - baselineNetPerSiClp) / baselineNetPerSiClp) * 100).toFixed(1))
+                : shrinkPct;
+        const severity: 'WARNING' | 'CRITICAL' =
+            shrinkPct >= 15 || priceVarianceVsBaseline > 30 ? 'CRITICAL' : 'WARNING';
+
+        findings.push({
+            alertId: `anom_shrink_${input.canonicalSkuId}_${Date.now().toString(36)}`,
+            alertType: 'ANOMALY_SHRINKFLATION',
+            severity,
+            canonicalSkuId: input.canonicalSkuId,
+            messageSpanish: `Reduflación detectada en ${input.itemName || input.canonicalSkuId}: contenido ${input.observedUnitSizeSi} vs ${input.expectedUnitSizeSi} ${input.unitSi} (-${shrinkPct}%), costo efectivo CLP ${observedNetPerSiClp}/${input.unitSi}.`,
+            observedValue: observedNetPerSiClp,
+            baselineValue: baselineNetPerSiClp ?? observedNetPerSiClp,
+            variancePct: priceVarianceVsBaseline,
+            detectedAtIso: nowIso,
+        });
+    }
+
+    // 2. Variación de precio unitario normalizado (`ANOMALY_PRICE_VARIANCE`)
+    if (baselineNetPerSiClp && baselineNetPerSiClp > 0) {
+        const variancePct = Number(
+            (((observedNetPerSiClp - baselineNetPerSiClp) / baselineNetPerSiClp) * 100).toFixed(1)
+        );
+        if (variancePct > 15) {
+            const severity: 'WARNING' | 'CRITICAL' = variancePct > 30 ? 'CRITICAL' : 'WARNING';
+            findings.push({
+                alertId: `anom_price_${input.canonicalSkuId}_${Date.now().toString(36)}`,
+                alertType: 'ANOMALY_PRICE_VARIANCE',
+                severity,
+                canonicalSkuId: input.canonicalSkuId,
+                messageSpanish: `Alza atípica de precio en ${input.itemName || input.canonicalSkuId}: CLP ${observedNetPerSiClp}/${input.unitSi} vs base CLP ${Math.round(baselineNetPerSiClp)}/${input.unitSi} (+${variancePct}%).`,
+                observedValue: observedNetPerSiClp,
+                baselineValue: Math.round(baselineNetPerSiClp),
+                variancePct,
+                detectedAtIso: nowIso,
+            });
+        }
+    }
+
+    return {
+        canonicalSkuId: input.canonicalSkuId,
+        observedNetPerSiClp,
+        baselineNetPerSiClp,
+        effectiveSizeRatio,
+        findings,
+    };
+}

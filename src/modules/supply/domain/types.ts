@@ -246,6 +246,7 @@ export interface CanonicalSupplySku {
     procurementBucket: ProcurementBucket;
     baseUnitSi: SupplyUnitSi;
     unspscCode?: string;
+    gtin?: string;
     requiredSlots: RequiredSlotName[];
     defaultPackToSi?: DefaultPackConversion;
     referenceUnitPriceClp?: number;
@@ -547,6 +548,7 @@ export interface CashLedgerEntry {
     tenantId: string;
     siteId: string;
     purchaseId: string;
+    purchaseLineId?: string;
     paymentMethod: SupplyPaymentMethod;
     entryType:
         | 'EXPENSE_OPEX'

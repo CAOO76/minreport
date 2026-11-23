@@ -82,6 +82,8 @@ import {
     CreateSupplyWarehouseRequestSchema,
     ExportConversationQuerySchema,
     GrantTemporaryChannelRequestSchema,
+    ReconciliationCommit4WayRequestSchema,
+    ReconciliationProposeRequestSchema,
     RecordStockMovementRequestSchema,
     RevokeTemporaryChannelRequestSchema,
     SupplyWhatsAppChannelIdSchema,
@@ -4075,6 +4077,71 @@ router.post(
             });
         } catch (err) {
             return handleProfilePortError(res, err, 'Error confirmando recepción física 4-Way.');
+        }
+    }
+);
+
+router.post(
+    '/reconciliation/propose',
+    requireSupplyTenantScope,
+    aiRateLimiter,
+    async (req: SupplyRequest, res: Response) => {
+        try {
+            const ctx = req.supplyContext!;
+            const parsed = ReconciliationProposeRequestSchema.safeParse(req.body);
+            if (!parsed.success) {
+                return res.status(400).json({
+                    error: 'Payload inválido para propuesta de conciliación semántica 4-Way.',
+                    code: 'INVALID_RECONCILIATION_PROPOSE_PAYLOAD',
+                    details: parsed.error.flatten(),
+                });
+            }
+            const proposal = await SupplyRepository.proposeReconciliation(
+                ctx.tenantId,
+                parsed.data,
+                {
+                    actorUid: ctx.actorUid,
+                    actorEmail: ctx.actorEmail,
+                    ipAddress: extractClientIp(req),
+                }
+            );
+            return res.status(200).json({ success: true, proposal });
+        } catch (err) {
+            return handleProfilePortError(res, err, 'Error generando propuesta semántica 4-Way.');
+        }
+    }
+);
+
+router.post(
+    '/reconciliation/commit-4way',
+    requireSupplyTenantScope,
+    requireSupplyMutationAllowed,
+    mutationRateLimiter,
+    async (req: SupplyRequest, res: Response) => {
+        try {
+            const ctx = req.supplyContext!;
+            const parsed = ReconciliationCommit4WayRequestSchema.safeParse(req.body);
+            if (!parsed.success) {
+                return res.status(400).json({
+                    error: 'Payload inválido o falta confirmación HITL "ACTUALIZAR" para confirmar conciliación 4-Way.',
+                    code: 'INVALID_RECONCILIATION_COMMIT_PAYLOAD',
+                    details: parsed.error.flatten(),
+                });
+            }
+            const actorRole = asOperationalRole(ctx.supplyProfile.role);
+            const result = await SupplyRepository.commit4WayReconciliation(
+                ctx.tenantId,
+                parsed.data,
+                {
+                    actorUid: ctx.actorUid,
+                    actorEmail: ctx.actorEmail,
+                    ipAddress: extractClientIp(req),
+                },
+                actorRole
+            );
+            return res.status(201).json({ success: true, ...result });
+        } catch (err) {
+            return handleProfilePortError(res, err, 'Error ejecutando conciliación 4-Way.');
         }
     }
 );

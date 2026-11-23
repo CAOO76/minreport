@@ -25,7 +25,12 @@ import {
 import {
     ConfirmWarehouseReceptionV3RequestSchema,
     CreateSupplyWarehouseRequestSchema,
+    ReconciliationCommit4WayRequestSchema,
+    ReconciliationProposalSchema,
+    ReconciliationProposeRequestSchema,
     RecordStockMovementRequestSchema,
+    type ReconciliationProposal,
+    type SupplyAnomalyAlert,
     type SupplyBusinessUnitKpis,
     type SupplyReceptionDiscrepancy,
     type SupplyTankTelemetry,
@@ -35,23 +40,40 @@ import {
     normalizeLegacyProcurementBucket,
     normalizeLegacySupplyCategoryCode,
 } from '../../../contracts/supply.contracts';
-import { matchPurchaseToRequisitions } from '../domain/RequisitionFulfillmentMatcher';
+import {
+    detectRuralReceiptDuplicate,
+    matchPurchaseToRequisitions,
+} from '../domain/RequisitionFulfillmentMatcher';
 import {
     buildSiiDedupeKey as buildDomainSiiDedupeKey,
     computeChileanVatBreakdown,
     computeRcvAcceptanceDeadline,
     isValidPositiveFolio,
+    parseSiiXmlDte,
     validateSiiDocumentForPurchase,
 } from '../domain/SiiTaxValidator';
 import { consolidateRequisitionsToShoppingList } from '../domain/SmartShoppingListConsolidator';
 import {
     confirmWarehouseReception,
+    prorateLandedCosts,
     reconcilePurchase,
 } from '../domain/StockAssetCashCostReconciler';
 import {
     type SplitInvoiceSmurfingResult,
+    detectPriceAndShrinkflationAnomalies,
     detectSplitInvoiceSmurfing,
 } from '../domain/SupplyPolicyAndAnomalyEngine';
+import {
+    FuelOpermaqTelemetryReconciler,
+    type FuelDispatchAuditResult,
+} from './FuelOpermaqTelemetryReconciler';
+import {
+    SemanticRequisitionMatcher,
+    TENANT_SUPPLIER_SKU_MAP_COLLECTION,
+    proposeSemanticReconciliation,
+    type DecideFn,
+    type EmbedTextFn,
+} from './SemanticRequisitionMatcher';
 import type {
     RequisitionLineStatus as DomainRequisitionLineStatus,
     RequisitionStatus as DomainRequisitionStatus,
@@ -130,6 +152,7 @@ export const SUPPLY_COLLECTIONS = {
     CHANNEL_GRANTS: 'supply_channel_grants',
     CONVERSATION_THREADS: 'supply_conversation_threads',
     CONVERSATION_TURNS: 'supply_conversation_turns',
+    TENANT_SUPPLIER_SKU_MAP: TENANT_SUPPLIER_SKU_MAP_COLLECTION,
 } as const;
 
 export interface SupplyPolicyAuditEntry {
@@ -1523,38 +1546,80 @@ export class SupplyRepository {
 
                 // Costo tributario contable: cuando no hay IVA crédito fiscal recuperable (ej. Boleta 39, DTE 52),
                 // el monto pagado completo constituye base de costo (DL 825 Art. 23).
-                const lineVatCredit = domCash ? domCash.vatRecoverableClp : lineVat.vatRecoverableClp;
-                const lineNetBasis =
-                    params.documentType === 61
-                        ? -Math.abs(accountingCostBasisClp)
-                        : accountingCostBasisClp;
-                const lineGrossAmountClp =
-                    params.documentType === 61
-                        ? -Math.abs(lineVat.totalAmountClp)
-                        : Math.abs(lineVat.totalAmountClp);
+                const domCashSplits = domainRecon.cashEntries.filter(
+                    (c) => c.purchaseLineId === pLine.purchaseLineId
+                );
+                if (!isCapex && domCashSplits.length > 0) {
+                    for (const domCashSplit of domCashSplits) {
+                        const splitNetBasis =
+                            params.documentType === 61
+                                ? -Math.abs(domCashSplit.opexImpactClp)
+                                : domCashSplit.opexImpactClp;
+                        const splitGrossAmountClp =
+                            params.documentType === 61
+                                ? -Math.abs(domCashSplit.grossAmountClp)
+                                : Math.abs(domCashSplit.grossAmountClp);
 
-                txCashEntries.push({
-                    entryId: `cash_${crypto.randomBytes(5).toString('hex')}`,
-                    tenantId: params.tenantId,
-                    siteId: params.siteId,
-                    paymentMethod: params.paymentMethod,
-                    direction:
-                        params.paymentMethod === 'REEMBOLSO_GERENCIA'
-                            ? 'REIMBURSEMENT_DUE'
-                            : 'EXPENSE_RENDERED',
-                    amountClp: lineGrossAmountClp,
-                    netAmountClp: lineNetBasis,
-                    vatCreditClp: lineVatCredit,
-                    isCapex,
-                    categoryCode: pLine.categoryCode,
-                    costCenter: isCapex
-                        ? 'CC-CAPEX'
-                        : domCash?.costCenter || normalizeLegacyCostCenter(pLine.costCenter, pLine.categoryCode),
-                    referenceId: purchaseId,
-                    actorUid: actor.actorUid,
-                    description: `${pLine.description} (${pLine.qtyPurchased} ${pLine.unitSi}) · DTE ${params.documentType} #${params.folio}`,
-                    createdAt: now,
-                });
+                        txCashEntries.push({
+                            entryId: `cash_${crypto.randomBytes(5).toString('hex')}`,
+                            tenantId: params.tenantId,
+                            siteId: params.siteId,
+                            paymentMethod: params.paymentMethod,
+                            direction:
+                                params.paymentMethod === 'REEMBOLSO_GERENCIA'
+                                    ? 'REIMBURSEMENT_DUE'
+                                    : 'EXPENSE_RENDERED',
+                            amountClp: splitGrossAmountClp,
+                            netAmountClp: splitNetBasis,
+                            vatCreditClp: domCashSplit.vatRecoverableClp,
+                            isCapex: false,
+                            categoryCode: pLine.categoryCode,
+                            costCenter:
+                                domCashSplit.costCenter ||
+                                normalizeLegacyCostCenter(pLine.costCenter, pLine.categoryCode),
+                            referenceId: purchaseId,
+                            actorUid: actor.actorUid,
+                            description: `${pLine.description} (${pLine.qtyPurchased} ${pLine.unitSi}) · ${domCashSplit.costCenter} · DTE ${params.documentType} #${params.folio}`,
+                            createdAt: now,
+                        });
+                    }
+                } else {
+                    const domCash =
+                        domainRecon.cashEntries.find((c) => c.purchaseLineId === pLine.purchaseLineId) ||
+                        domainRecon.cashEntries[idx];
+                    const lineVatCredit = domCash ? domCash.vatRecoverableClp : lineVat.vatRecoverableClp;
+                    const lineNetBasis =
+                        params.documentType === 61
+                            ? -Math.abs(accountingCostBasisClp)
+                            : accountingCostBasisClp;
+                    const lineGrossAmountClp =
+                        params.documentType === 61
+                            ? -Math.abs(lineVat.totalAmountClp)
+                            : Math.abs(lineVat.totalAmountClp);
+
+                    txCashEntries.push({
+                        entryId: `cash_${crypto.randomBytes(5).toString('hex')}`,
+                        tenantId: params.tenantId,
+                        siteId: params.siteId,
+                        paymentMethod: params.paymentMethod,
+                        direction:
+                            params.paymentMethod === 'REEMBOLSO_GERENCIA'
+                                ? 'REIMBURSEMENT_DUE'
+                                : 'EXPENSE_RENDERED',
+                        amountClp: lineGrossAmountClp,
+                        netAmountClp: lineNetBasis,
+                        vatCreditClp: lineVatCredit,
+                        isCapex,
+                        categoryCode: pLine.categoryCode,
+                        costCenter: isCapex
+                            ? 'CC-CAPEX'
+                            : domCash?.costCenter || normalizeLegacyCostCenter(pLine.costCenter, pLine.categoryCode),
+                        referenceId: purchaseId,
+                        actorUid: actor.actorUid,
+                        description: `${pLine.description} (${pLine.qtyPurchased} ${pLine.unitSi}) · DTE ${params.documentType} #${params.folio}`,
+                        createdAt: now,
+                    });
+                }
             }
 
             // FASE 3: TODAS LAS ESCRITURAS ATÓMICAS EN LA MISMA TRANSACCIÓN
@@ -2383,6 +2448,7 @@ export class SupplyRepository {
         originBalance: SupplyWarehouseBalance;
         destinationBalance?: SupplyWarehouseBalance;
         transferGroupId?: string;
+        fuelTelemetryAudit?: FuelDispatchAuditResult;
     }> {
         const parsed = RecordStockMovementRequestSchema.safeParse(rawInput);
         if (!parsed.success) {
@@ -2703,11 +2769,46 @@ export class SupplyRepository {
             }
         );
 
+        let fuelTelemetryAudit: FuelDispatchAuditResult | undefined;
+        if (
+            input.movementType === 'ISSUE_CONSUMPTION' &&
+            categoryCode === 'COMBUSTIBLE_FLOTA_PROD' &&
+            input.linkedAssetId &&
+            typeof input.horometer === 'number'
+        ) {
+            const latestTeleSnap = await db
+                .collection(SUPPLY_COLLECTIONS.TANK_TELEMETRY)
+                .where('tenantId', '==', tenantId)
+                .where('warehouseId', '==', input.warehouseId)
+                .limit(10)
+                .get()
+                .catch(() => null);
+            const latestVariance = latestTeleSnap?.docs
+                ?.map((d) => d.data() as SupplyTankTelemetry)
+                ?.sort((a, b) =>
+                    String(b.createdAt || '').localeCompare(String(a.createdAt || ''))
+                )?.[0]?.variancePct;
+
+            fuelTelemetryAudit = await FuelOpermaqTelemetryReconciler.auditFuelDispatch({
+                tenantId,
+                siteId: input.siteId,
+                warehouseId: input.warehouseId,
+                opermaqAssetId: input.linkedAssetId,
+                canonicalSkuId: input.canonicalSkuId,
+                litersDispensed: input.qtySi,
+                currentHorometer: input.horometer,
+                latestTankVariancePct: latestVariance ?? null,
+                actorUid: actor.actorUid,
+                dispatchRefId: resultEntries[0].entryId,
+            });
+        }
+
         return {
             entries: resultEntries,
             originBalance: resultOriginBalance,
             ...(resultDestBalance ? { destinationBalance: resultDestBalance } : {}),
             ...(transferGroupId ? { transferGroupId } : {}),
+            ...(fuelTelemetryAudit ? { fuelTelemetryAudit } : {}),
         };
     }
 
@@ -3939,5 +4040,410 @@ export class SupplyRepository {
                 processedAt: payload.processedAt || new Date().toISOString(),
                 ttlExpiresAt,
             });
+    }
+
+    // -----------------------------------------------------------------------
+    // V3-E05: Propuesta Semántica 3 Niveles & Commit Atómico 4-Way
+    // -----------------------------------------------------------------------
+
+    public static async proposeReconciliation(
+        tenantId: string,
+        rawInput: unknown,
+        _actor: AuditActorContext,
+        options?: {
+            embedFn?: EmbedTextFn;
+            decideFn?: DecideFn;
+            allowNetworkAi?: boolean;
+        }
+    ): Promise<ReconciliationProposal> {
+        const parsed = ReconciliationProposeRequestSchema.safeParse(rawInput);
+        if (!parsed.success) {
+            throw new SupplyValidationError(
+                'INVALID_RECONCILIATION_PROPOSE_PAYLOAD',
+                parsed.error.issues[0]?.message || 'Payload inválido para propuesta de conciliación.'
+            );
+        }
+        const input = parsed.data;
+        const now = new Date().toISOString();
+
+        let dteType = input.documentType;
+        let folio = input.folio || '0';
+        let issueDate = input.issueDate || now.slice(0, 10);
+        let supplierTaxIdRaw = input.supplierTaxId;
+        let globalAdjustmentNetClp = Number(input.globalDiscountOrChargeClp || 0);
+        let iepOrIecClp = 0;
+        let linePricingBasis: 'NET' | 'GROSS' =
+            dteType === 33 || dteType === 52 || dteType === 61 ? 'NET' : 'GROSS';
+        let dteReferences: ReconciliationProposal['dteReferences'] = [];
+        let lines = [...input.lines];
+        let totalAmountForDedupe = Number(input.totalAmountClp || 0);
+
+        if (input.xmlContent && input.xmlContent.trim()) {
+            const parsedXml = parseSiiXmlDte(input.xmlContent);
+            dteType = parsedXml.dteType;
+            folio = parsedXml.folio || folio;
+            issueDate = parsedXml.issueDate || issueDate;
+            supplierTaxIdRaw = parsedXml.emitterRutNormalized || supplierTaxIdRaw;
+            globalAdjustmentNetClp =
+                input.globalDiscountOrChargeClp !== undefined
+                    ? Number(input.globalDiscountOrChargeClp)
+                    : parsedXml.globalAdjustmentNetClp;
+            iepOrIecClp = parsedXml.fuelTaxIepIecClp;
+            linePricingBasis = parsedXml.linePricingBasis;
+            dteReferences = parsedXml.references;
+            totalAmountForDedupe = totalAmountForDedupe || parsedXml.totalAmountClp;
+
+            if (lines.length === 0 && parsedXml.lines.length > 0) {
+                lines = parsedXml.lines.map((l) => ({
+                    purchaseLineId: `xml-line-${l.lineNumber}`,
+                    lineNumber: l.lineNumber,
+                    rawDescription: l.name,
+                    supplierItemCode: l.supplierItemCode,
+                    quantity: l.quantity,
+                    unitPriceClp: l.unitPriceClp,
+                    subtotalClp: l.subtotalClp,
+                    linePricingBasis: parsedXml.linePricingBasis,
+                }));
+            }
+        }
+
+        const taxAdapter = getTaxJurisdictionAdapter('CL');
+        const rutCheck = taxAdapter.validateTaxId(supplierTaxIdRaw);
+        const supplierTaxIdNormalized =
+            rutCheck.normalized || supplierTaxIdRaw.replace(/[\s.]/g, '').toUpperCase();
+
+        if (!totalAmountForDedupe) {
+            totalAmountForDedupe = lines.reduce((acc, l) => acc + Number(l.subtotalClp || 0), 0);
+        }
+
+        const [learnedMaps, reqSnap, recentPurchasesSnap, balancesSnap, signalsSnap] =
+            await Promise.all([
+                SemanticRequisitionMatcher.lookupTenantLearnedMaps(
+                    tenantId,
+                    supplierTaxIdNormalized
+                ),
+                db
+                    .collection(SUPPLY_COLLECTIONS.REQUISITIONS)
+                    .where('tenantId', '==', tenantId)
+                    .where('siteId', '==', input.siteId)
+                    .limit(150)
+                    .get(),
+                db
+                    .collection(SUPPLY_COLLECTIONS.PURCHASES)
+                    .where('tenantId', '==', tenantId)
+                    .limit(100)
+                    .get(),
+                db
+                    .collection(SUPPLY_COLLECTIONS.WAREHOUSE_BALANCES)
+                    .where('tenantId', '==', tenantId)
+                    .limit(200)
+                    .get(),
+                db.collection(SUPPLY_COLLECTIONS.MARKET_DEMAND_SIGNALS).limit(200).get(),
+            ]);
+
+        const recentPurchases = recentPurchasesSnap.docs.map((d) => d.data() as SupplyPurchase);
+        const ruralDup = detectRuralReceiptDuplicate({
+            supplierTaxIdNormalized,
+            documentType: dteType,
+            totalAmountClp: totalAmountForDedupe,
+            issueDate,
+            phashHex: input.phashHex,
+            recentPurchases: recentPurchases.map((p) => ({
+                purchaseId: p.purchaseId,
+                supplierTaxIdNormalized: p.supplierTaxId,
+                documentType: p.documentType,
+                totalAmountClp: p.totalAmountClp,
+                issueDate: p.issueDate,
+                phashHex: p.evidenceCasRef?.phashHex || null,
+            })),
+        });
+
+        const anomalies: SupplyAnomalyAlert[] = [];
+        let ruralDuplicateAlert: SupplyAnomalyAlert | null = null;
+        if (ruralDup.isDuplicate) {
+            ruralDuplicateAlert = {
+                alertId: `anom_rural_${Date.now().toString(36)}`,
+                alertType: 'ANOMALY_RURAL_DUPLICATE_DHASH',
+                severity: 'CRITICAL',
+                messageSpanish: ruralDup.messageSpanish || 'Posible comprobante rural duplicado.',
+                observedValue: ruralDup.hammingDistance ?? null,
+                baselineValue: 6,
+                evidenceRef: ruralDup.matchedPurchaseId || null,
+                detectedAtIso: now,
+            };
+            anomalies.push(ruralDuplicateAlert);
+        }
+
+        const openRequisitions = reqSnap.docs
+            .map((d) => d.data() as SupplyRequisition)
+            .filter(
+                (r) =>
+                    (input.requisitionIds.length === 0 || input.requisitionIds.includes(r.reqId)) &&
+                    (r.status === 'OPEN' || r.status === 'PARTIAL')
+            )
+            .map((r) => ({
+                reqId: r.reqId,
+                costCenter: r.costCenter,
+                lines: r.lines.map((rl) => ({
+                    lineId: rl.lineId,
+                    canonicalSkuId: rl.canonicalSkuId,
+                    qtyPending: rl.qtyPending,
+                })),
+            }));
+
+        const cascade = await proposeSemanticReconciliation(lines, {
+            tenantId,
+            supplierRutNormalized: supplierTaxIdNormalized,
+            documentType: dteType,
+            prorationMode: input.prorationMode,
+            globalAdjustmentNetClp,
+            learnedMaps,
+            openRequisitions,
+            embedFn: options?.embedFn,
+            decideFn: options?.decideFn,
+            allowNetworkAi: options?.allowNetworkAi,
+        });
+
+        // Evaluar desviaciones de precio / shrinkflation sobre líneas con SKU resuelto
+        const pmpBySku = new Map<string, number>();
+        for (const doc of balancesSnap.docs) {
+            const b = doc.data() as SupplyWarehouseBalance;
+            if (b.pmpNetClp > 0 && !pmpBySku.has(b.canonicalSkuId)) {
+                pmpBySku.set(b.canonicalSkuId, b.pmpNetClp);
+            }
+        }
+        const marketBySku = new Map<string, { median: number; peers: number }>();
+        for (const doc of signalsSnap.docs) {
+            const sig = doc.data() as DemandPoolSignal;
+            if (
+                typeof sig.medianReferenceUnitClp === 'number' &&
+                sig.medianReferenceUnitClp > 0 &&
+                sig.participatingEntitiesCount >= LEY21719_MIN_K_ANONYMITY
+            ) {
+                marketBySku.set(sig.canonicalSkuId, {
+                    median: sig.medianReferenceUnitClp,
+                    peers: sig.participatingEntitiesCount,
+                });
+            }
+        }
+
+        for (let i = 0; i < cascade.proposedLines.length; i++) {
+            const prop = cascade.proposedLines[i];
+            const rawLine = lines[i];
+            if (!prop.matchedCanonicalSkuId || prop.classification === 'ACCESSORY_CHARGE') continue;
+            const sku = findDomainCanonicalSkuById(prop.matchedCanonicalSkuId);
+            const baseline = pmpBySku.get(prop.matchedCanonicalSkuId);
+            const mkt = marketBySku.get(prop.matchedCanonicalSkuId);
+            const shrinkRes = detectPriceAndShrinkflationAnomalies({
+                canonicalSkuId: prop.matchedCanonicalSkuId,
+                itemName: prop.matchedSkuName || prop.rawDescription,
+                unitSi: sku?.baseUnitSi || 'un',
+                quantity: Number(rawLine?.quantity || 1),
+                netTotalClp: prop.landedUnitCostNetClp * Number(rawLine?.quantity || 1),
+                observedUnitSizeSi: rawLine?.observedUnitSizeSi,
+                tenantMedian90dNetPerSiClp: baseline,
+                marketMedianNetPerSiClp: mkt?.median,
+                marketPeerCount: mkt?.peers,
+                detectedAtIso: now,
+            });
+            for (const f of shrinkRes.findings) {
+                anomalies.push({
+                    alertId: f.alertId,
+                    alertType: f.alertType,
+                    severity: f.severity,
+                    canonicalSkuId: f.canonicalSkuId,
+                    messageSpanish: f.messageSpanish,
+                    observedValue: f.observedValue,
+                    baselineValue: f.baselineValue,
+                    variancePct: f.variancePct,
+                    detectedAtIso: f.detectedAtIso,
+                });
+            }
+        }
+
+        return ReconciliationProposalSchema.parse({
+            proposalId: `rprop_${Date.now().toString(36)}_${crypto.randomBytes(4).toString('hex')}`,
+            tenantId,
+            siteId: input.siteId,
+            supplierTaxIdNormalized,
+            documentType: dteType,
+            folio,
+            issueDate,
+            dteReferences,
+            siiTaxes: {
+                iepOrIecClp,
+                globalAdjustmentNetClp,
+                linePricingBasis,
+            },
+            ruralDuplicateAlert,
+            proposedLines: cascade.proposedLines,
+            anomalies,
+            createdAtIso: now,
+        });
+    }
+
+    public static async commit4WayReconciliation(
+        tenantId: string,
+        rawInput: unknown,
+        actor: AuditActorContext,
+        buyerRole: SupplyOperationalRole = 'BUYER',
+        options?: {
+            embedFn?: EmbedTextFn;
+            allowNetworkAi?: boolean;
+        }
+    ) {
+        const parsed = ReconciliationCommit4WayRequestSchema.safeParse(rawInput);
+        if (!parsed.success) {
+            throw new SupplyValidationError(
+                'INVALID_RECONCILIATION_COMMIT_PAYLOAD',
+                parsed.error.issues[0]?.message || 'Confirmación HITL "ACTUALIZAR" o payload inválido.'
+            );
+        }
+        const input = parsed.data;
+        const acceptedLines = input.lines.filter((l) => l.accepted);
+        if (acceptedLines.length === 0) {
+            throw new SupplyValidationError(
+                'NO_ACCEPTED_RECONCILIATION_LINES',
+                'Debe aceptar al menos una línea para confirmar la conciliación 4-Way.'
+            );
+        }
+
+        const proration = prorateLandedCosts({
+            lines: acceptedLines.map((l) => {
+                const rawNet =
+                    l.linePricingBasis === 'NET'
+                        ? Math.round(l.subtotalClp)
+                        : input.documentType === 33 ||
+                            input.documentType === 52 ||
+                            input.documentType === 61
+                          ? Math.round(l.subtotalClp / 1.19)
+                          : Math.round(l.subtotalClp);
+                return {
+                    purchaseLineId: l.purchaseLineId,
+                    qtyPurchased: l.qtyPurchased,
+                    netAmountClp: rawNet,
+                    isAccessoryCharge: l.classification === 'ACCESSORY_CHARGE',
+                    weightKg: l.weightKg,
+                    volumeL: l.volumeL,
+                };
+            }),
+            prorationMode: input.prorationMode,
+            globalAdjustmentNetClp: input.globalDiscountOrChargeClp,
+        });
+
+        const goodsLines = acceptedLines.filter((l) => l.classification !== 'ACCESSORY_CHARGE');
+        const effectivePurchaseLines = goodsLines.length > 0 ? goodsLines : acceptedLines;
+
+        const mappedPurchaseLines: SupplyPurchaseLine[] = effectivePurchaseLines.map((l) => {
+            const sku = findDomainCanonicalSkuById(l.canonicalSkuId);
+            const landed = proration.byLineId[l.purchaseLineId];
+            const landedNetTotal = landed ? landed.landedTotalNetClp : Math.round(l.subtotalClp);
+            const landedUnitNet =
+                l.qtyPurchased > 0 ? Math.round(landedNetTotal / l.qtyPurchased) : 0;
+            const categoryCode = normalizeLegacySupplyCategoryCode(
+                l.categoryCode || sku?.categoryCode || 'FERRETERIA_CONSTRUCCION'
+            );
+            const procurementBucket = normalizeLegacyProcurementBucket(
+                sku?.procurementBucket || 'FERRETERIA_INSUMOS'
+            );
+            const isCapex = Boolean(
+                l.isCapexAsset || l.destination === 'CAPEX_ASSET' || sku?.isCapexAsset
+            );
+            return {
+                purchaseLineId: l.purchaseLineId,
+                canonicalSkuId: l.canonicalSkuId,
+                description: sku?.name || l.rawDescription,
+                categoryCode,
+                procurementBucket,
+                unitSi: l.unitSi || sku?.baseUnitSi || 'un',
+                qtyPurchased: l.qtyPurchased,
+                unitPriceClp: landedUnitNet,
+                subtotalClp: landedNetTotal,
+                linePricingBasis: 'NET',
+                destination: isCapex ? 'CAPEX_ASSET' : l.destination,
+                isCapexAsset: isCapex,
+                costCenter: normalizeLegacyCostCenter(
+                    isCapex ? 'CC-CAPEX' : l.costCenter,
+                    categoryCode
+                ),
+                opermaqAssetId: l.opermaqAssetId,
+            };
+        });
+
+        const netAmountClp = mappedPurchaseLines.reduce((s, l) => s + Math.round(l.subtotalClp), 0);
+        const hasRecoverableVat = input.documentType === 33 || input.documentType === 61;
+        const vatAmountClp = hasRecoverableVat ? Math.round(netAmountClp * 0.19) : 0;
+        const totalAmountClp = Math.round(
+            netAmountClp + vatAmountClp + Number(input.iepOrIecFuelTaxClp || 0)
+        );
+        const parsedFolio = input.documentType === 0 ? 0 : Math.max(1, Number(input.folio) || 0);
+
+        const taxAdapter = getTaxJurisdictionAdapter('CL');
+        const rutNorm =
+            taxAdapter.validateTaxId(input.supplierTaxId).normalized ||
+            input.supplierTaxId.replace(/[\s.]/g, '').toUpperCase();
+
+        const purchaseResult = await this.createPurchaseWithReconciliation(
+            {
+                tenantId,
+                siteId: input.siteId,
+                buyerUid: actor.actorUid,
+                buyerRole,
+                purchaseMode: input.purchaseMode,
+                authorizedByAuthority: true,
+                supplierTaxId: input.supplierTaxId,
+                supplierName: input.supplierName,
+                documentType: input.documentType,
+                folio: parsedFolio,
+                issueDate: input.issueDate,
+                netAmountClp,
+                vatAmountClp,
+                totalAmountClp,
+                paymentMethod: input.paymentMethod,
+                evidenceCasRef: input.phashHex
+                    ? {
+                          sha256: crypto
+                              .createHash('sha256')
+                              .update(`${tenantId}|${rutNorm}|${input.folio}|${input.phashHex}`)
+                              .digest('hex'),
+                          phashHex: input.phashHex,
+                          downloadUrl: `cas://supply/${tenantId}/${input.phashHex}`,
+                          mimeType: 'image/webp',
+                          extension: 'webp',
+                          originalBytes: 1024,
+                          optimizedBytes: 512,
+                          savingsPct: 50,
+                      }
+                    : undefined,
+                lines: mappedPurchaseLines,
+            },
+            actor
+        );
+
+        // Persistir aprendizaje proveedor -> SKU en `tenant_supplier_sku_map` tras confirmación HITL "ACTUALIZAR"
+        const learnedMappings = [];
+        for (const l of effectivePurchaseLines) {
+            if (!l.learnSupplierMapping) continue;
+            const saved = await SemanticRequisitionMatcher.saveLearnedSupplierMapping({
+                tenantId,
+                supplierRutNormalized: rutNorm,
+                supplierItemCode: l.supplierItemCode || null,
+                rawDescription: l.rawDescription,
+                supplierGtin: l.gtin || null,
+                canonicalSkuId: l.canonicalSkuId,
+                classification: l.classification,
+                confirmedByUid: actor.actorUid,
+                embedFn: options?.embedFn,
+                allowNetworkAi: options?.allowNetworkAi,
+            });
+            learnedMappings.push(saved);
+        }
+
+        return {
+            ...purchaseResult,
+            landedCostProration: proration,
+            learnedMappingsCount: learnedMappings.length,
+            learnedMappings,
+        };
     }
 }

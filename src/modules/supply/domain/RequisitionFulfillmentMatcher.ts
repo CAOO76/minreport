@@ -416,3 +416,97 @@ export function matchPurchaseToRequisitions(
         hitlComparativeRows,
     };
 }
+
+// ── V3-E05: Anti-duplicación Rural dHash 64-bit + Metadata ──────────────────────────
+
+/**
+ * Calcula distancia Hamming determinística entre dos hashes perceptuales dHash de 64 bits (16 hex).
+ */
+export function computeDHashHammingDistance(hashA: string, hashB: string): number {
+    const normA = String(hashA || '').trim().toLowerCase();
+    const normB = String(hashB || '').trim().toLowerCase();
+    if (!/^[0-9a-f]{16}$/.test(normA) || !/^[0-9a-f]{16}$/.test(normB)) {
+        return Number.POSITIVE_INFINITY;
+    }
+    let xor = BigInt(`0x${normA}`) ^ BigInt(`0x${normB}`);
+    let dist = 0;
+    while (xor > 0n) {
+        if ((xor & 1n) === 1n) dist++;
+        xor >>= 1n;
+    }
+    return dist;
+}
+
+export interface RuralReceiptCandidateHistoryItem {
+    purchaseId: string;
+    supplierTaxIdNormalized: string;
+    documentType: number;
+    totalAmountClp: number;
+    issueDate: string;
+    phashHex?: string | null;
+}
+
+export interface RuralDuplicateDetectionResult {
+    isDuplicate: boolean;
+    reason?: 'VISUAL_DHASH_MATCH' | 'METADATA_AMOUNT_DATE_SUPPLIER_MATCH';
+    matchedPurchaseId?: string;
+    hammingDistance?: number;
+    messageSpanish?: string;
+}
+
+/**
+ * Detecta duplicados en recibos rurales sin folio DTE (`dteType === 0`) o boletas fotografiadas:
+ * - Distancia Hamming `dHash <= 6` contra recibos recientes del mismo tenant.
+ * - O coincidencia `(proveedor, monto ±2%, fecha ±2 días)` para `dteType === 0`.
+ */
+export function detectRuralReceiptDuplicate(params: {
+    supplierTaxIdNormalized: string;
+    documentType: number;
+    totalAmountClp: number;
+    issueDate: string;
+    phashHex?: string | null;
+    recentPurchases: readonly RuralReceiptCandidateHistoryItem[];
+    maxHammingDistance?: number;
+}): RuralDuplicateDetectionResult {
+    const maxHamming = params.maxHammingDistance ?? 6;
+    const targetDateMs = Date.parse(`${String(params.issueDate || '').slice(0, 10)}T00:00:00Z`);
+    const targetRut = String(params.supplierTaxIdNormalized || '').replace(/[\s.]/g, '').toUpperCase();
+
+    for (const prev of params.recentPurchases) {
+        if (params.phashHex && prev.phashHex) {
+            const dist = computeDHashHammingDistance(params.phashHex, prev.phashHex);
+            if (dist <= maxHamming) {
+                return {
+                    isDuplicate: true,
+                    reason: 'VISUAL_DHASH_MATCH',
+                    matchedPurchaseId: prev.purchaseId,
+                    hammingDistance: dist,
+                    messageSpanish: `Posible comprobante rural duplicado por similitud visual dHash (distancia ${dist} <= ${maxHamming}) respecto de compra ${prev.purchaseId}.`,
+                };
+            }
+        }
+
+        if (params.documentType === 0 && prev.documentType === 0) {
+            const prevRut = String(prev.supplierTaxIdNormalized || '').replace(/[\s.]/g, '').toUpperCase();
+            const sameSupplier = Boolean(targetRut) && prevRut === targetRut;
+            const prevDateMs = Date.parse(`${String(prev.issueDate || '').slice(0, 10)}T00:00:00Z`);
+            const daysDiff =
+                Number.isFinite(targetDateMs) && Number.isFinite(prevDateMs)
+                    ? Math.abs(targetDateMs - prevDateMs) / 86_400_000
+                    : Number.POSITIVE_INFINITY;
+            const denom = Math.max(1, Math.abs(prev.totalAmountClp));
+            const amountDiffPct = Math.abs(params.totalAmountClp - prev.totalAmountClp) / denom;
+
+            if (sameSupplier && daysDiff <= 2 && amountDiffPct <= 0.02) {
+                return {
+                    isDuplicate: true,
+                    reason: 'METADATA_AMOUNT_DATE_SUPPLIER_MATCH',
+                    matchedPurchaseId: prev.purchaseId,
+                    messageSpanish: `Posible boleta rural duplicada: mismo proveedor, monto dentro de ±2% y fecha dentro de ±2 días respecto de compra ${prev.purchaseId}.`,
+                };
+            }
+        }
+    }
+
+    return { isDuplicate: false };
+}

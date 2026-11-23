@@ -151,11 +151,179 @@ function resolveCostCenterForLine(
     return CATEGORY_DEFAULT_COST_CENTER[line.categoryCode] || 'CC-OPS-MINA';
 }
 
+export interface LandedCostProrationInputLine {
+    purchaseLineId: string;
+    qtyPurchased: number;
+    netAmountClp: number;
+    isAccessoryCharge?: boolean;
+    weightKg?: number;
+    volumeL?: number;
+}
+
+export interface LandedCostProrationLineResult {
+    purchaseLineId: string;
+    isAccessoryCharge: boolean;
+    baseNetClp: number;
+    allocatedAdjustmentClp: number;
+    landedTotalNetClp: number;
+    landedUnitCostNetClp: number;
+}
+
+export interface LandedCostProrationResult {
+    modeUsed: 'NET_VALUE' | 'WEIGHT_KG' | 'VOLUME_L';
+    totalAccessoryPoolClp: number;
+    globalAdjustmentNetClp: number;
+    totalDistributedPoolClp: number;
+    lines: LandedCostProrationLineResult[];
+    byLineId: Record<string, LandedCostProrationLineResult>;
+}
+
+/**
+ * Motor determinístico `LandedCostProrationEngine`:
+ * Prorratea fletes, embalajes (`ACCESSORY_CHARGE`) y descuentos/recargos globales (`<DscRcgGlobal>`)
+ * sobre líneas inventariables o CAPEX usando `NET_VALUE`, `WEIGHT_KG` o `VOLUME_L`,
+ * ajustando redondeos CLP en la línea de mayor participación para conservar suma exacta al peso.
+ */
+export function prorateLandedCosts(params: {
+    lines: readonly LandedCostProrationInputLine[];
+    prorationMode?: 'NET_VALUE' | 'WEIGHT_KG' | 'VOLUME_L';
+    globalAdjustmentNetClp?: number;
+    extraAccessoryPoolClp?: number;
+}): LandedCostProrationResult {
+    const requestedMode = params.prorationMode || 'NET_VALUE';
+    const globalAdjustmentNetClp = roundClp(params.globalAdjustmentNetClp || 0);
+    const extraAccessoryPoolClp = roundClp(params.extraAccessoryPoolClp || 0);
+
+    const accessoryPoolFromLines = params.lines
+        .filter((l) => Boolean(l.isAccessoryCharge))
+        .reduce((acc, l) => acc + roundClp(l.netAmountClp), 0);
+    const totalAccessoryPoolClp = roundClp(accessoryPoolFromLines + extraAccessoryPoolClp);
+    const totalDistributedPoolClp = roundClp(totalAccessoryPoolClp + globalAdjustmentNetClp);
+
+    const targetLines = params.lines.filter((l) => !l.isAccessoryCharge);
+    const weightDriverTotal =
+        requestedMode === 'WEIGHT_KG'
+            ? targetLines.reduce((s, l) => s + Math.max(0, Number(l.weightKg || 0)), 0)
+            : 0;
+    const volumeDriverTotal =
+        requestedMode === 'VOLUME_L'
+            ? targetLines.reduce((s, l) => s + Math.max(0, Number(l.volumeL || 0)), 0)
+            : 0;
+
+    const modeUsed: 'NET_VALUE' | 'WEIGHT_KG' | 'VOLUME_L' =
+        requestedMode === 'WEIGHT_KG' && weightDriverTotal > 0
+            ? 'WEIGHT_KG'
+            : requestedMode === 'VOLUME_L' && volumeDriverTotal > 0
+              ? 'VOLUME_L'
+              : 'NET_VALUE';
+
+    const rawWeights = targetLines.map((l) => {
+        if (modeUsed === 'WEIGHT_KG') return Math.max(0, Number(l.weightKg || 0));
+        if (modeUsed === 'VOLUME_L') return Math.max(0, Number(l.volumeL || 0));
+        return Math.max(0, roundClp(l.netAmountClp));
+    });
+    const totalWeight = rawWeights.reduce((s, w) => s + w, 0);
+
+    const allocatedMap = new Map<string, number>();
+    if (targetLines.length > 0 && totalDistributedPoolClp !== 0) {
+        let runningAllocated = 0;
+        let maxWeightIdx = 0;
+        for (let i = 1; i < targetLines.length; i++) {
+            if (rawWeights[i] > rawWeights[maxWeightIdx]) maxWeightIdx = i;
+        }
+        for (let i = 0; i < targetLines.length; i++) {
+            const share =
+                totalWeight > 0 ? rawWeights[i] / totalWeight : 1 / targetLines.length;
+            const alloc = roundClp(totalDistributedPoolClp * share);
+            allocatedMap.set(targetLines[i].purchaseLineId, alloc);
+            runningAllocated = roundClp(runningAllocated + alloc);
+        }
+        const remainder = roundClp(totalDistributedPoolClp - runningAllocated);
+        if (remainder !== 0) {
+            const anchorId = targetLines[maxWeightIdx].purchaseLineId;
+            allocatedMap.set(anchorId, roundClp((allocatedMap.get(anchorId) || 0) + remainder));
+        }
+    }
+
+    const lines: LandedCostProrationLineResult[] = [];
+    const byLineId: Record<string, LandedCostProrationLineResult> = {};
+
+    for (const l of params.lines) {
+        const baseNetClp = roundClp(l.netAmountClp);
+        const isAcc = Boolean(l.isAccessoryCharge);
+        const allocatedAdjustmentClp = isAcc ? 0 : allocatedMap.get(l.purchaseLineId) || 0;
+        const landedTotalNetClp = isAcc ? 0 : Math.max(0, roundClp(baseNetClp + allocatedAdjustmentClp));
+        const qty = roundSupplyQty(l.qtyPurchased);
+        const landedUnitCostNetClp = !isAcc && qty > 0 ? roundClp(landedTotalNetClp / qty) : 0;
+        const row: LandedCostProrationLineResult = {
+            purchaseLineId: l.purchaseLineId,
+            isAccessoryCharge: isAcc,
+            baseNetClp,
+            allocatedAdjustmentClp,
+            landedTotalNetClp,
+            landedUnitCostNetClp,
+        };
+        lines.push(row);
+        byLineId[l.purchaseLineId] = row;
+    }
+
+    return {
+        modeUsed,
+        totalAccessoryPoolClp,
+        globalAdjustmentNetClp,
+        totalDistributedPoolClp,
+        lines,
+        byLineId,
+    };
+}
+
+function buildCostCenterWeightSplits(
+    allocationsForLine: readonly FulfillmentAllocation[],
+    fallbackCostCenter: SupplyCostCenter
+): Array<{ costCenter: SupplyCostCenter; ratio: number }> {
+    const grouped = new Map<SupplyCostCenter, number>();
+    for (const alloc of allocationsForLine) {
+        const q = Number(alloc.qtyAllocated || 0);
+        if (q <= 0) continue;
+        const cc = alloc.costCenter || fallbackCostCenter;
+        grouped.set(cc, roundSupplyQty((grouped.get(cc) || 0) + q));
+    }
+    if (grouped.size <= 1) {
+        const onlyCc = grouped.size === 1 ? Array.from(grouped.keys())[0] : fallbackCostCenter;
+        return [{ costCenter: onlyCc, ratio: 1 }];
+    }
+    const entries = Array.from(grouped.entries());
+    const totalAllocated = entries.reduce((acc, [, q]) => acc + q, 0);
+    if (totalAllocated <= 0) {
+        return [{ costCenter: fallbackCostCenter, ratio: 1 }];
+    }
+    return entries.map(([cc, q]) => ({
+        costCenter: cc,
+        ratio: q / totalAllocated,
+    }));
+}
+
+function splitClpByRatios(totalClp: number, ratios: readonly number[]): number[] {
+    if (ratios.length <= 1) return [roundClp(totalClp)];
+    const out: number[] = [];
+    let running = 0;
+    for (let i = 0; i < ratios.length; i++) {
+        if (i === ratios.length - 1) {
+            out.push(roundClp(totalClp - running));
+        } else {
+            const part = roundClp(totalClp * ratios[i]);
+            out.push(part);
+            running = roundClp(running + part);
+        }
+    }
+    return out;
+}
+
 /**
  * Concilia una compra en:
  * 1. `StockLedgerEntry[]` (separando `IN_TRANSIT` vs `IN_WAREHOUSE`).
  * 2. `SupplyAsset[]` (bóveda CAPEX aislada con base depreciable neta Art. 31 N° 5 LIR).
- * 3. `CashLedgerEntry[]` (caja/rendición/IVA recuperable vs no recuperable/centros de costo).
+ * 3. `CashLedgerEntry[]` (caja/rendición/IVA recuperable vs no recuperable/centros de costo con split multi-CC).
  */
 export function reconcilePurchase(
     purchase: SupplyPurchase,
@@ -338,34 +506,47 @@ export function reconcilePurchase(
         }
         // Si destination === 'DIRECT_EXPENSE', impacta directamente OPEX sin crear asiento de bodega
 
-        totalOpexImpactClp = roundClp(totalOpexImpactClp + accountingCostBasisClp);
-        opexByCostCenter[costCenter] = roundClp(
-            (opexByCostCenter[costCenter] || 0) + accountingCostBasisClp
-        );
+        const ccSplits = buildCostCenterWeightSplits(lineAllocs, costCenter);
+        const ratios = ccSplits.map((s) => s.ratio);
+        const opexSplits = splitClpByRatios(accountingCostBasisClp, ratios);
+        const netSplits = splitClpByRatios(vat.netAmountClp, ratios);
+        const vatRecSplits = splitClpByRatios(vat.vatRecoverableClp, ratios);
+        const vatNonRecSplits = splitClpByRatios(vat.vatNonRecoverableClp, ratios);
+        const grossSplits = splitClpByRatios(vat.totalAmountClp, ratios);
 
+        totalOpexImpactClp = roundClp(totalOpexImpactClp + accountingCostBasisClp);
         if (FOOD_OPEX_CATEGORIES.has(line.categoryCode)) {
             campFoodOpexClp = roundClp(campFoodOpexClp + accountingCostBasisClp);
         }
 
-        cashEntries.push({
-            entryId: `cash-${purchase.purchaseId}-${cashSeq++}`,
-            tenantId: purchase.tenantId,
-            siteId: purchase.siteId,
-            purchaseId: purchase.purchaseId,
-            paymentMethod: purchase.paymentMethod,
-            entryType: resolveCashEntryType(purchase.paymentMethod, false),
-            categoryCode: line.categoryCode,
-            netAmountClp: vat.netAmountClp,
-            vatRecoverableClp: vat.vatRecoverableClp,
-            vatNonRecoverableClp: vat.vatNonRecoverableClp,
-            grossAmountClp: vat.totalAmountClp,
-            opexImpactClp: accountingCostBasisClp,
-            capexImpactClp: 0,
-            costCenter,
-            dteType: purchase.documentType,
-            dedupeKey,
-            recordedAt,
-        });
+        for (let sIdx = 0; sIdx < ccSplits.length; sIdx++) {
+            const splitCc = ccSplits[sIdx].costCenter;
+            const splitOpex = opexSplits[sIdx];
+            opexByCostCenter[splitCc] = roundClp(
+                (opexByCostCenter[splitCc] || 0) + splitOpex
+            );
+
+            cashEntries.push({
+                entryId: `cash-${purchase.purchaseId}-${cashSeq++}`,
+                tenantId: purchase.tenantId,
+                siteId: purchase.siteId,
+                purchaseId: purchase.purchaseId,
+                purchaseLineId: line.purchaseLineId,
+                paymentMethod: purchase.paymentMethod,
+                entryType: resolveCashEntryType(purchase.paymentMethod, false),
+                categoryCode: line.categoryCode,
+                netAmountClp: netSplits[sIdx],
+                vatRecoverableClp: vatRecSplits[sIdx],
+                vatNonRecoverableClp: vatNonRecSplits[sIdx],
+                grossAmountClp: grossSplits[sIdx],
+                opexImpactClp: splitOpex,
+                capexImpactClp: 0,
+                costCenter: splitCc,
+                dteType: purchase.documentType,
+                dedupeKey,
+                recordedAt,
+            });
+        }
     }
 
     return {
