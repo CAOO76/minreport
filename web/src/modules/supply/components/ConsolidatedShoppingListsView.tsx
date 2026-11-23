@@ -36,6 +36,27 @@ const BUCKET_ICON: Record<ProcurementBucket, string> = {
     MANTENCION_CAMP: 'build',
 };
 
+const BUCKET_DOMAIN: Record<
+    ProcurementBucket,
+    'CAMPAMENTO' | 'OPERACION' | 'CONTROLADO' | 'PATRIMONIO'
+> = {
+    VERDULERIA: 'CAMPAMENTO',
+    SUPERMERCADO: 'CAMPAMENTO',
+    AGUA_POTABLE: 'CAMPAMENTO',
+    GAS_GLP_DOMESTICO: 'CAMPAMENTO',
+    ASEO_HIGIENE: 'CAMPAMENTO',
+    MANTENCION_CAMP: 'CAMPAMENTO',
+    AGUA_INDUSTRIAL_ALJIBE: 'OPERACION',
+    GASES_INDUSTRIALES: 'OPERACION',
+    COMBUSTIBLE_GRANEL: 'OPERACION',
+    REPUESTOS_LUBRICANTES: 'OPERACION',
+    FERRETERIA_INSUMOS: 'OPERACION',
+    PERFORACION_FORTIFICACION: 'OPERACION',
+    EPP_SEGURIDAD: 'OPERACION',
+    CONTROLADOS_DGMN: 'CONTROLADO',
+    ACTIVOS_CAPEX: 'PATRIMONIO',
+};
+
 export const ConsolidatedShoppingListsView: React.FC<ConsolidatedShoppingListsViewProps> = ({
     groups,
     loading: _loading,
@@ -247,6 +268,18 @@ export const ConsolidatedShoppingListsView: React.FC<ConsolidatedShoppingListsVi
                                         <h3 className="font-mono text-data-dense font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6] truncate">
                                             {t(`supply.buckets.${group.procurementBucket}`)}
                                         </h3>
+                                        <span
+                                            className={cn(
+                                                'font-mono text-microcopy uppercase font-bold',
+                                                group.procurementBucket === 'CONTROLADOS_DGMN'
+                                                    ? 'text-[#7C3F0E] dark:text-[#C68346]'
+                                                    : 'text-[#475569] dark:text-[#8A93A6]'
+                                            )}
+                                        >
+                                            {t(
+                                                `supply.channels.domains.${BUCKET_DOMAIN[group.procurementBucket]}`
+                                            )}
+                                        </span>
                                         <span className="font-mono text-microcopy tabular-nums text-[#475569] dark:text-[#8A93A6]">
                                             {group.totalLines} SKU
                                         </span>

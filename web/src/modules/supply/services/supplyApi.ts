@@ -2,13 +2,19 @@ import { coreAuthFetch } from '../../../core/network/coreAuthFetch';
 import { mediaDigestorClient } from '../../../core/media/MediaDigestorClient';
 import { offlineStorage } from '../../../core/offline/OfflineStorage';
 import { syncQueueEngine } from '../../../core/offline/SyncQueueEngine';
+import type {
+    StockLedgerEntry,
+    SupplyReceptionDiscrepancy,
+} from '../../../contracts/supply.contracts';
 import {
     computeSavingsPct,
     type AtypicalFlagCode,
     type CanonicalSupplySku,
     type CasEvidenceRef,
+    type ConfirmWarehouseReceptionV3Request,
     type ConsolidatedShoppingBucketGroup,
     type ConsolidatedShoppingItem,
+    type CreateSupplyWarehouseRequest,
     type DemandForecastSummary,
     type FulfillmentAllocationDraft,
     type GrantTemporaryChannelRequest,
@@ -19,13 +25,16 @@ import {
     type ReceiptAnalysisDraft,
     type ReceiptAnalysisSource,
     type ReceiptArithmeticCheckSummary,
+    type RecordStockMovementRequest,
     type RequisitionUrgency,
     type SiiDocumentRcvStatus,
     type SiiDocumentRecord,
     type SiiDteType,
     type SiiExpenseReport,
     type SiiExpenseReportStatus,
+    type StockLedgerMovementType,
     type SupplyAssetRecord,
+    type SupplyBusinessUnitKpis,
     type SupplyCategoryCode,
     type SupplyConversationThread,
     type SupplyConversationTurn,
@@ -41,8 +50,12 @@ import {
     type SupplyRequisition,
     type SupplyRequisitionLine,
     type SupplySite,
+    type SupplyTankTelemetry,
     type SupplyUnitSi,
+    type SupplyWarehouse,
+    type SupplyWarehouseBalance,
     type SupplyWhatsAppChannelId,
+    type TankCycleCountRequest,
     type TemporaryChannelGrant,
     type UpdateSupplyProfileChannelsRequest,
     type UpsertSupplyProfileRequest,
@@ -1789,7 +1802,132 @@ export const supplyApi = {
             payload,
         };
     },
+
+    async listSupplyWarehouses(
+        params: { siteId?: string; limit?: number } = {},
+        tenantId?: string
+    ): Promise<SupplyWarehouseListResult> {
+        const qs = buildQuery(params);
+        const res = await coreAuthFetch(`${SUPPLY_API_BASE}/warehouses${qs}`, {
+            method: 'GET',
+            headers: buildHeaders(tenantId),
+        });
+        const json = await parseJsonResponse<Record<string, unknown>>(res);
+        return {
+            warehouses: unwrapArray<SupplyWarehouse>(json, 'warehouses'),
+            balances: unwrapArray<SupplyWarehouseBalance>(json, 'balances'),
+        };
+    },
+
+    async createSupplyWarehouse(
+        payload: CreateSupplyWarehouseRequest,
+        tenantId?: string
+    ): Promise<SupplyWarehouse> {
+        const res = await coreAuthFetch(`${SUPPLY_API_BASE}/warehouses`, {
+            method: 'POST',
+            headers: buildHeaders(tenantId, true),
+            body: JSON.stringify(payload),
+        });
+        const json = await parseJsonResponse<Record<string, unknown>>(res);
+        return (json?.warehouse || json) as SupplyWarehouse;
+    },
+
+    async listSupplyKardex(
+        params: {
+            siteId?: string;
+            warehouseId?: string;
+            canonicalSkuId?: string;
+            movementType?: StockLedgerMovementType;
+            limit?: number;
+        } = {},
+        tenantId?: string
+    ): Promise<SupplyKardexListResult> {
+        const qs = buildQuery(params);
+        const res = await coreAuthFetch(`${SUPPLY_API_BASE}/kardex${qs}`, {
+            method: 'GET',
+            headers: buildHeaders(tenantId),
+        });
+        const json = await parseJsonResponse<Record<string, unknown>>(res);
+        return {
+            entries: unwrapArray<StockLedgerEntry>(json, 'entries'),
+            balances: unwrapArray<SupplyWarehouseBalance>(json, 'balances'),
+            tankTelemetry: unwrapArray<SupplyTankTelemetry>(json, 'tankTelemetry'),
+        };
+    },
+
+    async recordSupplyKardexMovement(
+        payload: RecordStockMovementRequest | TankCycleCountRequest,
+        tenantId?: string
+    ): Promise<Record<string, unknown>> {
+        const res = await coreAuthFetch(`${SUPPLY_API_BASE}/kardex`, {
+            method: 'POST',
+            headers: buildHeaders(tenantId, true),
+            body: JSON.stringify(payload),
+        });
+        return parseJsonResponse<Record<string, unknown>>(res);
+    },
+
+    async confirmWarehouseReceptionV3(
+        payload: ConfirmWarehouseReceptionV3Request,
+        tenantId?: string
+    ): Promise<ConfirmWarehouseReceptionV3Result> {
+        const res = await coreAuthFetch(`${SUPPLY_API_BASE}/warehouses/receptions`, {
+            method: 'POST',
+            headers: buildHeaders(tenantId, true),
+            body: JSON.stringify(payload),
+        });
+        const json = await parseJsonResponse<Record<string, unknown>>(res);
+        return {
+            purchase: (json?.purchase as SupplyPurchaseRecord) || undefined,
+            receptionOutcome:
+                String(json?.receptionOutcome || 'RECEIVED_OK') === 'PARTIAL_OR_DISCREPANCY'
+                    ? 'PARTIAL_OR_DISCREPANCY'
+                    : 'RECEIVED_OK',
+            receivedItemCount: Number(json?.receivedItemCount ?? 0) || 0,
+            affectedRequisitionIds: Array.isArray(json?.affectedRequisitionIds)
+                ? (json.affectedRequisitionIds as string[])
+                : [],
+            discrepancies: unwrapArray<SupplyReceptionDiscrepancy>(json, 'discrepancies'),
+            urgentRcvAlert: Boolean(json?.urgentRcvAlert),
+            suggestCreditNote61: Boolean(json?.suggestCreditNote61),
+        };
+    },
+
+    async getSupplyBusinessUnitKpis(
+        params: { siteId?: string; periodDays?: number; tonnage?: number } = {},
+        tenantId?: string
+    ): Promise<SupplyBusinessUnitKpis | null> {
+        const qs = buildQuery(params);
+        const res = await coreAuthFetch(`${SUPPLY_API_BASE}/kpis${qs}`, {
+            method: 'GET',
+            headers: buildHeaders(tenantId),
+        });
+        const json = await parseJsonResponse<Record<string, unknown>>(res);
+        if (!json?.kpis || typeof json.kpis !== 'object') return null;
+        return json.kpis as SupplyBusinessUnitKpis;
+    },
 };
+
+export interface SupplyWarehouseListResult {
+    warehouses: SupplyWarehouse[];
+    balances: SupplyWarehouseBalance[];
+}
+
+export interface SupplyKardexListResult {
+    entries: StockLedgerEntry[];
+    balances: SupplyWarehouseBalance[];
+    tankTelemetry: SupplyTankTelemetry[];
+}
+
+export interface ConfirmWarehouseReceptionV3Result {
+    purchase?: SupplyPurchaseRecord;
+    receptionOutcome: 'RECEIVED_OK' | 'PARTIAL_OR_DISCREPANCY';
+    receivedItemCount: number;
+    affectedRequisitionIds: string[];
+    discrepancies: SupplyReceptionDiscrepancy[];
+    urgentRcvAlert: boolean;
+    suggestCreditNote61: boolean;
+}
 
 export interface SupplyConversationChainVerification {
     valid: boolean;

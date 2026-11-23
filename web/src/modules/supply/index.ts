@@ -22,6 +22,18 @@ export {
     SupplyConversationsAuditView,
     type SupplyConversationsAuditViewProps,
 } from './components/SupplyConversationsAuditView';
+export {
+    SupplyControlDashboardView,
+    type SupplyControlDashboardViewProps,
+} from './components/SupplyControlDashboardView';
+export {
+    WarehouseKardexView,
+    type WarehouseKardexViewProps,
+} from './components/WarehouseKardexView';
+export {
+    WarehouseReceptionModal,
+    type WarehouseReceptionModalProps,
+} from './components/WarehouseReceptionModal';
 export { supplyApi } from './services/supplyApi';
 export { registerSupplyLocales } from './locales/registerSupplyLocales';
 export * from './types';

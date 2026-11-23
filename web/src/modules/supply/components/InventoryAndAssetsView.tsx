@@ -4,22 +4,36 @@ import M3LinearProgress from '../../../components/common/M3LinearProgress';
 import CopyButton from '../../../components/common/CopyButton';
 import HitlConfirmModal, { type HitlComparisonDiffItem } from '../../../components/common/HitlConfirmModal';
 import { cn } from '../../../utils/cn';
-import { supplyApi } from '../services/supplyApi';
+import type { StockLedgerEntry } from '../../../contracts/supply.contracts';
+import { supplyApi, type ConfirmWarehouseReceptionV3Result } from '../services/supplyApi';
 import {
     formatCasTelemetry,
     formatClp,
+    type CreateSupplyWarehouseRequest,
     type DemandForecastSummary,
     type SupplyAssetRecord,
     type SupplyInventoryItem,
     type SupplyPurchaseRecord,
     type SupplySite,
+    type SupplyTankTelemetry,
+    type SupplyUnitSi,
+    type SupplyWarehouse,
+    type SupplyWarehouseBalance,
+    type SupplyWarehouseClass,
 } from '../types';
+import { WarehouseKardexView } from './WarehouseKardexView';
+import { WarehouseReceptionModal } from './WarehouseReceptionModal';
 
 export interface InventoryAndAssetsViewProps {
     inventory: SupplyInventoryItem[];
     assets: SupplyAssetRecord[];
     inTransitPurchases: SupplyPurchaseRecord[];
     forecast: DemandForecastSummary | null;
+    warehouses?: SupplyWarehouse[];
+    warehouseBalances?: SupplyWarehouseBalance[];
+    kardexEntries?: StockLedgerEntry[];
+    tankTelemetry?: SupplyTankTelemetry[];
+    sites?: SupplySite[];
     activeSite?: SupplySite | null;
     tenantId?: string;
     loading: boolean;
@@ -28,16 +42,35 @@ export interface InventoryAndAssetsViewProps {
     onMutated: () => void;
 }
 
-type WarehouseTab = 'STOCK' | 'ASSETS';
+type WarehouseTab = 'STOCK' | 'KARDEX' | 'WAREHOUSES' | 'ASSETS';
+
+const WAREHOUSE_CLASSES: SupplyWarehouseClass[] = [
+    'DRY_WAREHOUSE',
+    'COLD_STORAGE',
+    'POTABLE_WATER_TANK',
+    'INDUSTRIAL_WATER_POND',
+    'FUEL_TANK_CAMP',
+    'FUEL_TANK_FLEET',
+    'GLP_CAGE',
+    'INDUSTRIAL_GAS_CAGE',
+    'HAZMAT_DS43',
+    'MAGAZINE_DGMN',
+    'VIRTUAL_IN_TRANSIT',
+];
 
 export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
     inventory,
     assets,
     inTransitPurchases,
     forecast,
+    warehouses = [],
+    warehouseBalances = [],
+    kardexEntries = [],
+    tankTelemetry = [],
+    sites = [],
     activeSite,
     tenantId,
-    loading: _loading,
+    loading,
     canMutate = true,
     canManageCapex = true,
     onMutated,
@@ -46,16 +79,35 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
     const uid = useId();
     const [tab, setTab] = useState<WarehouseTab>('STOCK');
     const [searchQuery, setSearchQuery] = useState('');
+    const [selectedWarehouseId, setSelectedWarehouseId] = useState<string>('ALL');
     const [pendingReceptionPurchase, setPendingReceptionPurchase] =
         useState<SupplyPurchaseRecord | null>(null);
     const [pendingLinkAsset, setPendingLinkAsset] = useState<SupplyAssetRecord | null>(null);
     const [actionLoading, setActionLoading] = useState(false);
     const [notice, setNotice] = useState<{ tone: 'copper' | 'cyan'; text: string } | null>(null);
 
+    // Physical Warehouse Creation State
+    const [showCreateWh, setShowCreateWh] = useState(false);
+    const [whCode, setWhCode] = useState('');
+    const [whName, setWhName] = useState('');
+    const [whClass, setWhClass] = useState<SupplyWarehouseClass>('DRY_WAREHOUSE');
+    const [whCapacity, setWhCapacity] = useState<number>(10000);
+    const [whCapacityUnit, setWhCapacityUnit] = useState<SupplyUnitSi>('L');
+    const [pendingWarehouseHitl, setPendingWarehouseHitl] =
+        useState<CreateSupplyWarehouseRequest | null>(null);
+
     const waterTelemetry = useMemo(() => {
+        const potableTanksBalance = warehouseBalances
+            .filter((b) => b.warehouseClass === 'POTABLE_WATER_TANK')
+            .reduce((acc, b) => acc + (b.qtyOnHand || 0), 0);
+        const hasPotableTanks = warehouses.some(
+            (w) => w.warehouseClass === 'POTABLE_WATER_TANK'
+        );
         const pax = forecast?.headcount ?? activeSite?.currentHeadcount ?? 0;
         const leadDays = forecast?.leadTimeDays ?? activeSite?.leadTimeDays ?? 7;
-        const storedL = forecast?.waterStoredL ?? activeSite?.waterStorageCapacityL ?? 0;
+        const storedL =
+            forecast?.waterStoredL ??
+            (hasPotableTanks ? potableTanksBalance : activeSite?.waterStorageCapacityL ?? 0);
         const dailyPerPax = activeSite?.ds594DailyWaterTargetLPerPax ?? 120;
         const dailyTargetL = forecast?.waterDailyTargetL ?? pax * dailyPerPax;
         const requiredLeadL = forecast?.waterRequiredLeadL ?? dailyTargetL * leadDays;
@@ -67,7 +119,20 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
         const compliant =
             forecast?.waterCompliantDs594 ?? (requiredLeadL > 0 ? storedL >= requiredLeadL : true);
         return { pax, leadDays, storedL, dailyTargetL, requiredLeadL, coverageDays, pct, compliant };
-    }, [forecast, activeSite]);
+    }, [forecast, activeSite, warehouseBalances, warehouses]);
+
+    const filteredBalances = useMemo(() => {
+        const q = searchQuery.trim().toLowerCase();
+        return warehouseBalances.filter((b) => {
+            if (selectedWarehouseId !== 'ALL' && b.warehouseId !== selectedWarehouseId) {
+                return false;
+            }
+            if (!q) return true;
+            return `${b.itemName} ${b.canonicalSkuId} ${b.categoryCode} ${b.warehouseId}`
+                .toLowerCase()
+                .includes(q);
+        });
+    }, [warehouseBalances, selectedWarehouseId, searchQuery]);
 
     const filteredStock = useMemo(() => {
         const q = searchQuery.trim().toLowerCase();
@@ -95,46 +160,65 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
         [assets]
     );
 
-    const handleConfirmReception = async () => {
-        if (!pendingReceptionPurchase) return;
+    const handleReceptionV3Committed = (result: ConfirmWarehouseReceptionV3Result) => {
+        const purchaseId = pendingReceptionPurchase?.purchaseId || '';
+        setPendingReceptionPurchase(null);
+        const alertParts = [
+            purchaseId,
+            result.receptionOutcome,
+            result.discrepancies.length > 0
+                ? `${result.discrepancies.length} ${t('supply.warehouse.discrepancies_tag')}`
+                : null,
+            result.urgentRcvAlert ? t('supply.sii.rcv_alert_48h') : null,
+            result.suggestCreditNote61 ? 'NC 61' : null,
+        ].filter(Boolean);
+        setNotice({
+            tone:
+                result.receptionOutcome === 'PARTIAL_OR_DISCREPANCY' || result.urgentRcvAlert
+                    ? 'copper'
+                    : 'cyan',
+            text: alertParts.join(' · '),
+        });
+        onMutated();
+    };
+
+    const handlePrepareCreateWarehouse = (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!canMutate || !whCode.trim() || !whName.trim()) return;
+        setPendingWarehouseHitl({
+            siteId: activeSite?.siteId || sites[0]?.siteId || 'site-main',
+            code: whCode.trim().toUpperCase(),
+            name: whName.trim(),
+            warehouseClass: whClass,
+            allowedChannelIds: [],
+            defaultCostCenter: 'CC-OPS-MINA',
+            capacityUnitSi: whCapacityUnit,
+            maxCapacitySi: Math.max(0, Number(whCapacity) || 0),
+            status: 'ACTIVE',
+            confirmationKeyword: 'ACTUALIZAR',
+        });
+    };
+
+    const handleConfirmCreateWarehouse = async () => {
+        if (!pendingWarehouseHitl) return;
         setActionLoading(true);
         setNotice(null);
         try {
-            const receivedLines =
-                (pendingReceptionPurchase.lines || []).length > 0
-                    ? pendingReceptionPurchase.lines.map((line) => {
-                          const purchased = Number(line.qtyPurchased ?? line.qty) || 0;
-                          const received = Number(line.qtyReceived ?? 0) || 0;
-                          const remaining = Math.max(0, purchased - received);
-                          return {
-                              purchaseLineId: line.purchaseLineId || line.lineId,
-                              qtyReceivedNow: remaining > 0 ? remaining : purchased,
-                          };
-                      })
-                    : [
-                          {
-                              purchaseLineId: `${pendingReceptionPurchase.purchaseId}_line_1`,
-                              qtyReceivedNow: 1,
-                          },
-                      ];
-
-            await supplyApi.confirmPurchaseReception(
-                pendingReceptionPurchase.purchaseId,
-                receivedLines,
-                'ACTUALIZAR',
-                tenantId
-            );
-            setPendingReceptionPurchase(null);
+            const created = await supplyApi.createSupplyWarehouse(pendingWarehouseHitl, tenantId);
+            setPendingWarehouseHitl(null);
+            setShowCreateWh(false);
+            setWhCode('');
+            setWhName('');
             setNotice({
                 tone: 'cyan',
-                text: `${pendingReceptionPurchase.purchaseId} ➔ ${t('supply.warehouse.col_warehouse')}`,
+                text: `${created.code} · ${created.name}`,
             });
             onMutated();
         } catch (err) {
-            setPendingReceptionPurchase(null);
+            setPendingWarehouseHitl(null);
             setNotice({
                 tone: 'copper',
-                text: err instanceof Error ? err.message : 'RECEPTION_ERROR',
+                text: err instanceof Error ? err.message : 'WAREHOUSE_CREATE_ERROR',
             });
         } finally {
             setActionLoading(false);
@@ -168,21 +252,16 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
         }
     };
 
-    const receptionDiff = useMemo<HitlComparisonDiffItem[]>(() => {
-        if (!pendingReceptionPurchase) return [];
+    const warehouseDiff = useMemo<HitlComparisonDiffItem[]>(() => {
+        if (!pendingWarehouseHitl) return [];
         return [
             {
-                field: pendingReceptionPurchase.purchaseId,
-                current: t('supply.destinations.STOCK_IN_TRANSIT'),
-                suggested: t('supply.destinations.STOCK_IN_WAREHOUSE'),
-            },
-            {
-                field: t('supply.scanner.total_clp'),
-                current: `DTE ${pendingReceptionPurchase.documentType} #${pendingReceptionPurchase.folio}`,
-                suggested: formatClp(pendingReceptionPurchase.totalAmountClp),
+                field: pendingWarehouseHitl.code,
+                current: '—',
+                suggested: `${pendingWarehouseHitl.name} (${pendingWarehouseHitl.warehouseClass})`,
             },
         ];
-    }, [pendingReceptionPurchase, t]);
+    }, [pendingWarehouseHitl]);
 
     const linkDiff = useMemo<HitlComparisonDiffItem[]>(() => {
         if (!pendingLinkAsset) return [];
@@ -220,6 +299,44 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
 
                     <button
                         type="button"
+                        onClick={() => setTab('KARDEX')}
+                        aria-label={t('supply.warehouse.kardex_tab')}
+                        title={t('supply.warehouse.kardex_tab')}
+                        data-testid="warehouse-subtab-KARDEX"
+                        className={cn(
+                            'bg-transparent border-0 border-b-2 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center gap-fib-8 transition-colors cursor-pointer rounded-none shadow-none',
+                            tab === 'KARDEX'
+                                ? 'border-[#C68346] text-[#7C3F0E] dark:text-[#C68346]'
+                                : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
+                        )}
+                    >
+                        <span className="material-symbols-outlined text-[22px]">swap_horiz</span>
+                        <span className="font-mono text-microcopy tabular-nums">
+                            {kardexEntries.length}
+                        </span>
+                    </button>
+
+                    <button
+                        type="button"
+                        onClick={() => setTab('WAREHOUSES')}
+                        aria-label={t('supply.warehouse.warehouses_tab')}
+                        title={t('supply.warehouse.warehouses_tab')}
+                        data-testid="warehouse-subtab-WAREHOUSES"
+                        className={cn(
+                            'bg-transparent border-0 border-b-2 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center gap-fib-8 transition-colors cursor-pointer rounded-none shadow-none',
+                            tab === 'WAREHOUSES'
+                                ? 'border-[#C68346] text-[#7C3F0E] dark:text-[#C68346]'
+                                : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
+                        )}
+                    >
+                        <span className="material-symbols-outlined text-[22px]">inventory_2</span>
+                        <span className="font-mono text-microcopy tabular-nums">
+                            {warehouses.length}
+                        </span>
+                    </button>
+
+                    <button
+                        type="button"
                         onClick={() => setTab('ASSETS')}
                         aria-label={t('supply.warehouse.assets_tab')}
                         title={t('supply.warehouse.assets_tab')}
@@ -244,21 +361,55 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
                     </button>
                 </div>
 
-                <div>
-                    <label htmlFor={`${uid}-search`} className="sr-only">
-                        {t('supply.common.search_placeholder')}
-                    </label>
-                    <input
-                        id={`${uid}-search`}
-                        type="text"
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        autoComplete="off"
-                        spellCheck={false}
-                        aria-label={t('supply.common.search_placeholder')}
-                        placeholder={t('supply.common.search_placeholder')}
-                        className="w-56 min-h-[48px] px-fib-13 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
-                    />
+                <div className="flex flex-wrap items-center gap-fib-8">
+                    {tab === 'STOCK' && warehouses.length > 0 && (
+                        <select
+                            value={selectedWarehouseId}
+                            onChange={(e) => setSelectedWarehouseId(e.target.value)}
+                            aria-label={t('supply.warehouse.target_warehouse')}
+                            data-testid="warehouse-filter-select"
+                            className="min-h-[48px] px-fib-13 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-microcopy text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
+                        >
+                            <option value="ALL">{t('supply.warehouse.all_warehouses')}</option>
+                            {warehouses.map((w) => (
+                                <option key={w.warehouseId} value={w.warehouseId}>
+                                    {w.code} · {w.name}
+                                </option>
+                            ))}
+                        </select>
+                    )}
+
+                    {tab === 'WAREHOUSES' && canMutate && (
+                        <button
+                            type="button"
+                            onClick={() => setShowCreateWh((prev) => !prev)}
+                            aria-label={t('supply.warehouse.new_warehouse')}
+                            title={t('supply.warehouse.new_warehouse')}
+                            data-testid="new-warehouse-btn"
+                            className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#C68346] hover:opacity-80 cursor-pointer rounded-none shadow-none"
+                        >
+                            <span className="material-symbols-outlined text-[22px]">
+                                {showCreateWh ? 'close' : 'add'}
+                            </span>
+                        </button>
+                    )}
+
+                    <div>
+                        <label htmlFor={`${uid}-search`} className="sr-only">
+                            {t('supply.common.search_placeholder')}
+                        </label>
+                        <input
+                            id={`${uid}-search`}
+                            type="text"
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            autoComplete="off"
+                            spellCheck={false}
+                            aria-label={t('supply.common.search_placeholder')}
+                            placeholder={t('supply.common.search_placeholder')}
+                            className="w-56 min-h-[48px] px-fib-13 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
+                        />
+                    </div>
                 </div>
             </div>
 
@@ -389,6 +540,61 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
                         </div>
                     )}
 
+                    {filteredBalances.length > 0 && (
+                        <div className="divide-y divide-[#E2E8F0] dark:divide-[#12151C] border-b border-[#E2E8F0] dark:border-[#12151C]">
+                            {filteredBalances.map((bal) => (
+                                <div
+                                    key={bal.balanceId}
+                                    data-testid={`warehouse-balance-${bal.balanceId}`}
+                                    className="px-fib-21 py-fib-13 border-l-[3px] border-l-[#00AEEF] flex flex-wrap items-center justify-between gap-fib-13 font-mono tabular-nums"
+                                >
+                                    <div className="space-y-1 min-w-0">
+                                        <div className="flex flex-wrap items-center gap-fib-8">
+                                            <span className="text-data-dense font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                                                {bal.itemName}
+                                            </span>
+                                            <span className="text-microcopy text-[#475569] dark:text-[#8A93A6] select-text">
+                                                {bal.canonicalSkuId}
+                                            </span>
+                                            <CopyButton
+                                                value={bal.canonicalSkuId}
+                                                title={t('supply.common.copy_code')}
+                                            />
+                                        </div>
+                                        <div className="flex flex-wrap items-center gap-fib-13 text-microcopy text-[#475569] dark:text-[#8A93A6]">
+                                            <span>
+                                                {bal.warehouseId} ·{' '}
+                                                {t(`supply.warehouse.class_${bal.warehouseClass}`)}
+                                            </span>
+                                            <span>PMP {formatClp(bal.pmpNetClp)}</span>
+                                            {bal.lotNumber && (
+                                                <span className="select-text">
+                                                    FEFO {bal.lotNumber}
+                                                    {bal.expiryDateIso
+                                                        ? ` (${bal.expiryDateIso.slice(0, 10)})`
+                                                        : ''}
+                                                </span>
+                                            )}
+                                            {(bal.fullCount !== null && bal.fullCount !== undefined) && (
+                                                <span>
+                                                    {bal.fullCount}/{bal.emptyCount ?? 0} un
+                                                </span>
+                                            )}
+                                        </div>
+                                    </div>
+                                    <div className="text-right">
+                                        <div className="text-data-dense font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                                            {bal.qtyOnHand} {bal.unitSi}
+                                        </div>
+                                        <div className="text-microcopy text-[#475569] dark:text-[#8A93A6]">
+                                            {formatClp(bal.totalValueNetClp)}
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+
                     {/* Column Headers */}
                     <div className="hidden md:grid grid-cols-12 gap-fib-8 px-fib-21 py-fib-8 bg-[#F8FAFC] dark:bg-[#07090D] font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">
                         <div className="col-span-4">{t('supply.warehouse.col_item')}</div>
@@ -489,6 +695,138 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
                             );
                         })
                     )}
+                </div>
+            )}
+
+            {/* KARDEX TAB */}
+            {tab === 'KARDEX' && (
+                <WarehouseKardexView
+                    entries={kardexEntries}
+                    tankTelemetry={tankTelemetry}
+                    warehouses={warehouses}
+                    sites={sites}
+                    activeSiteId={activeSite?.siteId}
+                    tenantId={tenantId}
+                    loading={loading}
+                    canMutate={canMutate}
+                    onMutated={onMutated}
+                />
+            )}
+
+            {/* PHYSICAL WAREHOUSES & TANKS TAB */}
+            {tab === 'WAREHOUSES' && (
+                <div>
+                    {canMutate && showCreateWh && (
+                        <form
+                            onSubmit={handlePrepareCreateWarehouse}
+                            autoComplete="off"
+                            spellCheck={false}
+                            className="px-fib-21 py-fib-13 bg-[#F8FAFC] dark:bg-[#07090D] border-b border-[#E2E8F0] dark:border-[#12151C] grid grid-cols-1 md:grid-cols-6 gap-fib-13 items-end"
+                        >
+                            <input
+                                type="text"
+                                required
+                                value={whCode}
+                                onChange={(e) => setWhCode(e.target.value)}
+                                autoComplete="off"
+                                spellCheck={false}
+                                placeholder={t('supply.warehouse.wh_code')}
+                                className="min-h-[48px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
+                            />
+                            <input
+                                type="text"
+                                required
+                                value={whName}
+                                onChange={(e) => setWhName(e.target.value)}
+                                autoComplete="off"
+                                spellCheck={false}
+                                placeholder={t('supply.warehouse.wh_name')}
+                                className="min-h-[48px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
+                            />
+                            <select
+                                value={whClass}
+                                onChange={(e) => setWhClass(e.target.value as SupplyWarehouseClass)}
+                                aria-label={t('supply.warehouse.wh_class')}
+                                className="min-h-[48px] px-fib-8 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-microcopy text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
+                            >
+                                {WAREHOUSE_CLASSES.map((wc) => (
+                                    <option key={wc} value={wc}>
+                                        {t(`supply.warehouse.class_${wc}`)} ({wc})
+                                    </option>
+                                ))}
+                            </select>
+                            <input
+                                type="number"
+                                min={0}
+                                value={whCapacity}
+                                onChange={(e) => setWhCapacity(Number(e.target.value) || 0)}
+                                autoComplete="off"
+                                spellCheck={false}
+                                placeholder={t('supply.warehouse.wh_capacity')}
+                                className="min-h-[48px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-data-dense tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
+                            />
+                            <select
+                                value={whCapacityUnit}
+                                onChange={(e) => setWhCapacityUnit(e.target.value as SupplyUnitSi)}
+                                aria-label={t('supply.warehouse.wh_unit')}
+                                className="min-h-[48px] px-fib-8 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
+                            >
+                                {(['L', 'm3', 'kg', 'un', 'caja'] as SupplyUnitSi[]).map((u) => (
+                                    <option key={u} value={u}>
+                                        {u}
+                                    </option>
+                                ))}
+                            </select>
+                            <button
+                                type="submit"
+                                className="min-h-[48px] px-fib-21 bg-[#C68346] border border-[#C68346] text-[#000000] font-mono text-microcopy font-bold uppercase rounded-none shadow-none cursor-pointer"
+                            >
+                                {t('supply.common.save')}
+                            </button>
+                        </form>
+                    )}
+
+                    <div className="divide-y divide-[#E2E8F0] dark:divide-[#12151C]">
+                        {warehouses.length === 0 ? (
+                            <div className="px-fib-21 py-fib-55 text-center font-mono text-data-dense text-[#475569] dark:text-[#8A93A6]">
+                                {t('supply.common.no_records')}
+                            </div>
+                        ) : (
+                            warehouses.map((wh) => (
+                                <div
+                                    key={wh.warehouseId}
+                                    data-testid={`physical-wh-${wh.warehouseId}`}
+                                    className="px-fib-21 py-fib-13 border-l-[3px] border-l-[#00AEEF] flex flex-wrap items-center justify-between gap-fib-13 font-mono tabular-nums"
+                                >
+                                    <div className="space-y-1">
+                                        <div className="flex flex-wrap items-center gap-fib-8">
+                                            <span className="text-data-dense font-bold text-[#0F172A] dark:text-[#F3F4F6] select-text">
+                                                {wh.code}
+                                            </span>
+                                            <CopyButton
+                                                value={wh.code}
+                                                title={t('supply.common.copy_code')}
+                                            />
+                                            <span className="text-data-dense text-[#0F172A] dark:text-[#F3F4F6]">
+                                                {wh.name}
+                                            </span>
+                                        </div>
+                                        <div className="text-microcopy text-[#475569] dark:text-[#8A93A6]">
+                                            {t(`supply.warehouse.class_${wh.warehouseClass}`)} ·{' '}
+                                            {wh.defaultCostCenter}
+                                            {wh.secTc4Code ? ` · SEC ${wh.secTc4Code}` : ''}
+                                            {wh.dgmnResolutionCode
+                                                ? ` · DGMN ${wh.dgmnResolutionCode}`
+                                                : ''}
+                                        </div>
+                                    </div>
+                                    <div className="text-right text-data-dense font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                                        {wh.maxCapacitySi.toLocaleString('es-CL')} {wh.capacityUnitSi}
+                                    </div>
+                                </div>
+                            ))
+                        )}
+                    </div>
                 </div>
             )}
 
@@ -633,15 +971,24 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
                 </div>
             )}
 
-            <HitlConfirmModal
+            <WarehouseReceptionModal
                 open={Boolean(pendingReceptionPurchase)}
-                title={t('supply.warehouse.hitl_reception_title')}
-                description={t('supply.warehouse.hitl_reception_desc')}
+                purchase={pendingReceptionPurchase}
+                warehouses={warehouses}
+                tenantId={tenantId}
+                onClose={() => setPendingReceptionPurchase(null)}
+                onCommitted={handleReceptionV3Committed}
+            />
+
+            <HitlConfirmModal
+                open={Boolean(pendingWarehouseHitl)}
+                title={t('supply.warehouse.hitl_warehouse_title')}
+                description={t('supply.warehouse.hitl_warehouse_desc')}
                 keyword="ACTUALIZAR"
-                comparisonDiff={receptionDiff}
+                comparisonDiff={warehouseDiff}
                 loading={actionLoading}
-                onConfirm={() => void handleConfirmReception()}
-                onCancel={() => setPendingReceptionPurchase(null)}
+                onConfirm={() => void handleConfirmCreateWarehouse()}
+                onCancel={() => setPendingWarehouseHitl(null)}
             />
 
             <HitlConfirmModal

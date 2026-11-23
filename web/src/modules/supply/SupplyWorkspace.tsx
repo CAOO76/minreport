@@ -15,6 +15,8 @@ import { ReceiptScannerModal } from './components/ReceiptScannerModal';
 import { ReconciliationHitlDrawer } from './components/ReconciliationHitlDrawer';
 import { SupplyProfilesChannelsView } from './components/SupplyProfilesChannelsView';
 import { SupplyConversationsAuditView } from './components/SupplyConversationsAuditView';
+import { SupplyControlDashboardView } from './components/SupplyControlDashboardView';
+import type { StockLedgerEntry } from '../../contracts/supply.contracts';
 import {
     computeRcvDaysRemaining,
     type ConsolidatedShoppingBucketGroup,
@@ -23,6 +25,7 @@ import {
     type SiiDocumentRecord,
     type SiiExpenseReport,
     type SupplyAssetRecord,
+    type SupplyBusinessUnitKpis,
     type SupplyConversationThread,
     type SupplyDomainMode,
     type SupplyInventoryItem,
@@ -31,6 +34,9 @@ import {
     type SupplyPurchaseRecord,
     type SupplyRequisition,
     type SupplySite,
+    type SupplyTankTelemetry,
+    type SupplyWarehouse,
+    type SupplyWarehouseBalance,
 } from './types';
 
 export interface SupplyWorkspaceProps {
@@ -248,6 +254,11 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
     const [expenseReports, setExpenseReports] = useState<SiiExpenseReport[]>([]);
     const [wsProfiles, setWsProfiles] = useState<SupplyProfileViewRecord[]>([]);
     const [conversationThreads, setConversationThreads] = useState<SupplyConversationThread[]>([]);
+    const [warehouses, setWarehouses] = useState<SupplyWarehouse[]>([]);
+    const [warehouseBalances, setWarehouseBalances] = useState<SupplyWarehouseBalance[]>([]);
+    const [kardexEntries, setKardexEntries] = useState<StockLedgerEntry[]>([]);
+    const [tankTelemetry, setTankTelemetry] = useState<SupplyTankTelemetry[]>([]);
+    const [businessUnitKpis, setBusinessUnitKpis] = useState<SupplyBusinessUnitKpis | null>(null);
 
     useEffect(() => {
         if (domainMode) setActiveTab(resolveTabFromDomainMode(domainMode));
@@ -317,19 +328,27 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
             });
 
             if (targetTab === 'CONTROL') {
-                const [, reqRes, purRes, docRes, assetRes, fcRes] = await Promise.allSettled([
-                    safeSites,
-                    supplyApi.listRequisitions({ siteId: siteFilter }, resolvedTenantId),
-                    supplyApi.listPurchases({ siteId: siteFilter }, resolvedTenantId),
-                    supplyApi.listSiiDocuments({ siteId: siteFilter }, resolvedTenantId),
-                    supplyApi.listAssets({ siteId: siteFilter }, resolvedTenantId),
-                    supplyApi.getForecast({ siteId: siteFilter }, resolvedTenantId),
-                ]);
+                const [, reqRes, purRes, docRes, assetRes, fcRes, whRes, kpiRes] =
+                    await Promise.allSettled([
+                        safeSites,
+                        supplyApi.listRequisitions({ siteId: siteFilter }, resolvedTenantId),
+                        supplyApi.listPurchases({ siteId: siteFilter }, resolvedTenantId),
+                        supplyApi.listSiiDocuments({ siteId: siteFilter }, resolvedTenantId),
+                        supplyApi.listAssets({ siteId: siteFilter }, resolvedTenantId),
+                        supplyApi.getForecast({ siteId: siteFilter }, resolvedTenantId),
+                        supplyApi.listSupplyWarehouses({ siteId: siteFilter }, resolvedTenantId),
+                        supplyApi.getSupplyBusinessUnitKpis({ siteId: siteFilter }, resolvedTenantId),
+                    ]);
                 if (reqRes.status === 'fulfilled') setRequisitions(reqRes.value);
                 if (purRes.status === 'fulfilled') setPurchases(purRes.value);
                 if (docRes.status === 'fulfilled') setSiiDocuments(docRes.value);
                 if (assetRes.status === 'fulfilled') setAssets(assetRes.value);
                 if (fcRes.status === 'fulfilled') setForecast(fcRes.value);
+                if (whRes.status === 'fulfilled') {
+                    setWarehouses(whRes.value.warehouses);
+                    setWarehouseBalances(whRes.value.balances);
+                }
+                if (kpiRes.status === 'fulfilled') setBusinessUnitKpis(kpiRes.value);
             } else if (targetTab === 'DEMAND') {
                 const [, reqRes] = await Promise.allSettled([
                     safeSites,
@@ -345,17 +364,28 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                 if (listRes.status === 'fulfilled') setConsolidatedLists(listRes.value);
                 if (reqRes.status === 'fulfilled') setRequisitions(reqRes.value);
             } else if (targetTab === 'WAREHOUSE') {
-                const [, invRes, assetRes, purRes, fcRes] = await Promise.allSettled([
-                    safeSites,
-                    supplyApi.listInventory({ siteId: siteFilter }, resolvedTenantId),
-                    supplyApi.listAssets({ siteId: siteFilter }, resolvedTenantId),
-                    supplyApi.listPurchases({ siteId: siteFilter }, resolvedTenantId),
-                    supplyApi.getForecast({ siteId: siteFilter }, resolvedTenantId),
-                ]);
+                const [, invRes, assetRes, purRes, fcRes, whRes, kardexRes] =
+                    await Promise.allSettled([
+                        safeSites,
+                        supplyApi.listInventory({ siteId: siteFilter }, resolvedTenantId),
+                        supplyApi.listAssets({ siteId: siteFilter }, resolvedTenantId),
+                        supplyApi.listPurchases({ siteId: siteFilter }, resolvedTenantId),
+                        supplyApi.getForecast({ siteId: siteFilter }, resolvedTenantId),
+                        supplyApi.listSupplyWarehouses({ siteId: siteFilter }, resolvedTenantId),
+                        supplyApi.listSupplyKardex({ siteId: siteFilter }, resolvedTenantId),
+                    ]);
                 if (invRes.status === 'fulfilled') setInventory(invRes.value);
                 if (assetRes.status === 'fulfilled') setAssets(assetRes.value);
                 if (purRes.status === 'fulfilled') setPurchases(purRes.value);
                 if (fcRes.status === 'fulfilled') setForecast(fcRes.value);
+                if (whRes.status === 'fulfilled') {
+                    setWarehouses(whRes.value.warehouses);
+                    setWarehouseBalances(whRes.value.balances);
+                }
+                if (kardexRes.status === 'fulfilled') {
+                    setKardexEntries(kardexRes.value.entries);
+                    setTankTelemetry(kardexRes.value.tankTelemetry);
+                }
             } else if (targetTab === 'FINANCE_SII') {
                 const [, docRes, repRes] = await Promise.allSettled([
                     safeSites,
@@ -702,47 +732,20 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
             >
                 <main className="min-h-0 flex-1 overflow-y-auto bg-[#FFFFFF] dark:bg-[#000000]">
                     {activeTab === 'CONTROL' && (
-                        <div data-testid="supply-control-summary" className="p-fib-21 space-y-fib-21">
-                            <div className="flex items-center justify-between border-b border-[#E2E8F0] dark:border-[#12151C] pb-fib-13">
-                                <h2 className="font-mono text-microcopy uppercase font-bold tracking-wider text-[#0F172A] dark:text-[#F3F4F6]">
-                                    {t('supply.control.title')}
-                                </h2>
-                                <span className={cn('font-mono text-microcopy uppercase font-bold', telemetry.rcvUrgent > 0 || telemetry.assetsWithoutInvoice > 0 ? 'text-[#9A5B21] dark:text-[#C68346]' : 'text-[#0369A1] dark:text-[#00AEEF]')}>
-                                    {telemetry.rcvUrgent > 0 || telemetry.assetsWithoutInvoice > 0
-                                        ? t('supply.control.status_alert')
-                                        : t('supply.control.status_nominal')}
-                                </span>
-                            </div>
-
-                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-fib-13 font-mono tabular-nums">
-                                <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] p-fib-21 space-y-fib-8">
-                                    <span className="text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">{t('supply.control.kpi_open_reqs')}</span>
-                                    <div className="text-kpi-display font-bold text-[#0F172A] dark:text-[#F3F4F6]">{openRequisitions.length}</div>
-                                </div>
-                                <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] p-fib-21 space-y-fib-8">
-                                    <span className="text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">{t('supply.control.kpi_in_transit')}</span>
-                                    <div className="text-kpi-display font-bold text-[#C68346]">{telemetry.inTransitCount}</div>
-                                </div>
-                                <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] p-fib-21 space-y-fib-8">
-                                    <span className="text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">{t('supply.control.kpi_water_coverage')}</span>
-                                    <div className="text-kpi-display font-bold text-[#00AEEF]">
-                                        {forecast ? `${forecast.waterCoverageDays} ${t('supply.common.days_short')}` : '—'}
-                                    </div>
-                                </div>
-                                <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] p-fib-21 space-y-fib-8">
-                                    <span className="text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">{t('supply.control.kpi_rcv_urgent')}</span>
-                                    <div className="text-kpi-display font-bold text-[#0F172A] dark:text-[#F3F4F6]">{telemetry.rcvUrgent}</div>
-                                </div>
-                                <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] p-fib-21 space-y-fib-8">
-                                    <span className="text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">{t('supply.control.kpi_assets_no_dte')}</span>
-                                    <div className="text-kpi-display font-bold text-[#0F172A] dark:text-[#F3F4F6]">{telemetry.assetsWithoutInvoice}</div>
-                                </div>
-                                <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] p-fib-21 space-y-fib-8">
-                                    <span className="text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">{t('supply.control.kpi_sites_active')}</span>
-                                    <div className="text-kpi-display font-bold text-[#0F172A] dark:text-[#F3F4F6]">{sites.length}</div>
-                                </div>
-                            </div>
-                        </div>
+                        <SupplyControlDashboardView
+                            kpis={businessUnitKpis}
+                            warehouses={warehouses}
+                            balances={warehouseBalances}
+                            forecast={forecast}
+                            activeSite={activeSite}
+                            loading={loading}
+                            openRequisitionsCount={openRequisitions.length}
+                            inTransitCount={telemetry.inTransitCount}
+                            rcvUrgentCount={telemetry.rcvUrgent}
+                            assets={assets}
+                            sitesCount={sites.length}
+                            onNavigateTab={setActiveTab}
+                        />
                     )}
 
                     {activeTab === 'PROCUREMENT' && (
@@ -780,6 +783,11 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                             assets={assets}
                             inTransitPurchases={inTransitPurchases}
                             forecast={forecast}
+                            warehouses={warehouses}
+                            warehouseBalances={warehouseBalances}
+                            kardexEntries={kardexEntries}
+                            tankTelemetry={tankTelemetry}
+                            sites={sites}
                             activeSite={activeSite}
                             tenantId={resolvedTenantId}
                             loading={loading}

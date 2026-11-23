@@ -292,6 +292,7 @@ describe('V3-E09b-sii — SiiRendicionesView HITL Approvals, ISO 27001 SoD & RCV
 
         await waitFor(() => {
             expect(listDocsSpy).toHaveBeenCalledWith({ siteId: 'site-01' }, 'tenant-sii-e09');
+            expect(screen.getByTestId('sii-rcv-badge-48h-doc-rcv-48h')).toBeInTheDocument();
         });
 
         const articles = Array.from(container.querySelectorAll('article'));
