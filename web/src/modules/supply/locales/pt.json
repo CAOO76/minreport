@@ -333,7 +333,18 @@
       "envelope_period": "Período",
       "envelope_advance": "Fundo adiantado CLP",
       "hitl_envelope_title": "CRIAR ENVELOPE DE PRESTAÇÃO SII",
-      "hitl_envelope_desc": "Registra um novo envelope de prestação SII com rastreabilidade no AuditLedger."
+      "hitl_envelope_desc": "Registra um novo envelope de prestação SII com rastreabilidade no AuditLedger.",
+      "rcv_filter_urgent": "Filtrar alertas RCV (≤ 3 dias / < 48h)",
+      "rcv_query_live": "Consultar DTEs RCV a vencer",
+      "rcv_alert_48h": "RCV < 48H",
+      "rcv_alert_3d": "RCV ≤ 3D",
+      "envelope_submit": "Enviar envelope para aprovação",
+      "envelope_approve": "Aprovar envelope SII",
+      "envelope_reject": "Rejeitar envelope SII",
+      "envelope_settle": "Liquidar / Reembolsar envelope SII",
+      "sod_self_approval_blocked": "ISO 27001 · AUTOAPROVAÇÃO BLOQUEADA",
+      "hitl_status_title": "ATUALIZAR STATUS DE PRESTAÇÃO SII",
+      "hitl_status_desc": "Executa transição auditável de envelope SII sob segregação de funções ISO 27001."
     },
     "control": {
       "title": "CONTROLE LOGÍSTICO DE MINERAÇÃO",

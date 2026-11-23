@@ -333,7 +333,18 @@
       "envelope_period": "Period",
       "envelope_advance": "Fund advance CLP",
       "hitl_envelope_title": "CREATE SII EXPENSE ENVELOPE",
-      "hitl_envelope_desc": "Records a new SII expense rendition envelope in AuditLedger."
+      "hitl_envelope_desc": "Records a new SII expense rendition envelope in AuditLedger.",
+      "rcv_filter_urgent": "Filter RCV alerts (≤ 3 days / < 48h)",
+      "rcv_query_live": "Query expiring RCV DTEs",
+      "rcv_alert_48h": "RCV < 48H",
+      "rcv_alert_3d": "RCV ≤ 3D",
+      "envelope_submit": "Submit envelope for approval",
+      "envelope_approve": "Approve SII envelope",
+      "envelope_reject": "Reject SII envelope",
+      "envelope_settle": "Settle / Reimburse SII envelope",
+      "sod_self_approval_blocked": "ISO 27001 · SELF-APPROVAL BLOCKED",
+      "hitl_status_title": "UPDATE SII EXPENSE REPORT STATUS",
+      "hitl_status_desc": "Executes auditable SII envelope transition under ISO 27001 segregation of duties."
     },
     "control": {
       "title": "MINING LOGISTICS CONTROL",

@@ -1,5 +1,6 @@
-import React, { useId, useMemo, useState } from 'react';
+import React, { useEffect, useId, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useMinReportSession } from '../../../context/MinReportSessionContext';
 import M3LinearProgress from '../../../components/common/M3LinearProgress';
 import SecureImage from '../../../components/common/SecureImage';
 import CopyButton from '../../../components/common/CopyButton';
@@ -14,6 +15,7 @@ import {
     type PaymentMethod,
     type SiiDocumentRecord,
     type SiiExpenseReport,
+    type SiiExpenseReportStatus,
 } from '../types';
 
 export interface SiiRendicionesViewProps {
@@ -21,6 +23,7 @@ export interface SiiRendicionesViewProps {
     expenseReports: SiiExpenseReport[];
     activeSiteId?: string;
     tenantId?: string;
+    actorUid?: string;
     loading: boolean;
     canMutate?: boolean;
     canApproveExpenseReports?: boolean;
@@ -34,15 +37,20 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
     expenseReports,
     activeSiteId,
     tenantId,
+    actorUid,
     loading,
     canMutate = true,
-    canApproveExpenseReports: _canApproveExpenseReports = false,
+    canApproveExpenseReports = false,
     onMutated,
 }) => {
     const { t } = useTranslation();
+    const { session } = useMinReportSession();
     const uid = useId();
     const [tab, setTab] = useState<SiiTab>('BOLETAS');
     const [searchQuery, setSearchQuery] = useState('');
+    const [onlyRcvUrgent, setOnlyRcvUrgent] = useState(false);
+    const [queriedRcvDocs, setQueriedRcvDocs] = useState<SiiDocumentRecord[] | null>(null);
+    const [queryingRcv, setQueryingRcv] = useState(false);
     const [previewDoc, setPreviewDoc] = useState<SiiDocumentRecord | null>(null);
     const [exporting, setExporting] = useState(false);
     const [showNewEnvelope, setShowNewEnvelope] = useState(false);
@@ -54,54 +62,122 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
     const [fundAdvanceClp, setFundAdvanceClp] = useState<number>(0);
     const [hitlEnvelopeOpen, setHitlEnvelopeOpen] = useState(false);
     const [creatingEnvelope, setCreatingEnvelope] = useState(false);
+    const [pendingStatusChange, setPendingStatusChange] = useState<{
+        report: SiiExpenseReport;
+        targetStatus: SiiExpenseReportStatus;
+    } | null>(null);
+    const [updatingStatus, setUpdatingStatus] = useState(false);
     const [notice, setNotice] = useState<{ tone: 'copper' | 'cyan'; text: string } | null>(null);
+
+    const effectiveDocuments = queriedRcvDocs ?? documents;
+    const resolvedActorUid = actorUid || session?.uid || '';
+
+    useEffect(() => {
+        setQueriedRcvDocs(null);
+    }, [documents]);
 
     const boletas = useMemo(
         () =>
-            documents.filter(
+            effectiveDocuments.filter(
                 (d) => d.documentType === 39 || d.documentType === 41 || d.documentType === 0
             ),
-        [documents]
+        [effectiveDocuments]
     );
 
     const facturas = useMemo(
         () =>
-            documents.filter(
+            effectiveDocuments.filter(
                 (d) =>
                     d.documentType === 33 ||
                     d.documentType === 34 ||
                     d.documentType === 52 ||
                     d.documentType === 61
             ),
-        [documents]
+        [effectiveDocuments]
     );
 
+    const isDocRcvAlert = (d: SiiDocumentRecord): boolean => {
+        if (d.documentType !== 33 && d.documentType !== 34) return false;
+        if (
+            d.rcvStatus === 'ACCEPTED' ||
+            d.rcvStatus === 'AUTO_ACCEPTED_8D' ||
+            d.rcvStatus === 'NOT_APPLICABLE'
+        ) {
+            return false;
+        }
+        const days = d.rcvDaysRemaining ?? computeRcvDaysRemaining(d.issueDate);
+        return days !== null && days <= 3;
+    };
+
     const rcvUrgentCount = useMemo(
-        () =>
-            facturas.filter((d) => {
-                if (
-                    d.rcvStatus === 'ACCEPTED' ||
-                    d.rcvStatus === 'AUTO_ACCEPTED_8D' ||
-                    d.rcvStatus === 'NOT_APPLICABLE'
-                ) {
-                    return false;
-                }
-                const days = d.rcvDaysRemaining ?? computeRcvDaysRemaining(d.issueDate);
-                return days !== null && days <= 2;
-            }).length,
+        () => facturas.filter(isDocRcvAlert).length,
         [facturas]
     );
 
     const activeDocuments = useMemo(() => {
-        const source = tab === 'BOLETAS' ? boletas : facturas;
+        const base = tab === 'BOLETAS' ? boletas : facturas;
+        const rcvFiltered =
+            tab === 'FACTURAS' && onlyRcvUrgent ? base.filter(isDocRcvAlert) : base;
         const q = searchQuery.trim().toLowerCase();
-        if (!q) return source;
-        return source.filter((d) =>
+        if (!q) return rcvFiltered;
+        return rcvFiltered.filter((d) =>
             `${d.supplierName} ${d.supplierTaxId} ${d.folio} ${d.dedupeKey}`
                 .toLowerCase()
                 .includes(q)
         );
-    }, [tab, boletas, facturas, searchQuery]);
+    }, [tab, boletas, facturas, onlyRcvUrgent, searchQuery]);
+
+    const handleQueryRcvExpiring = async () => {
+        setQueryingRcv(true);
+        setNotice(null);
+        try {
+            const freshDocs = await supplyApi.listSiiDocuments(
+                { siteId: activeSiteId },
+                tenantId
+            );
+            setQueriedRcvDocs(freshDocs);
+            setTab('FACTURAS');
+            setOnlyRcvUrgent(true);
+        } catch (err) {
+            setNotice({
+                tone: 'copper',
+                text: err instanceof Error ? err.message : 'RCV_QUERY_ERROR',
+            });
+        } finally {
+            setQueryingRcv(false);
+        }
+    };
+
+    const handleConfirmStatusChange = async () => {
+        if (!pendingStatusChange) return;
+        const { report, targetStatus } = pendingStatusChange;
+        setUpdatingStatus(true);
+        setNotice(null);
+        try {
+            const res = await supplyApi.updateExpenseReportStatus(
+                report.reportId,
+                targetStatus,
+                'ACTUALIZAR',
+                tenantId
+            );
+            setPendingStatusChange(null);
+            setNotice({
+                tone: 'cyan',
+                text: res.queuedOffline
+                    ? t('supply.scanner.offline_queued_notice')
+                    : `${report.code || report.reportId} ➔ ${t(`supply.status.${targetStatus}`)}`,
+            });
+            onMutated();
+        } catch (err) {
+            setPendingStatusChange(null);
+            setNotice({
+                tone: 'copper',
+                text: err instanceof Error ? err.message : 'ENVELOPE_STATUS_ERROR',
+            });
+        } finally {
+            setUpdatingStatus(false);
+        }
+    };
 
     const handleExportCsv = async () => {
         setExporting(true);
@@ -179,9 +255,26 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
         [envelopeTitle, envelopeCostCenter, fundAdvanceClp, periodLabel, t]
     );
 
+    const statusChangeDiff = useMemo<HitlComparisonDiffItem[]>(() => {
+        if (!pendingStatusChange) return [];
+        const { report, targetStatus } = pendingStatusChange;
+        return [
+            {
+                field: `${report.title || report.code} (${report.holderName})`,
+                current: t(`supply.status.${report.status}`),
+                suggested: t(`supply.status.${targetStatus}`),
+            },
+            {
+                field: t('supply.sii.rendered_total'),
+                current: formatClp(report.renderedTotalClp),
+                suggested: `${t('supply.sii.balance')}: ${formatClp(report.balanceClp)}`,
+            },
+        ];
+    }, [pendingStatusChange, t]);
+
     return (
         <section className="w-full flex flex-col bg-[#FFFFFF] dark:bg-[#000000] select-none">
-            {!loading && exporting && (
+            {!loading && (exporting || queryingRcv || updatingStatus) && (
                 <M3LinearProgress indeterminate ariaLabel={t('supply.common.loading')} />
             )}
 
@@ -265,6 +358,36 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                             className="w-52 min-h-[48px] px-fib-13 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
                         />
                     </div>
+
+                    {tab === 'FACTURAS' && (
+                        <button
+                            type="button"
+                            onClick={() => setOnlyRcvUrgent((prev) => !prev)}
+                            aria-label={t('supply.sii.rcv_filter_urgent')}
+                            title={t('supply.sii.rcv_filter_urgent')}
+                            data-testid="sii-rcv-urgent-filter-btn"
+                            className={cn(
+                                'bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center transition-colors cursor-pointer rounded-none shadow-none',
+                                onlyRcvUrgent
+                                    ? 'text-[#7C3F0E] dark:text-[#C68346]'
+                                    : 'text-[#475569] dark:text-[#8A93A6] hover:text-[#7C3F0E] dark:hover:text-[#C68346]'
+                            )}
+                        >
+                            <span className="material-symbols-outlined text-[22px]">schedule</span>
+                        </button>
+                    )}
+
+                    <button
+                        type="button"
+                        onClick={() => void handleQueryRcvExpiring()}
+                        disabled={queryingRcv}
+                        aria-label={t('supply.sii.rcv_query_live')}
+                        title={t('supply.sii.rcv_query_live')}
+                        data-testid="sii-rcv-query-btn"
+                        className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#7C3F0E] dark:text-[#C68346] hover:opacity-80 cursor-pointer rounded-none shadow-none disabled:opacity-40"
+                    >
+                        <span className="material-symbols-outlined text-[22px]">manage_search</span>
+                    </button>
 
                     {tab === 'ENVELOPES' && canMutate && (
                         <button
@@ -372,7 +495,8 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                                 isFactura &&
                                 isRcvPending &&
                                 rcvDays !== null &&
-                                rcvDays <= 2;
+                                rcvDays <= 3;
+                            const rcvCritical48h = rcvUrgent && rcvDays !== null && rcvDays <= 2;
                             const casLine = formatCasTelemetry(doc.evidenceCasRef);
 
                             // ISA-101 Color por Excepción (Dark Cockpit silencioso en estado nominal)
@@ -453,24 +577,42 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                                             </span>
 
                                             {isFactura && (
-                                                <span
-                                                    className={cn(
-                                                        'font-bold',
-                                                        rcvUrgent
-                                                            ? 'text-[#7C3F0E] dark:text-[#C68346]'
-                                                            : isRcvAccepted
-                                                              ? 'text-[#0369A1] dark:text-[#00AEEF]'
-                                                              : 'text-[#475569] dark:text-[#8A93A6]'
+                                                <>
+                                                    <span
+                                                        className={cn(
+                                                            'font-bold',
+                                                            rcvUrgent
+                                                                ? 'text-[#7C3F0E] dark:text-[#C68346]'
+                                                                : isRcvAccepted
+                                                                  ? 'text-[#0369A1] dark:text-[#00AEEF]'
+                                                                  : 'text-[#475569] dark:text-[#8A93A6]'
+                                                        )}
+                                                    >
+                                                        {t(`supply.status.${doc.rcvStatus}`)}
+                                                        {isRcvPending &&
+                                                        rcvDays !== null
+                                                            ? rcvDays < 0
+                                                                ? ` · ${t('supply.sii.rcv_expired')}`
+                                                                : ` · ${rcvDays}${t('supply.common.days_short')}`
+                                                            : ''}
+                                                    </span>
+                                                    {rcvCritical48h && (
+                                                        <span
+                                                            data-testid={`sii-rcv-badge-48h-${doc.docId}`}
+                                                            className="px-fib-8 py-0.5 bg-[#C68346] text-[#000000] font-bold uppercase"
+                                                        >
+                                                            {t('supply.sii.rcv_alert_48h')}
+                                                        </span>
                                                     )}
-                                                >
-                                                    {t(`supply.status.${doc.rcvStatus}`)}
-                                                    {isRcvPending &&
-                                                    rcvDays !== null
-                                                        ? rcvDays < 0
-                                                            ? ` · ${t('supply.sii.rcv_expired')}`
-                                                            : ` · ${rcvDays}${t('supply.common.days_short')}`
-                                                        : ''}
-                                                </span>
+                                                    {rcvUrgent && !rcvCritical48h && (
+                                                        <span
+                                                            data-testid={`sii-rcv-badge-3d-${doc.docId}`}
+                                                            className="px-fib-8 py-0.5 border border-[#C68346] text-[#7C3F0E] dark:text-[#C68346] font-bold uppercase"
+                                                        >
+                                                            {t('supply.sii.rcv_alert_3d')}
+                                                        </span>
+                                                    )}
+                                                </>
                                             )}
 
                                             {casLine && (
@@ -661,6 +803,23 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                                           )
                                         : 100;
                                 const negativeBalance = rep.balanceClp < 0;
+                                const reportOwnerUid = rep.holderUid || rep.custodianUid || '';
+                                const isSelfCustodian = Boolean(
+                                    resolvedActorUid &&
+                                        reportOwnerUid &&
+                                        resolvedActorUid === reportOwnerUid
+                                );
+                                const canSubmit =
+                                    canMutate &&
+                                    (rep.status === 'OPEN' || rep.status === 'REJECTED');
+                                const canApproveOrReject =
+                                    canMutate &&
+                                    canApproveExpenseReports &&
+                                    (rep.status === 'OPEN' || rep.status === 'SUBMITTED');
+                                const canSettle =
+                                    canMutate &&
+                                    canApproveExpenseReports &&
+                                    rep.status === 'APPROVED';
 
                                 return (
                                     <article
@@ -696,9 +855,123 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                                                     {t(`supply.payments.${rep.paymentMethod}`)}
                                                 </span>
                                             </div>
-                                            <span className="text-microcopy font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6]">
-                                                {t(`supply.status.${rep.status}`)} ({rep.documentCount} DTE)
-                                            </span>
+                                            <div className="flex flex-wrap items-center gap-fib-8">
+                                                <span className="text-microcopy font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6]">
+                                                    {t(`supply.status.${rep.status}`)} ({rep.documentCount} DTE)
+                                                </span>
+
+                                                {canSubmit && (
+                                                    <button
+                                                        type="button"
+                                                        disabled={updatingStatus}
+                                                        onClick={() =>
+                                                            setPendingStatusChange({
+                                                                report: rep,
+                                                                targetStatus: 'SUBMITTED',
+                                                            })
+                                                        }
+                                                        aria-label={t('supply.sii.envelope_submit')}
+                                                        title={t('supply.sii.envelope_submit')}
+                                                        data-testid={`sii-envelope-submit-${rep.reportId}`}
+                                                        className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#475569] dark:text-[#8A93A6] hover:text-[#0369A1] dark:hover:text-[#00AEEF] cursor-pointer rounded-none shadow-none disabled:opacity-40"
+                                                    >
+                                                        <span className="material-symbols-outlined text-[20px]">
+                                                            send
+                                                        </span>
+                                                    </button>
+                                                )}
+
+                                                {(canApproveOrReject || canSettle) &&
+                                                    (isSelfCustodian ? (
+                                                        <span
+                                                            data-testid={`sii-envelope-sod-blocked-${rep.reportId}`}
+                                                            title={t('supply.sii.sod_self_approval_blocked')}
+                                                            className="inline-flex items-center gap-1 font-mono text-microcopy font-bold text-[#7C3F0E] dark:text-[#C68346]"
+                                                        >
+                                                            <span className="material-symbols-outlined text-[16px]">
+                                                                lock
+                                                            </span>
+                                                            <span>
+                                                                {t('supply.sii.sod_self_approval_blocked')}
+                                                            </span>
+                                                        </span>
+                                                    ) : (
+                                                        <>
+                                                            {canApproveOrReject && (
+                                                                <>
+                                                                    <button
+                                                                        type="button"
+                                                                        disabled={updatingStatus}
+                                                                        onClick={() =>
+                                                                            setPendingStatusChange({
+                                                                                report: rep,
+                                                                                targetStatus: 'APPROVED',
+                                                                            })
+                                                                        }
+                                                                        aria-label={t(
+                                                                            'supply.sii.envelope_approve'
+                                                                        )}
+                                                                        title={t(
+                                                                            'supply.sii.envelope_approve'
+                                                                        )}
+                                                                        data-testid={`sii-envelope-approve-${rep.reportId}`}
+                                                                        className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#0369A1] dark:text-[#00AEEF] hover:opacity-80 cursor-pointer rounded-none shadow-none disabled:opacity-40"
+                                                                    >
+                                                                        <span className="material-symbols-outlined text-[22px]">
+                                                                            check_circle
+                                                                        </span>
+                                                                    </button>
+                                                                    <button
+                                                                        type="button"
+                                                                        disabled={updatingStatus}
+                                                                        onClick={() =>
+                                                                            setPendingStatusChange({
+                                                                                report: rep,
+                                                                                targetStatus: 'REJECTED',
+                                                                            })
+                                                                        }
+                                                                        aria-label={t(
+                                                                            'supply.sii.envelope_reject'
+                                                                        )}
+                                                                        title={t(
+                                                                            'supply.sii.envelope_reject'
+                                                                        )}
+                                                                        data-testid={`sii-envelope-reject-${rep.reportId}`}
+                                                                        className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#7C3F0E] dark:text-[#C68346] hover:opacity-80 cursor-pointer rounded-none shadow-none disabled:opacity-40"
+                                                                    >
+                                                                        <span className="material-symbols-outlined text-[22px]">
+                                                                            cancel
+                                                                        </span>
+                                                                    </button>
+                                                                </>
+                                                            )}
+                                                            {canSettle && (
+                                                                <button
+                                                                    type="button"
+                                                                    disabled={updatingStatus}
+                                                                    onClick={() =>
+                                                                        setPendingStatusChange({
+                                                                            report: rep,
+                                                                            targetStatus: 'SETTLED',
+                                                                        })
+                                                                    }
+                                                                    aria-label={t(
+                                                                        'supply.sii.envelope_settle'
+                                                                    )}
+                                                                    title={t(
+                                                                        'supply.sii.envelope_settle'
+                                                                    )}
+                                                                    data-testid={`sii-envelope-settle-${rep.reportId}`}
+                                                                    className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#0369A1] dark:text-[#00AEEF] hover:opacity-80 cursor-pointer rounded-none shadow-none disabled:opacity-40"
+                                                                >
+                                                                    <span className="material-symbols-outlined text-[22px]">
+                                                                        task_alt
+                                                                    </span>
+                                                                </button>
+                                                            )}
+                                                        </>
+                                                    ))}
+                                            </div>
                                         </div>
 
                                         <div className="grid grid-cols-3 gap-fib-13 font-mono text-microcopy tabular-nums">
@@ -753,6 +1026,17 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                 loading={creatingEnvelope}
                 onConfirm={() => void handleConfirmCreateEnvelope()}
                 onCancel={() => setHitlEnvelopeOpen(false)}
+            />
+
+            <HitlConfirmModal
+                open={Boolean(pendingStatusChange)}
+                title={t('supply.sii.hitl_status_title')}
+                description={t('supply.sii.hitl_status_desc')}
+                keyword="ACTUALIZAR"
+                comparisonDiff={statusChangeDiff}
+                loading={updatingStatus}
+                onConfirm={() => void handleConfirmStatusChange()}
+                onCancel={() => setPendingStatusChange(null)}
             />
         </section>
     );

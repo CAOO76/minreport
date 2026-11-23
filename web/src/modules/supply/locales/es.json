@@ -333,7 +333,18 @@
       "envelope_period": "Período",
       "envelope_advance": "Fondo entregado CLP",
       "hitl_envelope_title": "CREAR SOBRE DE RENDICIÓN SII",
-      "hitl_envelope_desc": "Registra un nuevo sobre de rendición SII con trazabilidad en AuditLedger."
+      "hitl_envelope_desc": "Registra un nuevo sobre de rendición SII con trazabilidad en AuditLedger.",
+      "rcv_filter_urgent": "Filtrar alertas RCV (≤ 3 días / < 48h)",
+      "rcv_query_live": "Consultar DTE RCV por vencer",
+      "rcv_alert_48h": "RCV < 48H",
+      "rcv_alert_3d": "RCV ≤ 3D",
+      "envelope_submit": "Enviar sobre a aprobación",
+      "envelope_approve": "Aprobar sobre SII",
+      "envelope_reject": "Rechazar sobre SII",
+      "envelope_settle": "Liquidar / Reembolsar sobre SII",
+      "sod_self_approval_blocked": "ISO 27001 · AUTO-APROBACIÓN BLOQUEADA",
+      "hitl_status_title": "ACTUALIZAR ESTADO DE RENDICIÓN SII",
+      "hitl_status_desc": "Ejecuta transición auditable de sobre SII bajo segregación de funciones ISO 27001."
     },
     "control": {
       "title": "CONTROL LOGÍSTICO MINERO",
