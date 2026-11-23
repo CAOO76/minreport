@@ -493,10 +493,10 @@ function buildSlotQuestionForItem(item: CampDraftItem, validatorQuestion?: strin
     if (validatorQuestion && validatorQuestion.trim()) {
         return validatorQuestion.trim();
     }
-    if (item.canonicalSkuId === 'sku-mantequilla' && item.missingSlots.includes('quantity')) {
+    if (item.canonicalSkuId === 'SKU-SUP-MANTEQUILLA' && item.missingSlots.includes('quantity')) {
         return '¿Cuántos potes o panes de mantequilla?';
     }
-    if (item.canonicalSkuId === 'sku-huevos' && item.missingSlots.includes('quantity')) {
+    if (item.canonicalSkuId === 'SKU-SUP-HUEVOS' && item.missingSlots.includes('quantity')) {
         return '¿Cuántas bandejas (30 un) o cuántos huevos?';
     }
     if (item.missingSlots.includes('size')) {
@@ -2145,7 +2145,7 @@ export class CampChannel {
                 requesterPhoneE164: member.phoneE164,
                 demandOrigin: resolveOriginForRole(member.supplyProfile.role),
                 demandNature: 'REACTIVE_FIELD',
-                costCenter: member.supplyProfile.defaultCostCenter || 'CC-CAMPAMENTO',
+                costCenter: member.supplyProfile.defaultCostCenter || 'CC-CAMP-ALIMENTACION',
                 atypicalFlags: Array.from(new Set(draftItems.flatMap((d) => d.atypicalFlags))),
                 lines: draftItems.map((d, idx) => ({
                     lineId: `line_${idx + 1}_${crypto.randomBytes(2).toString('hex')}`,
@@ -2263,7 +2263,7 @@ export class CampChannel {
             tedRawXml: turn.tedRawXml,
             contextCaption: turn.caption || turn.text,
             defaultDestination: 'STOCK_IN_WAREHOUSE',
-            defaultCostCenter: member.supplyProfile.defaultCostCenter || 'CC-CAMPAMENTO',
+            defaultCostCenter: member.supplyProfile.defaultCostCenter || 'CC-CAMP-ALIMENTACION',
             checkDuplicateDedupeKey: (dedupeKey) =>
                 SupplyRepository.existsSiiDocument(member.tenantId, dedupeKey),
         });

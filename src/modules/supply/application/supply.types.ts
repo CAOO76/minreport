@@ -1,7 +1,12 @@
 import { z } from 'zod';
 import {
+    ANONYMITY_K_MIN,
     AtypicalFlagCodeSchema,
     type AtypicalFlagCode,
+    CANONICAL_PROCUREMENT_BUCKETS,
+    CANONICAL_STOCK_LEDGER_MOVEMENT_TYPES,
+    CANONICAL_SUPPLY_CATEGORIES,
+    CANONICAL_WHATSAPP_CHANNEL_IDS,
     EvidenceCasRefSchema,
     type EvidenceCasRef,
     FulfillmentChannelSchema,
@@ -14,14 +19,20 @@ import {
     type InternationalPhoneE164,
     IsoCurrencyCodeSchema,
     type IsoCurrencyCode,
+    LinePricingBasisSchema,
+    type LinePricingBasis,
     MoneyAmountSchema,
     type MoneyAmount,
     ProcurementBucketSchema,
     type ProcurementBucket,
     PurchaseModeSchema,
     type PurchaseMode,
+    STANDARD_SUPPLY_COST_CENTERS,
     SiiDteTypeSchema,
     type SiiDteType,
+    type StandardSupplyCostCenter,
+    StockLedgerMovementTypeSchema,
+    type StockLedgerMovementType,
     SupplyCategoryCodeSchema,
     type SupplyCategoryCode,
     SupplyCommunicationDialectSchema,
@@ -45,8 +56,16 @@ import {
     type SupplyPurchaseDestination as PurchaseLineDestination,
     SupplyRequisitionStatusSchema as RequisitionStatusSchema,
     type SupplyRequisitionStatus as RequisitionStatus,
+    SupplyTankTelemetrySchema,
+    type SupplyTankTelemetry,
     SupplyUnitSiSchema,
     type SupplyUnitSi,
+    SupplyWarehouseClassSchema,
+    type SupplyWarehouseClass,
+    SupplyWarehouseSchema,
+    type SupplyWarehouse,
+    SupplyWhatsAppChannelIdSchema,
+    type SupplyWhatsAppChannelId,
     TaxIdentifierSchema,
     type TaxIdentifier,
     TaxIdentifierSchemeSchema,
@@ -56,10 +75,21 @@ import {
     UNIT_SI_TO_UNCEFACT_REC20,
     UnspscCodeSchema,
     type UnspscCode,
+    normalizeLegacyCostCenter,
+    normalizeLegacyProcurementBucket,
+    normalizeLegacyStockMovementType,
+    normalizeLegacySupplyCategoryCode,
 } from '../../../contracts/supply.contracts';
 import type { AuditLedgerModule } from '../../../core/audit-ledger';
 import type { AIModuleScope } from '../../../core/resilient-ai-client';
 import { validateChileanRut } from '../../../utils/taxIdValidator';
+import {
+    LEGACY_SKU_ID_ALIAS_MAP,
+    SUPPLY_CHANNELS_META,
+    classifySkuToChannel,
+    getChannelsForProfileRole,
+    resolveCanonicalSkuIdAlias,
+} from '../catalog/DefaultSupplyCatalogSeed';
 
 /**
  * MINREPORT · ABASTECIMIENTO (`supply`) — Application Domain Types & Deterministic Helpers
@@ -73,8 +103,13 @@ export const SUPPLY_AI_MODULE: AIModuleScope = 'supply';
 export const SUPPLY_AUDIT_MODULE: AuditLedgerModule = 'supply';
 
 export {
+    ANONYMITY_K_MIN,
     AtypicalFlagCodeSchema,
     type AtypicalFlagCode,
+    CANONICAL_PROCUREMENT_BUCKETS,
+    CANONICAL_STOCK_LEDGER_MOVEMENT_TYPES,
+    CANONICAL_SUPPLY_CATEGORIES,
+    CANONICAL_WHATSAPP_CHANNEL_IDS,
     EvidenceCasRefSchema,
     type EvidenceCasRef,
     FulfillmentChannelSchema,
@@ -87,6 +122,9 @@ export {
     type InternationalPhoneE164,
     IsoCurrencyCodeSchema,
     type IsoCurrencyCode,
+    LEGACY_SKU_ID_ALIAS_MAP,
+    LinePricingBasisSchema,
+    type LinePricingBasis,
     MoneyAmountSchema,
     type MoneyAmount,
     PaymentMethodSchema,
@@ -99,8 +137,13 @@ export {
     type PurchaseMode,
     RequisitionStatusSchema,
     type RequisitionStatus,
+    STANDARD_SUPPLY_COST_CENTERS,
+    SUPPLY_CHANNELS_META,
     SiiDteTypeSchema,
     type SiiDteType,
+    type StandardSupplyCostCenter,
+    StockLedgerMovementTypeSchema,
+    type StockLedgerMovementType,
     SupplyCategoryCodeSchema,
     type SupplyCategoryCode,
     SupplyCommunicationDialectSchema,
@@ -118,8 +161,16 @@ export {
     SupplyOperationalRoleSchema,
     type SupplyOperationalRole,
     SupplyPreferredModalitySchema,
+    SupplyTankTelemetrySchema,
+    type SupplyTankTelemetry,
     SupplyUnitSiSchema,
     type SupplyUnitSi,
+    SupplyWarehouseClassSchema,
+    type SupplyWarehouseClass,
+    SupplyWarehouseSchema,
+    type SupplyWarehouse,
+    SupplyWhatsAppChannelIdSchema,
+    type SupplyWhatsAppChannelId,
     TaxIdentifierSchema,
     type TaxIdentifier,
     TaxIdentifierSchemeSchema,
@@ -129,6 +180,13 @@ export {
     UNIT_SI_TO_UNCEFACT_REC20,
     UnspscCodeSchema,
     type UnspscCode,
+    classifySkuToChannel,
+    getChannelsForProfileRole,
+    normalizeLegacyCostCenter,
+    normalizeLegacyProcurementBucket,
+    normalizeLegacyStockMovementType,
+    normalizeLegacySupplyCategoryCode,
+    resolveCanonicalSkuIdAlias,
 };
 
 export const SupplyUrgencySchema = z.enum(['CRITICAL', 'HIGH', 'STANDARD', 'PLANNED', 'LOW']);
@@ -230,7 +288,7 @@ export const SupplyRequisitionSchema = z.object({
     requesterPhoneE164: z.string().trim().max(32).optional(),
     demandOrigin: SupplyDemandOriginSchema,
     demandNature: SupplyDemandNatureSchema.default('REACTIVE_FIELD'),
-    costCenter: z.string().trim().min(1).max(64).default('CC-CAMPAMENTO'),
+    costCenter: z.string().trim().min(1).max(64).default('CC-CAMP-ALIMENTACION'),
     linkedAssetId: z.string().trim().max(128).optional(),
     linkedPlanRef: z.string().trim().max(128).optional(),
     status: RequisitionStatusSchema.default('OPEN'),
@@ -247,13 +305,14 @@ export const SupplyPurchaseLineSchema = z.object({
     canonicalSkuId: z.string().trim().min(1).max(128),
     description: z.string().trim().min(1).max(240),
     categoryCode: SupplyCategoryCodeSchema.default('OTROS_OPERACIONAL'),
-    procurementBucket: ProcurementBucketSchema.default('SUPERMERCADO'),
+    procurementBucket: ProcurementBucketSchema.default('FERRETERIA_INSUMOS'),
     unitSi: SupplyUnitSiSchema.default('un'),
     qtyPurchased: z.number().positive(),
     unitPriceClp: z.number().nonnegative(),
     subtotalClp: z.number().nonnegative(),
+    linePricingBasis: LinePricingBasisSchema.optional(),
     destination: PurchaseLineDestinationSchema.default('STOCK_IN_TRANSIT'),
-    costCenter: z.string().trim().max(64).default('CC-CAMPAMENTO'),
+    costCenter: z.string().trim().max(64).default('CC-CAMP-ALIMENTACION'),
     isCapexAsset: z.boolean().default(false),
     serialOrTag: z.string().trim().max(120).optional(),
     explicitAllocations: z
@@ -413,7 +472,7 @@ export interface StockLedgerEntry {
     tenantId: string;
     siteId: string;
     canonicalSkuId: string;
-    movementType: 'INBOUND_IN_TRANSIT' | 'RECEPTION_CONFIRMED' | 'INBOUND_WAREHOUSE_DIRECT' | 'CONSUMPTION' | 'ADJUSTMENT';
+    movementType: StockLedgerMovementType;
     qtyDelta: number;
     unitSi: SupplyUnitSi;
     unitCostClp: number;
@@ -432,6 +491,7 @@ export interface CashLedgerEntry {
     netAmountClp: number;
     vatCreditClp: number;
     isCapex: boolean;
+    categoryCode?: SupplyCategoryCode;
     costCenter: string;
     referenceId: string;
     actorUid: string;
@@ -600,7 +660,7 @@ interface CatalogRule {
 
 export const BRIDGE_CATALOG_RULES: CatalogRule[] = [
     {
-        canonicalSkuId: 'sku-papas',
+        canonicalSkuId: 'SKU-VIV-PAPAS',
         itemName: 'Papas',
         regex: /\b(papa|papas)\b/i,
         categoryCode: 'VIVERES_ALIMENTACION',
@@ -612,7 +672,7 @@ export const BRIDGE_CATALOG_RULES: CatalogRule[] = [
         ],
     },
     {
-        canonicalSkuId: 'sku-mantequilla',
+        canonicalSkuId: 'SKU-SUP-MANTEQUILLA',
         itemName: 'Mantequilla',
         regex: /\b(mantequilla|mantequillas)\b/i,
         categoryCode: 'VIVERES_ALIMENTACION',
@@ -624,7 +684,7 @@ export const BRIDGE_CATALOG_RULES: CatalogRule[] = [
         ],
     },
     {
-        canonicalSkuId: 'sku-huevos',
+        canonicalSkuId: 'SKU-SUP-HUEVOS',
         itemName: 'Huevos',
         regex: /\b(huevo|huevos)\b/i,
         categoryCode: 'VIVERES_ALIMENTACION',
@@ -638,7 +698,7 @@ export const BRIDGE_CATALOG_RULES: CatalogRule[] = [
         ],
     },
     {
-        canonicalSkuId: 'sku-pan',
+        canonicalSkuId: 'SKU-SUP-PAN',
         itemName: 'Pan',
         regex: /\b(pan|marraqueta|hallulla)\b/i,
         categoryCode: 'VIVERES_ALIMENTACION',
@@ -647,7 +707,7 @@ export const BRIDGE_CATALOG_RULES: CatalogRule[] = [
         requiredSlots: ['quantity'],
     },
     {
-        canonicalSkuId: 'sku-tallarines',
+        canonicalSkuId: 'SKU-SUP-TALLARINES',
         itemName: 'Tallarines / Fideos',
         regex: /\b(tallar[ií]n|tallarines|fideo|fideos|pasta)\b/i,
         categoryCode: 'VIVERES_ALIMENTACION',
@@ -657,21 +717,58 @@ export const BRIDGE_CATALOG_RULES: CatalogRule[] = [
         packConversions: [{ regex: /\b(paquete|paquetes)\b/i, factor: 0.4, label: 'paquete (400 g)' }],
     },
     {
-        canonicalSkuId: 'sku-agua-bidon',
-        itemName: 'Agua Purificada Bidón',
-        regex: /\b(agua|bid[oó]n|bidones)\b/i,
-        categoryCode: 'AGUA_POTABLE',
-        procurementBucket: 'GAS_AGUA_COMBUSTIBLE',
+        canonicalSkuId: 'SKU-ASEO-CLORO',
+        itemName: 'Cloro Industrial / Desinfectante',
+        regex: /\b(cloro|hipoclorito|lavandina)\b/i,
+        categoryCode: 'ASEO_HIGIENE',
+        procurementBucket: 'ASEO_HIGIENE',
         unitSi: 'L',
         requiredSlots: ['quantity'],
-        packConversions: [{ regex: /\b(bid[oó]n|bidones)\b/i, factor: 20, label: 'bidón 20 L' }],
+        packConversions: [{ regex: /\b(bid[oó]n|bidones|envase)\b/i, factor: 5, label: 'bidón 5 L' }],
     },
     {
-        canonicalSkuId: 'sku-gas-glp',
+        canonicalSkuId: 'SKU-AGUA-INDUSTRIAL',
+        itemName: 'Agua Industrial / Aljibe',
+        regex: /\b(agua\s+industrial|agua\s+de\s+proceso|agua\s+no\s+potable|cami[oó]n\s+aljibe|aljibe)\b/i,
+        categoryCode: 'AGUA_INDUSTRIAL',
+        procurementBucket: 'AGUA_INDUSTRIAL_ALJIBE',
+        unitSi: 'L',
+        requiredSlots: ['quantity'],
+    },
+    {
+        canonicalSkuId: 'SKU-AGUA-BIDON',
+        itemName: 'Agua Purificada Bidón',
+        regex: /\b(agua\s+purificada|agua\s+potable|agua\s+mineral|bid[oó]n\s+(de\s+)?agua|botell[oó]n\s+(de\s+)?agua|\bagua\b)\b/i,
+        categoryCode: 'AGUA_POTABLE_BEBESTIBLE',
+        procurementBucket: 'AGUA_POTABLE',
+        unitSi: 'L',
+        requiredSlots: ['quantity'],
+        packConversions: [{ regex: /\b(bid[oó]n|bidones|botell[oó]n|botellones)\b/i, factor: 20, label: 'bidón 20 L' }],
+    },
+    {
+        canonicalSkuId: 'SKU-GAS-OXIGENO',
+        itemName: 'Oxígeno Industrial Cilindro',
+        regex: /\b(ox[ií]geno|acetileno|arg[oó]n|gas\s+industrial|gases\s+industriales|oxicorte)\b/i,
+        categoryCode: 'GASES_INDUSTRIALES',
+        procurementBucket: 'GASES_INDUSTRIALES',
+        unitSi: 'un',
+        requiredSlots: ['quantity'],
+    },
+    {
+        canonicalSkuId: 'SKU-OPM-FILTRO-ACEITE',
+        itemName: 'Repuesto / Filtro Hidráulico Maquinaria',
+        regex: /\b(filtro\s+hidr[aá]ulico|filtro\s+aceite|cilindro\s+hidr[aá]ulico|botella\s+hidr[aá]ulica|repuesto|caterpillar|komatsu|inyector|manguera\s+hidr[aá]ulica)\b/i,
+        categoryCode: 'REPUESTOS_MAQUINARIA',
+        procurementBucket: 'REPUESTOS_LUBRICANTES',
+        unitSi: 'un',
+        requiredSlots: ['quantity'],
+    },
+    {
+        canonicalSkuId: 'SKU-GAS-GLP45',
         itemName: 'Gas Licuado GLP',
-        regex: /\b(gas|glp|bal[oó]n|balones|cilindro)\b/i,
-        categoryCode: 'GAS_ENERGIA_CAMP',
-        procurementBucket: 'GAS_AGUA_COMBUSTIBLE',
+        regex: /\b(gas\s+licuado|glp|bal[oó]n\s+(de\s+)?gas|cilindro\s+(de\s+)?gas|gal[oó]n\s+(de\s+)?gas|gas\s+(15|45)\s*kg?)\b/i,
+        categoryCode: 'GAS_DOMESTICO_GLP',
+        procurementBucket: 'GAS_GLP_DOMESTICO',
         unitSi: 'kg',
         requiredSlots: ['quantity'],
         packConversions: [
@@ -680,20 +777,20 @@ export const BRIDGE_CATALOG_RULES: CatalogRule[] = [
         ],
     },
     {
-        canonicalSkuId: 'sku-pernos',
+        canonicalSkuId: 'SKU-FER-PERNOS',
         itemName: 'Pernos Industriales',
         regex: /\b(perno|pernos|tuerca|tuercas)\b/i,
         categoryCode: 'FERRETERIA_CONSTRUCCION',
-        procurementBucket: 'FERRETERIA',
+        procurementBucket: 'FERRETERIA_INSUMOS',
         unitSi: 'un',
         requiredSlots: ['quantity'],
     },
     {
-        canonicalSkuId: 'sku-cemento',
+        canonicalSkuId: 'SKU-FER-CEMENTO',
         itemName: 'Cemento Portland',
         regex: /\b(cemento)\b/i,
         categoryCode: 'FERRETERIA_CONSTRUCCION',
-        procurementBucket: 'FERRETERIA',
+        procurementBucket: 'FERRETERIA_INSUMOS',
         unitSi: 'kg',
         requiredSlots: ['quantity'],
         packConversions: [
@@ -701,7 +798,7 @@ export const BRIDGE_CATALOG_RULES: CatalogRule[] = [
         ],
     },
     {
-        canonicalSkuId: 'sku-epp-bototos',
+        canonicalSkuId: 'SKU-EPP-BOTOTOS',
         itemName: 'Zapatos / Bototos de Seguridad',
         regex: /\b(bototo|bototos|zapato\s+de\s+seguridad|zapatos\s+de\s+seguridad)\b/i,
         categoryCode: 'EPP_SEGURIDAD',
@@ -710,20 +807,21 @@ export const BRIDGE_CATALOG_RULES: CatalogRule[] = [
         requiredSlots: ['quantity', 'size'],
     },
     {
-        canonicalSkuId: 'sku-filtro-hidraulico',
-        itemName: 'Filtro Hidráulico Maquinaria',
-        regex: /\b(filtro\s+hidr[aá]ulico|filtro\s+aceite|repuesto|caterpillar|komatsu|inyector|manguera\s+hidr[aá]ulica)\b/i,
-        categoryCode: 'REPUESTOS_MAQUINARIA',
-        procurementBucket: 'REPUESTOS_OPERMAQ',
+        canonicalSkuId: 'SKU-CAPEX-COCINA',
+        itemName: 'Cocina / Refrigeración Industrial Campamento',
+        regex: /\b(cocina\s+industrial|cocinilla\s+industrial|horno\s+industrial|refrigerador|congelador)\b/i,
+        categoryCode: 'ACTIVO_EQUIPAMIENTO',
+        procurementBucket: 'ACTIVOS_CAPEX',
         unitSi: 'un',
         requiredSlots: ['quantity'],
+        isCapexAsset: true,
     },
     {
-        canonicalSkuId: 'sku-cocina-industrial',
-        itemName: 'Cocina Industrial Campamento',
-        regex: /\b(cocina|cocinilla\s+industrial|horno\s+industrial|refrigerador|congelador|generador|compresor|motobomba|soldadora)\b/i,
+        canonicalSkuId: 'SKU-CAPEX-GENERADOR',
+        itemName: 'Equipo Mayor / Generador / Soldadora',
+        regex: /\b(generador|compresor|motobomba|soldadora)\b/i,
         categoryCode: 'ACTIVO_EQUIPAMIENTO',
-        procurementBucket: 'MANTENCION_EQUIPAMIENTO',
+        procurementBucket: 'ACTIVOS_CAPEX',
         unitSi: 'un',
         requiredSlots: ['quantity'],
         isCapexAsset: true,
@@ -793,10 +891,10 @@ export function normalizeSupplyItemFromText(
                 : 'un';
 
     return {
-        canonicalSkuId: `sku-${slug || 'generico'}`,
+        canonicalSkuId: `SKU-GEN-${(slug || 'GENERICO').toUpperCase()}`,
         itemName: rawName.trim() || 'Insumo Operacional',
         categoryCode: 'OTROS_OPERACIONAL',
-        procurementBucket: 'SUPERMERCADO',
+        procurementBucket: 'FERRETERIA_INSUMOS',
         unitSi: inferredUnit,
         qtySi: typeof rawQty === 'number' && Number.isFinite(rawQty) && rawQty > 0 ? rawQty : null,
         requiredSlots: ['quantity'],
@@ -804,27 +902,60 @@ export function normalizeSupplyItemFromText(
     };
 }
 
+const DEFAULT_OPERATIONAL_BUYER_CATEGORIES: SupplyCategoryCode[] = CANONICAL_SUPPLY_CATEGORIES.filter(
+    (c) => c !== 'EXPLOSIVOS_REGULADO' && c !== 'QUIMICOS_REGULADOS'
+);
+
 export const DEFAULT_ALLOWED_CATEGORIES_BY_ROLE: Record<SupplyOperationalRole, SupplyCategoryCode[]> = {
-    CAMP_MANAGER: ['VIVERES_ALIMENTACION', 'AGUA_POTABLE', 'ASEO_HIGIENE', 'GAS_ENERGIA_CAMP', 'MANTENCION_CAMP'],
-    MECHANIC_TECH: ['REPUESTOS_MAQUINARIA', 'LUBRICANTES_FILTROS', 'HERRAMIENTAS', 'COMBUSTIBLE_FAENA'],
-    OPS_FOREMAN: ['PERFORACION_ACEROS', 'FORTIFICACION', 'FERRETERIA_CONSTRUCCION', 'HERRAMIENTAS', 'COMBUSTIBLE_FAENA'],
+    CAMP_MANAGER: [
+        'VIVERES_ALIMENTACION',
+        'AGUA_POTABLE_BEBESTIBLE',
+        'AGUA_POTABLE_SANITAR',
+        'ASEO_HIGIENE',
+        'GAS_DOMESTICO_GLP',
+        'COMBUSTIBLE_CAMPAMENTO',
+        'MANTENCION_CAMP',
+    ],
+    MECHANIC_TECH: [
+        'REPUESTOS_MAQUINARIA',
+        'LUBRICANTES_FILTROS',
+        'HERRAMIENTAS',
+        'COMBUSTIBLE_FLOTA_PROD',
+        'GASES_INDUSTRIALES',
+    ],
+    OPS_FOREMAN: [
+        'PERFORACION_ACEROS',
+        'FORTIFICACION',
+        'FERRETERIA_CONSTRUCCION',
+        'HERRAMIENTAS',
+        'AGUA_INDUSTRIAL',
+        'COMBUSTIBLE_FLOTA_PROD',
+        'GASES_INDUSTRIALES',
+    ],
     WAREHOUSE_KEEPER: [
         'VIVERES_ALIMENTACION',
-        'AGUA_POTABLE',
+        'AGUA_POTABLE_BEBESTIBLE',
+        'AGUA_POTABLE_SANITAR',
+        'AGUA_INDUSTRIAL',
         'ASEO_HIGIENE',
-        'GAS_ENERGIA_CAMP',
+        'GAS_DOMESTICO_GLP',
+        'GASES_INDUSTRIALES',
+        'COMBUSTIBLE_CAMPAMENTO',
+        'COMBUSTIBLE_FLOTA_PROD',
         'EPP_SEGURIDAD',
         'FERRETERIA_CONSTRUCCION',
         'MANTENCION_CAMP',
         'REPUESTOS_MAQUINARIA',
         'LUBRICANTES_FILTROS',
         'HERRAMIENTAS',
+        'PERFORACION_ACEROS',
+        'FORTIFICACION',
         'OTROS_OPERACIONAL',
     ],
-    HSEC_OFFICER: ['EPP_SEGURIDAD', 'AGUA_POTABLE', 'ASEO_HIGIENE'],
-    BUYER: SupplyCategoryCodeSchema.options,
-    SITE_ADMIN: SupplyCategoryCodeSchema.options,
-    OWNER_EXEC: SupplyCategoryCodeSchema.options,
+    HSEC_OFFICER: ['EPP_SEGURIDAD', 'AGUA_POTABLE_BEBESTIBLE', 'AGUA_POTABLE_SANITAR', 'ASEO_HIGIENE'],
+    BUYER: DEFAULT_OPERATIONAL_BUYER_CATEGORIES,
+    SITE_ADMIN: DEFAULT_OPERATIONAL_BUYER_CATEGORIES,
+    OWNER_EXEC: DEFAULT_OPERATIONAL_BUYER_CATEGORIES,
 };
 
 export function evaluateAtypicalFlagsForLine(params: {
@@ -1034,8 +1165,11 @@ export function verifyReceiptArithmetic(params: {
     );
     const totalClp = Math.round(params.totalAmountClp || 0);
     const netClp = Math.round(params.netAmountClp || 0);
+    const absLinesSum = Math.abs(linesSumClp);
+    const absTotal = Math.abs(totalClp);
+    const absNet = Math.abs(netClp);
 
-    if (totalClp <= 0 && linesSumClp > 0) {
+    if (absTotal <= 0 && absLinesSum > 0) {
         return {
             verified: true,
             linesSumClp,
@@ -1045,27 +1179,28 @@ export function verifyReceiptArithmetic(params: {
         };
     }
 
-    const grossDelta = Math.abs(linesSumClp - totalClp);
+    const grossDelta = Math.abs(absLinesSum - absTotal);
     if (grossDelta <= 2) {
         return {
             verified: true,
             linesSumClp,
             expectedTotalClp: totalClp,
-            deltaClp: linesSumClp - totalClp,
+            deltaClp: absLinesSum - absTotal,
             pricingBasis: 'GROSS',
         };
     }
 
-    // DTE 33 Facturas often show net item subtotals while header adds 19% IVA
-    const netDelta = Math.abs(linesSumClp - netClp);
-    if (params.documentType === 33 && netClp > 0 && netDelta <= 2) {
-        const expectedGrossFromLines = Math.round(linesSumClp * 1.19);
-        if (Math.abs(expectedGrossFromLines - totalClp) <= 5) {
+    // DTE 33 (Factura), DTE 52 (Guía) y DTE 61 (Nota de Crédito) suelen expresar `<MontoItem>` neto mientras cabecera suma 19% IVA
+    const isNetXmlDte = params.documentType === 33 || params.documentType === 52 || params.documentType === 61;
+    const netDelta = Math.abs(absLinesSum - absNet);
+    if (isNetXmlDte && absNet > 0 && netDelta <= 2) {
+        const expectedGrossFromLines = Math.round(absLinesSum * 1.19);
+        if (Math.abs(expectedGrossFromLines - absTotal) <= 5) {
             return {
                 verified: true,
                 linesSumClp,
                 expectedTotalClp: totalClp,
-                deltaClp: expectedGrossFromLines - totalClp,
+                deltaClp: expectedGrossFromLines - absTotal,
                 pricingBasis: 'NET_PLUS_VAT',
             };
         }
@@ -1075,7 +1210,7 @@ export function verifyReceiptArithmetic(params: {
         verified: false,
         linesSumClp,
         expectedTotalClp: totalClp,
-        deltaClp: linesSumClp - totalClp,
+        deltaClp: absLinesSum - absTotal,
         pricingBasis: 'MISMATCH',
     };
 }

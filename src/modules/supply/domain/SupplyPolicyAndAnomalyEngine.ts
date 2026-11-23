@@ -528,7 +528,11 @@ export function evaluateRequisitionPolicy(
             continue;
         }
 
-        const isControlled = Boolean(item.isControlled || item.sku?.isControlled);
+        const isControlled = Boolean(
+            item.isControlled ||
+                item.sku?.isControlled ||
+                item.categoryCode === 'QUIMICOS_REGULADOS'
+        );
         if (isControlled && !isDgmnExplosive && !profile.licensedForControlledItems) {
             rejectedItems.push({
                 itemKey: item.itemKey,

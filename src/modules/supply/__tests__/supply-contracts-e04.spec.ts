@@ -520,7 +520,69 @@ async function runTests(): Promise<void> {
         assert.equal(resetPayload.flushImmediately, true);
     }
 
-    console.log('\n✅ ALL E04 CANONICAL CONTRACTS, GLOBAL PRIMITIVES & NORMALIZER TESTS PASSED (3/3)!');
+    console.log('4) Testing V3-E01 contracts: 15 WS channels, warehouses, tank telemetry, ledger movement types & legacy normalizers...');
+    {
+        const contractsMod = require('../../../contracts/supply.contracts');
+        const mirrorMod = webContractsMod as Record<string, any>;
+        assert.equal(contractsMod.ANONYMITY_K_MIN, 5);
+        assert.equal(mirrorMod.ANONYMITY_K_MIN, 5);
+        assert.equal(contractsMod.CANONICAL_WHATSAPP_CHANNEL_IDS.length, 15);
+        assert.deepEqual(mirrorMod.CANONICAL_WHATSAPP_CHANNEL_IDS, contractsMod.CANONICAL_WHATSAPP_CHANNEL_IDS);
+        assert.equal(contractsMod.CANONICAL_SUPPLY_CATEGORIES.length, 21);
+        assert.deepEqual(mirrorMod.CANONICAL_SUPPLY_CATEGORIES, contractsMod.CANONICAL_SUPPLY_CATEGORIES);
+        assert.equal(contractsMod.CANONICAL_PROCUREMENT_BUCKETS.length, 15);
+        assert.deepEqual(mirrorMod.CANONICAL_PROCUREMENT_BUCKETS, contractsMod.CANONICAL_PROCUREMENT_BUCKETS);
+        assert.equal(contractsMod.STANDARD_SUPPLY_COST_CENTERS.length, 11);
+        assert.deepEqual(mirrorMod.STANDARD_SUPPLY_COST_CENTERS, contractsMod.STANDARD_SUPPLY_COST_CENTERS);
+        assert.equal(contractsMod.CANONICAL_STOCK_LEDGER_MOVEMENT_TYPES.length, 9);
+        assert.deepEqual(mirrorMod.CANONICAL_STOCK_LEDGER_MOVEMENT_TYPES, contractsMod.CANONICAL_STOCK_LEDGER_MOVEMENT_TYPES);
+
+        assert.equal(contractsMod.SupplyWhatsAppChannelIdSchema.parse('CH_CAMP_POTABLE_WATER'), 'CH_CAMP_POTABLE_WATER');
+        assert.equal(contractsMod.SupplyWhatsAppChannelIdSchema.parse('CH_CONTROLLED_DGMN'), 'CH_CONTROLLED_DGMN');
+        assert.equal(contractsMod.LinePricingBasisSchema.parse('NET'), 'NET');
+        assert.equal(contractsMod.SupplyCategoryCodeSchema.parse('AGUA_POTABLE'), 'AGUA_POTABLE_BEBESTIBLE');
+        assert.equal(contractsMod.ProcurementBucketSchema.parse('FERRETERIA'), 'FERRETERIA_INSUMOS');
+        assert.equal(contractsMod.ProcurementBucketSchema.parse('REPUESTOS_OPERMAQ'), 'REPUESTOS_LUBRICANTES');
+        assert.equal(contractsMod.StockLedgerMovementTypeSchema.parse('INBOUND_IN_TRANSIT'), 'INBOUND_TRANSIT');
+        assert.equal(contractsMod.StockLedgerMovementTypeSchema.parse('RECEPTION_CONFIRMED'), 'RECEIPT_AT_WAREHOUSE');
+        assert.equal(contractsMod.normalizeLegacyCostCenter('CC-CAMPAMENTO', 'AGUA_POTABLE_BEBESTIBLE'), 'CC-CAMP-AGUA');
+        assert.equal(contractsMod.normalizeLegacyCostCenter('CC-OPERACIONES'), 'CC-OPS-MINA');
+
+        const wh = contractsMod.SupplyWarehouseSchema.parse({
+            warehouseId: 'wh-camp-water-1',
+            tenantId: 'tenant-atacama',
+            siteId: 'site-norte',
+            code: 'BOD-AGUA-CAMP-01',
+            name: 'Estanque Agua Potable Norte',
+            warehouseClass: 'POTABLE_WATER_TANK',
+            allowedChannelIds: ['CH_CAMP_POTABLE_WATER'],
+            defaultCostCenter: 'CC-CAMP-AGUA',
+            capacityUnitSi: 'L',
+            maxCapacitySi: 40000,
+        });
+        assert.equal(wh.warehouseClass, 'POTABLE_WATER_TANK');
+        assert.equal(wh.code, 'BOD-AGUA-CAMP-01');
+
+        const tank = contractsMod.SupplyTankTelemetrySchema.parse({
+            telemetryId: 'tlm-1',
+            tenantId: 'tenant-atacama',
+            siteId: 'site-norte',
+            warehouseId: 'wh-camp-water-1',
+            warehouseClass: 'POTABLE_WATER_TANK',
+            canonicalSkuId: 'SKU-AGUA-POTABLE-CAMION',
+            measuredAtIso: '2026-11-23T12:00:00Z',
+            measuredLevelSi: 28000,
+            capacitySi: 40000,
+            occupancyPct: 70,
+            bookBalanceSi: 28000,
+            varianceSi: 0,
+            variancePct: 0,
+            measuredByUid: 'uid-camp-1',
+        });
+        assert.equal(tank.occupancyPct, 70);
+    }
+
+    console.log('\n✅ ALL E04 CANONICAL CONTRACTS, GLOBAL PRIMITIVES & NORMALIZER TESTS PASSED (4/4)!');
 }
 
 runTests().catch((err) => {

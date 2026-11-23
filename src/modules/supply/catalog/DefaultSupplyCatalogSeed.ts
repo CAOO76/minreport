@@ -1,17 +1,23 @@
 /**
- * MINREPORT · ABASTECIMIENTO — Catálogo Canónico Semilla y Perfiles Base por Rol
+ * MINREPORT · ABASTECIMIENTO — Catálogo Canónico Semilla v3.0, Taxonomía de 15 Canales WS y Perfiles Base
  *
- * Provee el seed determinístico inicial (`global_supply_catalog`) para pequeña y
- * mediana minería en Chile/LatAm cubriendo los 7 rubros de compra (`ProcurementBucket`),
- * cumplimiento Ley del Saco N° 20.949 (25 kg), activos CAPEX y reglas base por rol.
+ * Provee:
+ * - Seed determinístico unificado (`SKU-*`) para `global_supply_catalog` + tabla de alias `LEGACY_SKU_ID_ALIAS_MAP`.
+ * - Separación logística estricta Campamento vs Producción/Flota en los 15 rubros (`ProcurementBucket`),
+ *   21 categorías (`SupplyCategoryCode`) y 11 centros de costo (`CC-*`).
+ * - Metadatos de los 15 Canales WhatsApp Especializados (`SUPPLY_CHANNELS_META`, `getChannelsForProfileRole`,
+ *   `classifySkuToChannel`) y compuerta estricta DGMN (Ley N° 17.798).
  */
 
 import {
     CanonicalSupplySku,
+    ProcurementBucket,
     SupplyCategoryCode,
     SupplyCostCenter,
     SupplyMemberProfile,
     SupplyOperationalRole,
+    SupplyWarehouseClass,
+    SupplyWhatsAppChannelId,
 } from '../domain/types';
 
 export function normalizeCatalogText(input: string): string {
@@ -24,24 +30,393 @@ export function normalizeCatalogText(input: string): string {
         .trim();
 }
 
-export const CATEGORY_DEFAULT_COST_CENTER: Record<SupplyCategoryCode, SupplyCostCenter> = {
-    VIVERES_ALIMENTACION: 'CC-CAMPAMENTO',
-    AGUA_POTABLE: 'CC-CAMPAMENTO',
-    ASEO_HIGIENE: 'CC-CAMPAMENTO',
-    GAS_ENERGIA_CAMP: 'CC-CAMPAMENTO',
-    MANTENCION_CAMP: 'CC-CAMPAMENTO',
-    EPP_SEGURIDAD: 'CC-HSEC',
-    FERRETERIA_CONSTRUCCION: 'CC-OPERACIONES',
-    HERRAMIENTAS: 'CC-OPERACIONES',
-    PERFORACION_ACEROS: 'CC-OPERACIONES',
-    FORTIFICACION: 'CC-OPERACIONES',
-    EXPLOSIVOS_REGULADO: 'CC-OPERACIONES',
-    REPUESTOS_MAQUINARIA: 'CC-FLOTA',
-    LUBRICANTES_FILTROS: 'CC-FLOTA',
-    COMBUSTIBLE_FAENA: 'CC-FLOTA',
-    ACTIVO_EQUIPAMIENTO: 'CC-CAPEX',
-    OTROS_OPERACIONAL: 'CC-OPERACIONES',
+export const LEGACY_SKU_ID_ALIAS_MAP: Readonly<Record<string, string>> = {
+    'sku-papas': 'SKU-VIV-PAPAS',
+    'sku-papa-saco': 'SKU-VIV-PAPAS',
+    'sku-cebollas': 'SKU-VIV-CEBOLLAS',
+    'sku-tomates': 'SKU-VIV-TOMATES',
+    'sku-verduras': 'SKU-VIV-VERDURAS',
+    'sku-mantequilla': 'SKU-SUP-MANTEQUILLA',
+    'sku-huevos': 'SKU-SUP-HUEVOS',
+    'sku-pan': 'SKU-SUP-PAN',
+    'sku-tallarines': 'SKU-SUP-TALLARINES',
+    'sku-arroz': 'SKU-SUP-ARROZ',
+    'sku-arroz-grano': 'SKU-SUP-ARROZ',
+    'sku-aceite': 'SKU-SUP-ACEITE',
+    'sku-carne': 'SKU-SUP-CARNE',
+    'sku-cloro': 'SKU-ASEO-CLORO',
+    'sku-alcohol-gel': 'SKU-ASEO-ALCOHOL-GEL',
+    'sku-agua-bidon': 'SKU-AGUA-BIDON',
+    'sku-agua-bidon-20l': 'SKU-AGUA-BIDON',
+    'sku-agua-20l': 'SKU-AGUA-BIDON',
+    'sku-gas-glp': 'SKU-GAS-GLP45',
+    'sku-gas-glp45': 'SKU-GAS-GLP45',
+    'sku-gas-glp15': 'SKU-GAS-GLP15',
+    'sku-diesel': 'SKU-COMB-DIESEL',
+    'sku-pernos': 'SKU-FER-PERNOS',
+    'sku-cemento': 'SKU-FER-CEMENTO',
+    'sku-disco-corte': 'SKU-FER-DISCO-CORTE',
+    'sku-clavos': 'SKU-FER-CLAVOS',
+    'sku-filtro-hidraulico': 'SKU-OPM-FILTRO-ACEITE',
+    'sku-filter-cat': 'SKU-OPM-FILTRO-ACEITE',
+    'sku-filtro-aceite': 'SKU-OPM-FILTRO-ACEITE',
+    'sku-aceite-15w40': 'SKU-OPM-ACEITE-15W40',
+    'sku-manguera-hidraulica': 'SKU-OPM-MANGUERA-HID',
+    'sku-broca-perforacion': 'SKU-OPM-BROCA-PERF',
+    'sku-epp-bototos': 'SKU-EPP-BOTOTOS',
+    'sku-epp-guantes': 'SKU-EPP-GUANTES',
+    'sku-epp-casco': 'SKU-EPP-CASCO',
+    'sku-mantencion-camp': 'SKU-MANT-REPARACION',
+    'sku-cocina-industrial': 'SKU-CAPEX-COCINA',
+    'sku-generador': 'SKU-CAPEX-GENERADOR',
+    'sku-refrigerador': 'SKU-CAPEX-REFRIGERADOR',
+    'sku-detonador': 'SKU-EXP-DETONADOR',
 };
+
+export function resolveCanonicalSkuIdAlias(rawSkuId: string): string {
+    const trimmed = String(rawSkuId || '').trim();
+    if (!trimmed) return trimmed;
+    const lower = trimmed.toLowerCase();
+    return LEGACY_SKU_ID_ALIAS_MAP[lower] || trimmed;
+}
+
+export const CATEGORY_DEFAULT_COST_CENTER: Record<SupplyCategoryCode, SupplyCostCenter> = {
+    VIVERES_ALIMENTACION: 'CC-CAMP-ALIMENTACION',
+    AGUA_POTABLE_BEBESTIBLE: 'CC-CAMP-AGUA',
+    AGUA_POTABLE_SANITAR: 'CC-CAMP-AGUA',
+    AGUA_INDUSTRIAL: 'CC-OPS-AGUA-IND',
+    GAS_DOMESTICO_GLP: 'CC-CAMP-ENERGIA',
+    GASES_INDUSTRIALES: 'CC-FLOTA-MANTENCION',
+    COMBUSTIBLE_CAMPAMENTO: 'CC-CAMP-ENERGIA',
+    COMBUSTIBLE_FLOTA_PROD: 'CC-FLOTA-COMBUSTIBLE',
+    REPUESTOS_MAQUINARIA: 'CC-FLOTA-MANTENCION',
+    LUBRICANTES_FILTROS: 'CC-FLOTA-MANTENCION',
+    FERRETERIA_CONSTRUCCION: 'CC-OPS-MINA',
+    HERRAMIENTAS: 'CC-OPS-MINA',
+    PERFORACION_ACEROS: 'CC-OPS-MINA',
+    FORTIFICACION: 'CC-OPS-MINA',
+    EXPLOSIVOS_REGULADO: 'CC-OPS-TRONADURA',
+    QUIMICOS_REGULADOS: 'CC-OPS-TRONADURA',
+    ACTIVO_EQUIPAMIENTO: 'CC-CAPEX',
+    ASEO_HIGIENE: 'CC-CAMP-MANTENCION',
+    MANTENCION_CAMP: 'CC-CAMP-MANTENCION',
+    EPP_SEGURIDAD: 'CC-HSEC',
+    OTROS_OPERACIONAL: 'CC-OPS-MINA',
+};
+
+export interface SupplyChannelMeta {
+    channelId: SupplyWhatsAppChannelId;
+    domain: 'CAMPAMENTO' | 'OPERACION' | 'CONTROLADO' | 'PATRIMONIO' | 'LOGISTICA' | 'FINANZAS';
+    labelEs: string;
+    categories: readonly SupplyCategoryCode[];
+    buckets: readonly ProcurementBucket[];
+    defaultCostCenter: SupplyCostCenter;
+    defaultWarehouseClasses: readonly SupplyWarehouseClass[];
+    normativeRefs: readonly string[];
+    requiresDgmnLicense?: boolean;
+}
+
+export const SUPPLY_CHANNELS_META: Readonly<Record<SupplyWhatsAppChannelId, SupplyChannelMeta>> = {
+    CH_CAMP_FOOD: {
+        channelId: 'CH_CAMP_FOOD',
+        domain: 'CAMPAMENTO',
+        labelEs: 'Alimentación y Víveres',
+        categories: ['VIVERES_ALIMENTACION'],
+        buckets: ['VERDULERIA', 'SUPERMERCADO'],
+        defaultCostCenter: 'CC-CAMP-ALIMENTACION',
+        defaultWarehouseClasses: ['DRY_WAREHOUSE', 'COLD_STORAGE'],
+        normativeRefs: ['DS 594', 'RSA DS 977', 'Ley 20.949'],
+    },
+    CH_CAMP_POTABLE_WATER: {
+        channelId: 'CH_CAMP_POTABLE_WATER',
+        domain: 'CAMPAMENTO',
+        labelEs: 'Agua Potable Humana',
+        categories: ['AGUA_POTABLE_BEBESTIBLE', 'AGUA_POTABLE_SANITAR'],
+        buckets: ['AGUA_POTABLE'],
+        defaultCostCenter: 'CC-CAMP-AGUA',
+        defaultWarehouseClasses: ['POTABLE_WATER_TANK', 'DRY_WAREHOUSE'],
+        normativeRefs: ['DS 594 Art. 14', 'DS 28 Altitud', 'NCh 409'],
+    },
+    CH_CAMP_GLP_GAS: {
+        channelId: 'CH_CAMP_GLP_GAS',
+        domain: 'CAMPAMENTO',
+        labelEs: 'Gas Doméstico GLP',
+        categories: ['GAS_DOMESTICO_GLP'],
+        buckets: ['GAS_GLP_DOMESTICO'],
+        defaultCostCenter: 'CC-CAMP-ENERGIA',
+        defaultWarehouseClasses: ['GLP_CAGE'],
+        normativeRefs: ['SEC DS 108', 'DS 29'],
+    },
+    CH_CAMP_FUEL: {
+        channelId: 'CH_CAMP_FUEL',
+        domain: 'CAMPAMENTO',
+        labelEs: 'Combustible Campamento',
+        categories: ['COMBUSTIBLE_CAMPAMENTO'],
+        buckets: ['COMBUSTIBLE_GRANEL'],
+        defaultCostCenter: 'CC-CAMP-ENERGIA',
+        defaultWarehouseClasses: ['FUEL_TANK_CAMP'],
+        normativeRefs: ['SEC DS 160'],
+    },
+    CH_CAMP_HYGIENE_MAINT: {
+        channelId: 'CH_CAMP_HYGIENE_MAINT',
+        domain: 'CAMPAMENTO',
+        labelEs: 'Mantención y Aseo Campamento',
+        categories: ['ASEO_HIGIENE', 'MANTENCION_CAMP'],
+        buckets: ['ASEO_HIGIENE', 'MANTENCION_CAMP'],
+        defaultCostCenter: 'CC-CAMP-MANTENCION',
+        defaultWarehouseClasses: ['DRY_WAREHOUSE'],
+        normativeRefs: ['DS 594 Habitabilidad'],
+    },
+    CH_OPS_IND_WATER: {
+        channelId: 'CH_OPS_IND_WATER',
+        domain: 'OPERACION',
+        labelEs: 'Agua Industrial',
+        categories: ['AGUA_INDUSTRIAL'],
+        buckets: ['AGUA_INDUSTRIAL_ALJIBE'],
+        defaultCostCenter: 'CC-OPS-AGUA-IND',
+        defaultWarehouseClasses: ['INDUSTRIAL_WATER_POND'],
+        normativeRefs: ['DGA', 'RCA', 'DS 132'],
+    },
+    CH_OPS_FLEET_FUEL: {
+        channelId: 'CH_OPS_FLEET_FUEL',
+        domain: 'OPERACION',
+        labelEs: 'Combustible Producción y Flota',
+        categories: ['COMBUSTIBLE_FLOTA_PROD'],
+        buckets: ['COMBUSTIBLE_GRANEL'],
+        defaultCostCenter: 'CC-FLOTA-COMBUSTIBLE',
+        defaultWarehouseClasses: ['FUEL_TANK_FLEET'],
+        normativeRefs: ['SEC DS 160', 'DS 132', 'OPERMAQ'],
+    },
+    CH_OPS_IND_GASES: {
+        channelId: 'CH_OPS_IND_GASES',
+        domain: 'OPERACION',
+        labelEs: 'Gases Industriales',
+        categories: ['GASES_INDUSTRIALES'],
+        buckets: ['GASES_INDUSTRIALES'],
+        defaultCostCenter: 'CC-FLOTA-MANTENCION',
+        defaultWarehouseClasses: ['INDUSTRIAL_GAS_CAGE'],
+        normativeRefs: ['DS 43 MINSAL', 'NCh 2190'],
+    },
+    CH_OPS_PARTS_LUBES: {
+        channelId: 'CH_OPS_PARTS_LUBES',
+        domain: 'OPERACION',
+        labelEs: 'Repuestos, Lubricantes y Filtros',
+        categories: ['REPUESTOS_MAQUINARIA', 'LUBRICANTES_FILTROS'],
+        buckets: ['REPUESTOS_LUBRICANTES'],
+        defaultCostCenter: 'CC-FLOTA-MANTENCION',
+        defaultWarehouseClasses: ['DRY_WAREHOUSE', 'HAZMAT_DS43'],
+        normativeRefs: ['DS 148 RESPEL', 'OPERMAQ'],
+    },
+    CH_OPS_HARDWARE_DRILL: {
+        channelId: 'CH_OPS_HARDWARE_DRILL',
+        domain: 'OPERACION',
+        labelEs: 'Ferretería, Perforación y Fortificación',
+        categories: [
+            'FERRETERIA_CONSTRUCCION',
+            'HERRAMIENTAS',
+            'PERFORACION_ACEROS',
+            'FORTIFICACION',
+            'OTROS_OPERACIONAL',
+        ],
+        buckets: ['FERRETERIA_INSUMOS', 'PERFORACION_FORTIFICACION'],
+        defaultCostCenter: 'CC-OPS-MINA',
+        defaultWarehouseClasses: ['DRY_WAREHOUSE'],
+        normativeRefs: ['DS 132', 'Ley 20.949'],
+    },
+    CH_HSEC_EPP: {
+        channelId: 'CH_HSEC_EPP',
+        domain: 'OPERACION',
+        labelEs: 'EPP y Seguridad HSEC',
+        categories: ['EPP_SEGURIDAD'],
+        buckets: ['EPP_SEGURIDAD'],
+        defaultCostCenter: 'CC-HSEC',
+        defaultWarehouseClasses: ['DRY_WAREHOUSE'],
+        normativeRefs: ['DS 594', 'DS 132', 'ISP/CESMEC'],
+    },
+    CH_CONTROLLED_DGMN: {
+        channelId: 'CH_CONTROLLED_DGMN',
+        domain: 'CONTROLADO',
+        labelEs: 'Explosivos y Sustancias Controladas',
+        categories: ['EXPLOSIVOS_REGULADO', 'QUIMICOS_REGULADOS'],
+        buckets: ['CONTROLADOS_DGMN'],
+        defaultCostCenter: 'CC-OPS-TRONADURA',
+        defaultWarehouseClasses: ['MAGAZINE_DGMN', 'HAZMAT_DS43'],
+        normativeRefs: ['Ley N° 17.798 DGMN', 'DS 43'],
+        requiresDgmnLicense: true,
+    },
+    CH_CAPEX_ASSETS: {
+        channelId: 'CH_CAPEX_ASSETS',
+        domain: 'PATRIMONIO',
+        labelEs: 'Activos Fijos y Equipamiento CAPEX',
+        categories: ['ACTIVO_EQUIPAMIENTO'],
+        buckets: ['ACTIVOS_CAPEX'],
+        defaultCostCenter: 'CC-CAPEX',
+        defaultWarehouseClasses: ['VIRTUAL_IN_TRANSIT'],
+        normativeRefs: ['Art. 31 N° 5 LIR', 'DTE 33/34'],
+    },
+    CH_WAREHOUSE_RECEPTION: {
+        channelId: 'CH_WAREHOUSE_RECEPTION',
+        domain: 'LOGISTICA',
+        labelEs: 'Recepción Física, Salidas y Aforos',
+        categories: [],
+        buckets: [],
+        defaultCostCenter: 'CC-OPS-MINA',
+        defaultWarehouseClasses: ['DRY_WAREHOUSE', 'POTABLE_WATER_TANK', 'FUEL_TANK_FLEET'],
+        normativeRefs: ['Kardex', 'HITL Recepción'],
+    },
+    CH_DIRECT_PURCHASE_EXEC: {
+        channelId: 'CH_DIRECT_PURCHASE_EXEC',
+        domain: 'FINANZAS',
+        labelEs: 'Compras Directas, Boletas DTE y Rendición',
+        categories: [],
+        buckets: [],
+        defaultCostCenter: 'CC-OPS-MINA',
+        defaultWarehouseClasses: ['VIRTUAL_IN_TRANSIT'],
+        normativeRefs: ['SII DL 825', 'Ley 19.983 RCV 8d'],
+    },
+};
+
+export function getChannelsForProfileRole(
+    role: SupplyOperationalRole,
+    options?: { licensedForControlledItems?: boolean }
+): SupplyWhatsAppChannelId[] {
+    const hasDgmn = Boolean(options?.licensedForControlledItems);
+    switch (role) {
+        case 'CAMP_MANAGER':
+            return [
+                'CH_CAMP_FOOD',
+                'CH_CAMP_POTABLE_WATER',
+                'CH_CAMP_GLP_GAS',
+                'CH_CAMP_FUEL',
+                'CH_CAMP_HYGIENE_MAINT',
+            ];
+        case 'MECHANIC_TECH':
+            return [
+                'CH_OPS_PARTS_LUBES',
+                'CH_OPS_FLEET_FUEL',
+                'CH_OPS_IND_GASES',
+                'CH_OPS_HARDWARE_DRILL',
+                'CH_HSEC_EPP',
+            ];
+        case 'OPS_FOREMAN':
+            return [
+                'CH_OPS_HARDWARE_DRILL',
+                'CH_OPS_IND_WATER',
+                'CH_OPS_FLEET_FUEL',
+                'CH_HSEC_EPP',
+            ];
+        case 'WAREHOUSE_KEEPER':
+            return [
+                'CH_WAREHOUSE_RECEPTION',
+                'CH_CAMP_FOOD',
+                'CH_CAMP_POTABLE_WATER',
+                'CH_CAMP_GLP_GAS',
+                'CH_CAMP_FUEL',
+                'CH_CAMP_HYGIENE_MAINT',
+                'CH_OPS_IND_WATER',
+                'CH_OPS_FLEET_FUEL',
+                'CH_OPS_IND_GASES',
+                'CH_OPS_PARTS_LUBES',
+                'CH_OPS_HARDWARE_DRILL',
+                'CH_HSEC_EPP',
+            ];
+        case 'HSEC_OFFICER':
+            return ['CH_HSEC_EPP', 'CH_CAMP_POTABLE_WATER', 'CH_CAMP_HYGIENE_MAINT'];
+        case 'BUYER':
+        case 'SITE_ADMIN':
+            return [
+                'CH_CAMP_FOOD',
+                'CH_CAMP_POTABLE_WATER',
+                'CH_CAMP_GLP_GAS',
+                'CH_CAMP_FUEL',
+                'CH_CAMP_HYGIENE_MAINT',
+                'CH_OPS_IND_WATER',
+                'CH_OPS_FLEET_FUEL',
+                'CH_OPS_IND_GASES',
+                'CH_OPS_PARTS_LUBES',
+                'CH_OPS_HARDWARE_DRILL',
+                'CH_HSEC_EPP',
+                'CH_CAPEX_ASSETS',
+                'CH_WAREHOUSE_RECEPTION',
+                'CH_DIRECT_PURCHASE_EXEC',
+            ];
+        case 'OWNER_EXEC': {
+            const base: SupplyWhatsAppChannelId[] = [
+                'CH_CAMP_FOOD',
+                'CH_CAMP_POTABLE_WATER',
+                'CH_CAMP_GLP_GAS',
+                'CH_CAMP_FUEL',
+                'CH_CAMP_HYGIENE_MAINT',
+                'CH_OPS_IND_WATER',
+                'CH_OPS_FLEET_FUEL',
+                'CH_OPS_IND_GASES',
+                'CH_OPS_PARTS_LUBES',
+                'CH_OPS_HARDWARE_DRILL',
+                'CH_HSEC_EPP',
+                'CH_CAPEX_ASSETS',
+                'CH_WAREHOUSE_RECEPTION',
+                'CH_DIRECT_PURCHASE_EXEC',
+            ];
+            if (hasDgmn) base.push('CH_CONTROLLED_DGMN');
+            return base;
+        }
+    }
+}
+
+export function classifySkuToChannel(input: {
+    categoryCode: SupplyCategoryCode;
+    procurementBucket?: ProcurementBucket;
+    isCapexAsset?: boolean;
+    isControlled?: boolean;
+}): SupplyWhatsAppChannelId {
+    if (
+        input.isControlled ||
+        input.categoryCode === 'EXPLOSIVOS_REGULADO' ||
+        input.categoryCode === 'QUIMICOS_REGULADOS' ||
+        input.procurementBucket === 'CONTROLADOS_DGMN'
+    ) {
+        return 'CH_CONTROLLED_DGMN';
+    }
+    if (
+        input.isCapexAsset ||
+        input.categoryCode === 'ACTIVO_EQUIPAMIENTO' ||
+        input.procurementBucket === 'ACTIVOS_CAPEX'
+    ) {
+        return 'CH_CAPEX_ASSETS';
+    }
+    switch (input.categoryCode) {
+        case 'VIVERES_ALIMENTACION':
+            return 'CH_CAMP_FOOD';
+        case 'AGUA_POTABLE_BEBESTIBLE':
+        case 'AGUA_POTABLE_SANITAR':
+            return 'CH_CAMP_POTABLE_WATER';
+        case 'AGUA_INDUSTRIAL':
+            return 'CH_OPS_IND_WATER';
+        case 'GAS_DOMESTICO_GLP':
+            return 'CH_CAMP_GLP_GAS';
+        case 'GASES_INDUSTRIALES':
+            return 'CH_OPS_IND_GASES';
+        case 'COMBUSTIBLE_CAMPAMENTO':
+            return 'CH_CAMP_FUEL';
+        case 'COMBUSTIBLE_FLOTA_PROD':
+            return 'CH_OPS_FLEET_FUEL';
+        case 'ASEO_HIGIENE':
+        case 'MANTENCION_CAMP':
+            return 'CH_CAMP_HYGIENE_MAINT';
+        case 'REPUESTOS_MAQUINARIA':
+        case 'LUBRICANTES_FILTROS':
+            return 'CH_OPS_PARTS_LUBES';
+        case 'EPP_SEGURIDAD':
+            return 'CH_HSEC_EPP';
+        case 'FERRETERIA_CONSTRUCCION':
+        case 'HERRAMIENTAS':
+        case 'PERFORACION_ACEROS':
+        case 'FORTIFICACION':
+        case 'OTROS_OPERACIONAL':
+        default:
+            return 'CH_OPS_HARDWARE_DRILL';
+    }
+}
 
 export const DEFAULT_SUPPLY_CATALOG_SEED: readonly CanonicalSupplySku[] = [
     // ── VERDULERÍA ──────────────────────────────────────────────────────────
@@ -61,7 +436,7 @@ export const DEFAULT_SUPPLY_CATALOG_SEED: readonly CanonicalSupplySku[] = [
         leySaco25kgApplied: true,
         slotQuestionTemplate: '¿Cuántos kilos o mallas (25 kg) de papas?',
         expectedDailyPerPaxSi: 0.35,
-        defaultCostCenter: 'CC-CAMPAMENTO',
+        defaultCostCenter: 'CC-CAMP-ALIMENTACION',
     },
     {
         canonicalSkuId: 'SKU-VIV-CEBOLLAS',
@@ -79,7 +454,7 @@ export const DEFAULT_SUPPLY_CATALOG_SEED: readonly CanonicalSupplySku[] = [
         leySaco25kgApplied: true,
         slotQuestionTemplate: '¿Cuántos kilos o mallas (25 kg) de cebollas?',
         expectedDailyPerPaxSi: 0.12,
-        defaultCostCenter: 'CC-CAMPAMENTO',
+        defaultCostCenter: 'CC-CAMP-ALIMENTACION',
     },
     {
         canonicalSkuId: 'SKU-VIV-TOMATES',
@@ -96,7 +471,7 @@ export const DEFAULT_SUPPLY_CATALOG_SEED: readonly CanonicalSupplySku[] = [
         isControlled: false,
         slotQuestionTemplate: '¿Cuántos kilos o cajas de tomates?',
         expectedDailyPerPaxSi: 0.15,
-        defaultCostCenter: 'CC-CAMPAMENTO',
+        defaultCostCenter: 'CC-CAMP-ALIMENTACION',
     },
     {
         canonicalSkuId: 'SKU-VIV-VERDURAS',
@@ -112,7 +487,7 @@ export const DEFAULT_SUPPLY_CATALOG_SEED: readonly CanonicalSupplySku[] = [
         isControlled: false,
         slotQuestionTemplate: '¿Cuántos kilos de verduras?',
         expectedDailyPerPaxSi: 0.25,
-        defaultCostCenter: 'CC-CAMPAMENTO',
+        defaultCostCenter: 'CC-CAMP-ALIMENTACION',
     },
 
     // ── SUPERMERCADO ────────────────────────────────────────────────────────
@@ -131,7 +506,7 @@ export const DEFAULT_SUPPLY_CATALOG_SEED: readonly CanonicalSupplySku[] = [
         isControlled: false,
         slotQuestionTemplate: '¿Cuántos potes o panes de mantequilla?',
         expectedDailyPerPaxSi: 0.025,
-        defaultCostCenter: 'CC-CAMPAMENTO',
+        defaultCostCenter: 'CC-CAMP-ALIMENTACION',
     },
     {
         canonicalSkuId: 'SKU-SUP-HUEVOS',
@@ -148,7 +523,7 @@ export const DEFAULT_SUPPLY_CATALOG_SEED: readonly CanonicalSupplySku[] = [
         isControlled: false,
         slotQuestionTemplate: '¿Cuántas bandejas (30 un) o cuántos huevos?',
         expectedDailyPerPaxSi: 2,
-        defaultCostCenter: 'CC-CAMPAMENTO',
+        defaultCostCenter: 'CC-CAMP-ALIMENTACION',
     },
     {
         canonicalSkuId: 'SKU-SUP-PAN',
@@ -164,7 +539,7 @@ export const DEFAULT_SUPPLY_CATALOG_SEED: readonly CanonicalSupplySku[] = [
         isControlled: false,
         slotQuestionTemplate: '¿Cuántos kilos de pan?',
         expectedDailyPerPaxSi: 0.25,
-        defaultCostCenter: 'CC-CAMPAMENTO',
+        defaultCostCenter: 'CC-CAMP-ALIMENTACION',
     },
     {
         canonicalSkuId: 'SKU-SUP-TALLARINES',
@@ -181,7 +556,7 @@ export const DEFAULT_SUPPLY_CATALOG_SEED: readonly CanonicalSupplySku[] = [
         isControlled: false,
         slotQuestionTemplate: '¿Cuántos paquetes (400 g) o kilos de tallarines?',
         expectedDailyPerPaxSi: 0.1,
-        defaultCostCenter: 'CC-CAMPAMENTO',
+        defaultCostCenter: 'CC-CAMP-ALIMENTACION',
     },
     {
         canonicalSkuId: 'SKU-SUP-ARROZ',
@@ -198,7 +573,7 @@ export const DEFAULT_SUPPLY_CATALOG_SEED: readonly CanonicalSupplySku[] = [
         isControlled: false,
         slotQuestionTemplate: '¿Cuántos kilos de arroz?',
         expectedDailyPerPaxSi: 0.12,
-        defaultCostCenter: 'CC-CAMPAMENTO',
+        defaultCostCenter: 'CC-CAMP-ALIMENTACION',
     },
     {
         canonicalSkuId: 'SKU-SUP-ACEITE',
@@ -215,7 +590,7 @@ export const DEFAULT_SUPPLY_CATALOG_SEED: readonly CanonicalSupplySku[] = [
         isControlled: false,
         slotQuestionTemplate: '¿Cuántos litros de aceite vegetal?',
         expectedDailyPerPaxSi: 0.05,
-        defaultCostCenter: 'CC-CAMPAMENTO',
+        defaultCostCenter: 'CC-CAMP-ALIMENTACION',
     },
     {
         canonicalSkuId: 'SKU-SUP-CARNE',
@@ -231,14 +606,16 @@ export const DEFAULT_SUPPLY_CATALOG_SEED: readonly CanonicalSupplySku[] = [
         isControlled: false,
         slotQuestionTemplate: '¿Cuántos kilos de carne o proteína?',
         expectedDailyPerPaxSi: 0.3,
-        defaultCostCenter: 'CC-CAMPAMENTO',
+        defaultCostCenter: 'CC-CAMP-ALIMENTACION',
     },
+
+    // ── ASEO E HIGIENE CAMPAMENTO ───────────────────────────────────────────
     {
         canonicalSkuId: 'SKU-ASEO-CLORO',
         name: 'Cloro líquido',
-        aliases: ['cloro', 'cloro liquido', 'hipoclorito', 'desinfectante'],
+        aliases: ['cloro', 'cloro liquido', 'bidon de cloro', 'bidon cloro', 'hipoclorito', 'desinfectante'],
         categoryCode: 'ASEO_HIGIENE',
-        procurementBucket: 'SUPERMERCADO',
+        procurementBucket: 'ASEO_HIGIENE',
         baseUnitSi: 'L',
         unspscCode: '47131807',
         requiredSlots: ['quantity'],
@@ -248,14 +625,14 @@ export const DEFAULT_SUPPLY_CATALOG_SEED: readonly CanonicalSupplySku[] = [
         isControlled: false,
         slotQuestionTemplate: '¿Cuántos litros o bidones (5 L) de cloro?',
         expectedDailyPerPaxSi: 0.05,
-        defaultCostCenter: 'CC-CAMPAMENTO',
+        defaultCostCenter: 'CC-CAMP-MANTENCION',
     },
     {
         canonicalSkuId: 'SKU-ASEO-ALCOHOL-GEL',
         name: 'Alcohol gel higienizante',
         aliases: ['alcohol gel', 'alcohol isopropilico', 'alcohol desinfectante', 'alcohol medicinal'],
         categoryCode: 'ASEO_HIGIENE',
-        procurementBucket: 'SUPERMERCADO',
+        procurementBucket: 'ASEO_HIGIENE',
         baseUnitSi: 'L',
         unspscCode: '53131626',
         requiredSlots: ['quantity'],
@@ -267,30 +644,64 @@ export const DEFAULT_SUPPLY_CATALOG_SEED: readonly CanonicalSupplySku[] = [
         defaultCostCenter: 'CC-HSEC',
     },
 
-    // ── GAS / AGUA / COMBUSTIBLE ────────────────────────────────────────────
+    // ── AGUA POTABLE HUMANA (DS 594) VS AGUA INDUSTRIAL ──────────────────────
     {
         canonicalSkuId: 'SKU-AGUA-BIDON',
         name: 'Agua potable en bidón',
-        aliases: ['agua', 'agua potable', 'agua purificada', 'bidon de agua', 'bidon 20l', 'botellon de agua'],
-        categoryCode: 'AGUA_POTABLE',
-        procurementBucket: 'GAS_AGUA_COMBUSTIBLE',
+        aliases: ['agua potable', 'agua purificada', 'agua bebestible', 'bidon de agua', 'bidon 20l', 'botellon de agua'],
+        categoryCode: 'AGUA_POTABLE_BEBESTIBLE',
+        procurementBucket: 'AGUA_POTABLE',
         baseUnitSi: 'L',
         unspscCode: '50202301',
         requiredSlots: ['quantity'],
-        defaultPackToSi: { packLabel: 'bidon 20L', factorToSi: 20, unitSi: 'L' },
+        defaultPackToSi: { packLabel: 'bidon', factorToSi: 20, unitSi: 'L' },
         referenceUnitPriceClp: 150,
         isCapexAsset: false,
         isControlled: false,
         slotQuestionTemplate: '¿Cuántos bidones (20 L) o litros de agua potable?',
         expectedDailyPerPaxSi: 120,
-        defaultCostCenter: 'CC-CAMPAMENTO',
+        defaultCostCenter: 'CC-CAMP-AGUA',
     },
+    {
+        canonicalSkuId: 'SKU-AGUA-POTABLE-CAMION',
+        name: 'Agua potable sanitaria aljibe',
+        aliases: ['agua potable sanitaria', 'agua sanitaria campamento', 'aljibe potable', 'agua estanque potable'],
+        categoryCode: 'AGUA_POTABLE_SANITAR',
+        procurementBucket: 'AGUA_POTABLE',
+        baseUnitSi: 'L',
+        unspscCode: '10171600',
+        requiredSlots: ['quantity'],
+        defaultPackToSi: { packLabel: 'm3', factorToSi: 1000, unitSi: 'L' },
+        referenceUnitPriceClp: 25,
+        isCapexAsset: false,
+        isControlled: false,
+        slotQuestionTemplate: '¿Cuántos litros o m3 de agua potable sanitaria?',
+        expectedDailyPerPaxSi: 120,
+        defaultCostCenter: 'CC-CAMP-AGUA',
+    },
+    {
+        canonicalSkuId: 'SKU-AGUA-INDUSTRIAL',
+        name: 'Agua industrial perforación / riego / planta',
+        aliases: ['agua industrial', 'agua perforacion', 'agua de riego', 'agua chancado', 'agua planta', 'agua supresion polvo'],
+        categoryCode: 'AGUA_INDUSTRIAL',
+        procurementBucket: 'AGUA_INDUSTRIAL_ALJIBE',
+        baseUnitSi: 'm3',
+        unspscCode: '10171601',
+        requiredSlots: ['quantity'],
+        referenceUnitPriceClp: 8500,
+        isCapexAsset: false,
+        isControlled: false,
+        slotQuestionTemplate: '¿Cuántos m3 de agua industrial necesitas?',
+        defaultCostCenter: 'CC-OPS-AGUA-IND',
+    },
+
+    // ── GAS DOMÉSTICO GLP VS GASES INDUSTRIALES ──────────────────────────────
     {
         canonicalSkuId: 'SKU-GAS-GLP45',
         name: 'Gas licuado GLP 45 kg',
-        aliases: ['balon de 45', 'balon 45', 'cilindro de 45', 'gas de 45', 'glp 45', 'gas 45'],
-        categoryCode: 'GAS_ENERGIA_CAMP',
-        procurementBucket: 'GAS_AGUA_COMBUSTIBLE',
+        aliases: ['balon de 45', 'balon 45', 'cilindro de 45', 'gas de 45', 'glp 45', 'gas 45', 'gas licuado', 'gas glp'],
+        categoryCode: 'GAS_DOMESTICO_GLP',
+        procurementBucket: 'GAS_GLP_DOMESTICO',
         baseUnitSi: 'kg',
         unspscCode: '15111510',
         requiredSlots: ['quantity'],
@@ -298,16 +709,16 @@ export const DEFAULT_SUPPLY_CATALOG_SEED: readonly CanonicalSupplySku[] = [
         referenceUnitPriceClp: 1950,
         isCapexAsset: false,
         isControlled: false,
-        slotQuestionTemplate: '¿Cuántos balones de gas de 45 kg?',
+        slotQuestionTemplate: '¿Cuántos balones de gas GLP de 45 kg?',
         expectedDailyPerPaxSi: 0.4,
-        defaultCostCenter: 'CC-CAMPAMENTO',
+        defaultCostCenter: 'CC-CAMP-ENERGIA',
     },
     {
         canonicalSkuId: 'SKU-GAS-GLP15',
         name: 'Gas licuado GLP 15 kg',
         aliases: ['balon de 15', 'balon 15', 'cilindro de 15', 'gas de 15', 'glp 15', 'gas 15'],
-        categoryCode: 'GAS_ENERGIA_CAMP',
-        procurementBucket: 'GAS_AGUA_COMBUSTIBLE',
+        categoryCode: 'GAS_DOMESTICO_GLP',
+        procurementBucket: 'GAS_GLP_DOMESTICO',
         baseUnitSi: 'kg',
         unspscCode: '15111510',
         requiredSlots: ['quantity'],
@@ -315,16 +726,50 @@ export const DEFAULT_SUPPLY_CATALOG_SEED: readonly CanonicalSupplySku[] = [
         referenceUnitPriceClp: 1850,
         isCapexAsset: false,
         isControlled: false,
-        slotQuestionTemplate: '¿Cuántos balones de gas de 15 kg?',
+        slotQuestionTemplate: '¿Cuántos balones de gas GLP de 15 kg?',
         expectedDailyPerPaxSi: 0.25,
-        defaultCostCenter: 'CC-CAMPAMENTO',
+        defaultCostCenter: 'CC-CAMP-ENERGIA',
     },
     {
-        canonicalSkuId: 'SKU-COMB-DIESEL',
-        name: 'Petróleo Diésel faena',
-        aliases: ['diesel', 'petroleo', 'petroleo diesel', 'combustible diesel', 'tambor diesel'],
-        categoryCode: 'COMBUSTIBLE_FAENA',
-        procurementBucket: 'GAS_AGUA_COMBUSTIBLE',
+        canonicalSkuId: 'SKU-GAS-OXIGENO',
+        name: 'Oxígeno industrial cilindro',
+        aliases: ['oxigeno', 'cilindro de oxigeno', 'oxigeno industrial', 'gas oxigeno', 'oxicorte'],
+        categoryCode: 'GASES_INDUSTRIALES',
+        procurementBucket: 'GASES_INDUSTRIALES',
+        baseUnitSi: 'm3',
+        unspscCode: '12141904',
+        requiredSlots: ['quantity'],
+        defaultPackToSi: { packLabel: 'cilindro', factorToSi: 10, unitSi: 'm3' },
+        referenceUnitPriceClp: 9500,
+        isCapexAsset: false,
+        isControlled: false,
+        slotQuestionTemplate: '¿Cuántos m3 o cilindros de oxígeno industrial?',
+        defaultCostCenter: 'CC-FLOTA-MANTENCION',
+    },
+    {
+        canonicalSkuId: 'SKU-GAS-ACETILENO',
+        name: 'Acetileno / Argón soldadura',
+        aliases: ['acetileno', 'argon', 'gas argon', 'cilindro acetileno', 'gas soldadura'],
+        categoryCode: 'GASES_INDUSTRIALES',
+        procurementBucket: 'GASES_INDUSTRIALES',
+        baseUnitSi: 'm3',
+        unspscCode: '12141901',
+        requiredSlots: ['quantity'],
+        defaultPackToSi: { packLabel: 'cilindro', factorToSi: 6, unitSi: 'm3' },
+        referenceUnitPriceClp: 14500,
+        isCapexAsset: false,
+        isControlled: false,
+        slotQuestionTemplate: '¿Cuántos m3 o cilindros de acetileno/argón?',
+        defaultCostCenter: 'CC-FLOTA-MANTENCION',
+    },
+
+    // ── COMBUSTIBLE CAMPAMENTO VS FLOTA / PRODUCCIÓN ─────────────────────────
+    {
+        canonicalSkuId: 'SKU-COMB-DIESEL-CAMP',
+        name: 'Diésel / Parafina generador campamento',
+        aliases: ['diesel campamento', 'diesel generador', 'petroleo campamento', 'parafina', 'kerosene campamento'],
+        categoryCode: 'COMBUSTIBLE_CAMPAMENTO',
+        procurementBucket: 'COMBUSTIBLE_GRANEL',
         baseUnitSi: 'L',
         unspscCode: '15101505',
         requiredSlots: ['quantity'],
@@ -332,17 +777,33 @@ export const DEFAULT_SUPPLY_CATALOG_SEED: readonly CanonicalSupplySku[] = [
         referenceUnitPriceClp: 1080,
         isCapexAsset: false,
         isControlled: false,
-        slotQuestionTemplate: '¿Cuántos litros o tambores (200 L) de diésel?',
-        defaultCostCenter: 'CC-FLOTA',
+        slotQuestionTemplate: '¿Cuántos litros o tambores (200 L) de combustible para campamento?',
+        defaultCostCenter: 'CC-CAMP-ENERGIA',
+    },
+    {
+        canonicalSkuId: 'SKU-COMB-DIESEL',
+        name: 'Petróleo Diésel flota / producción',
+        aliases: ['diesel', 'petroleo', 'petroleo diesel', 'combustible diesel', 'diesel flota', 'tambor diesel'],
+        categoryCode: 'COMBUSTIBLE_FLOTA_PROD',
+        procurementBucket: 'COMBUSTIBLE_GRANEL',
+        baseUnitSi: 'L',
+        unspscCode: '15101505',
+        requiredSlots: ['quantity'],
+        defaultPackToSi: { packLabel: 'tambor', factorToSi: 200, unitSi: 'L' },
+        referenceUnitPriceClp: 1080,
+        isCapexAsset: false,
+        isControlled: false,
+        slotQuestionTemplate: '¿Cuántos litros o tambores (200 L) de diésel flota?',
+        defaultCostCenter: 'CC-FLOTA-COMBUSTIBLE',
     },
 
-    // ── FERRETERÍA ──────────────────────────────────────────────────────────
+    // ── FERRETERÍA, HERRAMIENTAS, PERFORACIÓN Y FORTIFICACIÓN ────────────────
     {
         canonicalSkuId: 'SKU-FER-PERNOS',
         name: 'Pernos',
         aliases: ['perno', 'pernos', 'pernos hexagonales', 'pernos de anclaje', 'perno anclaje'],
         categoryCode: 'FERRETERIA_CONSTRUCCION',
-        procurementBucket: 'FERRETERIA',
+        procurementBucket: 'FERRETERIA_INSUMOS',
         baseUnitSi: 'un',
         unspscCode: '31161600',
         requiredSlots: ['quantity'],
@@ -350,14 +811,14 @@ export const DEFAULT_SUPPLY_CATALOG_SEED: readonly CanonicalSupplySku[] = [
         isCapexAsset: false,
         isControlled: false,
         slotQuestionTemplate: '¿Cuántas unidades de pernos necesitas?',
-        defaultCostCenter: 'CC-OPERACIONES',
+        defaultCostCenter: 'CC-OPS-MINA',
     },
     {
         canonicalSkuId: 'SKU-FER-CEMENTO',
         name: 'Cemento Portland',
         aliases: ['cemento', 'saco de cemento', 'sacos de cemento', 'cemento portland'],
         categoryCode: 'FERRETERIA_CONSTRUCCION',
-        procurementBucket: 'FERRETERIA',
+        procurementBucket: 'FERRETERIA_INSUMOS',
         baseUnitSi: 'kg',
         unspscCode: '30111601',
         requiredSlots: ['quantity'],
@@ -367,14 +828,14 @@ export const DEFAULT_SUPPLY_CATALOG_SEED: readonly CanonicalSupplySku[] = [
         isControlled: false,
         leySaco25kgApplied: true,
         slotQuestionTemplate: '¿Cuántos sacos (25 kg) o kilos de cemento?',
-        defaultCostCenter: 'CC-OPERACIONES',
+        defaultCostCenter: 'CC-OPS-MINA',
     },
     {
         canonicalSkuId: 'SKU-FER-DISCO-CORTE',
         name: 'Disco de corte metal',
         aliases: ['disco de corte', 'discos de corte', 'disco esmeril', 'disco corte metal'],
         categoryCode: 'HERRAMIENTAS',
-        procurementBucket: 'FERRETERIA',
+        procurementBucket: 'FERRETERIA_INSUMOS',
         baseUnitSi: 'un',
         unspscCode: '31191506',
         requiredSlots: ['quantity'],
@@ -382,14 +843,14 @@ export const DEFAULT_SUPPLY_CATALOG_SEED: readonly CanonicalSupplySku[] = [
         isCapexAsset: false,
         isControlled: false,
         slotQuestionTemplate: '¿Cuántos discos de corte necesitas?',
-        defaultCostCenter: 'CC-OPERACIONES',
+        defaultCostCenter: 'CC-OPS-MINA',
     },
     {
         canonicalSkuId: 'SKU-FER-CLAVOS',
         name: 'Clavos corrientes',
         aliases: ['clavo', 'clavos', 'clavos corrientes'],
         categoryCode: 'FERRETERIA_CONSTRUCCION',
-        procurementBucket: 'FERRETERIA',
+        procurementBucket: 'FERRETERIA_INSUMOS',
         baseUnitSi: 'kg',
         unspscCode: '31162000',
         requiredSlots: ['quantity'],
@@ -397,31 +858,46 @@ export const DEFAULT_SUPPLY_CATALOG_SEED: readonly CanonicalSupplySku[] = [
         isCapexAsset: false,
         isControlled: false,
         slotQuestionTemplate: '¿Cuántos kilos de clavos?',
-        defaultCostCenter: 'CC-OPERACIONES',
+        defaultCostCenter: 'CC-OPS-MINA',
+    },
+    {
+        canonicalSkuId: 'SKU-OPM-BROCA-PERF',
+        name: 'Broca perforación botones',
+        aliases: ['broca', 'brocas', 'broca perforacion', 'bit perforacion', 'barra perforacion'],
+        categoryCode: 'PERFORACION_ACEROS',
+        procurementBucket: 'PERFORACION_FORTIFICACION',
+        baseUnitSi: 'un',
+        unspscCode: '20111600',
+        requiredSlots: ['quantity', 'linkedAssetId'],
+        referenceUnitPriceClp: 95000,
+        isCapexAsset: false,
+        isControlled: false,
+        slotQuestionTemplate: '¿Cuántas brocas de perforación y para qué perforadora?',
+        defaultCostCenter: 'CC-OPS-MINA',
     },
 
-    // ── REPUESTOS OPERMAQ ───────────────────────────────────────────────────
+    // ── REPUESTOS Y LUBRICANTES OPERMAQ ──────────────────────────────────────
     {
         canonicalSkuId: 'SKU-OPM-FILTRO-ACEITE',
-        name: 'Filtro de aceite motor maquinaria',
-        aliases: ['filtro de aceite', 'filtro aceite', 'filtros de aceite', 'filtro motor'],
+        name: 'Filtro de aceite / hidráulico maquinaria',
+        aliases: ['filtro de aceite', 'filtro aceite', 'filtros de aceite', 'filtro motor', 'filtro hidraulico'],
         categoryCode: 'LUBRICANTES_FILTROS',
-        procurementBucket: 'REPUESTOS_OPERMAQ',
+        procurementBucket: 'REPUESTOS_LUBRICANTES',
         baseUnitSi: 'un',
         unspscCode: '40161504',
         requiredSlots: ['quantity', 'linkedAssetId'],
         referenceUnitPriceClp: 28000,
         isCapexAsset: false,
         isControlled: false,
-        slotQuestionTemplate: '¿Cuántos filtros de aceite y para qué equipo (código máquina)?',
-        defaultCostCenter: 'CC-FLOTA',
+        slotQuestionTemplate: '¿Cuántos filtros de aceite/hidráulico y para qué equipo (código máquina)?',
+        defaultCostCenter: 'CC-FLOTA-MANTENCION',
     },
     {
         canonicalSkuId: 'SKU-OPM-ACEITE-15W40',
         name: 'Aceite motor 15W-40',
         aliases: ['aceite 15w40', 'aceite 15w-40', 'aceite motor', 'lubricante motor', 'balde aceite'],
         categoryCode: 'LUBRICANTES_FILTROS',
-        procurementBucket: 'REPUESTOS_OPERMAQ',
+        procurementBucket: 'REPUESTOS_LUBRICANTES',
         baseUnitSi: 'L',
         unspscCode: '15121501',
         requiredSlots: ['quantity', 'linkedAssetId'],
@@ -430,40 +906,25 @@ export const DEFAULT_SUPPLY_CATALOG_SEED: readonly CanonicalSupplySku[] = [
         isCapexAsset: false,
         isControlled: false,
         slotQuestionTemplate: '¿Cuántos baldes (20 L) o litros de aceite 15W-40 y para qué equipo?',
-        defaultCostCenter: 'CC-FLOTA',
+        defaultCostCenter: 'CC-FLOTA-MANTENCION',
     },
     {
         canonicalSkuId: 'SKU-OPM-MANGUERA-HID',
-        name: 'Manguera hidráulica alta presión',
-        aliases: ['manguera hidraulica', 'manguera alta presion', 'latiguillo hidraulico'],
+        name: 'Manguera / Cilindro hidráulico alta presión',
+        aliases: ['manguera hidraulica', 'manguera alta presion', 'latiguillo hidraulico', 'cilindro hidraulico', 'piston hidraulico'],
         categoryCode: 'REPUESTOS_MAQUINARIA',
-        procurementBucket: 'REPUESTOS_OPERMAQ',
+        procurementBucket: 'REPUESTOS_LUBRICANTES',
         baseUnitSi: 'm',
         unspscCode: '40142008',
         requiredSlots: ['quantity', 'linkedAssetId'],
         referenceUnitPriceClp: 18500,
         isCapexAsset: false,
         isControlled: false,
-        slotQuestionTemplate: '¿Cuántos metros de manguera hidráulica y para qué máquina?',
-        defaultCostCenter: 'CC-FLOTA',
-    },
-    {
-        canonicalSkuId: 'SKU-OPM-BROCA-PERF',
-        name: 'Broca perforación botones',
-        aliases: ['broca', 'brocas', 'broca perforacion', 'bit perforacion'],
-        categoryCode: 'PERFORACION_ACEROS',
-        procurementBucket: 'REPUESTOS_OPERMAQ',
-        baseUnitSi: 'un',
-        unspscCode: '20111600',
-        requiredSlots: ['quantity', 'linkedAssetId'],
-        referenceUnitPriceClp: 95000,
-        isCapexAsset: false,
-        isControlled: false,
-        slotQuestionTemplate: '¿Cuántas brocas de perforación y para qué perforadora?',
-        defaultCostCenter: 'CC-OPERACIONES',
+        slotQuestionTemplate: '¿Cuántos metros/unidades y para qué máquina?',
+        defaultCostCenter: 'CC-FLOTA-MANTENCION',
     },
 
-    // ── EPP SEGURIDAD ───────────────────────────────────────────────────────
+    // ── EPP SEGURIDAD HSEC ──────────────────────────────────────────────────
     {
         canonicalSkuId: 'SKU-EPP-BOTOTOS',
         name: 'Bototos de seguridad',
@@ -510,13 +971,13 @@ export const DEFAULT_SUPPLY_CATALOG_SEED: readonly CanonicalSupplySku[] = [
         defaultCostCenter: 'CC-HSEC',
     },
 
-    // ── MANTENCIÓN Y ACTIVOS CAPEX ──────────────────────────────────────────
+    // ── MANTENCIÓN CAMPAMENTO Y ACTIVOS CAPEX SEPARADOS ─────────────────────
     {
         canonicalSkuId: 'SKU-MANT-REPARACION',
         name: 'Reparación / Mantención campamento',
         aliases: ['reparacion', 'reparar', 'mantencion campamento', 'arreglo', 'fuga de agua', 'calefont roto'],
         categoryCode: 'MANTENCION_CAMP',
-        procurementBucket: 'MANTENCION_EQUIPAMIENTO',
+        procurementBucket: 'MANTENCION_CAMP',
         baseUnitSi: 'un',
         unspscCode: '72101500',
         requiredSlots: ['location', 'photoOptional'],
@@ -524,14 +985,14 @@ export const DEFAULT_SUPPLY_CATALOG_SEED: readonly CanonicalSupplySku[] = [
         isCapexAsset: false,
         isControlled: false,
         slotQuestionTemplate: '¿En qué ubicación exacta del campamento es la reparación? (puedes adjuntar foto opcional)',
-        defaultCostCenter: 'CC-CAMPAMENTO',
+        defaultCostCenter: 'CC-CAMP-MANTENCION',
     },
     {
         canonicalSkuId: 'SKU-CAPEX-COCINA',
         name: 'Cocina industrial campamento',
-        aliases: ['cocina', 'cocina industrial', 'cocina 4 platos', 'cocina 6 platos', 'cocina campamento'],
+        aliases: ['cocina', 'cocina industrial', 'cocinilla industrial', 'horno industrial', 'cocina 4 platos', 'cocina 6 platos', 'cocina campamento'],
         categoryCode: 'ACTIVO_EQUIPAMIENTO',
-        procurementBucket: 'MANTENCION_EQUIPAMIENTO',
+        procurementBucket: 'ACTIVOS_CAPEX',
         baseUnitSi: 'un',
         unspscCode: '48101500',
         requiredSlots: ['quantity'],
@@ -546,7 +1007,7 @@ export const DEFAULT_SUPPLY_CATALOG_SEED: readonly CanonicalSupplySku[] = [
         name: 'Generador eléctrico faena',
         aliases: ['generador', 'grupo electrogeno', 'generador electrico', 'planta electrica'],
         categoryCode: 'ACTIVO_EQUIPAMIENTO',
-        procurementBucket: 'MANTENCION_EQUIPAMIENTO',
+        procurementBucket: 'ACTIVOS_CAPEX',
         baseUnitSi: 'un',
         unspscCode: '26111601',
         requiredSlots: ['quantity'],
@@ -561,7 +1022,7 @@ export const DEFAULT_SUPPLY_CATALOG_SEED: readonly CanonicalSupplySku[] = [
         name: 'Refrigerador / Congelador industrial',
         aliases: ['refrigerador', 'congelador', 'freezer', 'refrigerador industrial'],
         categoryCode: 'ACTIVO_EQUIPAMIENTO',
-        procurementBucket: 'MANTENCION_EQUIPAMIENTO',
+        procurementBucket: 'ACTIVOS_CAPEX',
         baseUnitSi: 'un',
         unspscCode: '48101700',
         requiredSlots: ['quantity'],
@@ -571,14 +1032,29 @@ export const DEFAULT_SUPPLY_CATALOG_SEED: readonly CanonicalSupplySku[] = [
         slotQuestionTemplate: '¿Cuántos refrigeradores o congeladores necesitas?',
         defaultCostCenter: 'CC-CAPEX',
     },
+    {
+        canonicalSkuId: 'SKU-CAPEX-EQUIPO-TALLER',
+        name: 'Equipo industrial taller (soldadora / compresor / motobomba)',
+        aliases: ['soldadora', 'maquina de soldar', 'compresor', 'motobomba'],
+        categoryCode: 'ACTIVO_EQUIPAMIENTO',
+        procurementBucket: 'ACTIVOS_CAPEX',
+        baseUnitSi: 'un',
+        unspscCode: '23271400',
+        requiredSlots: ['quantity'],
+        referenceUnitPriceClp: 890000,
+        isCapexAsset: true,
+        isControlled: false,
+        slotQuestionTemplate: '¿Cuántos equipos industriales de taller necesitas?',
+        defaultCostCenter: 'CC-CAPEX',
+    },
 
-    // ── EXPLOSIVOS REGULADOS (CONTROLADO) ───────────────────────────────────
+    // ── CONTROLADOS DGMN (LEY N° 17.798 & DS 43) ────────────────────────────
     {
         canonicalSkuId: 'SKU-EXP-DETONADOR',
         name: 'Detonador / Accesorio de tronadura',
         aliases: ['detonador', 'detonadores', 'explosivo', 'explosivos', 'anfo', 'dinamita', 'tronadura'],
         categoryCode: 'EXPLOSIVOS_REGULADO',
-        procurementBucket: 'FERRETERIA',
+        procurementBucket: 'CONTROLADOS_DGMN',
         baseUnitSi: 'un',
         unspscCode: '12131500',
         requiredSlots: ['quantity'],
@@ -586,25 +1062,44 @@ export const DEFAULT_SUPPLY_CATALOG_SEED: readonly CanonicalSupplySku[] = [
         isCapexAsset: false,
         isControlled: true,
         slotQuestionTemplate: '¿Cuántas unidades reguladas de tronadura (requiere licencia DGMN)?',
-        defaultCostCenter: 'CC-OPERACIONES',
+        defaultCostCenter: 'CC-OPS-TRONADURA',
+    },
+    {
+        canonicalSkuId: 'SKU-QUIM-REACTIVO',
+        name: 'Sustancia química controlada DS 43',
+        aliases: ['acido sulfurico', 'reactivo controlado', 'cianuro', 'peroxido industrial'],
+        categoryCode: 'QUIMICOS_REGULADOS',
+        procurementBucket: 'CONTROLADOS_DGMN',
+        baseUnitSi: 'L',
+        unspscCode: '12161500',
+        requiredSlots: ['quantity'],
+        referenceUnitPriceClp: 12500,
+        isCapexAsset: false,
+        isControlled: true,
+        slotQuestionTemplate: '¿Cuántos litros de sustancia controlada DS 43 (requiere autorización vigente)?',
+        defaultCostCenter: 'CC-OPS-TRONADURA',
     },
 ];
 
 const ALL_STANDARD_CATEGORIES: SupplyCategoryCode[] = [
     'VIVERES_ALIMENTACION',
-    'AGUA_POTABLE',
-    'ASEO_HIGIENE',
-    'GAS_ENERGIA_CAMP',
-    'EPP_SEGURIDAD',
-    'FERRETERIA_CONSTRUCCION',
-    'MANTENCION_CAMP',
+    'AGUA_POTABLE_BEBESTIBLE',
+    'AGUA_POTABLE_SANITAR',
+    'AGUA_INDUSTRIAL',
+    'GAS_DOMESTICO_GLP',
+    'GASES_INDUSTRIALES',
+    'COMBUSTIBLE_CAMPAMENTO',
+    'COMBUSTIBLE_FLOTA_PROD',
     'REPUESTOS_MAQUINARIA',
     'LUBRICANTES_FILTROS',
+    'FERRETERIA_CONSTRUCCION',
+    'HERRAMIENTAS',
     'PERFORACION_ACEROS',
     'FORTIFICACION',
-    'COMBUSTIBLE_FAENA',
-    'HERRAMIENTAS',
     'ACTIVO_EQUIPAMIENTO',
+    'ASEO_HIGIENE',
+    'MANTENCION_CAMP',
+    'EPP_SEGURIDAD',
     'OTROS_OPERACIONAL',
 ];
 
@@ -613,18 +1108,20 @@ export const DEFAULT_ROLE_PROFILES: Record<SupplyOperationalRole, SupplyMemberPr
         role: 'CAMP_MANAGER',
         allowedCategories: [
             'VIVERES_ALIMENTACION',
-            'AGUA_POTABLE',
+            'AGUA_POTABLE_BEBESTIBLE',
+            'AGUA_POTABLE_SANITAR',
+            'GAS_DOMESTICO_GLP',
+            'COMBUSTIBLE_CAMPAMENTO',
             'ASEO_HIGIENE',
-            'GAS_ENERGIA_CAMP',
             'MANTENCION_CAMP',
         ],
-        deniedCategories: ['EXPLOSIVOS_REGULADO'],
+        deniedCategories: ['EXPLOSIVOS_REGULADO', 'QUIMICOS_REGULADOS'],
         maxRequisitionClp: 1_500_000,
         canRecordDirectPurchase: false,
         autoApproveDirectPurchase: false,
         allowCapex: false,
         licensedForControlledItems: false,
-        defaultCostCenter: 'CC-CAMPAMENTO',
+        defaultCostCenter: 'CC-CAMP-ALIMENTACION',
         assignedSiteIds: [],
         communicationStyle: { register: 'COLLOQUIAL_FIELD', preferredModality: 'HYBRID', dialect: 'es-CL' },
     },
@@ -633,18 +1130,19 @@ export const DEFAULT_ROLE_PROFILES: Record<SupplyOperationalRole, SupplyMemberPr
         allowedCategories: [
             'REPUESTOS_MAQUINARIA',
             'LUBRICANTES_FILTROS',
+            'GASES_INDUSTRIALES',
             'HERRAMIENTAS',
-            'COMBUSTIBLE_FAENA',
+            'COMBUSTIBLE_FLOTA_PROD',
             'FERRETERIA_CONSTRUCCION',
             'EPP_SEGURIDAD',
         ],
-        deniedCategories: ['EXPLOSIVOS_REGULADO'],
+        deniedCategories: ['EXPLOSIVOS_REGULADO', 'QUIMICOS_REGULADOS'],
         maxRequisitionClp: 2_500_000,
         canRecordDirectPurchase: false,
         autoApproveDirectPurchase: false,
         allowCapex: false,
         licensedForControlledItems: false,
-        defaultCostCenter: 'CC-FLOTA',
+        defaultCostCenter: 'CC-FLOTA-MANTENCION',
         assignedSiteIds: [],
         communicationStyle: { register: 'TECHNICAL_DIRECT', preferredModality: 'HYBRID', dialect: 'es-CL' },
     },
@@ -655,37 +1153,44 @@ export const DEFAULT_ROLE_PROFILES: Record<SupplyOperationalRole, SupplyMemberPr
             'HERRAMIENTAS',
             'PERFORACION_ACEROS',
             'FORTIFICACION',
+            'AGUA_INDUSTRIAL',
             'EPP_SEGURIDAD',
-            'COMBUSTIBLE_FAENA',
+            'COMBUSTIBLE_FLOTA_PROD',
             'OTROS_OPERACIONAL',
         ],
-        deniedCategories: [],
+        deniedCategories: ['EXPLOSIVOS_REGULADO', 'QUIMICOS_REGULADOS'],
         maxRequisitionClp: 3_000_000,
         canRecordDirectPurchase: false,
         autoApproveDirectPurchase: false,
         allowCapex: false,
         licensedForControlledItems: false,
-        defaultCostCenter: 'CC-OPERACIONES',
+        defaultCostCenter: 'CC-OPS-MINA',
         assignedSiteIds: [],
         communicationStyle: { register: 'TECHNICAL_DIRECT', preferredModality: 'HYBRID', dialect: 'es-CL' },
     },
     WAREHOUSE_KEEPER: {
         role: 'WAREHOUSE_KEEPER',
         allowedCategories: ALL_STANDARD_CATEGORIES.filter((c) => c !== 'ACTIVO_EQUIPAMIENTO'),
-        deniedCategories: ['EXPLOSIVOS_REGULADO'],
+        deniedCategories: ['EXPLOSIVOS_REGULADO', 'QUIMICOS_REGULADOS'],
         maxRequisitionClp: 2_000_000,
         canRecordDirectPurchase: false,
         autoApproveDirectPurchase: false,
         allowCapex: false,
         licensedForControlledItems: false,
-        defaultCostCenter: 'CC-OPERACIONES',
+        defaultCostCenter: 'CC-OPS-MINA',
         assignedSiteIds: [],
         communicationStyle: { register: 'TECHNICAL_DIRECT', preferredModality: 'TEXT', dialect: 'es-CL' },
     },
     HSEC_OFFICER: {
         role: 'HSEC_OFFICER',
-        allowedCategories: ['EPP_SEGURIDAD', 'AGUA_POTABLE', 'ASEO_HIGIENE', 'MANTENCION_CAMP'],
-        deniedCategories: ['EXPLOSIVOS_REGULADO'],
+        allowedCategories: [
+            'EPP_SEGURIDAD',
+            'AGUA_POTABLE_BEBESTIBLE',
+            'AGUA_POTABLE_SANITAR',
+            'ASEO_HIGIENE',
+            'MANTENCION_CAMP',
+        ],
+        deniedCategories: ['EXPLOSIVOS_REGULADO', 'QUIMICOS_REGULADOS'],
         maxRequisitionClp: 2_000_000,
         canRecordDirectPurchase: false,
         autoApproveDirectPurchase: false,
@@ -698,39 +1203,40 @@ export const DEFAULT_ROLE_PROFILES: Record<SupplyOperationalRole, SupplyMemberPr
     BUYER: {
         role: 'BUYER',
         allowedCategories: ALL_STANDARD_CATEGORIES,
-        deniedCategories: ['EXPLOSIVOS_REGULADO'],
+        deniedCategories: ['EXPLOSIVOS_REGULADO', 'QUIMICOS_REGULADOS'],
         maxRequisitionClp: 5_000_000,
         canRecordDirectPurchase: true,
         autoApproveDirectPurchase: true,
         allowCapex: true,
         licensedForControlledItems: false,
-        defaultCostCenter: 'CC-OPERACIONES',
+        defaultCostCenter: 'CC-OPS-MINA',
         assignedSiteIds: [],
         communicationStyle: { register: 'TECHNICAL_DIRECT', preferredModality: 'TEXT', dialect: 'es-CL' },
     },
     SITE_ADMIN: {
         role: 'SITE_ADMIN',
         allowedCategories: ALL_STANDARD_CATEGORIES,
-        deniedCategories: ['EXPLOSIVOS_REGULADO'],
+        deniedCategories: ['EXPLOSIVOS_REGULADO', 'QUIMICOS_REGULADOS'],
         maxRequisitionClp: 8_000_000,
         canRecordDirectPurchase: true,
         autoApproveDirectPurchase: true,
         allowCapex: true,
         licensedForControlledItems: false,
-        defaultCostCenter: 'CC-OPERACIONES',
+        defaultCostCenter: 'CC-OPS-MINA',
         assignedSiteIds: [],
         communicationStyle: { register: 'EXECUTIVE_BRIEF', preferredModality: 'TEXT', dialect: 'es-CL' },
     },
     OWNER_EXEC: {
         role: 'OWNER_EXEC',
-        allowedCategories: [...ALL_STANDARD_CATEGORIES, 'EXPLOSIVOS_REGULADO'],
+        allowedCategories: ALL_STANDARD_CATEGORIES,
         deniedCategories: [],
         maxRequisitionClp: undefined,
         canRecordDirectPurchase: true,
         autoApproveDirectPurchase: true,
         allowCapex: true,
-        licensedForControlledItems: true,
-        defaultCostCenter: 'CC-OPERACIONES',
+        // Compuerta estricta DGMN: jamás se concede licencia controlada sin resolución DGMN vigente
+        licensedForControlledItems: false,
+        defaultCostCenter: 'CC-OPS-MINA',
         assignedSiteIds: [],
         communicationStyle: { register: 'EXECUTIVE_BRIEF', preferredModality: 'HYBRID', dialect: 'es-CL' },
     },
@@ -740,13 +1246,19 @@ export function findCanonicalSkuById(
     canonicalSkuId: string,
     customCatalog?: readonly CanonicalSupplySku[]
 ): CanonicalSupplySku | undefined {
-    const target = String(canonicalSkuId || '').trim();
-    if (!target) return undefined;
+    const rawTarget = String(canonicalSkuId || '').trim();
+    if (!rawTarget) return undefined;
+    const resolvedTarget = resolveCanonicalSkuIdAlias(rawTarget);
     if (customCatalog) {
-        const customHit = customCatalog.find((item) => item.canonicalSkuId === target);
+        const customHit =
+            customCatalog.find((item) => item.canonicalSkuId === rawTarget) ||
+            customCatalog.find((item) => item.canonicalSkuId === resolvedTarget);
         if (customHit) return customHit;
     }
-    return DEFAULT_SUPPLY_CATALOG_SEED.find((item) => item.canonicalSkuId === target);
+    return (
+        DEFAULT_SUPPLY_CATALOG_SEED.find((item) => item.canonicalSkuId === resolvedTarget) ||
+        DEFAULT_SUPPLY_CATALOG_SEED.find((item) => item.canonicalSkuId === rawTarget)
+    );
 }
 
 /**

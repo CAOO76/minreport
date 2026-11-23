@@ -355,7 +355,10 @@ test('2.2 SupplyPolicyAndAnomalyEngine: 5 banderas atípicas y modo FLAG_AND_ACC
         ],
         {
             requesterRole: 'OWNER_EXEC',
-            memberProfile: DEFAULT_ROLE_PROFILES.OWNER_EXEC,
+            memberProfile: {
+                ...DEFAULT_ROLE_PROFILES.OWNER_EXEC,
+                licensedForControlledItems: true,
+            },
             demandNature: 'PLANNED_ENGINEERING',
         }
     );
@@ -652,64 +655,64 @@ test('4.1 SmartShoppingListConsolidator: consolida 13 requisiciones mixtas por c
             },
         ]),
         // 7. Ferretería OPEN (pernos 20 un)
-        mkReq('REQ-07', 'CC-OPERACIONES', 'WA_OPS', [
+        mkReq('REQ-07', 'CC-OPS-MINA', 'WA_OPS', [
             {
                 lineId: 'L1', canonicalSkuId: 'SKU-FER-PERNOS', description: 'Pernos',
-                categoryCode: 'FERRETERIA_CONSTRUCCION', procurementBucket: 'FERRETERIA', unitSi: 'un',
+                categoryCode: 'FERRETERIA_CONSTRUCCION', procurementBucket: 'FERRETERIA_INSUMOS', unitSi: 'un',
                 qtyRequested: 20, qtyPurchased: 0, qtyReceived: 0, qtyPending: 20,
                 lineStatus: 'OPEN', atypicalFlags: [], fulfillmentChannel: 'MANUAL_LOCAL_PURCHASE', urgency: 'STANDARD',
             },
         ]),
         // 8. Ferretería PARTIAL (pernos 15 un pendientes) + cemento CRITICAL (100 kg)
-        mkReq('REQ-08', 'CC-OPERACIONES', 'MODULE_PLANNING', [
+        mkReq('REQ-08', 'CC-OPS-MINA', 'MODULE_PLANNING', [
             {
                 lineId: 'L1', canonicalSkuId: 'SKU-FER-PERNOS', description: 'Pernos',
-                categoryCode: 'FERRETERIA_CONSTRUCCION', procurementBucket: 'FERRETERIA', unitSi: 'un',
+                categoryCode: 'FERRETERIA_CONSTRUCCION', procurementBucket: 'FERRETERIA_INSUMOS', unitSi: 'un',
                 qtyRequested: 30, qtyPurchased: 15, qtyReceived: 15, qtyPending: 15,
                 lineStatus: 'PARTIAL', atypicalFlags: [], fulfillmentChannel: 'MANUAL_LOCAL_PURCHASE', urgency: 'STANDARD',
             },
             {
                 lineId: 'L2', canonicalSkuId: 'SKU-FER-CEMENTO', description: 'Cemento Portland',
-                categoryCode: 'FERRETERIA_CONSTRUCCION', procurementBucket: 'FERRETERIA', unitSi: 'kg',
+                categoryCode: 'FERRETERIA_CONSTRUCCION', procurementBucket: 'FERRETERIA_INSUMOS', unitSi: 'kg',
                 qtyRequested: 100, qtyPurchased: 0, qtyReceived: 0, qtyPending: 100,
                 lineStatus: 'OPEN', atypicalFlags: [], fulfillmentChannel: 'MANUAL_LOCAL_PURCHASE', urgency: 'CRITICAL',
             },
         ], 'PARTIAL'),
         // 9. Ferretería OPEN (clavos 10 kg) + línea YA FULFILLED (no debe sumarse!)
-        mkReq('REQ-09', 'CC-OPERACIONES', 'WA_OPS', [
+        mkReq('REQ-09', 'CC-OPS-MINA', 'WA_OPS', [
             {
                 lineId: 'L1', canonicalSkuId: 'SKU-FER-CLAVOS', description: 'Clavos corrientes',
-                categoryCode: 'FERRETERIA_CONSTRUCCION', procurementBucket: 'FERRETERIA', unitSi: 'kg',
+                categoryCode: 'FERRETERIA_CONSTRUCCION', procurementBucket: 'FERRETERIA_INSUMOS', unitSi: 'kg',
                 qtyRequested: 10, qtyPurchased: 0, qtyReceived: 0, qtyPending: 10,
                 lineStatus: 'OPEN', atypicalFlags: [], fulfillmentChannel: 'MANUAL_LOCAL_PURCHASE', urgency: 'STANDARD',
             },
             {
                 lineId: 'L2', canonicalSkuId: 'SKU-FER-PERNOS', description: 'Pernos ya cubiertos',
-                categoryCode: 'FERRETERIA_CONSTRUCCION', procurementBucket: 'FERRETERIA', unitSi: 'un',
+                categoryCode: 'FERRETERIA_CONSTRUCCION', procurementBucket: 'FERRETERIA_INSUMOS', unitSi: 'un',
                 qtyRequested: 50, qtyPurchased: 50, qtyReceived: 50, qtyPending: 0,
                 lineStatus: 'FULFILLED', atypicalFlags: [], fulfillmentChannel: 'MANUAL_LOCAL_PURCHASE', urgency: 'STANDARD',
             },
         ], 'PARTIAL'),
         // 10. Repuestos OPERMAQ CRITICAL (filtro aceite 3 un)
-        mkReq('REQ-10', 'CC-FLOTA', 'MODULE_OPERMAQ', [
+        mkReq('REQ-10', 'CC-FLOTA-MANTENCION', 'MODULE_OPERMAQ', [
             {
                 lineId: 'L1', canonicalSkuId: 'SKU-OPM-FILTRO-ACEITE', description: 'Filtro de aceite motor',
-                categoryCode: 'LUBRICANTES_FILTROS', procurementBucket: 'REPUESTOS_OPERMAQ', unitSi: 'un',
+                categoryCode: 'LUBRICANTES_FILTROS', procurementBucket: 'REPUESTOS_LUBRICANTES', unitSi: 'un',
                 qtyRequested: 3, qtyPurchased: 0, qtyReceived: 0, qtyPending: 3,
                 lineStatus: 'OPEN', atypicalFlags: [], fulfillmentChannel: 'MANUAL_LOCAL_PURCHASE', urgency: 'CRITICAL',
             },
         ]),
         // 11. Repuestos OPERMAQ OPEN (filtro aceite 2 un + aceite 15W40 40 L)
-        mkReq('REQ-11', 'CC-FLOTA', 'WA_MECHANIC', [
+        mkReq('REQ-11', 'CC-FLOTA-MANTENCION', 'WA_MECHANIC', [
             {
                 lineId: 'L1', canonicalSkuId: 'SKU-OPM-FILTRO-ACEITE', description: 'Filtro de aceite motor',
-                categoryCode: 'LUBRICANTES_FILTROS', procurementBucket: 'REPUESTOS_OPERMAQ', unitSi: 'un',
+                categoryCode: 'LUBRICANTES_FILTROS', procurementBucket: 'REPUESTOS_LUBRICANTES', unitSi: 'un',
                 qtyRequested: 2, qtyPurchased: 0, qtyReceived: 0, qtyPending: 2,
                 lineStatus: 'OPEN', atypicalFlags: [], fulfillmentChannel: 'MANUAL_LOCAL_PURCHASE', urgency: 'STANDARD',
             },
             {
                 lineId: 'L2', canonicalSkuId: 'SKU-OPM-ACEITE-15W40', description: 'Aceite motor 15W-40',
-                categoryCode: 'LUBRICANTES_FILTROS', procurementBucket: 'REPUESTOS_OPERMAQ', unitSi: 'L',
+                categoryCode: 'LUBRICANTES_FILTROS', procurementBucket: 'REPUESTOS_LUBRICANTES', unitSi: 'L',
                 qtyRequested: 40, qtyPurchased: 0, qtyReceived: 0, qtyPending: 40,
                 lineStatus: 'OPEN', atypicalFlags: [], fulfillmentChannel: 'MANUAL_LOCAL_PURCHASE', urgency: 'STANDARD',
             },
@@ -729,17 +732,17 @@ test('4.1 SmartShoppingListConsolidator: consolida 13 requisiciones mixtas por c
                 lineStatus: 'OPEN', atypicalFlags: [], fulfillmentChannel: 'MANUAL_LOCAL_PURCHASE', urgency: 'STANDARD',
             },
         ]),
-        // 13. Gas / Agua CRITICAL (GLP 45 kg * 2 = 90 kg + agua bidón 200 L)
-        mkReq('REQ-13', 'CC-CAMPAMENTO', 'WA_CAMP', [
+        // 13. Gas GLP Doméstico + Agua Potable CRITICAL separados
+        mkReq('REQ-13', 'CC-CAMP-ENERGIA', 'WA_CAMP', [
             {
                 lineId: 'L1', canonicalSkuId: 'SKU-GAS-GLP45', description: 'Gas licuado GLP 45 kg',
-                categoryCode: 'GAS_ENERGIA_CAMP', procurementBucket: 'GAS_AGUA_COMBUSTIBLE', unitSi: 'kg',
+                categoryCode: 'GAS_DOMESTICO_GLP', procurementBucket: 'GAS_GLP_DOMESTICO', unitSi: 'kg',
                 qtyRequested: 90, qtyPurchased: 0, qtyReceived: 0, qtyPending: 90,
                 lineStatus: 'OPEN', atypicalFlags: [], fulfillmentChannel: 'MANUAL_LOCAL_PURCHASE', urgency: 'CRITICAL',
             },
             {
                 lineId: 'L2', canonicalSkuId: 'SKU-AGUA-BIDON', description: 'Agua potable en bidón',
-                categoryCode: 'AGUA_POTABLE', procurementBucket: 'GAS_AGUA_COMBUSTIBLE', unitSi: 'L',
+                categoryCode: 'AGUA_POTABLE_BEBESTIBLE', procurementBucket: 'AGUA_POTABLE', unitSi: 'L',
                 qtyRequested: 200, qtyPurchased: 0, qtyReceived: 0, qtyPending: 200,
                 lineStatus: 'OPEN', atypicalFlags: [], fulfillmentChannel: 'MANUAL_LOCAL_PURCHASE', urgency: 'CRITICAL',
             },
@@ -753,7 +756,7 @@ test('4.1 SmartShoppingListConsolidator: consolida 13 requisiciones mixtas por c
     });
 
     assert.equal(list.sourceRequisitionCount, 13);
-    assert.equal(list.buckets.length, 6); // Verdulería, Supermercado, Ferretería, Repuestos, EPP, Gas/Agua
+    assert.equal(list.buckets.length, 7); // Verdulería, Supermercado, Ferretería, Repuestos, EPP, Agua Potable, Gas GLP
     assert.equal(list.totalAtypicalCount, 1);
 
     // Verificar orden CRITICAL -> PARTIAL_PENDING -> STANDARD en VERDULERIA
@@ -770,8 +773,8 @@ test('4.1 SmartShoppingListConsolidator: consolida 13 requisiciones mixtas por c
     assert.equal(papasConsolidated.totalQtyPending, 75); // 50 + 25
     assert.equal(papasConsolidated.sourceReqRefs.length, 2);
 
-    // Verificar orden CRITICAL -> PARTIAL_PENDING -> STANDARD en FERRETERIA y exclusión de línea FULFILLED
-    const ferreteria = list.buckets.find((b) => b.procurementBucket === 'FERRETERIA')!;
+    // Verificar orden CRITICAL -> PARTIAL_PENDING -> STANDARD en FERRETERIA_INSUMOS y exclusión de línea FULFILLED
+    const ferreteria = list.buckets.find((b) => b.procurementBucket === 'FERRETERIA_INSUMOS')!;
     assert.deepEqual(
         ferreteria.items.map((i) => `${i.canonicalSkuId}:${i.priorityTier}`),
         [
@@ -844,7 +847,7 @@ test('5.1 RequisitionFulfillmentMatcher: escenario exacto Backlog {huevos 60, pe
             lines: [
                 {
                     lineId: 'L-PERNOS', canonicalSkuId: 'SKU-FER-PERNOS', description: 'Pernos',
-                    categoryCode: 'FERRETERIA_CONSTRUCCION', procurementBucket: 'FERRETERIA', unitSi: 'un',
+                    categoryCode: 'FERRETERIA_CONSTRUCCION', procurementBucket: 'FERRETERIA_INSUMOS', unitSi: 'un',
                     qtyRequested: 10, qtyPurchased: 0, qtyReceived: 0, qtyPending: 10,
                     lineStatus: 'OPEN', atypicalFlags: [], fulfillmentChannel: 'MANUAL_LOCAL_PURCHASE', urgency: 'HIGH',
                 },
@@ -1236,10 +1239,10 @@ test('6.1 StockAssetCashCostReconciler: separa IN_TRANSIT vs IN_WAREHOUSE, aisla
         ],
     };
     const reconMulti = reconcilePurchase(multiCostPurchase, []);
-    assert.equal(reconMulti.summary.opexByCostCenter['CC-FLOTA'], 28_000);
+    assert.equal(reconMulti.summary.opexByCostCenter['CC-FLOTA-MANTENCION'], 28_000);
     assert.equal(reconMulti.summary.opexByCostCenter['CC-HSEC'], 54_000);
     assert.equal(reconMulti.cashEntries[0].entryType, 'SUPPLIER_PAYABLE');
-    assert.equal(reconMulti.stockEntries[0].movementType, 'DIRECT_WAREHOUSE_IN');
+    assert.equal(reconMulti.stockEntries[0].movementType, 'DIRECT_RECEIPT');
 });
 
 // ============================================================================
@@ -1405,7 +1408,7 @@ test('8.1 DemandAndCostForecaster: EWMA per-cápita, DOI y guardrail DS 594 Art.
     const waterForecast = forecastSkuDemand({
         site: highAltitudeSite,
         canonicalSkuId: 'SKU-AGUA-BIDON',
-        categoryCode: 'AGUA_POTABLE',
+        categoryCode: 'AGUA_POTABLE_BEBESTIBLE',
         unitSi: 'L',
         history: [
             { dateIso: '2026-11-18', consumedQtySi: 6000, headcount: 50 },
@@ -1500,51 +1503,51 @@ test('8.2 DemandAndCostForecaster: DemandSignalProjector (Ley N° 21.719) exige 
         {
             tenantId: 'tenant-antofa-1', siteId: 'site-AN1', districtCode: 'CL-II-ANTOFAGASTA',
             geoFix: { lat: -23.6509, lng: -70.3975 }, optInMarketplace: true,
-            canonicalSkuId: 'SKU-FER-CEMENTO', procurementBucket: 'FERRETERIA', unitSi: 'kg',
+            canonicalSkuId: 'SKU-FER-CEMENTO', procurementBucket: 'FERRETERIA_INSUMOS', unitSi: 'kg',
             projectedDemandSi: 1000, unitPriceClp: 220,
         },
         {
             tenantId: 'tenant-antofa-2', siteId: 'site-AN2', districtCode: 'CL-II-ANTOFAGASTA',
             geoFix: { lat: -23.7000, lng: -70.4100 }, optInMarketplace: true,
-            canonicalSkuId: 'SKU-FER-CEMENTO', procurementBucket: 'FERRETERIA', unitSi: 'kg',
+            canonicalSkuId: 'SKU-FER-CEMENTO', procurementBucket: 'FERRETERIA_INSUMOS', unitSi: 'kg',
             projectedDemandSi: 800, unitPriceClp: 230,
         },
         {
             tenantId: 'tenant-antofa-3', siteId: 'site-AN3', districtCode: 'CL-II-ANTOFAGASTA',
             optInMarketplace: true,
-            canonicalSkuId: 'SKU-FER-CEMENTO', procurementBucket: 'FERRETERIA', unitSi: 'kg',
+            canonicalSkuId: 'SKU-FER-CEMENTO', procurementBucket: 'FERRETERIA_INSUMOS', unitSi: 'kg',
             projectedDemandSi: 600, unitPriceClp: 210,
         },
         {
             tenantId: 'tenant-antofa-4', siteId: 'site-AN4', districtCode: 'CL-II-ANTOFAGASTA',
             optInMarketplace: true,
-            canonicalSkuId: 'SKU-FER-CEMENTO', procurementBucket: 'FERRETERIA', unitSi: 'kg',
+            canonicalSkuId: 'SKU-FER-CEMENTO', procurementBucket: 'FERRETERIA_INSUMOS', unitSi: 'kg',
             projectedDemandSi: 700, unitPriceClp: 215,
         },
         // Mismo tenant con 5 sitios distintos en CL-IV-COQUIMBO (solo 1 tenant => DEBE SUPRIMIRSE!)
         {
             tenantId: 'tenant-single-E', siteId: 'site-E1', districtCode: 'CL-IV-COQUIMBO',
-            optInMarketplace: true, canonicalSkuId: 'SKU-FER-PERNOS', procurementBucket: 'FERRETERIA', unitSi: 'un',
+            optInMarketplace: true, canonicalSkuId: 'SKU-FER-PERNOS', procurementBucket: 'FERRETERIA_INSUMOS', unitSi: 'un',
             projectedDemandSi: 100,
         },
         {
             tenantId: 'tenant-single-E', siteId: 'site-E2', districtCode: 'CL-IV-COQUIMBO',
-            optInMarketplace: true, canonicalSkuId: 'SKU-FER-PERNOS', procurementBucket: 'FERRETERIA', unitSi: 'un',
+            optInMarketplace: true, canonicalSkuId: 'SKU-FER-PERNOS', procurementBucket: 'FERRETERIA_INSUMOS', unitSi: 'un',
             projectedDemandSi: 100,
         },
         {
             tenantId: 'tenant-single-E', siteId: 'site-E3', districtCode: 'CL-IV-COQUIMBO',
-            optInMarketplace: true, canonicalSkuId: 'SKU-FER-PERNOS', procurementBucket: 'FERRETERIA', unitSi: 'un',
+            optInMarketplace: true, canonicalSkuId: 'SKU-FER-PERNOS', procurementBucket: 'FERRETERIA_INSUMOS', unitSi: 'un',
             projectedDemandSi: 100,
         },
         {
             tenantId: 'tenant-single-E', siteId: 'site-E4', districtCode: 'CL-IV-COQUIMBO',
-            optInMarketplace: true, canonicalSkuId: 'SKU-FER-PERNOS', procurementBucket: 'FERRETERIA', unitSi: 'un',
+            optInMarketplace: true, canonicalSkuId: 'SKU-FER-PERNOS', procurementBucket: 'FERRETERIA_INSUMOS', unitSi: 'un',
             projectedDemandSi: 100,
         },
         {
             tenantId: 'tenant-single-E', siteId: 'site-E5', districtCode: 'CL-IV-COQUIMBO',
-            optInMarketplace: true, canonicalSkuId: 'SKU-FER-PERNOS', procurementBucket: 'FERRETERIA', unitSi: 'un',
+            optInMarketplace: true, canonicalSkuId: 'SKU-FER-PERNOS', procurementBucket: 'FERRETERIA_INSUMOS', unitSi: 'un',
             projectedDemandSi: 100,
         },
     ];
@@ -1758,7 +1761,26 @@ test('9.3 E05 SupplyPolicyAndAnomalyEngine: DS 132 NFD/leetspeak, DGMN explosivo
     assert.equal(dgmnBlocked.rejectedItems[0].rejectionCode, 'DGMN_EXPLOSIVES_BLOCK');
     assert.equal(dgmnBlocked.rejectedItems[1].rejectionCode, 'DGMN_EXPLOSIVES_BLOCK');
 
-    // Con licencia DGMN autorizada (OWNER_EXEC) sí pasa
+    // Sin licencia DGMN vigente, ni siquiera OWNER_EXEC por defecto puede pedir explosivos
+    const ownerDefaultBlocked = evaluateRequisitionPolicy(
+        [
+            {
+                itemKey: 'd3-blocked',
+                rawText: '2 sacos de anfo',
+                categoryCode: 'EXPLOSIVOS_REGULADO',
+                quantitySi: 50,
+                unitSi: 'kg',
+            },
+        ],
+        {
+            requesterRole: 'OWNER_EXEC',
+            memberProfile: DEFAULT_ROLE_PROFILES.OWNER_EXEC,
+            demandNature: 'PLANNED_ENGINEERING',
+        }
+    );
+    assert.equal(ownerDefaultBlocked.rejectedItems.length, 1);
+
+    // Con licencia DGMN explícita autorizada (OWNER_EXEC) sí pasa
     const dgmnAllowed = evaluateRequisitionPolicy(
         [
             {
@@ -1771,7 +1793,10 @@ test('9.3 E05 SupplyPolicyAndAnomalyEngine: DS 132 NFD/leetspeak, DGMN explosivo
         ],
         {
             requesterRole: 'OWNER_EXEC',
-            memberProfile: DEFAULT_ROLE_PROFILES.OWNER_EXEC,
+            memberProfile: {
+                ...DEFAULT_ROLE_PROFILES.OWNER_EXEC,
+                licensedForControlledItems: true,
+            },
             demandNature: 'PLANNED_ENGINEERING',
         }
     );
@@ -1930,6 +1955,15 @@ test('9.6 E05 Runtime Wiring: SupplyRepository (supply_policy_audit, event_ledge
     const mkDocRef = (colName: string, docId: string): any => ({
         id: docId,
         path: `${colName}/${docId}`,
+        collection(subCol: string) {
+            const subPath = `${colName}/${docId}/${subCol}`;
+            return {
+                doc: (subId?: string) => mkDocRef(subPath, subId || `auto_${Date.now()}`),
+                where: (f: string, op: string, v: unknown) => mkQuery(subPath, [{ f, v }]),
+                limit: () => mkQuery(subPath, []),
+                get: () => mkQuery(subPath, []).get(),
+            };
+        },
         async get() {
             const d = getCol(colName).get(docId);
             return { id: docId, exists: Boolean(d), data: () => (d ? JSON.parse(JSON.stringify(d)) : undefined) };
@@ -2094,10 +2128,10 @@ test('9.6 E05 Runtime Wiring: SupplyRepository (supply_policy_audit, event_ledge
                     lines: [
                         {
                             purchaseLineId: 'pl-tamper',
-                            canonicalSkuId: 'sku-cocina-industrial',
+                            canonicalSkuId: 'SKU-CAPEX-COCINA',
                             description: 'Cocina industrial',
                             categoryCode: 'ACTIVO_EQUIPAMIENTO',
-                            procurementBucket: 'MANTENCION_EQUIPAMIENTO',
+                            procurementBucket: 'ACTIVOS_CAPEX',
                             unitSi: 'un',
                             qtyPurchased: 1,
                             unitPriceClp: 571_200,
@@ -2134,10 +2168,10 @@ test('9.6 E05 Runtime Wiring: SupplyRepository (supply_policy_audit, event_ledge
             lines: [
                 {
                     purchaseLineId: 'pl-smurf-1',
-                    canonicalSkuId: 'sku-cocina-industrial',
+                    canonicalSkuId: 'SKU-CAPEX-COCINA',
                     description: 'Cocina Campamento',
                     categoryCode: 'ACTIVO_EQUIPAMIENTO',
-                    procurementBucket: 'MANTENCION_EQUIPAMIENTO',
+                    procurementBucket: 'ACTIVOS_CAPEX',
                     unitSi: 'un',
                     qtyPurchased: 1,
                     unitPriceClp: 320_000,
@@ -2247,10 +2281,10 @@ test('9.6 E05 Runtime Wiring: SupplyRepository (supply_policy_audit, event_ledge
                 lines: [
                     {
                         lineId: `l-${tid}`,
-                        canonicalSkuId: 'sku-cemento',
+                        canonicalSkuId: 'SKU-FER-CEMENTO',
                         itemName: 'Cemento Portland',
                         categoryCode: 'FERRETERIA_CONSTRUCCION',
-                        procurementBucket: 'FERRETERIA',
+                        procurementBucket: 'FERRETERIA_INSUMOS',
                         unitSi: 'kg',
                         qtyRequested: 100,
                         qtyPurchased: 0,
@@ -2299,10 +2333,10 @@ test('9.6 E05 Runtime Wiring: SupplyRepository (supply_policy_audit, event_ledge
             lines: [
                 {
                     lineId: 'l-b2b-5',
-                    canonicalSkuId: 'sku-cemento',
+                    canonicalSkuId: 'SKU-FER-CEMENTO',
                     itemName: 'Cemento Portland',
                     categoryCode: 'FERRETERIA_CONSTRUCCION',
-                    procurementBucket: 'FERRETERIA',
+                    procurementBucket: 'FERRETERIA_INSUMOS',
                     unitSi: 'kg',
                     qtyRequested: 100,
                     qtyPurchased: 0,
@@ -2321,6 +2355,326 @@ test('9.6 E05 Runtime Wiring: SupplyRepository (supply_policy_audit, event_ledge
     assert.equal(signalsWith5B2b.length, 1);
     assert.equal(signalsWith5B2b[0].participatingEntitiesCount, 5);
     assert.equal(signalsWith5B2b[0].aggregatedQty, 500);
+});
+
+// ============================================================================
+// 10. V3-E01: 15 CANALES WS, UNIFICACIÓN SKU-*, REGEX NO-DESTRUCTIVAS, DTE 33 NETO & DTE 61
+// ============================================================================
+test('10.1 V3-E01 Taxonomía 15 Canales WS, Catálogo Unificado SKU-* y Guardrails DGMN', () => {
+    const seedMod = require('../catalog/DefaultSupplyCatalogSeed');
+    const channelIds = Object.keys(seedMod.SUPPLY_CHANNELS_META);
+    assert.equal(channelIds.length, 15);
+    assert.ok(channelIds.includes('CH_CAMP_FOOD'));
+    assert.ok(channelIds.includes('CH_CAMP_POTABLE_WATER'));
+    assert.ok(channelIds.includes('CH_OPS_IND_WATER'));
+    assert.ok(channelIds.includes('CH_OPS_FLEET_FUEL'));
+    assert.ok(channelIds.includes('CH_OPS_IND_GASES'));
+    assert.ok(channelIds.includes('CH_CONTROLLED_DGMN'));
+    assert.ok(channelIds.includes('CH_CAPEX_ASSETS'));
+    assert.ok(channelIds.includes('CH_WAREHOUSE_RECEPTION'));
+    assert.ok(channelIds.includes('CH_DIRECT_PURCHASE_EXEC'));
+
+    // Unificación SKU-* + alias legacy
+    for (const sku of seedMod.DEFAULT_SUPPLY_CATALOG_SEED) {
+        assert.ok(sku.canonicalSkuId.startsWith('SKU-'), `SKU debe usar prefijo canónico SKU-: ${sku.canonicalSkuId}`);
+    }
+    assert.equal(seedMod.resolveCanonicalSkuIdAlias('sku-papas'), 'SKU-VIV-PAPAS');
+    assert.equal(seedMod.resolveCanonicalSkuIdAlias('sku-agua-bidon-20l'), 'SKU-AGUA-BIDON');
+
+    // SKU-EXP-DETONADOR corregido a CONTROLADOS_DGMN + CC-OPS-TRONADURA + sin permiso por defecto
+    const det = findCanonicalSkuById('SKU-EXP-DETONADOR');
+    assert.ok(det);
+    assert.equal(det.procurementBucket, 'CONTROLADOS_DGMN');
+    assert.equal(det.categoryCode, 'EXPLOSIVOS_REGULADO');
+    assert.equal(det.isControlled, true);
+
+    assert.equal(DEFAULT_ROLE_PROFILES.OWNER_EXEC.licensedForControlledItems, false);
+    assert.equal(DEFAULT_ROLE_PROFILES.BUYER.licensedForControlledItems, false);
+    assert.equal(DEFAULT_ROLE_PROFILES.SITE_ADMIN.licensedForControlledItems, false);
+    assert.ok(!DEFAULT_ROLE_PROFILES.BUYER.allowedCategories.includes('EXPLOSIVOS_REGULADO'));
+    assert.ok(!DEFAULT_ROLE_PROFILES.SITE_ADMIN.allowedCategories.includes('EXPLOSIVOS_REGULADO'));
+
+    // Routing por rol y por SKU
+    const campChannels = seedMod.getChannelsForProfileRole('CAMP_MANAGER');
+    assert.ok(campChannels.includes('CH_CAMP_FOOD'));
+    assert.ok(!campChannels.includes('CH_CONTROLLED_DGMN'));
+    assert.equal(seedMod.classifySkuToChannel({ canonicalSkuId: 'SKU-GAS-OXIGENO', categoryCode: 'GASES_INDUSTRIALES' }), 'CH_OPS_IND_GASES');
+    assert.equal(seedMod.classifySkuToChannel({ canonicalSkuId: 'SKU-AGUA-INDUSTRIAL', categoryCode: 'AGUA_INDUSTRIAL' }), 'CH_OPS_IND_WATER');
+    assert.equal(seedMod.classifySkuToChannel({ canonicalSkuId: 'SKU-EXP-DETONADOR', categoryCode: 'EXPLOSIVOS_REGULADO' }), 'CH_CONTROLLED_DGMN');
+});
+
+test('10.2 V3-E01 Regex no-destructivas, bidón por metadata de SKU y DS 594 solo agua potable humana', () => {
+    const appTypes = require('../application/supply.types');
+    const forecaster = require('../domain/DemandAndCostForecaster');
+
+    // "bidon de cloro" -> aseo 5 L (NO agua potable 20 L)
+    const cloroNorm = appTypes.normalizeSupplyItemFromText('2 bidones de cloro industrial', 2, 'bidon');
+    assert.equal(cloroNorm.canonicalSkuId, 'SKU-ASEO-CLORO');
+    assert.equal(cloroNorm.categoryCode, 'ASEO_HIGIENE');
+    assert.equal(cloroNorm.qtySi, 10);
+
+    const cloroUnit = normalizeUnitExpression('2 bidones de cloro industrial');
+    assert.equal(cloroUnit.canonicalSkuHint, 'SKU-ASEO-CLORO');
+    assert.equal(cloroUnit.quantitySi, 10);
+    assert.equal(cloroUnit.unitSi, 'L');
+
+    // "bidón" genérico sin volumen ni metadata -> ambiguo
+    const bidonGenerico = normalizeUnitExpression('2 bidones');
+    assert.equal(bidonGenerico.isAmbiguous, true);
+
+    // "agua industrial" -> AGUA_INDUSTRIAL (NO potable)
+    const aguaInd = appTypes.normalizeSupplyItemFromText('10000 L agua industrial camión aljibe', 10000, 'L');
+    assert.equal(aguaInd.categoryCode, 'AGUA_INDUSTRIAL');
+    assert.equal(aguaInd.procurementBucket, 'AGUA_INDUSTRIAL_ALJIBE');
+
+    // "oxígeno" / "cilindro hidráulico" != GLP doméstico
+    const oxigeno = appTypes.normalizeSupplyItemFromText('2 cilindros de oxígeno oxicorte', 2, 'un');
+    assert.equal(oxigeno.categoryCode, 'GASES_INDUSTRIALES');
+    assert.equal(oxigeno.procurementBucket, 'GASES_INDUSTRIALES');
+
+    const hidraulico = appTypes.normalizeSupplyItemFromText('1 cilindro hidráulico excavadora', 1, 'un');
+    assert.equal(hidraulico.categoryCode, 'REPUESTOS_MAQUINARIA');
+    assert.equal(hidraulico.procurementBucket, 'REPUESTOS_LUBRICANTES');
+
+    // "generador" separado de cocina industrial, pero CAPEX
+    const generador = appTypes.normalizeSupplyItemFromText('1 generador 15kva', 1, 'un');
+    assert.equal(generador.canonicalSkuId, 'SKU-CAPEX-GENERADOR');
+    assert.equal(generador.procurementBucket, 'ACTIVOS_CAPEX');
+    assert.equal(generador.isCapexAsset, true);
+
+    // DS 594 solo cuenta agua potable humana
+    assert.equal(forecaster.isHumanPotableWaterCategory('AGUA_POTABLE_BEBESTIBLE'), true);
+    assert.equal(forecaster.isHumanPotableWaterCategory('AGUA_POTABLE_SANITAR'), true);
+    assert.equal(forecaster.isHumanPotableWaterCategory('AGUA_INDUSTRIAL'), false);
+});
+
+test('10.3 V3-E01 DTE 33 XML neto (sin doble descuento IVA + PMP neto), DTE 61 negativo, foodOpex30d y teléfono activo', async () => {
+    const { db } = require('../../../config/firebase');
+    const { CasStorageService } = require('../../../core/media/CasStorageService');
+    const { ResilientAIClient } = require('../../../core/resilient-ai-client');
+    const { ReceiptIntelligencePipeline } = require('../application/ReceiptIntelligencePipeline');
+    const { SupplyRepository, SUPPLY_COLLECTIONS } = require('../application/SupplyRepository');
+
+    const tenantV3 = 'tenant-v3-e01';
+    const siteV3 = 'site-v3-e01';
+    await db.collection(SUPPLY_COLLECTIONS.SITES).doc(siteV3).set({
+        siteId: siteV3,
+        tenantId: tenantV3,
+        name: 'Faena V3 E01',
+        districtCode: 'CL-ATACAMA',
+        currentHeadcount: 10,
+        waterStorageCapacityL: 20_000,
+        ds594DailyWaterTargetLPerPax: 120,
+        leadTimeDays: 5,
+        shiftPattern: '7x7',
+        roleMismatchMode: 'FLAG_AND_ACCEPT',
+        directPurchaseAlertThresholdClp: 500_000,
+    });
+
+    // Perfil activo real para resolver teléfono sin depender del campo enmascarado
+    await db.collection('accounts').doc(tenantV3).collection('members').doc('uid-req-v3').set({
+        uid: 'uid-req-v3',
+        status: 'ACTIVE',
+        phoneE164: '+56987654321',
+    });
+    const resolvedPhone = await SupplyRepository.resolveActiveMemberPhoneE164(tenantV3, 'uid-req-v3');
+    assert.equal(resolvedPhone, '+56987654321');
+
+    // Stub temporal CAS + ResilientAIClient
+    const origDigestAndStore = CasStorageService.digestAndStore;
+    const origGenerateStructured = ResilientAIClient.generateStructured;
+    let capturedDataClass: string | undefined;
+
+    CasStorageService.digestAndStore = (async (_buf: Buffer, mime: string) => ({
+        descriptor: {
+            sha256: 'a'.repeat(64),
+            phashHex: '0'.repeat(16),
+            storagePath: `tenants/${tenantV3}/supply/receipts/test.bin`,
+            downloadUrl: '',
+            mimeType: mime,
+            extension: mime === 'image/png' ? 'png' : 'xml',
+            profile: mime === 'image/png' ? 'SUPPLY_RECEIPT_IMAGE' : 'XML_DTE_DOCUMENT',
+            originalBytes: 512,
+            optimizedBytes: 512,
+            savingsRatio: 0,
+            savingsPct: 0,
+            originalFilename: 'dte33_net.xml',
+            createdAt: new Date().toISOString(),
+        },
+        digested: {
+            buffer: _buf,
+            mimeType: mime,
+            originalBytes: 512,
+            optimizedBytes: 512,
+        },
+    })) as any;
+
+    ResilientAIClient.generateStructured = (async (req: any) => {
+        capturedDataClass = req.dataClassification;
+        return {
+            data: {
+                supplierName: 'Comercial Prueba SpA',
+                documentType: 39,
+                folio: 123,
+                totalAmountClp: 11900,
+                lines: [
+                    { description: 'Detergente aseo', quantity: 1, unitPriceClp: 11900, subtotalClp: 11900 },
+                ],
+            },
+            meta: { model: 'gemini-test' },
+        };
+    }) as any;
+
+    try {
+        // 1. DTE 33 XML con <MontoItem> NETO (100.000 neto + 19.000 IVA = 119.000 total)
+        const dte33NetXml = `<?xml version="1.0" encoding="ISO-8859-1"?>
+<DTE version="1.0"><Documento>
+  <Encabezado>
+    <IdDoc><TipoDTE>33</TipoDTE><Folio>9901</Folio><FchEmis>2026-11-22</FchEmis></IdDoc>
+    <Emisor><RUTEmisor>76192083-9</RUTEmisor><RznSoc>Proveedor Papas SpA</RznSoc></Emisor>
+    <Receptor><RUTRecep>77123456-K</RUTRecep></Receptor>
+    <Totales><MntNeto>100000</MntNeto><IVA>19000</IVA><MntTotal>119000</MntTotal></Totales>
+  </Encabezado>
+  <Detalle><NmbItem>Papas 100 kg</NmbItem><QtyItem>100</QtyItem><UnmdItem>kg</UnmdItem><PrcItem>1000</PrcItem><MontoItem>100000</MontoItem></Detalle>
+</Documento></DTE>`;
+
+        const analyzed = await ReceiptIntelligencePipeline.analyze({
+            tenantId: tenantV3,
+            actorUid: 'uid-buyer-v3',
+            xmlContent: dte33NetXml,
+            defaultDestination: 'STOCK_IN_WAREHOUSE',
+            defaultCostCenter: 'CC-CAMP-ALIMENTACION',
+        });
+
+        assert.equal(analyzed.arithmeticCheck.verified, true);
+        assert.equal(analyzed.arithmeticCheck.pricingBasis, 'NET_PLUS_VAT');
+        assert.equal(analyzed.lines[0].linePricingBasis, 'NET');
+        assert.equal(analyzed.lines[0].subtotalClp, 100000);
+        assert.equal(analyzed.vatCreditRecoverableClp, 19000);
+
+        // Guardar compra -> NO debe dividir por 1.19 dos veces: PMP neto debe ser 1000 (NO 840!)
+        const actor = { actorUid: 'uid-buyer-v3', actorEmail: 'buyer@v3.cl' };
+        await SupplyRepository.createPurchaseWithReconciliation(
+            {
+                tenantId: tenantV3,
+                siteId: siteV3,
+                buyerUid: 'uid-buyer-v3',
+                buyerRole: 'BUYER',
+                purchaseMode: 'DIRECT_AUTONOMOUS',
+                authorizedByAuthority: true,
+                supplierTaxId: analyzed.supplierTaxId,
+                supplierName: analyzed.supplierName,
+                documentType: analyzed.documentType,
+                folio: analyzed.folio,
+                issueDate: analyzed.issueDate,
+                netAmountClp: analyzed.netAmountClp,
+                vatAmountClp: analyzed.vatAmountClp,
+                totalAmountClp: analyzed.totalAmountClp,
+                paymentMethod: 'TRANSFERENCIA',
+                lines: analyzed.lines,
+            },
+            actor
+        );
+
+        const inv = await SupplyRepository.listInventory(tenantV3, siteV3);
+        const papasInv = inv.find((i: any) => i.canonicalSkuId === 'SKU-VIV-PAPAS');
+        assert.ok(papasInv);
+        assert.equal(papasInv.avgUnitCostClp, 1000);
+
+        // Compra no alimentaria (cloro aseo) + agua industrial NO deben contaminar foodOpex30d ni DS 594
+        await SupplyRepository.createPurchaseWithReconciliation(
+            {
+                tenantId: tenantV3,
+                siteId: siteV3,
+                buyerUid: 'uid-buyer-v3',
+                buyerRole: 'BUYER',
+                purchaseMode: 'DIRECT_AUTONOMOUS',
+                authorizedByAuthority: true,
+                supplierTaxId: '76192083-9',
+                supplierName: 'Química Industrial SpA',
+                documentType: 33,
+                folio: 9902,
+                issueDate: '2026-11-22',
+                netAmountClp: 50000,
+                vatAmountClp: 9500,
+                totalAmountClp: 59500,
+                paymentMethod: 'TRANSFERENCIA',
+                lines: [
+                    {
+                        purchaseLineId: 'pl-cloro',
+                        canonicalSkuId: 'SKU-ASEO-CLORO',
+                        description: 'Cloro industrial',
+                        categoryCode: 'ASEO_HIGIENE',
+                        procurementBucket: 'ASEO_HIGIENE',
+                        unitSi: 'L',
+                        qtyPurchased: 50,
+                        unitPriceClp: 1000,
+                        subtotalClp: 50000,
+                        linePricingBasis: 'NET',
+                        destination: 'STOCK_IN_WAREHOUSE',
+                        costCenter: 'CC-CAMP-MANTENCION',
+                        isCapexAsset: false,
+                    },
+                    {
+                        purchaseLineId: 'pl-aguaind',
+                        canonicalSkuId: 'SKU-AGUA-INDUSTRIAL',
+                        description: 'Agua industrial aljibe',
+                        categoryCode: 'AGUA_INDUSTRIAL',
+                        procurementBucket: 'AGUA_INDUSTRIAL_ALJIBE',
+                        unitSi: 'L',
+                        qtyPurchased: 10000,
+                        unitPriceClp: 10,
+                        subtotalClp: 100000,
+                        linePricingBasis: 'NET',
+                        destination: 'STOCK_IN_WAREHOUSE',
+                        costCenter: 'CC-OPS-AGUA-IND',
+                        isCapexAsset: false,
+                    },
+                ],
+            },
+            actor
+        );
+
+        const forecasts = await SupplyRepository.computeForecastReadOnly(tenantV3, siteV3);
+        const forecast = forecasts[0];
+        assert.ok(forecast);
+        assert.equal(forecast.dailyFoodOpexClpPerPax, Math.round(100000 / (30 * 10)));
+        assert.equal(forecast.waterCoverageDays, 0); // Agua industrial NO cuenta como reserva potable DS 594
+
+        // 2. DTE 61 Nota de Crédito -> vatCreditRecoverableClp negativo
+        const dte61Xml = `<?xml version="1.0" encoding="ISO-8859-1"?>
+<DTE version="1.0"><Documento>
+  <Encabezado>
+    <IdDoc><TipoDTE>61</TipoDTE><Folio>401</Folio><FchEmis>2026-11-22</FchEmis></IdDoc>
+    <Emisor><RUTEmisor>76192083-9</RUTEmisor><RznSoc>Proveedor Papas SpA</RznSoc></Emisor>
+    <Receptor><RUTRecep>77123456-K</RUTRecep></Receptor>
+    <Totales><MntNeto>20000</MntNeto><IVA>3800</IVA><MntTotal>23800</MntTotal></Totales>
+  </Encabezado>
+  <Detalle><NmbItem>Devolución Papas</NmbItem><QtyItem>20</QtyItem><UnmdItem>kg</UnmdItem><PrcItem>1000</PrcItem><MontoItem>20000</MontoItem></Detalle>
+</Documento></DTE>`;
+
+        const nc61 = await ReceiptIntelligencePipeline.analyze({
+            tenantId: tenantV3,
+            actorUid: 'uid-buyer-v3',
+            xmlContent: dte61Xml,
+        });
+        assert.equal(nc61.documentType, 61);
+        assert.equal(nc61.vatCreditRecoverableClp, -3800);
+        assert.equal(nc61.lines[0].linePricingBasis, 'NET');
+
+        // 3. Llamada AI vision pasa dataClassification: 'TENANT_PRIVATE'
+        await ReceiptIntelligencePipeline.analyze({
+            tenantId: tenantV3,
+            actorUid: 'uid-buyer-v3',
+            rawBuffer: Buffer.from([137, 80, 78, 71]),
+            mimeType: 'image/png',
+            originalFilename: 'boleta.png',
+        });
+        assert.equal(capturedDataClass, 'TENANT_PRIVATE');
+    } finally {
+        CasStorageService.digestAndStore = origDigestAndStore;
+        ResilientAIClient.generateStructured = origGenerateStructured;
+    }
 });
 
 // ============================================================================

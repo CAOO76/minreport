@@ -6,56 +6,166 @@ import { CanonicalGeoFixSchema } from './geo.contracts';
  * Paridad 1:1 con `src/contracts/supply.contracts.ts` (Zod 3.25 / CJS).
  *
  * Cumplimiento estricto:
- * - Ley N° 19.628 y Nueva Ley N° 21.719 (Chile): k-anonimato >= 3 sin `tenantId` ni GPS exacto en `market_demand_signals`.
+ * - Ley N° 19.628 y Nueva Ley N° 21.719 (Chile): k-anonimato >= 5 sin `tenantId` ni GPS exacto en `market_demand_signals`.
  * - MINREPORT-MEDIA-DIGESTOR-CAS: trazabilidad obligatoria `originalBytes`, `optimizedBytes`, `savingsPct`.
  * - HITL SpaceX Dragon Gate: confirmación explícita `confirmationKeyword: 'ACTUALIZAR'` en mutaciones críticas.
  */
 
 export const SUPPLY_HITL_CONFIRM_KEYWORD = 'ACTUALIZAR' as const;
+export const ANONYMITY_K_MIN = 5 as const;
 
-// ── 1. Taxonomías Canónicas de Abastecimiento ────────────────────────────────
+// ── 1. Taxonomías Canónicas de Abastecimiento v3.0 ───────────────────────────
+
+export const CANONICAL_WHATSAPP_CHANNEL_IDS = [
+    'CH_CAMP_FOOD',
+    'CH_CAMP_POTABLE_WATER',
+    'CH_CAMP_GLP_GAS',
+    'CH_CAMP_FUEL',
+    'CH_CAMP_HYGIENE_MAINT',
+    'CH_OPS_IND_WATER',
+    'CH_OPS_FLEET_FUEL',
+    'CH_OPS_IND_GASES',
+    'CH_OPS_PARTS_LUBES',
+    'CH_OPS_HARDWARE_DRILL',
+    'CH_HSEC_EPP',
+    'CH_CONTROLLED_DGMN',
+    'CH_CAPEX_ASSETS',
+    'CH_WAREHOUSE_RECEPTION',
+    'CH_DIRECT_PURCHASE_EXEC',
+] as const;
+
+export const SupplyWhatsAppChannelIdSchema = z.enum(CANONICAL_WHATSAPP_CHANNEL_IDS);
+export type SupplyWhatsAppChannelId = z.infer<typeof SupplyWhatsAppChannelIdSchema>;
 
 export const SupplyDomainModeSchema = z.enum([
+    'CONTROL',
     'DEMAND',
     'WAREHOUSE',
     'PROCUREMENT',
+    'CONVERSATIONS',
     'FINANCE_RECON',
     'SII_EXPENSES',
+    'PROFILES_WS',
     'FORECAST',
     'WHATSAPP_CHANNELS',
 ]);
 export type SupplyDomainMode = z.infer<typeof SupplyDomainModeSchema>;
 
-export const SupplyCategoryCodeSchema = z.enum([
+export const CANONICAL_SUPPLY_CATEGORIES = [
     'VIVERES_ALIMENTACION',
-    'AGUA_POTABLE',
-    'ASEO_HIGIENE',
-    'GAS_ENERGIA_CAMP',
-    'EPP_SEGURIDAD',
-    'FERRETERIA_CONSTRUCCION',
-    'MANTENCION_CAMP',
+    'AGUA_POTABLE_BEBESTIBLE',
+    'AGUA_POTABLE_SANITAR',
+    'AGUA_INDUSTRIAL',
+    'GAS_DOMESTICO_GLP',
+    'GASES_INDUSTRIALES',
+    'COMBUSTIBLE_CAMPAMENTO',
+    'COMBUSTIBLE_FLOTA_PROD',
     'REPUESTOS_MAQUINARIA',
     'LUBRICANTES_FILTROS',
+    'FERRETERIA_CONSTRUCCION',
+    'HERRAMIENTAS',
     'PERFORACION_ACEROS',
     'FORTIFICACION',
-    'COMBUSTIBLE_FAENA',
-    'HERRAMIENTAS',
-    'ACTIVO_EQUIPAMIENTO',
     'EXPLOSIVOS_REGULADO',
+    'QUIMICOS_REGULADOS',
+    'ACTIVO_EQUIPAMIENTO',
+    'ASEO_HIGIENE',
+    'MANTENCION_CAMP',
+    'EPP_SEGURIDAD',
     'OTROS_OPERACIONAL',
-]);
-export type SupplyCategoryCode = z.infer<typeof SupplyCategoryCodeSchema>;
+] as const;
 
-export const ProcurementBucketSchema = z.enum([
+export const SupplyCategoryCodeEnum = z.enum(CANONICAL_SUPPLY_CATEGORIES);
+export type SupplyCategoryCode = z.infer<typeof SupplyCategoryCodeEnum>;
+
+export const LEGACY_SUPPLY_CATEGORY_MAP: Readonly<Record<string, SupplyCategoryCode>> = {
+    AGUA_POTABLE: 'AGUA_POTABLE_BEBESTIBLE',
+    GAS_ENERGIA_CAMP: 'GAS_DOMESTICO_GLP',
+    COMBUSTIBLE_FAENA: 'COMBUSTIBLE_FLOTA_PROD',
+};
+
+export function normalizeLegacySupplyCategoryCode(raw: unknown): SupplyCategoryCode {
+    if (typeof raw !== 'string') return 'OTROS_OPERACIONAL';
+    const upper = raw.trim().toUpperCase();
+    const mapped = LEGACY_SUPPLY_CATEGORY_MAP[upper] ?? upper;
+    return (CANONICAL_SUPPLY_CATEGORIES as readonly string[]).includes(mapped)
+        ? (mapped as SupplyCategoryCode)
+        : 'OTROS_OPERACIONAL';
+}
+
+export const SupplyCategoryCodeSchema = z.preprocess((raw) => {
+    if (typeof raw !== 'string') return raw;
+    const upper = raw.trim().toUpperCase();
+    return LEGACY_SUPPLY_CATEGORY_MAP[upper] ?? upper;
+}, SupplyCategoryCodeEnum);
+
+export const CANONICAL_PROCUREMENT_BUCKETS = [
     'VERDULERIA',
     'SUPERMERCADO',
-    'FERRETERIA',
-    'REPUESTOS_OPERMAQ',
+    'AGUA_POTABLE',
+    'AGUA_INDUSTRIAL_ALJIBE',
+    'GAS_GLP_DOMESTICO',
+    'GASES_INDUSTRIALES',
+    'COMBUSTIBLE_GRANEL',
+    'REPUESTOS_LUBRICANTES',
+    'FERRETERIA_INSUMOS',
+    'PERFORACION_FORTIFICACION',
     'EPP_SEGURIDAD',
-    'GAS_AGUA_COMBUSTIBLE',
-    'MANTENCION_EQUIPAMIENTO',
-]);
-export type ProcurementBucket = z.infer<typeof ProcurementBucketSchema>;
+    'CONTROLADOS_DGMN',
+    'ACTIVOS_CAPEX',
+    'ASEO_HIGIENE',
+    'MANTENCION_CAMP',
+] as const;
+
+export const ProcurementBucketEnum = z.enum(CANONICAL_PROCUREMENT_BUCKETS);
+export type ProcurementBucket = z.infer<typeof ProcurementBucketEnum>;
+
+export const LEGACY_PROCUREMENT_BUCKET_MAP: Readonly<Record<string, ProcurementBucket>> = {
+    FERRETERIA: 'FERRETERIA_INSUMOS',
+    REPUESTOS_OPERMAQ: 'REPUESTOS_LUBRICANTES',
+    GAS_AGUA_COMBUSTIBLE: 'COMBUSTIBLE_GRANEL',
+    MANTENCION_EQUIPAMIENTO: 'ACTIVOS_CAPEX',
+};
+
+export function normalizeLegacyProcurementBucket(
+    raw: unknown,
+    categoryCode?: string
+): ProcurementBucket {
+    const upper = typeof raw === 'string' ? raw.trim().toUpperCase() : '';
+    const cat = categoryCode ? normalizeLegacySupplyCategoryCode(categoryCode) : undefined;
+    if (upper === 'GAS_AGUA_COMBUSTIBLE') {
+        if (cat === 'AGUA_POTABLE_BEBESTIBLE' || cat === 'AGUA_POTABLE_SANITAR') return 'AGUA_POTABLE';
+        if (cat === 'AGUA_INDUSTRIAL') return 'AGUA_INDUSTRIAL_ALJIBE';
+        if (cat === 'GAS_DOMESTICO_GLP') return 'GAS_GLP_DOMESTICO';
+        if (cat === 'GASES_INDUSTRIALES') return 'GASES_INDUSTRIALES';
+        return 'COMBUSTIBLE_GRANEL';
+    }
+    if (upper === 'MANTENCION_EQUIPAMIENTO') {
+        return cat === 'MANTENCION_CAMP' ? 'MANTENCION_CAMP' : 'ACTIVOS_CAPEX';
+    }
+    if (upper === 'FERRETERIA') {
+        if (cat === 'EXPLOSIVOS_REGULADO' || cat === 'QUIMICOS_REGULADOS') return 'CONTROLADOS_DGMN';
+        return 'FERRETERIA_INSUMOS';
+    }
+    if (upper === 'REPUESTOS_OPERMAQ') {
+        if (cat === 'PERFORACION_ACEROS' || cat === 'FORTIFICACION') return 'PERFORACION_FORTIFICACION';
+        return 'REPUESTOS_LUBRICANTES';
+    }
+    const mapped = LEGACY_PROCUREMENT_BUCKET_MAP[upper] ?? upper;
+    if ((CANONICAL_PROCUREMENT_BUCKETS as readonly string[]).includes(mapped)) {
+        return mapped as ProcurementBucket;
+    }
+    if (cat === 'ASEO_HIGIENE') return 'ASEO_HIGIENE';
+    if (cat === 'MANTENCION_CAMP') return 'MANTENCION_CAMP';
+    if (cat === 'EPP_SEGURIDAD') return 'EPP_SEGURIDAD';
+    return 'FERRETERIA_INSUMOS';
+}
+
+export const ProcurementBucketSchema = z.preprocess((raw) => {
+    if (typeof raw !== 'string') return raw;
+    const upper = raw.trim().toUpperCase();
+    return LEGACY_PROCUREMENT_BUCKET_MAP[upper] ?? upper;
+}, ProcurementBucketEnum);
 
 export const SupplyUnitSiSchema = z.enum([
     'kg',
@@ -224,25 +334,122 @@ export const CashLedgerEntryTypeSchema = z.enum([
 ]);
 export type CashLedgerEntryType = z.infer<typeof CashLedgerEntryTypeSchema>;
 
-export const StockLedgerMovementTypeSchema = z.enum([
-    'PURCHASE_IN_TRANSIT',
-    'WAREHOUSE_RECEPTION',
-    'CAMP_CONSUMPTION',
+export const CANONICAL_STOCK_LEDGER_MOVEMENT_TYPES = [
+    'INBOUND_TRANSIT',
+    'RECEIPT_AT_WAREHOUSE',
+    'DIRECT_RECEIPT',
+    'ISSUE_CONSUMPTION',
     'TRANSFER_OUT',
     'TRANSFER_IN',
-    'ADJUSTMENT',
-    'WASTE_SHRINKAGE',
-]);
-export type StockLedgerMovementType = z.infer<typeof StockLedgerMovementTypeSchema>;
+    'RETURN_TO_WAREHOUSE',
+    'SHRINKAGE_WASTE',
+    'CYCLE_COUNT_ADJUSTMENT',
+] as const;
+
+export const StockLedgerMovementTypeEnum = z.enum(CANONICAL_STOCK_LEDGER_MOVEMENT_TYPES);
+export type StockLedgerMovementType = z.infer<typeof StockLedgerMovementTypeEnum>;
+
+export const LEGACY_STOCK_LEDGER_MOVEMENT_TYPE_MAP: Readonly<
+    Record<string, StockLedgerMovementType>
+> = {
+    PURCHASE_IN_TRANSIT: 'INBOUND_TRANSIT',
+    INBOUND_IN_TRANSIT: 'INBOUND_TRANSIT',
+    WAREHOUSE_RECEPTION: 'RECEIPT_AT_WAREHOUSE',
+    RECEPTION_CONFIRMED: 'RECEIPT_AT_WAREHOUSE',
+    DIRECT_WAREHOUSE_IN: 'DIRECT_RECEIPT',
+    INBOUND_WAREHOUSE_DIRECT: 'DIRECT_RECEIPT',
+    CAMP_CONSUMPTION: 'ISSUE_CONSUMPTION',
+    CONSUMPTION: 'ISSUE_CONSUMPTION',
+    CONSUMPTION_OUT: 'ISSUE_CONSUMPTION',
+    WASTE_SHRINKAGE: 'SHRINKAGE_WASTE',
+    ADJUSTMENT: 'CYCLE_COUNT_ADJUSTMENT',
+};
+
+export function normalizeLegacyStockMovementType(raw: unknown): StockLedgerMovementType {
+    if (typeof raw !== 'string') return 'CYCLE_COUNT_ADJUSTMENT';
+    const upper = raw.trim().toUpperCase();
+    const mapped = LEGACY_STOCK_LEDGER_MOVEMENT_TYPE_MAP[upper] ?? upper;
+    return (CANONICAL_STOCK_LEDGER_MOVEMENT_TYPES as readonly string[]).includes(mapped)
+        ? (mapped as StockLedgerMovementType)
+        : 'CYCLE_COUNT_ADJUSTMENT';
+}
+
+export const StockLedgerMovementTypeSchema = z.preprocess((raw) => {
+    if (typeof raw !== 'string') return raw;
+    const upper = raw.trim().toUpperCase();
+    return LEGACY_STOCK_LEDGER_MOVEMENT_TYPE_MAP[upper] ?? upper;
+}, StockLedgerMovementTypeEnum);
+
+export const LinePricingBasisSchema = z.enum(['NET', 'GROSS']);
+export type LinePricingBasis = z.infer<typeof LinePricingBasisSchema>;
 
 export const STANDARD_SUPPLY_COST_CENTERS = [
-    'CC-CAMPAMENTO',
-    'CC-FLOTA',
-    'CC-OPERACIONES',
+    'CC-CAMP-ALIMENTACION',
+    'CC-CAMP-AGUA',
+    'CC-CAMP-ENERGIA',
+    'CC-CAMP-MANTENCION',
+    'CC-OPS-AGUA-IND',
+    'CC-FLOTA-COMBUSTIBLE',
+    'CC-FLOTA-MANTENCION',
+    'CC-OPS-MINA',
     'CC-HSEC',
+    'CC-OPS-TRONADURA',
     'CC-CAPEX',
-    'CC-ADMINISTRACION',
 ] as const;
+
+export type StandardSupplyCostCenter = (typeof STANDARD_SUPPLY_COST_CENTERS)[number];
+
+export const LEGACY_COST_CENTER_MAP: Readonly<Record<string, StandardSupplyCostCenter>> = {
+    'CC-CAMPAMENTO': 'CC-CAMP-ALIMENTACION',
+    'CC-FLOTA': 'CC-FLOTA-MANTENCION',
+    'CC-OPERACIONES': 'CC-OPS-MINA',
+    'CC-ADMINISTRACION': 'CC-CAMP-MANTENCION',
+};
+
+export function normalizeLegacyCostCenter(
+    rawCostCenter: unknown,
+    categoryCode?: string
+): string {
+    const clean = typeof rawCostCenter === 'string' ? rawCostCenter.trim().toUpperCase() : '';
+    const cat = categoryCode ? normalizeLegacySupplyCategoryCode(categoryCode) : undefined;
+
+    if (clean === 'CC-CAMPAMENTO' || !clean) {
+        if (cat === 'AGUA_POTABLE_BEBESTIBLE' || cat === 'AGUA_POTABLE_SANITAR') return 'CC-CAMP-AGUA';
+        if (cat === 'GAS_DOMESTICO_GLP' || cat === 'COMBUSTIBLE_CAMPAMENTO') return 'CC-CAMP-ENERGIA';
+        if (cat === 'ASEO_HIGIENE' || cat === 'MANTENCION_CAMP') return 'CC-CAMP-MANTENCION';
+        if (cat === 'VIVERES_ALIMENTACION') return 'CC-CAMP-ALIMENTACION';
+    }
+    if (clean === 'CC-FLOTA') {
+        if (cat === 'COMBUSTIBLE_FLOTA_PROD') return 'CC-FLOTA-COMBUSTIBLE';
+        return 'CC-FLOTA-MANTENCION';
+    }
+    if (clean === 'CC-OPERACIONES') {
+        if (cat === 'AGUA_INDUSTRIAL') return 'CC-OPS-AGUA-IND';
+        if (cat === 'EXPLOSIVOS_REGULADO' || cat === 'QUIMICOS_REGULADOS') return 'CC-OPS-TRONADURA';
+        return 'CC-OPS-MINA';
+    }
+    if (clean && LEGACY_COST_CENTER_MAP[clean]) {
+        return LEGACY_COST_CENTER_MAP[clean];
+    }
+    return typeof rawCostCenter === 'string' && rawCostCenter.trim()
+        ? rawCostCenter.trim()
+        : 'CC-CAMP-ALIMENTACION';
+}
+
+export const SupplyWarehouseClassSchema = z.enum([
+    'DRY_WAREHOUSE',
+    'COLD_STORAGE',
+    'POTABLE_WATER_TANK',
+    'INDUSTRIAL_WATER_POND',
+    'FUEL_TANK_CAMP',
+    'FUEL_TANK_FLEET',
+    'GLP_CAGE',
+    'INDUSTRIAL_GAS_CAGE',
+    'HAZMAT_DS43',
+    'MAGAZINE_DGMN',
+    'VIRTUAL_IN_TRANSIT',
+]);
+export type SupplyWarehouseClass = z.infer<typeof SupplyWarehouseClassSchema>;
 
 // ── 1b. Primitivas Global-Ready (ISO 4217, Tax IDs, E.164, IANA, UNSPSC, GS1 GTIN, UN/CEFACT) ──
 
@@ -473,7 +680,7 @@ export const SupplyMemberProfileSchema = z.object({
     directPurchaseAlertThresholdClp: z.number().nonnegative().nullable().optional(),
     allowCapex: z.boolean().default(false),
     licensedForControlledItems: z.boolean().default(false),
-    defaultCostCenter: z.string().trim().min(2).max(64).default('CC-CAMPAMENTO'),
+    defaultCostCenter: z.string().trim().min(2).max(64).default('CC-CAMP-ALIMENTACION'),
     assignedSiteIds: z.array(z.string().trim().min(1).max(128)).default([]),
     communicationStyle: SupplyCommunicationStyleSchema.default({
         register: 'TECHNICAL_DIRECT',
@@ -564,6 +771,48 @@ export const SupplySiteSchema = z.object({
     updatedAt: z.union([z.number(), z.string()]).optional(),
 });
 export type SupplySite = z.infer<typeof SupplySiteSchema>;
+
+export const SupplyWarehouseSchema = z.object({
+    warehouseId: z.string().trim().min(1).max(128),
+    tenantId: z.string().trim().min(1).max(128),
+    siteId: z.string().trim().min(1).max(128),
+    code: z.string().trim().min(2).max(64),
+    name: z.string().trim().min(2).max(180),
+    warehouseClass: SupplyWarehouseClassSchema,
+    allowedChannelIds: z.array(SupplyWhatsAppChannelIdSchema).default([]),
+    defaultCostCenter: z.string().trim().min(2).max(64).default('CC-OPS-MINA'),
+    capacityUnitSi: SupplyUnitSiSchema.default('un'),
+    maxCapacitySi: z.number().nonnegative().default(0),
+    secTc4Code: z.string().trim().max(64).nullable().optional(),
+    dgmnResolutionCode: z.string().trim().max(64).nullable().optional(),
+    geoFix: CanonicalGeoFixSchema.nullable().optional(),
+    status: z.enum(['ACTIVE', 'PAUSED', 'CLOSED']).default('ACTIVE'),
+    createdAt: z.union([z.number(), z.string()]).optional(),
+    updatedAt: z.union([z.number(), z.string()]).optional(),
+});
+export type SupplyWarehouse = z.infer<typeof SupplyWarehouseSchema>;
+
+export const SupplyTankTelemetrySchema = z.object({
+    telemetryId: z.string().trim().min(1).max(128),
+    tenantId: z.string().trim().min(1).max(128),
+    siteId: z.string().trim().min(1).max(128),
+    warehouseId: z.string().trim().min(1).max(128),
+    warehouseClass: SupplyWarehouseClassSchema,
+    canonicalSkuId: z.string().trim().min(1).max(128),
+    measuredAtIso: z.string().min(10).max(40),
+    measuredLevelSi: z.number().nonnegative(),
+    capacitySi: z.number().nonnegative(),
+    occupancyPct: z.number().min(0).max(200),
+    bookBalanceSi: z.number().nonnegative(),
+    varianceSi: z.number(),
+    variancePct: z.number(),
+    anomalyFlag: z.boolean().default(false),
+    measuredByUid: z.string().trim().min(1).max(128),
+    notes: z.string().trim().max(500).optional(),
+    evidenceCasRef: SupplyEvidenceCasRefSchema.nullable().optional(),
+    createdAt: z.union([z.number(), z.string()]).optional(),
+});
+export type SupplyTankTelemetry = z.infer<typeof SupplyTankTelemetrySchema>;
 
 // ── 6. Requisiciones Multi-Origen (`supply_requisitions`) ────────────────────
 
@@ -684,14 +933,16 @@ export const SupplyPurchaseLineSchema = z.object({
     rawDescription: z.string().trim().min(1).max(300),
     normalizedName: z.string().trim().min(1).max(200),
     categoryCode: SupplyCategoryCodeSchema,
+    procurementBucket: ProcurementBucketSchema.optional(),
     unitSi: SupplyUnitSiSchema,
     qtyPurchased: z.number().positive(),
     qtyReceived: z.number().nonnegative().default(0),
     unitPriceNetClp: z.number().nonnegative(),
     unitPriceGrossClp: z.number().nonnegative(),
-    lineNetClp: z.number().nonnegative(),
-    lineVatClp: z.number().nonnegative(),
-    lineTotalClp: z.number().nonnegative(),
+    lineNetClp: z.number(),
+    lineVatClp: z.number(),
+    lineTotalClp: z.number(),
+    linePricingBasis: LinePricingBasisSchema.optional(),
     destination: SupplyPurchaseDestinationSchema,
     costCenter: z.string().trim().min(2).max(64),
     isCapexAsset: z.boolean().default(false),
@@ -717,9 +968,9 @@ export const SupplyPurchaseSchema = z.object({
     folio: z.string().trim().min(1).max(64),
     dedupeKey: z.string().trim().min(3).max(128).optional(),
     issueDate: z.string().trim().min(8).max(32),
-    netAmountClp: z.number().nonnegative(),
-    vatAmountClp: z.number().nonnegative(),
-    totalAmountClp: z.number().nonnegative(),
+    netAmountClp: z.number(),
+    vatAmountClp: z.number(),
+    totalAmountClp: z.number(),
     netMoney: MoneyAmountSchema.optional(),
     vatMoney: MoneyAmountSchema.optional(),
     totalMoney: MoneyAmountSchema.optional(),
@@ -820,10 +1071,10 @@ export const SiiDocumentRecordSchema = z.object({
     documentType: SiiDteTypeSchema,
     folio: z.string().trim().min(1).max(64),
     issueDate: z.string().trim().min(8).max(32),
-    netAmountClp: z.number().nonnegative(),
+    netAmountClp: z.number(),
     exemptAmountClp: z.number().nonnegative().default(0),
-    vatAmountClp: z.number().nonnegative(),
-    totalAmountClp: z.number().nonnegative(),
+    vatAmountClp: z.number(),
+    totalAmountClp: z.number(),
     netMoney: MoneyAmountSchema.optional(),
     vatMoney: MoneyAmountSchema.optional(),
     totalMoney: MoneyAmountSchema.optional(),
@@ -896,6 +1147,7 @@ export const StockLedgerEntrySchema = z.object({
     ledgerId: z.string().trim().min(1).max(128),
     tenantId: z.string().trim().min(1).max(128),
     siteId: z.string().trim().min(1).max(128),
+    warehouseId: z.string().trim().max(128).nullable().optional(),
     canonicalSkuId: z.string().trim().min(1).max(128),
     itemName: z.string().trim().min(1).max(200),
     categoryCode: SupplyCategoryCodeSchema,
@@ -906,6 +1158,12 @@ export const StockLedgerEntrySchema = z.object({
     balanceInTransitAfter: z.number().nonnegative(),
     balanceInWarehouseAfter: z.number().nonnegative(),
     unitCostNetClp: z.number().nonnegative().default(0),
+    costCenter: z.string().trim().max(64).optional(),
+    linkedAssetId: z.string().trim().max(128).nullable().optional(),
+    horometer: z.number().nonnegative().nullable().optional(),
+    fullCount: z.number().int().nonnegative().nullable().optional(),
+    emptyCount: z.number().int().nonnegative().nullable().optional(),
+    transferGroupId: z.string().trim().max(128).nullable().optional(),
     purchaseId: z.string().trim().max(128).nullable().optional(),
     requisitionId: z.string().trim().max(128).nullable().optional(),
     actorUid: z.string().trim().min(1).max(128),
@@ -977,7 +1235,7 @@ export type DemandForecast = z.infer<typeof DemandForecastSchema>;
 
 /**
  * Señal agregada y anónima de demanda distrital para futuro MINREPORT · MARKETPLACE.
- * Ley N° 21.719 (Chile): estrictamente opt-in, k-anonimato k >= 3 entidades distintas,
+ * Ley N° 21.719 (Chile): estrictamente opt-in, k-anonimato k >= 5 entidades distintas,
  * PROHIBIDO incluir `tenantId`, `siteId` o coordenadas GPS exactas (`.strict()`).
  */
 export const DemandPoolSignalSchema = z
@@ -994,7 +1252,7 @@ export const DemandPoolSignalSchema = z
         participatingEntitiesCount: z
             .number()
             .int()
-            .min(3, 'K-anonimato Ley N° 21.719 exige k >= 3 entidades distintas.'),
+            .min(ANONYMITY_K_MIN, 'K-anonimato Ley N° 21.719 exige k >= 5 entidades B2B distintas.'),
         optInVerified: z.literal(true),
         medianReferenceUnitClp: z.number().nonnegative().optional(),
         generatedAt: z.string().min(10),
@@ -1069,7 +1327,7 @@ export const CreateSupplyRequisitionPayloadSchema = z.object({
     siteId: z.string().trim().min(1).max(128),
     demandOrigin: SupplyDemandOriginSchema.default('DESKTOP_MANUAL'),
     demandNature: SupplyDemandNatureSchema.default('REACTIVE_FIELD'),
-    costCenter: z.string().trim().min(2).max(64).default('CC-CAMPAMENTO'),
+    costCenter: z.string().trim().min(2).max(64).default('CC-CAMP-ALIMENTACION'),
     linkedAssetId: z.string().trim().max(128).nullable().optional(),
     linkedPlanRef: z.string().trim().max(160).nullable().optional(),
     notes: z.string().trim().max(1000).optional(),
@@ -1120,9 +1378,9 @@ export const AnalyzedReceiptDraftSchema = z.object({
     dedupeKey: z.string().trim().max(128),
     isDuplicate: z.boolean().default(false),
     issueDate: z.string().trim().max(32),
-    netAmountClp: z.number().nonnegative(),
-    vatAmountClp: z.number().nonnegative(),
-    totalAmountClp: z.number().nonnegative(),
+    netAmountClp: z.number(),
+    vatAmountClp: z.number(),
+    totalAmountClp: z.number(),
     vatRecoverable: z.boolean().default(false),
     arithmeticValid: z.boolean(),
     arithmeticMismatchClp: z.number(),
@@ -1143,9 +1401,9 @@ export const CommitSupplyPurchasePayloadSchema = z.object({
     documentType: SiiDteTypeSchema,
     folio: z.string().trim().min(1).max(64),
     issueDate: z.string().trim().min(8).max(32),
-    netAmountClp: z.number().nonnegative(),
-    vatAmountClp: z.number().nonnegative(),
-    totalAmountClp: z.number().nonnegative(),
+    netAmountClp: z.number(),
+    vatAmountClp: z.number(),
+    totalAmountClp: z.number(),
     paymentMethod: SupplyPaymentMethodSchema,
     expenseReportId: z.string().trim().max(128).nullable().optional(),
     evidenceCasRef: SupplyEvidenceCasRefSchema,
@@ -1186,7 +1444,7 @@ export const CreateSiiExpenseReportPayloadSchema = z.object({
     siteId: z.string().trim().min(1).max(128),
     title: z.string().trim().min(2).max(180),
     periodLabel: z.string().trim().min(4).max(32),
-    costCenter: z.string().trim().min(2).max(64).default('CC-CAMPAMENTO'),
+    costCenter: z.string().trim().min(2).max(64).default('CC-CAMP-ALIMENTACION'),
     fundAdvanceClp: z.number().nonnegative().default(0),
     notes: z.string().trim().max(1000).optional(),
 });

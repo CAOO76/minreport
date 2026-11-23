@@ -532,10 +532,10 @@ const SAMPLE_PURCHASES: SupplyPurchase[] = [
             },
             {
                 purchaseLineId: 'pl_2',
-                canonicalSkuId: 'sku-agua-bidon-20l',
+                canonicalSkuId: 'SKU-AGUA-BIDON',
                 description: 'Agua Potable Bidón 20L',
-                categoryCode: 'AGUA_POTABLE',
-                procurementBucket: 'GAS_AGUA_COMBUSTIBLE',
+                categoryCode: 'AGUA_POTABLE_BEBESTIBLE',
+                procurementBucket: 'AGUA_POTABLE',
                 unitSi: 'L',
                 qtyPurchased: 200,
                 unitPriceClp: 500,

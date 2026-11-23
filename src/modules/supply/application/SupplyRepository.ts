@@ -15,6 +15,7 @@ import {
     type TenantDemandObservation,
     evaluateDs594WaterGuardrail,
     forecastSkuDemand,
+    isHumanPotableWaterCategory,
     isSandboxTenantId,
     projectAnonymousDemandSignals,
 } from '../domain/DemandAndCostForecaster';
@@ -71,6 +72,7 @@ import {
     type SupplyPurchaseLine,
     type SupplyRequisition,
     type SupplySite,
+    normalizeLegacyCostCenter,
 } from './supply.types';
 
 /**
@@ -1253,17 +1255,36 @@ export class SupplyRepository {
             }
 
             // 2b. Invocar `RequisitionFulfillmentMatcher` para conciliación N:M FIFO de los remanentes
+            const computePurchaseLineVat = (
+                line: SupplyPurchaseLine,
+                ratio = 1
+            ): ReturnType<typeof computeChileanVatBreakdown> => {
+                const scaledSubtotal = Math.round(line.subtotalClp * ratio);
+                const isNetLine =
+                    line.linePricingBasis === 'NET' &&
+                    (params.documentType === 33 || params.documentType === 52 || params.documentType === 61);
+                if (isNetLine) {
+                    const grossEstimated = Math.round(scaledSubtotal * 1.19);
+                    return computeChileanVatBreakdown({
+                        dteType: params.documentType,
+                        totalAmountClp: grossEstimated,
+                        netAmountClp: scaledSubtotal,
+                    });
+                }
+                return computeChileanVatBreakdown({
+                    dteType: params.documentType,
+                    totalAmountClp: scaledSubtotal,
+                });
+            };
+
             const domainOpenReqs = Array.from(reqById.values()).map(mapAppReqToDomain);
             const domainLinesForMatcher = params.lines
                 .filter((l) => (remainingQtyByLineId.get(l.purchaseLineId) || 0) > 0)
                 .map((l) => {
                     const remQty = remainingQtyByLineId.get(l.purchaseLineId) || 0;
                     const ratio = l.qtyPurchased > 0 ? remQty / l.qtyPurchased : 1;
-                    const lineGross = Math.round(l.subtotalClp * ratio);
-                    const lineVat = computeChileanVatBreakdown({
-                        dteType: params.documentType,
-                        totalAmountClp: lineGross,
-                    });
+                    const lineVat = computePurchaseLineVat(l, ratio);
+                    const lineGross = Math.abs(lineVat.totalAmountClp);
                     return {
                         purchaseLineId: l.purchaseLineId,
                         canonicalSkuId: l.canonicalSkuId,
@@ -1272,7 +1293,8 @@ export class SupplyRepository {
                         unitSi: l.unitSi,
                         qtyPurchased: remQty,
                         unitPriceNetClp: remQty > 0 ? Math.round(Math.abs(lineVat.netAmountClp) / remQty) : 0,
-                        unitPriceGrossClp: l.unitPriceClp,
+                        unitPriceGrossClp:
+                            remQty > 0 ? Math.round(lineGross / remQty) : l.unitPriceClp,
                         subtotalNetClp: Math.abs(lineVat.netAmountClp),
                         subtotalGrossClp: lineGross,
                         destination: l.destination,
@@ -1364,10 +1386,8 @@ export class SupplyRepository {
             const domainFullPurchase: DomainSupplyPurchase = {
                 ...domainRemainingPurchase,
                 lines: params.lines.map((l) => {
-                    const lineVat = computeChileanVatBreakdown({
-                        dteType: params.documentType,
-                        totalAmountClp: l.subtotalClp,
-                    });
+                    const lineVat = computePurchaseLineVat(l, 1);
+                    const lineGross = Math.abs(lineVat.totalAmountClp);
                     return {
                         purchaseLineId: l.purchaseLineId,
                         canonicalSkuId: l.canonicalSkuId,
@@ -1377,9 +1397,10 @@ export class SupplyRepository {
                         qtyPurchased: l.qtyPurchased,
                         unitPriceNetClp:
                             l.qtyPurchased > 0 ? Math.round(Math.abs(lineVat.netAmountClp) / l.qtyPurchased) : 0,
-                        unitPriceGrossClp: l.unitPriceClp,
+                        unitPriceGrossClp:
+                            l.qtyPurchased > 0 ? Math.round(lineGross / l.qtyPurchased) : l.unitPriceClp,
                         subtotalNetClp: Math.abs(lineVat.netAmountClp),
-                        subtotalGrossClp: l.subtotalClp,
+                        subtotalGrossClp: lineGross,
                         destination: l.destination,
                         isCapexAsset: l.isCapexAsset || l.destination === 'CAPEX_ASSET',
                         costCenter: l.costCenter,
@@ -1395,9 +1416,14 @@ export class SupplyRepository {
             const domainAssetByLineId = new Map(
                 domainRecon.createdAssets.map((a) => [a.purchaseLineId, a])
             );
+            const hasRecoverableVatDte = params.documentType === 33 || params.documentType === 61;
 
             for (let idx = 0; idx < params.lines.length; idx++) {
                 const pLine = params.lines[idx];
+                const lineVat = computePurchaseLineVat(pLine, 1);
+                const accountingCostBasisClp = hasRecoverableVatDte
+                    ? Math.abs(lineVat.netAmountClp)
+                    : Math.abs(lineVat.totalAmountClp);
                 const domAsset = domainAssetByLineId.get(pLine.purchaseLineId);
                 const domCash = domainRecon.cashEntries[idx];
                 const isCapex = Boolean(domAsset || pLine.isCapexAsset || pLine.destination === 'CAPEX_ASSET');
@@ -1405,13 +1431,10 @@ export class SupplyRepository {
                 if (isCapex) {
                     const lineVatCreditClp = domAsset
                         ? domAsset.vatCreditClp
-                        : computeChileanVatBreakdown({
-                              dteType: params.documentType,
-                              totalAmountClp: pLine.subtotalClp,
-                          }).vatRecoverableClp;
+                        : lineVat.vatRecoverableClp;
                     const lineNetClp = domAsset
                         ? domAsset.acquisitionNetClp
-                        : Math.max(0, Math.round(pLine.subtotalClp - Math.max(0, lineVatCreditClp)));
+                        : Math.abs(lineVat.netAmountClp);
 
                     txCreatedAssets.push({
                         assetId: `sasset_${Date.now().toString(36)}_${crypto.randomBytes(3).toString('hex')}`,
@@ -1440,6 +1463,8 @@ export class SupplyRepository {
                 ) {
                     const invDocId = buildInventoryDocId(params.tenantId, params.siteId, pLine.canonicalSkuId);
                     const currentInv = txUpdatedInventory.get(invDocId) ?? invByDocId.get(invDocId) ?? null;
+                    const netUnitCostForPmp =
+                        pLine.qtyPurchased > 0 ? Math.round(accountingCostBasisClp / pLine.qtyPurchased) : 0;
                     const computed = this.computeNextInventoryState(currentInv, {
                         tenantId: params.tenantId,
                         siteId: params.siteId,
@@ -1450,11 +1475,11 @@ export class SupplyRepository {
                         unitSi: pLine.unitSi,
                         inTransitDelta: pLine.destination === 'STOCK_IN_TRANSIT' ? pLine.qtyPurchased : 0,
                         inWarehouseDelta: pLine.destination === 'STOCK_IN_WAREHOUSE' ? pLine.qtyPurchased : 0,
-                        unitCostClp: pLine.unitPriceClp,
+                        unitCostClp: netUnitCostForPmp,
                         movementType:
                             pLine.destination === 'STOCK_IN_TRANSIT'
-                                ? 'INBOUND_IN_TRANSIT'
-                                : 'INBOUND_WAREHOUSE_DIRECT',
+                                ? 'INBOUND_TRANSIT'
+                                : 'DIRECT_RECEIPT',
                         referenceId: purchaseId,
                         actorUid: actor.actorUid,
                         now,
@@ -1465,16 +1490,15 @@ export class SupplyRepository {
 
                 // Costo tributario contable: cuando no hay IVA crédito fiscal recuperable (ej. Boleta 39, DTE 52),
                 // el monto pagado completo constituye base de costo (DL 825 Art. 23).
-                const lineVatCredit = domCash
-                    ? domCash.vatRecoverableClp
-                    : computeChileanVatBreakdown({
-                          dteType: params.documentType,
-                          totalAmountClp: pLine.subtotalClp,
-                      }).vatRecoverableClp;
+                const lineVatCredit = domCash ? domCash.vatRecoverableClp : lineVat.vatRecoverableClp;
                 const lineNetBasis =
                     params.documentType === 61
-                        ? -Math.abs(Math.round(pLine.subtotalClp - Math.abs(lineVatCredit)))
-                        : Math.max(0, Math.round(pLine.subtotalClp - Math.max(0, lineVatCredit)));
+                        ? -Math.abs(accountingCostBasisClp)
+                        : accountingCostBasisClp;
+                const lineGrossAmountClp =
+                    params.documentType === 61
+                        ? -Math.abs(lineVat.totalAmountClp)
+                        : Math.abs(lineVat.totalAmountClp);
 
                 txCashEntries.push({
                     entryId: `cash_${crypto.randomBytes(5).toString('hex')}`,
@@ -1485,11 +1509,14 @@ export class SupplyRepository {
                         params.paymentMethod === 'REEMBOLSO_GERENCIA'
                             ? 'REIMBURSEMENT_DUE'
                             : 'EXPENSE_RENDERED',
-                    amountClp: params.documentType === 61 ? -Math.abs(Math.round(pLine.subtotalClp)) : Math.round(pLine.subtotalClp),
+                    amountClp: lineGrossAmountClp,
                     netAmountClp: lineNetBasis,
                     vatCreditClp: lineVatCredit,
                     isCapex,
-                    costCenter: isCapex ? 'CC-CAPEX' : domCash?.costCenter || pLine.costCenter || 'CC-CAMPAMENTO',
+                    categoryCode: pLine.categoryCode,
+                    costCenter: isCapex
+                        ? 'CC-CAPEX'
+                        : domCash?.costCenter || normalizeLegacyCostCenter(pLine.costCenter, pLine.categoryCode),
                     referenceId: purchaseId,
                     actorUid: actor.actorUid,
                     description: `${pLine.description} (${pLine.qtyPurchased} ${pLine.unitSi}) · DTE ${params.documentType} #${params.folio}`,
@@ -1727,6 +1754,26 @@ export class SupplyRepository {
             }
 
             // FASE 2: CÁLCULO ATÓMICO EN MEMORIA (evaluado vía `StockAssetCashCostReconciler.confirmWarehouseReception`)
+            const resolveLineNetUnitCostClp = (line: PurchaseLineWithReceptionProgress): number => {
+                const subtotalBase = Math.round(line.subtotalClp || 0);
+                const hasRecoverableVat = loaded.documentType === 33 || loaded.documentType === 61;
+                const isNetLine =
+                    line.linePricingBasis === 'NET' &&
+                    (loaded.documentType === 33 || loaded.documentType === 52 || loaded.documentType === 61);
+                const vat = isNetLine
+                    ? computeChileanVatBreakdown({
+                          dteType: loaded.documentType,
+                          totalAmountClp: Math.round(subtotalBase * 1.19),
+                          netAmountClp: subtotalBase,
+                      })
+                    : computeChileanVatBreakdown({
+                          dteType: loaded.documentType,
+                          totalAmountClp: subtotalBase,
+                      });
+                const costBasis = hasRecoverableVat ? Math.abs(vat.netAmountClp) : Math.abs(vat.totalAmountClp);
+                return line.qtyPurchased > 0 ? Math.round(costBasis / line.qtyPurchased) : Math.round(line.unitPriceClp || 0);
+            };
+
             confirmWarehouseReception({
                 receptionId: `rec_${loaded.purchaseId}_${Date.now().toString(36)}`,
                 tenantId: params.tenantId,
@@ -1740,8 +1787,8 @@ export class SupplyRepository {
                         unitSi: line.unitSi,
                         expectedInTransitQty: Math.max(0, Number((line.qtyPurchased - prog.prev).toFixed(3))),
                         receivedQty: prog.incoming,
-                        unitCostNetClp: line.unitPriceClp,
-                        costCenter: line.costCenter || 'CC-CAMPAMENTO',
+                        unitCostNetClp: resolveLineNetUnitCostClp(line),
+                        costCenter: normalizeLegacyCostCenter(line.costCenter, line.categoryCode),
                     };
                 }),
             });
@@ -1769,8 +1816,8 @@ export class SupplyRepository {
                         unitSi: line.unitSi,
                         inTransitDelta: -prog.incoming,
                         inWarehouseDelta: prog.incoming,
-                        unitCostClp: line.unitPriceClp,
-                        movementType: 'RECEPTION_CONFIRMED',
+                        unitCostClp: resolveLineNetUnitCostClp(line),
+                        movementType: 'RECEIPT_AT_WAREHOUSE',
                         referenceId: loaded.purchaseId,
                         actorUid: actor.actorUid,
                         now,
@@ -2169,7 +2216,7 @@ export class SupplyRepository {
                 paymentMethod: input.paymentMethod,
                 title: input.title,
                 periodLabel: input.periodLabel,
-                costCenter: (input.costCenter || 'CC-CAMPAMENTO').trim() || 'CC-CAMPAMENTO',
+                costCenter: normalizeLegacyCostCenter(input.costCenter || 'CC-CAMP-ALIMENTACION'),
                 fundAdvanceClp: Math.round(input.fundAdvanceClp),
                 renderedTotalClp: Math.round(renderedTotalClp),
                 balanceClp,
@@ -2281,8 +2328,8 @@ export class SupplyRepository {
             const ds594Target = Math.max(100, Number(site.ds594DailyWaterTargetLPerPax || 120));
             const waterStorageCapacityL = Math.round(Number(site.waterStorageCapacityL || 0));
 
-            // Stock REAL de agua potable en bodega y tránsito (`supply_inventory_items`) — jamás asumir tanque lleno
-            const waterItems = inventory.filter((inv) => inv.categoryCode === 'AGUA_POTABLE');
+            // Stock REAL de agua potable humana en bodega y tránsito (`supply_inventory_items`) — jamás incluir agua industrial ni asumir tanque lleno
+            const waterItems = inventory.filter((inv) => isHumanPotableWaterCategory(inv.categoryCode));
             const waterWarehouseL = waterItems.reduce(
                 (acc, inv) => acc + Math.max(0, Number(inv.qtyInWarehouse || 0)),
                 0
@@ -2326,15 +2373,25 @@ export class SupplyRepository {
                         : 'WARNING'
                     : 'NOMINAL';
 
-            // OPEX diario alimentario por persona (excluyendo estrictamente isCapex === true)
+            // OPEX diario alimentario por persona (excluyendo estrictamente CAPEX, aseo, mantención, combustible y gas)
             const thirtyDaysAgoMs = Date.now() - 30 * 24 * 60 * 60 * 1000;
             const foodOpex30d = cashEntries
-                .filter(
-                    (e) =>
-                        !e.isCapex &&
-                        e.costCenter === 'CC-CAMPAMENTO' &&
-                        Date.parse(e.createdAt) >= thirtyDaysAgoMs
-                )
+                .filter((e) => {
+                    if (e.isCapex) return false;
+                    if (e.direction && e.direction !== 'EXPENSE_RENDERED' && e.direction !== 'REIMBURSEMENT_DUE') {
+                        return false;
+                    }
+                    if (Date.parse(e.createdAt) < thirtyDaysAgoMs) return false;
+                    if (e.categoryCode) {
+                        return e.categoryCode === 'VIVERES_ALIMENTACION' || isHumanPotableWaterCategory(e.categoryCode);
+                    }
+                    const normalizedCc = normalizeLegacyCostCenter(e.costCenter);
+                    return (
+                        normalizedCc === 'CC-CAMP-ALIMENTACION' ||
+                        normalizedCc === 'CC-CAMP-AGUA' ||
+                        e.costCenter === 'CC-CAMPAMENTO'
+                    );
+                })
                 .reduce((acc, e) => acc + e.netAmountClp, 0);
 
             const dailyFoodOpexClpPerPax =
@@ -2342,7 +2399,7 @@ export class SupplyRepository {
 
             const items: DemandForecastLine[] = inventory.map((inv) => {
                 const defaultPerPax =
-                    inv.categoryCode === 'AGUA_POTABLE'
+                    isHumanPotableWaterCategory(inv.categoryCode)
                         ? ds594Target * altitudeMultiplier
                         : inv.categoryCode === 'VIVERES_ALIMENTACION'
                           ? 0.35
@@ -2659,6 +2716,31 @@ export class SupplyRepository {
                 },
                 { merge: true }
             );
+    }
+
+    public static async resolveActiveMemberPhoneE164(
+        tenantId: string,
+        uid: string
+    ): Promise<string | null> {
+        const cleanTenant = String(tenantId || '').trim();
+        const cleanUid = String(uid || '').trim();
+        if (!cleanTenant || !cleanUid) return null;
+        const snap = await db
+            .collection('accounts')
+            .doc(cleanTenant)
+            .collection('members')
+            .doc(cleanUid)
+            .get();
+        if (!snap.exists) return null;
+        const data = snap.data() as Record<string, unknown> | undefined;
+        if (!data) return null;
+        const status = String(data.status || '').toUpperCase();
+        if (status && status !== 'ACTIVE') return null;
+        const phone = typeof data.phoneE164 === 'string' ? data.phoneE164.trim() : '';
+        if (!phone || phone.includes('*') || !/^\+[1-9]\d{6,14}$/.test(phone)) {
+            return null;
+        }
+        return phone;
     }
 
     public static async recordWhatsAppWamid(

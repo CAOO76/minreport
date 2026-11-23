@@ -47,11 +47,19 @@ const URGENCY_RANK: Readonly<Record<SupplyUrgency, number>> = {
 const CANONICAL_BUCKET_ORDER: readonly ProcurementBucket[] = [
     'VERDULERIA',
     'SUPERMERCADO',
-    'FERRETERIA',
-    'REPUESTOS_OPERMAQ',
+    'AGUA_POTABLE',
+    'AGUA_INDUSTRIAL_ALJIBE',
+    'GAS_GLP_DOMESTICO',
+    'GASES_INDUSTRIALES',
+    'COMBUSTIBLE_GRANEL',
+    'REPUESTOS_LUBRICANTES',
+    'FERRETERIA_INSUMOS',
+    'PERFORACION_FORTIFICACION',
     'EPP_SEGURIDAD',
-    'GAS_AGUA_COMBUSTIBLE',
-    'MANTENCION_EQUIPAMIENTO',
+    'CONTROLADOS_DGMN',
+    'ACTIVOS_CAPEX',
+    'ASEO_HIGIENE',
+    'MANTENCION_CAMP',
 ];
 
 function resolveHigherUrgency(a: SupplyUrgency, b: SupplyUrgency): SupplyUrgency {

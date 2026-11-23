@@ -80,9 +80,12 @@ import {
     EvidenceCasRefSchema,
     exportSiiDocumentsToCsv,
     HitlConfirmationKeywordSchema,
+    LinePricingBasisSchema,
     maskPiiForLog,
+    normalizeLegacyCostCenter,
     normalizeSupplyItemFromText,
     PaymentMethodSchema,
+    ProcurementBucketSchema,
     PurchaseLineDestinationSchema,
     PurchaseModeSchema,
     RequisitionStatusSchema,
@@ -759,7 +762,7 @@ const CreateRequisitionBodySchema = z.object({
     siteId: z.string().trim().min(1).max(128),
     demandOrigin: SupplyDemandOriginSchema.default('DESKTOP_MANUAL'),
     demandNature: SupplyDemandNatureSchema.default('REACTIVE_FIELD'),
-    costCenter: z.string().trim().min(1).max(64).default('CC-CAMPAMENTO'),
+    costCenter: z.string().trim().min(1).max(64).default('CC-CAMP-ALIMENTACION'),
     linkedAssetId: z.string().trim().max(128).optional(),
     linkedPlanRef: z.string().trim().max(128).optional(),
     notes: z.string().trim().max(1000).optional(),
@@ -772,17 +775,7 @@ const CreateRequisitionBodySchema = z.object({
                     normalizedName: z.string().trim().min(1).max(200).optional(),
                     itemName: z.string().trim().min(1).max(200).optional(),
                     categoryCode: SupplyCategoryCodeSchema.optional(),
-                    procurementBucket: z
-                        .enum([
-                            'VERDULERIA',
-                            'SUPERMERCADO',
-                            'FERRETERIA',
-                            'REPUESTOS_OPERMAQ',
-                            'EPP_SEGURIDAD',
-                            'GAS_AGUA_COMBUSTIBLE',
-                            'MANTENCION_EQUIPAMIENTO',
-                        ])
-                        .optional(),
+                    procurementBucket: ProcurementBucketSchema.optional(),
                     unitSi: z.enum(['kg', 'L', 'un', 'par', 'm', 'm3', 'caja', 'bolsa']).optional(),
                     qtyRequested: z.number().positive(),
                     urgency: SupplyUrgencySchema.default('STANDARD'),
@@ -822,17 +815,7 @@ const FlexiblePurchaseLineInputSchema = z.object({
     rawDescription: z.string().trim().min(1).max(240).optional(),
     normalizedName: z.string().trim().min(1).max(240).optional(),
     categoryCode: SupplyCategoryCodeSchema.optional(),
-    procurementBucket: z
-        .enum([
-            'VERDULERIA',
-            'SUPERMERCADO',
-            'FERRETERIA',
-            'REPUESTOS_OPERMAQ',
-            'EPP_SEGURIDAD',
-            'GAS_AGUA_COMBUSTIBLE',
-            'MANTENCION_EQUIPAMIENTO',
-        ])
-        .optional(),
+    procurementBucket: ProcurementBucketSchema.optional(),
     unitSi: z.enum(['kg', 'L', 'un', 'par', 'm', 'm3', 'caja', 'bolsa']).optional(),
     qtyPurchased: z.number().positive(),
     unitPriceClp: z.number().nonnegative().optional(),
@@ -842,8 +825,9 @@ const FlexiblePurchaseLineInputSchema = z.object({
     lineNetClp: z.number().nonnegative().optional(),
     lineVatClp: z.number().nonnegative().optional(),
     lineTotalClp: z.number().nonnegative().optional(),
+    linePricingBasis: LinePricingBasisSchema.optional(),
     destination: PurchaseLineDestinationSchema.default('STOCK_IN_TRANSIT'),
-    costCenter: z.string().trim().max(64).default('CC-CAMPAMENTO'),
+    costCenter: z.string().trim().max(64).default('CC-CAMP-ALIMENTACION'),
     isCapexAsset: z.boolean().optional(),
     serialOrTag: z.string().trim().max(120).optional(),
     explicitAllocations: z
@@ -928,7 +912,7 @@ const CreateCashLedgerBodySchema = z.object({
     netAmountClp: z.number().nonnegative().optional(),
     vatCreditClp: z.number().nonnegative().optional(),
     isCapex: z.boolean().default(false),
-    costCenter: z.string().trim().min(1).max(64).default('CC-CAMPAMENTO'),
+    costCenter: z.string().trim().min(1).max(64).default('CC-CAMP-ALIMENTACION'),
     referenceId: z.string().trim().min(1).max(128),
     description: z.string().trim().min(1).max(300),
 });
@@ -939,7 +923,7 @@ const CreateExpenseReportBodySchema = z.object({
     paymentMethod: PaymentMethodSchema,
     title: z.string().trim().min(2).max(200),
     periodLabel: z.string().trim().min(2).max(80).optional(),
-    costCenter: z.string().trim().min(1).max(64).default('CC-CAMPAMENTO'),
+    costCenter: z.string().trim().min(1).max(64).default('CC-CAMP-ALIMENTACION'),
     fundAdvanceClp: z.number().nonnegative(),
     siiDocumentIds: z.array(z.string().trim().min(1).max(160)).max(200).default([]),
 });
@@ -2232,35 +2216,51 @@ router.post('/purchases', mutationRateLimiter, async (req: SupplyRequest, res: R
         const normalizedLines: SupplyPurchaseLine[] = data.lines.map((l) => {
             const desc = (l.normalizedName || l.description || l.rawDescription || 'Ítem Compra').trim();
             const norm = normalizeSupplyItemFromText(desc, l.qtyPurchased, l.unitSi);
+            const hasExplicitNetOnly =
+                l.linePricingBasis === 'NET' ||
+                (l.lineTotalClp === undefined && l.lineNetClp !== undefined && l.lineVatClp === undefined);
+            const linePricingBasis = l.linePricingBasis ?? (hasExplicitNetOnly ? 'NET' : 'GROSS');
             const subtotalClp = Math.round(
                 l.lineTotalClp ??
                     l.subtotalClp ??
-                    ((l.lineNetClp ?? 0) + (l.lineVatClp ?? 0) ||
-                        l.qtyPurchased * (l.unitPriceGrossClp ?? l.unitPriceClp ?? l.unitPriceNetClp ?? 0))
+                    (linePricingBasis === 'NET'
+                        ? (l.lineNetClp ??
+                          l.qtyPurchased * (l.unitPriceNetClp ?? l.unitPriceClp ?? 0))
+                        : ((l.lineNetClp ?? 0) + (l.lineVatClp ?? 0) ||
+                          l.qtyPurchased * (l.unitPriceGrossClp ?? l.unitPriceClp ?? l.unitPriceNetClp ?? 0)))
             );
             const unitPriceClp = Math.round(
-                l.unitPriceGrossClp ??
-                    l.unitPriceClp ??
-                    l.unitPriceNetClp ??
-                    (l.qtyPurchased > 0 ? subtotalClp / l.qtyPurchased : 0)
+                linePricingBasis === 'NET'
+                    ? (l.unitPriceNetClp ??
+                      l.unitPriceClp ??
+                      (l.qtyPurchased > 0 ? subtotalClp / l.qtyPurchased : 0))
+                    : (l.unitPriceGrossClp ??
+                      l.unitPriceClp ??
+                      l.unitPriceNetClp ??
+                      (l.qtyPurchased > 0 ? subtotalClp / l.qtyPurchased : 0))
             );
             const mergedExplicit = [
                 ...(l.explicitAllocations || []),
                 ...(topLevelAllocsByLine.get(l.purchaseLineId) || []),
             ];
+            const effectiveCategory = l.categoryCode || norm.categoryCode;
 
             return {
                 purchaseLineId: l.purchaseLineId,
                 canonicalSkuId: l.canonicalSkuId || norm.canonicalSkuId,
                 description: desc,
-                categoryCode: l.categoryCode || norm.categoryCode,
+                categoryCode: effectiveCategory,
                 procurementBucket: l.procurementBucket || norm.procurementBucket,
                 unitSi: l.unitSi || norm.unitSi,
                 qtyPurchased: l.qtyPurchased,
                 unitPriceClp,
                 subtotalClp,
+                linePricingBasis,
                 destination: l.destination,
-                costCenter: l.costCenter || 'CC-CAMPAMENTO',
+                costCenter: normalizeLegacyCostCenter(
+                    l.costCenter || 'CC-CAMP-ALIMENTACION',
+                    effectiveCategory
+                ),
                 isCapexAsset: Boolean(l.isCapexAsset || l.destination === 'CAPEX_ASSET' || norm.isCapexAsset),
                 serialOrTag: l.serialOrTag,
                 explicitAllocations: mergedExplicit.length > 0 ? mergedExplicit : undefined,
@@ -2365,14 +2365,25 @@ router.post(
                 }
             );
 
-            // Retroalimentación automática por WhatsApp a solicitantes en terreno
+            // Retroalimentación automática por WhatsApp a solicitantes en terreno (resolviendo teléfono real activo desde perfil, nunca el enmascarado)
             for (const reqItem of result.affectedRequisitions) {
-                if (reqItem.requesterPhoneE164) {
+                const activePhone = await SupplyRepository.resolveActiveMemberPhoneE164(
+                    ctx.tenantId,
+                    reqItem.requesterUid
+                );
+                const fallbackUnmasked =
+                    reqItem.requesterPhoneE164 &&
+                    !reqItem.requesterPhoneE164.includes('*') &&
+                    /^\+[1-9]\d{6,14}$/.test(reqItem.requesterPhoneE164.trim())
+                        ? reqItem.requesterPhoneE164.trim()
+                        : null;
+                const targetPhone = activePhone || fallbackUnmasked;
+                if (targetPhone) {
                     const summaryLines = reqItem.lines.map(
                         (l) => `${l.itemName}: ${l.qtyReceived}/${l.qtyRequested} ${l.unitSi} recibido`
                     );
                     await EmailAndWhatsAppNotifier.sendFieldStatusUpdate({
-                        toE164: reqItem.requesterPhoneE164,
+                        toE164: targetPhone,
                         requisitionId: reqItem.reqId,
                         statusLabel: 'RECEPCIÓN EN BODEGA CONFIRMADA',
                         summaryLines,

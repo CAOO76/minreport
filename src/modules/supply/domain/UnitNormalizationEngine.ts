@@ -167,10 +167,6 @@ const SIMPLE_UNIT_MAP: Readonly<Record<string, SimpleUnitSpec>> = {
     ml: { factorToSi: 0.001, unitSi: 'L', label: 'ml' },
     cc: { factorToSi: 0.001, unitSi: 'L', label: 'cc' },
     m3: { factorToSi: 1, unitSi: 'm3', label: 'm3' },
-    bidon: { factorToSi: 20, unitSi: 'L', label: 'bidón (20 L)' },
-    bidones: { factorToSi: 20, unitSi: 'L', label: 'bidón (20 L)' },
-    botellon: { factorToSi: 20, unitSi: 'L', label: 'botellón (20 L)' },
-    botellones: { factorToSi: 20, unitSi: 'L', label: 'botellón (20 L)' },
     balde: { factorToSi: 20, unitSi: 'L', label: 'balde (20 L)' },
     baldes: { factorToSi: 20, unitSi: 'L', label: 'balde (20 L)' },
     tambor: { factorToSi: 200, unitSi: 'L', label: 'tambor (200 L)' },
@@ -278,11 +274,20 @@ export function normalizeQuantityToSi(input: UnitNormalizationInput): UnitNormal
         }
     }
 
+    const effectiveSku = input.sku || matchCanonicalSkuByText(combinedText);
+
     // 2. Reglas compuestas de jerga minera chilena/LatAm (ej. "malla de papas", "balón de 45", "bidón 20L")
     const sortedRules = [...BUILTIN_COMPOUND_UNIT_RULES].sort(
         (a, b) => b.pattern.length - a.pattern.length
     );
     for (const rule of sortedRules) {
+        if (
+            rule.canonicalSkuHint &&
+            effectiveSku &&
+            rule.canonicalSkuHint !== effectiveSku.canonicalSkuId
+        ) {
+            continue;
+        }
         if (matchesPhrase(combinedText, rule.pattern)) {
             // Si el usuario indicó explícitamente una unidad SI directa (ej. "2 kilos de papas"),
             // NO sobrescribir con factor de empaque compuesto a menos que la unidad raw sea el empaque.
@@ -302,16 +307,16 @@ export function normalizeQuantityToSi(input: UnitNormalizationInput): UnitNormal
                     factorApplied: rule.factorToSi,
                     matchedAlias: rule.packLabel,
                     leySaco25kgApplied: Boolean(rule.leySaco25kgApplied),
-                    canonicalSkuHint: rule.canonicalSkuHint || input.sku?.canonicalSkuId,
+                    canonicalSkuHint: rule.canonicalSkuHint || effectiveSku?.canonicalSkuId,
                     isAmbiguous: false,
                 };
             }
         }
     }
 
-    // 3. Empaque específico del SKU canónico (ej. "paquete" en tallarines -> 0.4 kg, "bidon" en cloro -> 5 L)
-    if (input.sku?.defaultPackToSi && rawUnitNormalized) {
-        const packNorm = normalizeCatalogText(input.sku.defaultPackToSi.packLabel);
+    // 3. Empaque específico del SKU canónico (ej. "paquete" en tallarines -> 0.4 kg, "bidon" en cloro -> 5 L, "bidon" en agua -> 20 L)
+    if (effectiveSku?.defaultPackToSi && rawUnitNormalized) {
+        const packNorm = normalizeCatalogText(effectiveSku.defaultPackToSi.packLabel);
         const packSingular = packNorm.split(' ')[0];
         if (
             rawUnitNormalized === packNorm ||
@@ -321,16 +326,36 @@ export function normalizeQuantityToSi(input: UnitNormalizationInput): UnitNormal
         ) {
             return {
                 originalQuantity: qty,
-                originalUnitRaw: input.unitRaw || input.sku.defaultPackToSi.packLabel,
-                quantitySi: roundSupplyQty(qty * input.sku.defaultPackToSi.factorToSi),
-                unitSi: input.sku.defaultPackToSi.unitSi,
-                factorApplied: input.sku.defaultPackToSi.factorToSi,
-                matchedAlias: input.sku.defaultPackToSi.packLabel,
-                leySaco25kgApplied: Boolean(input.sku.leySaco25kgApplied),
-                canonicalSkuHint: input.sku.canonicalSkuId,
+                originalUnitRaw: input.unitRaw || effectiveSku.defaultPackToSi.packLabel,
+                quantitySi: roundSupplyQty(qty * effectiveSku.defaultPackToSi.factorToSi),
+                unitSi: effectiveSku.defaultPackToSi.unitSi,
+                factorApplied: effectiveSku.defaultPackToSi.factorToSi,
+                matchedAlias: effectiveSku.defaultPackToSi.packLabel,
+                leySaco25kgApplied: Boolean(effectiveSku.leySaco25kgApplied),
+                canonicalSkuHint: effectiveSku.canonicalSkuId,
                 isAmbiguous: false,
             };
         }
+    }
+
+    // 3b. "bidon" / "botellon" sin volumen explícito ni metadata SKU: marcar ambiguo en vez de asumir 20 L hardcoded
+    if (
+        rawUnitNormalized === 'bidon' ||
+        rawUnitNormalized === 'bidones' ||
+        rawUnitNormalized === 'botellon' ||
+        rawUnitNormalized === 'botellones'
+    ) {
+        return {
+            originalQuantity: qty,
+            originalUnitRaw: input.unitRaw || rawUnitNormalized,
+            quantitySi: roundSupplyQty(qty),
+            unitSi: effectiveSku?.baseUnitSi || 'un',
+            factorApplied: 1,
+            matchedAlias: rawUnitNormalized,
+            leySaco25kgApplied: false,
+            canonicalSkuHint: effectiveSku?.canonicalSkuId,
+            isAmbiguous: true,
+        };
     }
 
     // 4. Mapa de unidades simples (kg, L, bandeja, pote, saco, malla, etc.)
@@ -339,7 +364,7 @@ export function normalizeQuantityToSi(input: UnitNormalizationInput): UnitNormal
         // Caso especial: "pan" solo como producto (ej. "pan" sin unidad) vs "pan" como unidad de mantequilla
         if (
             (rawUnitNormalized === 'pan' || rawUnitNormalized === 'panes') &&
-            input.sku?.canonicalSkuId === 'SKU-SUP-PAN'
+            effectiveSku?.canonicalSkuId === 'SKU-SUP-PAN'
         ) {
             return {
                 originalQuantity: qty,
@@ -349,7 +374,7 @@ export function normalizeQuantityToSi(input: UnitNormalizationInput): UnitNormal
                 factorApplied: 1,
                 matchedAlias: 'un',
                 leySaco25kgApplied: false,
-                canonicalSkuHint: input.sku.canonicalSkuId,
+                canonicalSkuHint: effectiveSku.canonicalSkuId,
                 isAmbiguous: false,
             };
         }
@@ -363,23 +388,23 @@ export function normalizeQuantityToSi(input: UnitNormalizationInput): UnitNormal
             factorApplied: simpleUnit.factorToSi,
             matchedAlias: simpleUnit.label,
             leySaco25kgApplied: Boolean(simpleUnit.leySaco25kgApplied),
-            canonicalSkuHint: input.sku?.canonicalSkuId,
+            canonicalSkuHint: effectiveSku?.canonicalSkuId,
             isAmbiguous: false,
         };
     }
 
     // 5. "paquete" / "paquetes" genérico
     if (rawUnitNormalized === 'paquete' || rawUnitNormalized === 'paquetes') {
-        if (input.sku?.defaultPackToSi) {
+        if (effectiveSku?.defaultPackToSi) {
             return {
                 originalQuantity: qty,
                 originalUnitRaw: input.unitRaw || 'paquete',
-                quantitySi: roundSupplyQty(qty * input.sku.defaultPackToSi.factorToSi),
-                unitSi: input.sku.defaultPackToSi.unitSi,
-                factorApplied: input.sku.defaultPackToSi.factorToSi,
-                matchedAlias: input.sku.defaultPackToSi.packLabel,
-                leySaco25kgApplied: Boolean(input.sku.leySaco25kgApplied),
-                canonicalSkuHint: input.sku.canonicalSkuId,
+                quantitySi: roundSupplyQty(qty * effectiveSku.defaultPackToSi.factorToSi),
+                unitSi: effectiveSku.defaultPackToSi.unitSi,
+                factorApplied: effectiveSku.defaultPackToSi.factorToSi,
+                matchedAlias: effectiveSku.defaultPackToSi.packLabel,
+                leySaco25kgApplied: Boolean(effectiveSku.leySaco25kgApplied),
+                canonicalSkuHint: effectiveSku.canonicalSkuId,
                 isAmbiguous: false,
             };
         }
@@ -391,13 +416,13 @@ export function normalizeQuantityToSi(input: UnitNormalizationInput): UnitNormal
             factorApplied: 1,
             matchedAlias: 'paquete',
             leySaco25kgApplied: false,
-            canonicalSkuHint: input.sku?.canonicalSkuId,
+            canonicalSkuHint: effectiveSku?.canonicalSkuId,
             isAmbiguous: true,
         };
     }
 
     // 6. Fallback a unidad base del SKU si existe
-    const matchedSku = input.sku || matchCanonicalSkuByText(combinedText);
+    const matchedSku = effectiveSku;
     if (matchedSku) {
         return {
             originalQuantity: qty,
@@ -503,11 +528,23 @@ export function normalizeUnitExpression(
             const afterUnit = remainderTokens.slice(1);
             cleanedItemText = afterUnit[0] === 'de' ? afterUnit.slice(1).join(' ') : afterUnit.join(' ');
         }
-    } else if (remainderTokens[0] === 'paquete' || remainderTokens[0] === 'paquetes') {
-        unitRaw = remainderTokens[0];
-        hasExplicitUnit = true;
-        const afterUnit = remainderTokens.slice(1);
-        cleanedItemText = afterUnit[0] === 'de' ? afterUnit.slice(1).join(' ') : afterUnit.join(' ');
+    } else if (
+        remainderTokens[0] === 'paquete' ||
+        remainderTokens[0] === 'paquetes' ||
+        remainderTokens[0] === 'bidon' ||
+        remainderTokens[0] === 'bidones' ||
+        remainderTokens[0] === 'botellon' ||
+        remainderTokens[0] === 'botellones'
+    ) {
+        if (compoundHit && compoundHit.pattern.startsWith(remainderTokens[0])) {
+            unitRaw = compoundHit.pattern;
+            hasExplicitUnit = true;
+        } else {
+            unitRaw = remainderTokens[0];
+            hasExplicitUnit = true;
+            const afterUnit = remainderTokens.slice(1);
+            cleanedItemText = afterUnit[0] === 'de' ? afterUnit.slice(1).join(' ') : afterUnit.join(' ');
+        }
     } else if (compoundHit) {
         unitRaw = compoundHit.pattern;
         hasExplicitUnit = true;

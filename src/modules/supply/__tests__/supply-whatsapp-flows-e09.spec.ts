@@ -939,10 +939,10 @@ async function runTests(): Promise<void> {
                 lines: [
                     {
                         lineId: 'prior_l1',
-                        canonicalSkuId: 'sku-agua-bidon-20l',
+                        canonicalSkuId: 'SKU-AGUA-BIDON',
                         itemName: 'Agua Potable Bidón 20L',
-                        categoryCode: 'AGUA_POTABLE',
-                        procurementBucket: 'GAS_AGUA_COMBUSTIBLE',
+                        categoryCode: 'AGUA_POTABLE_BEBESTIBLE',
+                        procurementBucket: 'AGUA_POTABLE',
                         unitSi: 'L',
                         qtyRequested: 200,
                         qtyPurchased: 200,
@@ -1015,7 +1015,7 @@ async function runTests(): Promise<void> {
         const persistedReq = getCollectionMap(SUPPLY_COLLECTIONS.REQUISITIONS).get(createdReqId);
         assert.ok(persistedReq, 'La requisición 1-Tap Re-Order debe persistirse en Firestore');
         assert.equal(persistedReq.lines.length, 2);
-        assert.equal(persistedReq.lines[0].canonicalSkuId, 'sku-agua-bidon-20l');
+        assert.equal(persistedReq.lines[0].canonicalSkuId, 'SKU-AGUA-BIDON');
 
         // 6c. Bloqueo DS 132 (alcohol ofuscado con acentos/leetspeak) -> rechazado sin crear requisición
         const reqCountBefore = getCollectionMap(SUPPLY_COLLECTIONS.REQUISITIONS).size;
@@ -1302,10 +1302,10 @@ async function runTests(): Promise<void> {
                 lines: [
                     {
                         lineId: 'atyp_l1',
-                        canonicalSkuId: 'sku-cocina-industrial',
+                        canonicalSkuId: 'SKU-CAPEX-COCINA',
                         itemName: 'Cocina Industrial Campamento',
                         categoryCode: 'ACTIVO_EQUIPAMIENTO',
-                        procurementBucket: 'MANTENCION_EQUIPAMIENTO',
+                        procurementBucket: 'ACTIVOS_CAPEX',
                         unitSi: 'un',
                         qtyRequested: 1,
                         qtyPurchased: 0,

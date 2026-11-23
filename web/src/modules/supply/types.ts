@@ -4,14 +4,43 @@
  */
 
 export {
+    ANONYMITY_K_MIN,
+    CANONICAL_PROCUREMENT_BUCKETS,
+    CANONICAL_STOCK_LEDGER_MOVEMENT_TYPES,
+    CANONICAL_SUPPLY_CATEGORIES,
+    CANONICAL_WHATSAPP_CHANNEL_IDS,
+    LEGACY_COST_CENTER_MAP,
+    LEGACY_PROCUREMENT_BUCKET_MAP,
+    LEGACY_STOCK_LEDGER_MOVEMENT_TYPE_MAP,
+    LEGACY_SUPPLY_CATEGORY_MAP,
+    STANDARD_SUPPLY_COST_CENTERS,
     UNIT_SI_TO_UNCEFACT_REC20,
+    normalizeLegacyCostCenter,
+    normalizeLegacyProcurementBucket,
+    normalizeLegacyStockMovementType,
+    normalizeLegacySupplyCategoryCode,
     type IsoCurrencyCode,
+    type LinePricingBasis,
     type MoneyAmount,
+    type ProcurementBucket,
+    type StandardSupplyCostCenter,
+    type StockLedgerMovementType,
+    type SupplyCategoryCode,
     type SupplyCommunicationStyle,
     type SupplyMemberProfile,
+    type SupplyTankTelemetry,
+    type SupplyWarehouse,
+    type SupplyWarehouseClass,
+    type SupplyWhatsAppChannelId,
     type TaxIdentifier,
     type TaxIdentifierScheme,
     type UnCefactRec20Code,
+} from '../../contracts/supply.contracts';
+
+import type {
+    LinePricingBasis,
+    ProcurementBucket,
+    SupplyCategoryCode,
 } from '../../contracts/supply.contracts';
 
 export type SupplyDomainMode =
@@ -19,37 +48,12 @@ export type SupplyDomainMode =
     | 'DEMAND'
     | 'WAREHOUSE'
     | 'PROCUREMENT'
+    | 'CONVERSATIONS'
     | 'FINANCE_RECON'
     | 'SII_EXPENSES'
+    | 'PROFILES_WS'
     | 'FORECAST'
     | 'WHATSAPP_CHANNELS';
-
-export type SupplyCategoryCode =
-    | 'VIVERES_ALIMENTACION'
-    | 'AGUA_POTABLE'
-    | 'ASEO_HIGIENE'
-    | 'GAS_ENERGIA_CAMP'
-    | 'EPP_SEGURIDAD'
-    | 'FERRETERIA_CONSTRUCCION'
-    | 'MANTENCION_CAMP'
-    | 'REPUESTOS_MAQUINARIA'
-    | 'LUBRICANTES_FILTROS'
-    | 'PERFORACION_ACEROS'
-    | 'FORTIFICACION'
-    | 'COMBUSTIBLE_FAENA'
-    | 'HERRAMIENTAS'
-    | 'ACTIVO_EQUIPAMIENTO'
-    | 'EXPLOSIVOS_REGULADO'
-    | 'OTROS_OPERACIONAL';
-
-export type ProcurementBucket =
-    | 'VERDULERIA'
-    | 'SUPERMERCADO'
-    | 'FERRETERIA'
-    | 'REPUESTOS_OPERMAQ'
-    | 'EPP_SEGURIDAD'
-    | 'GAS_AGUA_COMBUSTIBLE'
-    | 'MANTENCION_EQUIPAMIENTO';
 
 export type SupplyUnitSi = 'kg' | 'L' | 'un' | 'par' | 'm' | 'm3' | 'caja' | 'bolsa';
 
@@ -287,6 +291,7 @@ export interface SupplyPurchaseLineDraft {
     lineNetClp?: number;
     lineVatClp?: number;
     lineTotalClp?: number;
+    linePricingBasis?: LinePricingBasis;
     destination: PurchaseLineDestination;
     costCenter?: string;
     isCapexAsset?: boolean;
@@ -484,34 +489,14 @@ export interface WhatsAppSimMessage {
     timestamp: string;
 }
 
-export const PROCUREMENT_BUCKETS: ProcurementBucket[] = [
-    'VERDULERIA',
-    'SUPERMERCADO',
-    'FERRETERIA',
-    'REPUESTOS_OPERMAQ',
-    'EPP_SEGURIDAD',
-    'GAS_AGUA_COMBUSTIBLE',
-    'MANTENCION_EQUIPAMIENTO',
-];
+import {
+    CANONICAL_PROCUREMENT_BUCKETS,
+    CANONICAL_SUPPLY_CATEGORIES,
+} from '../../contracts/supply.contracts';
 
-export const SUPPLY_CATEGORIES: SupplyCategoryCode[] = [
-    'VIVERES_ALIMENTACION',
-    'AGUA_POTABLE',
-    'ASEO_HIGIENE',
-    'GAS_ENERGIA_CAMP',
-    'EPP_SEGURIDAD',
-    'FERRETERIA_CONSTRUCCION',
-    'MANTENCION_CAMP',
-    'REPUESTOS_MAQUINARIA',
-    'LUBRICANTES_FILTROS',
-    'PERFORACION_ACEROS',
-    'FORTIFICACION',
-    'COMBUSTIBLE_FAENA',
-    'HERRAMIENTAS',
-    'ACTIVO_EQUIPAMIENTO',
-    'EXPLOSIVOS_REGULADO',
-    'OTROS_OPERACIONAL',
-];
+export const PROCUREMENT_BUCKETS: ProcurementBucket[] = [...CANONICAL_PROCUREMENT_BUCKETS];
+
+export const SUPPLY_CATEGORIES: SupplyCategoryCode[] = [...CANONICAL_SUPPLY_CATEGORIES];
 
 export const SUPPLY_UNITS_SI: SupplyUnitSi[] = ['kg', 'L', 'un', 'par', 'm', 'm3', 'caja', 'bolsa'];
 

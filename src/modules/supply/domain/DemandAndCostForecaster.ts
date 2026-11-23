@@ -6,7 +6,7 @@
  * - Guardrail sanitario **DS 594 Art. 14** de agua potable (`100–120 L/PAX/día × leadTimeDays`)
  *   con factor de hipobaria en gran altura geográfica (> 3.000 msnm, **DS 28**).
  * - **`DemandSignalProjector`** conforme a **Ley N° 21.719 (Chile)**: exige opt-in explícito y
- *   k-anonimato estricto (`k >= 3` sitios Y `k >= 3` tenants distintos por distrito minero),
+ *   k-anonimato estricto (`k >= 5` sitios Y `k >= 5` tenants distintos por distrito minero),
  *   garantizando estructuralmente cero exposición de `tenantId`, `siteId` o coordenadas GPS.
  */
 
@@ -29,6 +29,15 @@ export const DS594_DEFAULT_WATER_L_PER_PAX_DAY = 120;
 export const DS28_HIGH_ALTITUDE_THRESHOLD_M = 3000;
 export const DS28_VERY_HIGH_ALTITUDE_THRESHOLD_M = 4000;
 export const LEY21719_MIN_K_ANONYMITY = 5;
+
+export function isHumanPotableWaterCategory(categoryCode: string | undefined | null): boolean {
+    const upper = String(categoryCode || '').trim().toUpperCase();
+    return (
+        upper === 'AGUA_POTABLE_BEBESTIBLE' ||
+        upper === 'AGUA_POTABLE_SANITAR' ||
+        upper === 'AGUA_POTABLE'
+    );
+}
 
 export function isSandboxTenantId(
     tenantId: string,
@@ -223,7 +232,7 @@ export function forecastSkuDemand(input: ForecastSkuDemandInput): DemandForecast
             : roundSupplyQty(input.fallbackDailyPerPaxSi ?? 0);
 
     let ds594WaterGuardrail: Ds594WaterGuardrailEvaluation | undefined;
-    if (input.categoryCode === 'AGUA_POTABLE' && input.unitSi === 'L') {
+    if (isHumanPotableWaterCategory(input.categoryCode) && input.unitSi === 'L') {
         ds594WaterGuardrail = evaluateDs594WaterGuardrail({
             site: input.site,
             currentWaterWarehouseL: input.currentWarehouseStockSi,

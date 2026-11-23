@@ -101,7 +101,7 @@ function resolveLineCostCenter(
     if (destination === 'CAPEX_ASSET') return 'CC-CAPEX';
     if (line.costCenter) return line.costCenter;
     if (fallbackCostCenter) return fallbackCostCenter;
-    return CATEGORY_DEFAULT_COST_CENTER[line.categoryCode] || 'CC-OPERACIONES';
+    return CATEGORY_DEFAULT_COST_CENTER[line.categoryCode] || 'CC-OPS-MINA';
 }
 
 function recomputeRequisitionStatus(lines: readonly SupplyRequisitionLine[], currentStatus: RequisitionStatus): RequisitionStatus {

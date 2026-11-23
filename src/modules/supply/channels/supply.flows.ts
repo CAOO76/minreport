@@ -181,7 +181,7 @@ export const SUPPLY_WHATSAPP_FLOW_DEFINITIONS = {
                                 title: { type: 'string' },
                             },
                         },
-                        __example__: [{ id: 'sku-agua-bidon-20l', title: 'Agua 20L (10 un)' }],
+                        __example__: [{ id: 'SKU-AGUA-BIDON', title: 'Agua 20L (10 un)' }],
                     },
                     error_message: { type: 'string', __example__: '' },
                 },
@@ -982,7 +982,7 @@ async function handleCampOrderFlow(
             autoApproveDirectPurchase: Boolean(member.supplyProfile.autoApproveDirectPurchase),
             allowCapex: Boolean(member.supplyProfile.allowCapex),
             licensedForControlledItems: Boolean(member.supplyProfile.licensedForControlledItems),
-            defaultCostCenter: member.supplyProfile.defaultCostCenter || 'CC-CAMPAMENTO',
+            defaultCostCenter: member.supplyProfile.defaultCostCenter || 'CC-CAMP-ALIMENTACION',
             assignedSiteIds: member.supplyProfile.assignedSiteIds || [],
             communicationStyle: {
                 register: member.supplyProfile.communicationStyle?.register || 'COLLOQUIAL_FIELD',
@@ -1089,7 +1089,7 @@ async function handleCampOrderFlow(
             costCenter:
                 typeof payload.cost_center === 'string' && payload.cost_center.trim()
                     ? payload.cost_center.trim().slice(0, 64)
-                    : 'CC-CAMPAMENTO',
+                    : 'CC-CAMP-ALIMENTACION',
             atypicalFlags: aggregateFlags,
             notes: isOneTapReorder
                 ? `[WA_FLOW_1TAP_REORDER] ${typeof payload.notes === 'string' ? payload.notes.trim() : ''}`.trim()

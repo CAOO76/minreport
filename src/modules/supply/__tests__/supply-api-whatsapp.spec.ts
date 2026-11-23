@@ -1122,10 +1122,10 @@ async function runTests(): Promise<void> {
                         },
                         {
                             lineId: 'ln_pernos',
-                            canonicalSkuId: 'sku-pernos',
+                            canonicalSkuId: 'SKU-FER-PERNOS',
                             itemName: 'Pernos Industriales',
                             categoryCode: 'FERRETERIA_CONSTRUCCION',
-                            procurementBucket: 'FERRETERIA',
+                            procurementBucket: 'FERRETERIA_INSUMOS',
                             unitSi: 'un',
                             qtyRequested: 10,
                             qtyPurchased: 0,
@@ -1166,18 +1166,18 @@ async function runTests(): Promise<void> {
                 unit: any;
                 qty: number;
             }> = [
-                { sku: 'sku-papas', name: 'Papas', cat: 'VIVERES_ALIMENTACION', bucket: 'VERDULERIA', unit: 'kg', qty: 25 },
-                { sku: 'sku-papas', name: 'Papas', cat: 'VIVERES_ALIMENTACION', bucket: 'VERDULERIA', unit: 'kg', qty: 50 },
-                { sku: 'sku-agua-bidon', name: 'Agua Purificada', cat: 'AGUA_POTABLE', bucket: 'GAS_AGUA_COMBUSTIBLE', unit: 'L', qty: 200 },
-                { sku: 'sku-gas-glp', name: 'Gas Licuado GLP', cat: 'GAS_ENERGIA_CAMP', bucket: 'GAS_AGUA_COMBUSTIBLE', unit: 'kg', qty: 45 },
-                { sku: 'sku-cemento', name: 'Cemento', cat: 'FERRETERIA_CONSTRUCCION', bucket: 'FERRETERIA', unit: 'kg', qty: 50 },
-                { sku: 'sku-epp-bototos', name: 'Bototos Seguridad', cat: 'EPP_SEGURIDAD', bucket: 'EPP_SEGURIDAD', unit: 'par', qty: 4 },
-                { sku: 'sku-filtro-hidraulico', name: 'Filtro Hidráulico', cat: 'REPUESTOS_MAQUINARIA', bucket: 'REPUESTOS_OPERMAQ', unit: 'un', qty: 2 },
-                { sku: 'sku-tallarines', name: 'Tallarines', cat: 'VIVERES_ALIMENTACION', bucket: 'SUPERMERCADO', unit: 'kg', qty: 12 },
-                { sku: 'sku-mantequilla', name: 'Mantequilla', cat: 'VIVERES_ALIMENTACION', bucket: 'SUPERMERCADO', unit: 'kg', qty: 3 },
-                { sku: 'sku-pernos', name: 'Pernos Industriales', cat: 'FERRETERIA_CONSTRUCCION', bucket: 'FERRETERIA', unit: 'un', qty: 15 },
-                { sku: 'sku-pan', name: 'Pan', cat: 'VIVERES_ALIMENTACION', bucket: 'SUPERMERCADO', unit: 'kg', qty: 5 },
-                { sku: 'sku-agua-bidon', name: 'Agua Purificada', cat: 'AGUA_POTABLE', bucket: 'GAS_AGUA_COMBUSTIBLE', unit: 'L', qty: 100 },
+                { sku: 'SKU-VIV-PAPAS', name: 'Papas', cat: 'VIVERES_ALIMENTACION', bucket: 'VERDULERIA', unit: 'kg', qty: 25 },
+                { sku: 'SKU-VIV-PAPAS', name: 'Papas', cat: 'VIVERES_ALIMENTACION', bucket: 'VERDULERIA', unit: 'kg', qty: 50 },
+                { sku: 'SKU-AGUA-BIDON', name: 'Agua Purificada', cat: 'AGUA_POTABLE_BEBESTIBLE', bucket: 'AGUA_POTABLE', unit: 'L', qty: 200 },
+                { sku: 'SKU-GAS-GLP45', name: 'Gas Licuado GLP', cat: 'GAS_DOMESTICO_GLP', bucket: 'GAS_GLP_DOMESTICO', unit: 'kg', qty: 45 },
+                { sku: 'SKU-FER-CEMENTO', name: 'Cemento', cat: 'FERRETERIA_CONSTRUCCION', bucket: 'FERRETERIA_INSUMOS', unit: 'kg', qty: 50 },
+                { sku: 'SKU-EPP-BOTOTOS', name: 'Bototos Seguridad', cat: 'EPP_SEGURIDAD', bucket: 'EPP_SEGURIDAD', unit: 'par', qty: 4 },
+                { sku: 'SKU-OPM-FILTRO-ACEITE', name: 'Filtro Hidráulico', cat: 'REPUESTOS_MAQUINARIA', bucket: 'REPUESTOS_LUBRICANTES', unit: 'un', qty: 2 },
+                { sku: 'SKU-SUP-TALLARINES', name: 'Tallarines', cat: 'VIVERES_ALIMENTACION', bucket: 'SUPERMERCADO', unit: 'kg', qty: 12 },
+                { sku: 'SKU-SUP-MANTEQUILLA', name: 'Mantequilla', cat: 'VIVERES_ALIMENTACION', bucket: 'SUPERMERCADO', unit: 'kg', qty: 3 },
+                { sku: 'SKU-FER-PERNOS', name: 'Pernos Industriales', cat: 'FERRETERIA_CONSTRUCCION', bucket: 'FERRETERIA_INSUMOS', unit: 'un', qty: 15 },
+                { sku: 'SKU-SUP-PAN', name: 'Pan', cat: 'VIVERES_ALIMENTACION', bucket: 'SUPERMERCADO', unit: 'kg', qty: 5 },
+                { sku: 'SKU-AGUA-BIDON', name: 'Agua Purificada', cat: 'AGUA_POTABLE_BEBESTIBLE', bucket: 'AGUA_POTABLE', unit: 'L', qty: 100 },
             ];
 
             for (let i = 0; i < mixedSpecs.length; i++) {
@@ -1266,10 +1266,10 @@ async function runTests(): Promise<void> {
                         },
                         {
                             purchaseLineId: 'pl_pernos',
-                            canonicalSkuId: 'sku-pernos',
+                            canonicalSkuId: 'SKU-FER-PERNOS',
                             description: 'Pernos Industriales',
                             categoryCode: 'FERRETERIA_CONSTRUCCION',
-                            procurementBucket: 'FERRETERIA',
+                            procurementBucket: 'FERRETERIA_INSUMOS',
                             unitSi: 'un',
                             qtyPurchased: 10,
                             unitPriceClp: 1000,
@@ -1281,10 +1281,10 @@ async function runTests(): Promise<void> {
                         },
                         {
                             purchaseLineId: 'pl_cocina',
-                            canonicalSkuId: 'sku-cocina-industrial',
+                            canonicalSkuId: 'SKU-CAPEX-COCINA',
                             description: 'Cocina Campamento',
                             categoryCode: 'ACTIVO_EQUIPAMIENTO',
-                            procurementBucket: 'MANTENCION_EQUIPAMIENTO',
+                            procurementBucket: 'ACTIVOS_CAPEX',
                             unitSi: 'un',
                             qtyPurchased: 1,
                             unitPriceClp: 220000,
@@ -1396,15 +1396,15 @@ async function runTests(): Promise<void> {
             await SupplyRepository.applyInventoryDelta({
                 tenantId: TENANT_A,
                 siteId: SITE_A,
-                canonicalSkuId: 'sku-agua-bidon',
+                canonicalSkuId: 'SKU-AGUA-BIDON',
                 itemName: 'Agua Purificada Bidón',
-                categoryCode: 'AGUA_POTABLE',
-                procurementBucket: 'GAS_AGUA_COMBUSTIBLE',
+                categoryCode: 'AGUA_POTABLE_BEBESTIBLE',
+                procurementBucket: 'AGUA_POTABLE',
                 unitSi: 'L',
                 inTransitDelta: 0,
                 inWarehouseDelta: 25000,
                 unitCostClp: 150,
-                movementType: 'INBOUND_WAREHOUSE_DIRECT',
+                movementType: 'DIRECT_RECEIPT',
                 referenceId: 'seed-water-stock',
                 actorUid: 'uid-owner',
             });
@@ -1459,7 +1459,7 @@ async function runTests(): Promise<void> {
                         lines: [
                             {
                                 lineId: `l_${extra.siteId}`,
-                                canonicalSkuId: 'sku-papas',
+                                canonicalSkuId: 'SKU-VIV-PAPAS',
                                 itemName: 'Papas',
                                 categoryCode: 'VIVERES_ALIMENTACION',
                                 procurementBucket: 'VERDULERIA',
@@ -1658,7 +1658,7 @@ async function runTests(): Promise<void> {
             });
             assert.equal(catalogResp.status, 200);
             const catalogJson: any = await catalogResp.json();
-            assert.ok(catalogJson.items.some((i: any) => i.canonicalSkuId === 'sku-papas'));
+            assert.ok(catalogJson.items.some((i: any) => i.canonicalSkuId === 'SKU-VIV-PAPAS'));
 
             // M2M x402: Catalog SKUs & RFQ Quote submission
             const m2mCatResp = await apiFetch(`${baseUrl}/api/m2m/supply/catalog/skus`, {
@@ -1791,7 +1791,7 @@ async function runTests(): Promise<void> {
                     canonicalSkuId: 'sku-master-global-1',
                     name: 'SKU Maestro Oficial',
                     categoryCode: 'FERRETERIA_CONSTRUCCION',
-                    procurementBucket: 'FERRETERIA',
+                    procurementBucket: 'FERRETERIA_INSUMOS',
                     baseUnitSi: 'un',
                 }),
             });
@@ -1809,7 +1809,7 @@ async function runTests(): Promise<void> {
                     canonicalSkuId: 'sku-master-global-1',
                     name: 'Override Privado Tenant B',
                     categoryCode: 'FERRETERIA_CONSTRUCCION',
-                    procurementBucket: 'FERRETERIA',
+                    procurementBucket: 'FERRETERIA_INSUMOS',
                     baseUnitSi: 'un',
                 }),
             });
@@ -2078,7 +2078,7 @@ async function runTests(): Promise<void> {
             assert.equal(exp9.status, 201);
             const exp9Json: any = await exp9.json();
             assert.equal(exp9Json.report.periodLabel, '2026-11');
-            assert.equal(exp9Json.report.costCenter, 'CC-OPERACIONES');
+            assert.equal(exp9Json.report.costCenter, 'CC-OPS-MINA');
 
             // Auto-aprobación del custodio rechazada con 403
             const expSelfPatch = await apiFetch(

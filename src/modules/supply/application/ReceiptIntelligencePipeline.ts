@@ -10,6 +10,8 @@ import {
     buildSiiDedupeKey,
     computeRcvDeadline,
     type EvidenceCasRef,
+    type LinePricingBasis,
+    normalizeLegacyCostCenter,
     normalizeSupplyItemFromText,
     type ParsedSiiHeader,
     parseSiiTedOrXmlDeterministic,
@@ -141,7 +143,7 @@ export class ReceiptIntelligencePipeline {
         }
 
         const defaultDest: PurchaseLineDestination = input.defaultDestination || 'STOCK_IN_TRANSIT';
-        const defaultCc = (input.defaultCostCenter || 'CC-CAMPAMENTO').trim() || 'CC-CAMPAMENTO';
+        const defaultCc = (input.defaultCostCenter || 'CC-CAMP-ALIMENTACION').trim() || 'CC-CAMP-ALIMENTACION';
 
         let rawBuf = input.rawBuffer;
         let mimeType = (input.mimeType || '').toLowerCase().trim();
@@ -328,6 +330,7 @@ export class ReceiptIntelligencePipeline {
                     preferredTier: 'SECONDARY',
                     temperature: 0,
                     tenantId: input.tenantId,
+                    dataClassification: 'TENANT_PRIVATE',
                     prompt,
                     media:
                         aiMediaBuffer && aiMediaMimeType
@@ -397,6 +400,11 @@ export class ReceiptIntelligencePipeline {
                   ]
                 : [];
 
+        const xmlOrNetDte =
+            hasDeterministicXmlLines &&
+            (documentType === 33 || documentType === 52 || documentType === 61);
+        const xmlHeaderEstimated = xmlOrNetDte && !deterministicHeader?.totalAmountClp;
+
         const lines: SupplyPurchaseLine[] = rawLinesSource.map((rawLine, idx) => {
             const norm = normalizeSupplyItemFromText(rawLine.description, rawLine.quantity, rawLine.unitRaw);
             const isCapex = Boolean(norm.isCapexAsset || rawLine.isCapexSuspected);
@@ -406,19 +414,21 @@ export class ReceiptIntelligencePipeline {
             );
             const unitPriceClp =
                 qty > 0 ? Math.round(subtotalClp / qty) : Math.round(rawLine.unitPriceClp || 0);
+            const effectiveCategory = isCapex ? 'ACTIVO_EQUIPAMIENTO' : norm.categoryCode;
 
             return {
                 purchaseLineId: `pline_${idx + 1}_${crypto.randomBytes(3).toString('hex')}`,
                 canonicalSkuId: norm.canonicalSkuId,
                 description: rawLine.description.trim(),
-                categoryCode: isCapex ? 'ACTIVO_EQUIPAMIENTO' : norm.categoryCode,
-                procurementBucket: isCapex ? 'MANTENCION_EQUIPAMIENTO' : norm.procurementBucket,
+                categoryCode: effectiveCategory,
+                procurementBucket: isCapex ? 'ACTIVOS_CAPEX' : norm.procurementBucket,
                 unitSi: norm.unitSi,
                 qtyPurchased: qty,
                 unitPriceClp,
                 subtotalClp,
+                linePricingBasis: xmlHeaderEstimated ? 'NET' : 'GROSS',
                 destination: isCapex ? 'CAPEX_ASSET' : defaultDest,
-                costCenter: isCapex ? 'CC-CAPEX' : defaultCc,
+                costCenter: isCapex ? 'CC-CAPEX' : normalizeLegacyCostCenter(defaultCc, effectiveCategory),
                 isCapexAsset: isCapex,
             };
         });
@@ -427,7 +437,7 @@ export class ReceiptIntelligencePipeline {
         const totalAmountClp = Math.round(
             deterministicHeader?.totalAmountClp ||
                 aiExtracted?.totalAmountClp ||
-                summedLinesClp
+                (xmlOrNetDte ? Math.round(summedLinesClp * 1.19) : summedLinesClp)
         );
 
         let netAmountClp: number;
@@ -435,15 +445,15 @@ export class ReceiptIntelligencePipeline {
         if (typeof deterministicHeader?.netAmountClp === 'number' && typeof deterministicHeader?.vatAmountClp === 'number') {
             netAmountClp = Math.round(deterministicHeader.netAmountClp);
             vatAmountClp = Math.round(deterministicHeader.vatAmountClp);
-        } else if (documentType === 33) {
+        } else if (documentType === 33 || documentType === 52 || documentType === 61) {
             netAmountClp =
                 typeof aiExtracted?.netAmountClp === 'number' && aiExtracted.netAmountClp > 0
                     ? Math.round(aiExtracted.netAmountClp)
-                    : Math.round(totalAmountClp / 1.19);
+                    : Math.round(Math.abs(totalAmountClp) / 1.19);
             vatAmountClp =
                 typeof aiExtracted?.vatAmountClp === 'number' && aiExtracted.vatAmountClp >= 0
                     ? Math.round(aiExtracted.vatAmountClp)
-                    : Math.max(0, totalAmountClp - netAmountClp);
+                    : Math.max(0, Math.abs(totalAmountClp) - netAmountClp);
         } else if (documentType === 39) {
             netAmountClp = Math.round(totalAmountClp / 1.19);
             vatAmountClp = Math.max(0, totalAmountClp - netAmountClp);
@@ -452,8 +462,13 @@ export class ReceiptIntelligencePipeline {
             vatAmountClp = 0;
         }
 
-        // Crédito fiscal IVA recuperable SOLO en Factura Electrónica Afecta (DTE 33)
-        const vatCreditRecoverableClp = documentType === 33 ? vatAmountClp : 0;
+        // Crédito fiscal IVA recuperable positivo en Factura Electrónica (DTE 33) y negativo (ajuste/rebaja) en Nota de Crédito (DTE 61)
+        const vatCreditRecoverableClp =
+            documentType === 33
+                ? Math.abs(vatAmountClp)
+                : documentType === 61
+                  ? -Math.abs(vatAmountClp)
+                  : 0;
 
         // 6. Verificación aritmética determinista
         const arithmeticCheck = verifyReceiptArithmetic({
@@ -463,6 +478,18 @@ export class ReceiptIntelligencePipeline {
             totalAmountClp,
             documentType,
         });
+
+        const resolvedLinePricingBasis: LinePricingBasis =
+            arithmeticCheck.pricingBasis === 'NET_PLUS_VAT'
+                ? 'NET'
+                : arithmeticCheck.pricingBasis === 'GROSS'
+                  ? 'GROSS'
+                  : xmlHeaderEstimated
+                    ? 'NET'
+                    : 'GROSS';
+        for (const line of lines) {
+            line.linePricingBasis = resolvedLinePricingBasis;
+        }
 
         // 7. Llave anti-duplicación SII y plazo 8 días RCV (Ley N° 19.983)
         const dedupeKey = buildSiiDedupeKey(supplierTaxId, documentType, folio);

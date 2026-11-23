@@ -6,32 +6,88 @@
  * acoplamiento hexagonal limpio.
  */
 
+export type SupplyWhatsAppChannelId =
+    | 'CH_CAMP_FOOD'
+    | 'CH_CAMP_POTABLE_WATER'
+    | 'CH_CAMP_GLP_GAS'
+    | 'CH_CAMP_FUEL'
+    | 'CH_CAMP_HYGIENE_MAINT'
+    | 'CH_OPS_IND_WATER'
+    | 'CH_OPS_FLEET_FUEL'
+    | 'CH_OPS_IND_GASES'
+    | 'CH_OPS_PARTS_LUBES'
+    | 'CH_OPS_HARDWARE_DRILL'
+    | 'CH_HSEC_EPP'
+    | 'CH_CONTROLLED_DGMN'
+    | 'CH_CAPEX_ASSETS'
+    | 'CH_WAREHOUSE_RECEPTION'
+    | 'CH_DIRECT_PURCHASE_EXEC';
+
 export type SupplyCategoryCode =
     | 'VIVERES_ALIMENTACION'
-    | 'AGUA_POTABLE'
-    | 'ASEO_HIGIENE'
-    | 'GAS_ENERGIA_CAMP'
-    | 'EPP_SEGURIDAD'
-    | 'FERRETERIA_CONSTRUCCION'
-    | 'MANTENCION_CAMP'
+    | 'AGUA_POTABLE_BEBESTIBLE'
+    | 'AGUA_POTABLE_SANITAR'
+    | 'AGUA_INDUSTRIAL'
+    | 'GAS_DOMESTICO_GLP'
+    | 'GASES_INDUSTRIALES'
+    | 'COMBUSTIBLE_CAMPAMENTO'
+    | 'COMBUSTIBLE_FLOTA_PROD'
     | 'REPUESTOS_MAQUINARIA'
     | 'LUBRICANTES_FILTROS'
+    | 'FERRETERIA_CONSTRUCCION'
+    | 'HERRAMIENTAS'
     | 'PERFORACION_ACEROS'
     | 'FORTIFICACION'
-    | 'COMBUSTIBLE_FAENA'
-    | 'HERRAMIENTAS'
-    | 'ACTIVO_EQUIPAMIENTO'
     | 'EXPLOSIVOS_REGULADO'
+    | 'QUIMICOS_REGULADOS'
+    | 'ACTIVO_EQUIPAMIENTO'
+    | 'ASEO_HIGIENE'
+    | 'MANTENCION_CAMP'
+    | 'EPP_SEGURIDAD'
     | 'OTROS_OPERACIONAL';
 
 export type ProcurementBucket =
     | 'VERDULERIA'
     | 'SUPERMERCADO'
-    | 'FERRETERIA'
-    | 'REPUESTOS_OPERMAQ'
+    | 'AGUA_POTABLE'
+    | 'AGUA_INDUSTRIAL_ALJIBE'
+    | 'GAS_GLP_DOMESTICO'
+    | 'GASES_INDUSTRIALES'
+    | 'COMBUSTIBLE_GRANEL'
+    | 'REPUESTOS_LUBRICANTES'
+    | 'FERRETERIA_INSUMOS'
+    | 'PERFORACION_FORTIFICACION'
     | 'EPP_SEGURIDAD'
-    | 'GAS_AGUA_COMBUSTIBLE'
-    | 'MANTENCION_EQUIPAMIENTO';
+    | 'CONTROLADOS_DGMN'
+    | 'ACTIVOS_CAPEX'
+    | 'ASEO_HIGIENE'
+    | 'MANTENCION_CAMP';
+
+export type LinePricingBasis = 'NET' | 'GROSS';
+
+export type SupplyWarehouseClass =
+    | 'DRY_WAREHOUSE'
+    | 'COLD_STORAGE'
+    | 'POTABLE_WATER_TANK'
+    | 'INDUSTRIAL_WATER_POND'
+    | 'FUEL_TANK_CAMP'
+    | 'FUEL_TANK_FLEET'
+    | 'GLP_CAGE'
+    | 'INDUSTRIAL_GAS_CAGE'
+    | 'HAZMAT_DS43'
+    | 'MAGAZINE_DGMN'
+    | 'VIRTUAL_IN_TRANSIT';
+
+export type StockLedgerMovementType =
+    | 'INBOUND_TRANSIT'
+    | 'RECEIPT_AT_WAREHOUSE'
+    | 'DIRECT_RECEIPT'
+    | 'ISSUE_CONSUMPTION'
+    | 'TRANSFER_OUT'
+    | 'TRANSFER_IN'
+    | 'RETURN_TO_WAREHOUSE'
+    | 'SHRINKAGE_WASTE'
+    | 'CYCLE_COUNT_ADJUSTMENT';
 
 export type SupplyUnitSi = 'kg' | 'L' | 'un' | 'par' | 'm' | 'm3' | 'caja' | 'bolsa';
 
@@ -98,12 +154,17 @@ export type SiiDteType = 33 | 34 | 39 | 41 | 52 | 61 | 0;
 export type SupplyUrgency = 'CRITICAL' | 'HIGH' | 'STANDARD' | 'PLANNED';
 
 export type SupplyCostCenter =
-    | 'CC-CAMPAMENTO'
-    | 'CC-FLOTA'
-    | 'CC-OPERACIONES'
+    | 'CC-CAMP-ALIMENTACION'
+    | 'CC-CAMP-AGUA'
+    | 'CC-CAMP-ENERGIA'
+    | 'CC-CAMP-MANTENCION'
+    | 'CC-OPS-AGUA-IND'
+    | 'CC-FLOTA-COMBUSTIBLE'
+    | 'CC-FLOTA-MANTENCION'
+    | 'CC-OPS-MINA'
     | 'CC-HSEC'
+    | 'CC-OPS-TRONADURA'
     | 'CC-CAPEX'
-    | 'CC-ADMINISTRACION'
     | (string & {});
 
 export type SupplyPaymentMethod =
@@ -327,12 +388,14 @@ export interface SupplyPurchaseLine {
     canonicalSkuId: string;
     description: string;
     categoryCode: SupplyCategoryCode;
+    procurementBucket?: ProcurementBucket;
     unitSi: SupplyUnitSi;
     qtyPurchased: number;
     unitPriceNetClp: number;
     unitPriceGrossClp: number;
     subtotalNetClp: number;
     subtotalGrossClp: number;
+    linePricingBasis?: LinePricingBasis;
     destination: SupplyLineDestination;
     isCapexAsset?: boolean;
     costCenter?: SupplyCostCenter;
@@ -462,19 +525,20 @@ export interface StockLedgerEntry {
     entryId: string;
     tenantId: string;
     siteId: string;
+    warehouseId?: string;
     canonicalSkuId: string;
-    movementType:
-        | 'PURCHASE_IN_TRANSIT'
-        | 'WAREHOUSE_RECEPTION'
-        | 'DIRECT_WAREHOUSE_IN'
-        | 'CONSUMPTION_OUT'
-        | 'ADJUSTMENT';
+    movementType: StockLedgerMovementType;
     deltaInTransit: number;
     deltaInWarehouse: number;
     unitSi: SupplyUnitSi;
     unitCostNetClp: number;
     referenceId: string;
     costCenter: SupplyCostCenter;
+    linkedAssetId?: string;
+    horometer?: number;
+    fullCount?: number;
+    emptyCount?: number;
+    transferGroupId?: string;
     recordedAt: string;
 }
 

@@ -179,7 +179,7 @@ function resolveMandatorySlotsForItem(
 
     if (
         MACHINERY_CATEGORIES.has(item.categoryCode) ||
-        (requesterRole === 'MECHANIC_TECH' && item.procurementBucket === 'REPUESTOS_OPERMAQ')
+        (requesterRole === 'MECHANIC_TECH' && item.procurementBucket === 'REPUESTOS_LUBRICANTES')
     ) {
         mandatory.add('linkedAssetId');
     }
@@ -503,7 +503,7 @@ export function parseRawSpanishItemsToDraft(
             canonicalSkuId: sku?.canonicalSkuId,
             name: sku?.name || segment,
             categoryCode: sku?.categoryCode || 'OTROS_OPERACIONAL',
-            procurementBucket: sku?.procurementBucket || 'FERRETERIA',
+            procurementBucket: sku?.procurementBucket || 'FERRETERIA_INSUMOS',
             quantity: hasExplicitQuantity ? parsed.originalQuantity : undefined,
             quantitySi: hasExplicitQuantity ? parsed.quantitySi : undefined,
             unitRaw: hasExplicitPackagingUnit ? parsed.originalUnitRaw : undefined,
@@ -835,7 +835,7 @@ export function advanceConversationTurn(
                       name: partial.name || sku?.name || partial.rawText || '',
                       categoryCode: partial.categoryCode || sku?.categoryCode || 'OTROS_OPERACIONAL',
                       procurementBucket:
-                          partial.procurementBucket || sku?.procurementBucket || 'FERRETERIA',
+                          partial.procurementBucket || sku?.procurementBucket || 'FERRETERIA_INSUMOS',
                       quantity: partial.quantity,
                       quantitySi: partial.quantitySi,
                       unitRaw: partial.unitRaw,
@@ -926,7 +926,7 @@ export function advanceConversationTurn(
     const costCenter =
         currentSession.costCenter ||
         CATEGORY_DEFAULT_COST_CENTER[acceptedDraftItems[0].categoryCode] ||
-        'CC-OPERACIONES';
+        'CC-OPS-MINA';
 
     const nextSession: ConversationDraftSession = {
         ...currentSession,

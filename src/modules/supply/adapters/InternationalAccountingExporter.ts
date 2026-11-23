@@ -190,7 +190,7 @@ function enrichDocuments(input: AccountingExportInput): EnrichedAccountingDocume
                           qty: line.qtyPurchased,
                           unitPriceMinor: Math.round(line.unitPriceClp),
                           subtotalMinor: Math.round(line.subtotalClp),
-                          costCenter: line.costCenter || 'CC-CAMPAMENTO',
+                          costCenter: line.costCenter || 'CC-CAMP-ALIMENTACION',
                           isCapexAsset: Boolean(line.isCapexAsset || line.destination === 'CAPEX_ASSET'),
                       };
                   })
@@ -207,12 +207,12 @@ function enrichDocuments(input: AccountingExportInput): EnrichedAccountingDocume
                           qty: 1,
                           unitPriceMinor: Math.round(doc.netAmountClp),
                           subtotalMinor: Math.round(doc.netAmountClp),
-                          costCenter: doc.missingInvoiceForCapex ? 'CC-CAPEX' : 'CC-CAMPAMENTO',
+                          costCenter: doc.missingInvoiceForCapex ? 'CC-CAPEX' : 'CC-CAMP-ALIMENTACION',
                           isCapexAsset: Boolean(doc.missingInvoiceForCapex),
                       },
                   ];
 
-        const primaryCostCenter = lines[0]?.costCenter || 'CC-CAMPAMENTO';
+        const primaryCostCenter = lines[0]?.costCenter || 'CC-CAMP-ALIMENTACION';
         const isCapex = lines.some((l) => l.isCapexAsset) || Boolean(doc.missingInvoiceForCapex);
 
         return {

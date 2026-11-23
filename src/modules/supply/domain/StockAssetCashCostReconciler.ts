@@ -110,7 +110,8 @@ export interface SkuInventoryBalance {
 
 const FOOD_OPEX_CATEGORIES = new Set<SupplyCategoryCode>([
     'VIVERES_ALIMENTACION',
-    'AGUA_POTABLE',
+    'AGUA_POTABLE_BEBESTIBLE',
+    'AGUA_POTABLE_SANITAR',
 ]);
 
 function isPurchaseLineCapex(
@@ -147,7 +148,7 @@ function resolveCostCenterForLine(
         return allocationsForLine[0].costCenter;
     }
     if (purchaseFallbackCostCenter) return purchaseFallbackCostCenter;
-    return CATEGORY_DEFAULT_COST_CENTER[line.categoryCode] || 'CC-OPERACIONES';
+    return CATEGORY_DEFAULT_COST_CENTER[line.categoryCode] || 'CC-OPS-MINA';
 }
 
 /**
@@ -197,11 +198,18 @@ export function reconcilePurchase(
             purchase.costCenter
         );
 
-        const lineGross = roundClp(
-            (line.subtotalGrossClp > 0
+        const isNetLine = line.linePricingBasis === 'NET';
+        const inferredGross =
+            line.subtotalGrossClp > 0
                 ? line.subtotalGrossClp
-                : line.unitPriceGrossClp * line.qtyPurchased) * sign
-        );
+                : isNetLine && line.subtotalNetClp > 0
+                  ? purchase.documentType === 33 ||
+                    purchase.documentType === 52 ||
+                    purchase.documentType === 61
+                      ? roundClp(line.subtotalNetClp * 1.19)
+                      : line.subtotalNetClp
+                  : line.unitPriceGrossClp * line.qtyPurchased;
+        const lineGross = roundClp(inferredGross * sign);
         const lineNetInput =
             line.subtotalNetClp > 0
                 ? roundClp(line.subtotalNetClp * sign)
@@ -303,7 +311,7 @@ export function reconcilePurchase(
                 tenantId: purchase.tenantId,
                 siteId: purchase.siteId,
                 canonicalSkuId: line.canonicalSkuId,
-                movementType: 'PURCHASE_IN_TRANSIT',
+                movementType: 'INBOUND_TRANSIT',
                 deltaInTransit: qty,
                 deltaInWarehouse: 0,
                 unitSi: line.unitSi,
@@ -318,7 +326,7 @@ export function reconcilePurchase(
                 tenantId: purchase.tenantId,
                 siteId: purchase.siteId,
                 canonicalSkuId: line.canonicalSkuId,
-                movementType: 'DIRECT_WAREHOUSE_IN',
+                movementType: 'DIRECT_RECEIPT',
                 deltaInTransit: 0,
                 deltaInWarehouse: qty,
                 unitSi: line.unitSi,
@@ -403,7 +411,7 @@ export function confirmWarehouseReception(
                 tenantId: input.tenantId,
                 siteId: input.siteId,
                 canonicalSkuId: line.canonicalSkuId,
-                movementType: 'WAREHOUSE_RECEPTION',
+                movementType: 'RECEIPT_AT_WAREHOUSE',
                 deltaInTransit: -transitCleared,
                 deltaInWarehouse: received,
                 unitSi: line.unitSi,
@@ -555,7 +563,9 @@ export function computeFoodCostPerPaxDay(params: {
         if (
             entry.opexImpactClp > 0 &&
             FOOD_OPEX_CATEGORIES.has(entry.categoryCode) &&
-            entry.costCenter === 'CC-CAMPAMENTO'
+            (entry.costCenter === 'CC-CAMP-ALIMENTACION' ||
+                entry.costCenter === 'CC-CAMP-AGUA' ||
+                entry.costCenter === 'CC-CAMPAMENTO')
         ) {
             totalFoodOpexClp = roundClp(totalFoodOpexClp + entry.opexImpactClp);
         }
