@@ -303,7 +303,7 @@ describe('E13a — Offline-First Cordillera SyncQueueEngine + Supply Offline + G
                     lines: [
                         {
                             rawDescription: 'Agua 20L',
-                            categoryCode: 'AGUA_POTABLE',
+                            categoryCode: 'AGUA_POTABLE_BEBESTIBLE',
                             unitSi: 'L',
                             qtyRequested: 20,
                         },

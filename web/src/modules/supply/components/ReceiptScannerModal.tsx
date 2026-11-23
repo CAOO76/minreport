@@ -111,15 +111,31 @@ function mapBucketToCategory(bucket?: ProcurementBucket | null): SupplyCategoryC
         case 'VERDULERIA':
         case 'SUPERMERCADO':
             return 'VIVERES_ALIMENTACION';
-        case 'FERRETERIA':
-            return 'FERRETERIA_CONSTRUCCION';
-        case 'REPUESTOS_OPERMAQ':
+        case 'AGUA_POTABLE':
+            return 'AGUA_POTABLE_BEBESTIBLE';
+        case 'AGUA_INDUSTRIAL_ALJIBE':
+            return 'AGUA_INDUSTRIAL';
+        case 'GAS_GLP_DOMESTICO':
+            return 'GAS_DOMESTICO_GLP';
+        case 'GASES_INDUSTRIALES':
+            return 'GASES_INDUSTRIALES';
+        case 'COMBUSTIBLE_GRANEL':
+            return 'COMBUSTIBLE_FLOTA_PROD';
+        case 'REPUESTOS_LUBRICANTES':
             return 'REPUESTOS_MAQUINARIA';
+        case 'FERRETERIA_INSUMOS':
+            return 'FERRETERIA_CONSTRUCCION';
+        case 'PERFORACION_FORTIFICACION':
+            return 'PERFORACION_ACEROS';
         case 'EPP_SEGURIDAD':
             return 'EPP_SEGURIDAD';
-        case 'GAS_AGUA_COMBUSTIBLE':
-            return 'GAS_ENERGIA_CAMP';
-        case 'MANTENCION_EQUIPAMIENTO':
+        case 'CONTROLADOS_DGMN':
+            return 'QUIMICOS_REGULADOS';
+        case 'ACTIVOS_CAPEX':
+            return 'ACTIVO_EQUIPAMIENTO';
+        case 'ASEO_HIGIENE':
+            return 'ASEO_HIGIENE';
+        case 'MANTENCION_CAMP':
             return 'MANTENCION_CAMP';
         default:
             return 'OTROS_OPERACIONAL';

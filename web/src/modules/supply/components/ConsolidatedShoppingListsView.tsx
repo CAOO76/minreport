@@ -21,11 +21,19 @@ export interface ConsolidatedShoppingListsViewProps {
 const BUCKET_ICON: Record<ProcurementBucket, string> = {
     VERDULERIA: 'nutrition',
     SUPERMERCADO: 'storefront',
-    FERRETERIA: 'hardware',
-    REPUESTOS_OPERMAQ: 'precision_manufacturing',
+    AGUA_POTABLE: 'water_drop',
+    AGUA_INDUSTRIAL_ALJIBE: 'local_shipping',
+    GAS_GLP_DOMESTICO: 'propane_tank',
+    GASES_INDUSTRIALES: 'science',
+    COMBUSTIBLE_GRANEL: 'local_gas_station',
+    REPUESTOS_LUBRICANTES: 'precision_manufacturing',
+    FERRETERIA_INSUMOS: 'hardware',
+    PERFORACION_FORTIFICACION: 'construction',
     EPP_SEGURIDAD: 'health_and_safety',
-    GAS_AGUA_COMBUSTIBLE: 'local_gas_station',
-    MANTENCION_EQUIPAMIENTO: 'build',
+    CONTROLADOS_DGMN: 'warning',
+    ACTIVOS_CAPEX: 'inventory_2',
+    ASEO_HIGIENE: 'cleaning_services',
+    MANTENCION_CAMP: 'build',
 };
 
 export const ConsolidatedShoppingListsView: React.FC<ConsolidatedShoppingListsViewProps> = ({
