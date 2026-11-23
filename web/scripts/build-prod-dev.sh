@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Build productivo exclusivo 1º DEV (ACOPIOS + ABASTECIMIENTO) para https://minreport.com y Android fieldtestRelease.
+# Build productivo exclusivo 1º DEV (por defecto solo ACOPIOS; --with-supply activa ABASTECIMIENTO junto a ACOPIOS) para https://minreport.com y Android fieldtestRelease.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WEB_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ROOT_DIR="$(cd "${WEB_DIR}/.." && pwd)"
@@ -51,6 +51,7 @@ fi
 
 export NODE_ENV=production
 export VITE_RELEASE_STAGE="${VITE_RELEASE_STAGE:-DEV_PRIVATE}"
+# Por defecto producción DEV mantiene solo ACOPIOS (geolapp); --with-supply activa ABASTECIMIENTO junto a ACOPIOS (stockpile,supply).
 if [ "${INCLUDE_SUPPLY}" -eq 1 ]; then
     export VITE_DEV_MODULES="${VITE_DEV_MODULES:-stockpile,supply}"
 else

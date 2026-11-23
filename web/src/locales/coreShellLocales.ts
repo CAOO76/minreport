@@ -42,6 +42,7 @@ export const coreShellLocales = {
             loading_stockpile: 'CARGANDO MÓDULO ACOPIOS',
             loading_geolapp_stockpile: 'MINREPORT · ACOPIOS',
             loading_supply: 'MINREPORT · ABASTECIMIENTO',
+            loading_supply_control: 'CARGANDO MÓDULO ABASTECIMIENTO · TABLERO',
             loading_supply_demand: 'CARGANDO MÓDULO ABASTECIMIENTO · DEMANDA',
             loading_supply_procurement: 'CARGANDO MÓDULO ABASTECIMIENTO · COMPRAS',
             loading_supply_warehouse: 'CARGANDO MÓDULO ABASTECIMIENTO · BODEGA',
@@ -88,6 +89,7 @@ export const coreShellLocales = {
             enabled_modules_count: '{{count}} habilitado(s)',
             no_modules_enabled: 'Sin módulos operativos habilitados para esta cuenta.',
             open_module: 'Abrir módulo',
+            future_module_reserved: '[Pendiente de registro]',
             modules: {
                 opermaq: {
                     name: 'FLOTA',
@@ -337,6 +339,7 @@ export const coreShellLocales = {
             loading_stockpile: 'LOADING STOCKPILES MODULE',
             loading_geolapp_stockpile: 'MINREPORT · STOCKPILES',
             loading_supply: 'MINREPORT · SUPPLY',
+            loading_supply_control: 'LOADING SUPPLY MODULE · CONTROL',
             loading_supply_demand: 'LOADING SUPPLY MODULE · DEMAND',
             loading_supply_procurement: 'LOADING SUPPLY MODULE · PROCUREMENT',
             loading_supply_warehouse: 'LOADING SUPPLY MODULE · WAREHOUSE',
@@ -383,6 +386,7 @@ export const coreShellLocales = {
             enabled_modules_count: '{{count}} enabled',
             no_modules_enabled: 'No operational modules enabled for this account.',
             open_module: 'Open module',
+            future_module_reserved: '[Pending registration]',
             modules: {
                 opermaq: {
                     name: 'FLEET',
@@ -631,6 +635,7 @@ export const coreShellLocales = {
             loading_stockpile: 'CARREGANDO MÓDULO PILHAS',
             loading_geolapp_stockpile: 'MINREPORT · PILHAS',
             loading_supply: 'MINREPORT · SUPRIMENTOS',
+            loading_supply_control: 'CARREGANDO MÓDULO SUPRIMENTOS · CONTROLE',
             loading_supply_demand: 'CARREGANDO MÓDULO SUPRIMENTOS · DEMANDA',
             loading_supply_procurement: 'CARREGANDO MÓDULO SUPRIMENTOS · COMPRAS',
             loading_supply_warehouse: 'CARREGANDO MÓDULO SUPRIMENTOS · ALMOXARIFADO',
@@ -677,6 +682,7 @@ export const coreShellLocales = {
             enabled_modules_count: '{{count}} habilitado(s)',
             no_modules_enabled: 'Sem módulos operacionais habilitados para esta conta.',
             open_module: 'Abrir módulo',
+            future_module_reserved: '[Pendente de registro]',
             modules: {
                 opermaq: {
                     name: 'FROTA',

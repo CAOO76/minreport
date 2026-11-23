@@ -16,6 +16,7 @@ import { PWAInstallPrompt } from './components/common/PWAInstallPrompt';
 import { LanguageSwitch } from './components/LanguageSwitch';
 import { ThemeSwitch } from './components/ThemeSwitch';
 import { ModuleHost, M3ModuleHudFallback } from './core/modules/ModuleHost';
+import { FUTURE_MODULE_IDS, type FutureModuleId } from './core/modules/module-registry';
 import { isFieldTestApp } from './core/runtime/appFlavor';
 import { isDevPrivateReleaseStage } from './config/releaseStage';
 import type { AccountReference } from './types/user_directory';
@@ -230,6 +231,34 @@ const RequireAdminRole: React.FC<{
     }
 
     return children;
+};
+
+const FutureModuleReservedRoute: React.FC<{ moduleId: FutureModuleId }> = ({ moduleId }) => {
+    const { t } = useTranslation();
+    const isReserved = FUTURE_MODULE_IDS.includes(moduleId);
+    const code = moduleId.toUpperCase();
+
+    return (
+        <div
+            className="w-full h-full min-h-[240px] flex items-center justify-center p-fib-34 bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-none"
+            data-future-module={moduleId}
+            data-future-reserved={isReserved ? 'true' : 'false'}
+        >
+            <div className="w-full max-w-md border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] p-fib-21 rounded-none shadow-none space-y-fib-13">
+                <div className="flex items-center justify-between border-b border-[#E2E8F0] dark:border-[#12151C] pb-fib-8">
+                    <span className="font-mono text-microcopy uppercase tracking-widest text-[#C68346]">
+                        [{code}]
+                    </span>
+                    <span className="material-symbols-outlined text-[20px] text-[#475569] dark:text-[#8A93A6]">
+                        lock
+                    </span>
+                </div>
+                <p className="font-mono text-data-dense text-[#475569] dark:text-[#8A93A6]">
+                    {t('core_shell.future_module_reserved', '[Pendiente de registro]')}
+                </p>
+            </div>
+        </div>
+    );
 };
 
 const DashboardRouter = () => {
@@ -466,6 +495,12 @@ const AppRoutes = () => {
                     }
                 />
 
+                <Route path="/rrhh" element={<FutureModuleReservedRoute moduleId="hr" />} />
+                <Route path="/rrhh/*" element={<FutureModuleReservedRoute moduleId="hr" />} />
+                <Route path="/hr" element={<Navigate to="/rrhh" replace />} />
+                <Route path="/hr/*" element={<Navigate to="/rrhh" replace />} />
+                <Route path="/marketplace" element={<FutureModuleReservedRoute moduleId="marketplace" />} />
+                <Route path="/marketplace/*" element={<FutureModuleReservedRoute moduleId="marketplace" />} />
                 <Route path="/plugins" element={<Navigate to="/dashboard" replace />} />
             </Route>
 

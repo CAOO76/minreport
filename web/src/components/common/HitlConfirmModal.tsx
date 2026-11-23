@@ -186,7 +186,7 @@ export const HitlConfirmModal: React.FC<HitlConfirmModalProps> = ({
                             className={cn(
                                 'min-h-[52px] px-fib-21 py-fib-13 font-mono text-data-dense font-bold uppercase tracking-wider rounded-none shadow-none flex items-center gap-fib-8 border transition-colors',
                                 isKeywordValid && !loading
-                                    ? 'bg-[#C68346] border-[#C68346] text-[#FFFFFF] cursor-pointer hover:opacity-90'
+                                    ? 'bg-[#C68346] border-[#C68346] text-[#000000] cursor-pointer hover:opacity-90'
                                     : 'bg-[#E2E8F0] dark:bg-[#12151C] border-[#E2E8F0] dark:border-[#12151C] text-[#64748B] dark:text-[#8A93A6] cursor-not-allowed'
                             )}
                         >

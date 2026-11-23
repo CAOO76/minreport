@@ -42,6 +42,7 @@ type SupplyPrimaryTab = 'PROCUREMENT' | 'DEMAND' | 'WAREHOUSE' | 'SII_EXPENSES';
 
 function parseTabQueryParam(raw?: string | null): SupplyPrimaryTab | null {
     switch (String(raw || '').trim().toUpperCase()) {
+        case 'CONTROL':
         case 'PROCUREMENT':
             return 'PROCUREMENT';
         case 'DEMAND':
@@ -66,6 +67,7 @@ function resolveTabFromDomainMode(mode?: string): SupplyPrimaryTab {
         case 'SII_EXPENSES':
         case 'FINANCE_RECON':
             return 'SII_EXPENSES';
+        case 'CONTROL':
         case 'PROCUREMENT':
         default:
             return 'PROCUREMENT';

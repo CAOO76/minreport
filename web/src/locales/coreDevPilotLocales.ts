@@ -66,6 +66,8 @@ export const coreDevPilotLocales = {
                 suppliers_aria: 'Agenda independiente de proveedores y sucursales',
                 supply_title: 'ABASTECIMIENTO',
                 supply_aria: 'Abastecimiento minero y rendiciones SII',
+                hr_title: 'RRHH',
+                hr_aria: 'Módulo futuro RRHH',
             },
             sections: {
                 pilots: 'PILOTOS',
@@ -683,6 +685,8 @@ export const coreDevPilotLocales = {
                 suppliers_aria: 'Independent suppliers agenda & branches',
                 supply_title: 'SUPPLY',
                 supply_aria: 'Mining supply and SII tax expenses',
+                hr_title: 'HR',
+                hr_aria: 'Future HR module',
             },
             sections: {
                 pilots: 'PILOTS',
@@ -1300,6 +1304,8 @@ export const coreDevPilotLocales = {
                 suppliers_aria: 'Agenda independente de fornecedores e filiais',
                 supply_title: 'SUPRIMENTOS',
                 supply_aria: 'Suprimentos de mineração e prestações SII',
+                hr_title: 'RH',
+                hr_aria: 'Módulo futuro RH',
             },
             sections: {
                 pilots: 'PILOTOS',

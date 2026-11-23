@@ -113,7 +113,7 @@ export class ModuleErrorBoundary extends Component<
                         <button
                             type="button"
                             onClick={this.handleRetry}
-                            className="w-full py-fib-13 px-fib-21 bg-[#C68346] hover:bg-[#B0743E] text-white font-mono font-bold text-microcopy uppercase tracking-wider rounded-none shadow-none border-0 cursor-pointer transition-colors"
+                            className="w-full py-fib-13 px-fib-21 bg-[#C68346] hover:bg-[#B0743E] text-[#000000] font-mono font-bold text-microcopy uppercase tracking-wider rounded-none shadow-none border-0 cursor-pointer transition-colors"
                         >
                             {i18n.t('core_shell.retry_module_load', 'REINTENTAR CARGA DE MÓDULO')}
                         </button>
@@ -184,6 +184,7 @@ function resolveModuleFallbackLabel(
         return t('core_shell.loading_opermaq', 'CARGANDO MÓDULO OPERMAQ');
     }
     if (moduleId === 'supply') {
+        if (domainMode === 'CONTROL') return t('core_shell.loading_supply_control', 'CARGANDO MÓDULO ABASTECIMIENTO · TABLERO');
         if (domainMode === 'DEMAND') return t('core_shell.loading_supply_demand', 'CARGANDO MÓDULO ABASTECIMIENTO · DEMANDA');
         if (domainMode === 'PROCUREMENT') return t('core_shell.loading_supply_procurement', 'CARGANDO MÓDULO ABASTECIMIENTO · COMPRAS');
         if (domainMode === 'WAREHOUSE') return t('core_shell.loading_supply_warehouse', 'CARGANDO MÓDULO ABASTECIMIENTO · BODEGA');

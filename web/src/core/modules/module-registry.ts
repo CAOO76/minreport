@@ -4,15 +4,19 @@ export const CORE_MODULE_IDS = ['opermaq', 'stockpile', 'supply'] as const;
 
 export type CoreModuleId = (typeof CORE_MODULE_IDS)[number];
 
-export const FUTURE_MODULE_IDS = ['marketplace'] as const;
+export const FUTURE_MODULE_IDS = ['hr', 'marketplace'] as const;
 
 export type FutureModuleId = (typeof FUTURE_MODULE_IDS)[number];
+
+export const isFutureModuleId = (value: unknown): value is FutureModuleId =>
+    value === 'hr' || value === 'marketplace';
 
 export type OpermaqDomainMode = 'CATALOG' | 'FLEET' | 'SYMBOLOGY' | 'MANUFACTURERS' | 'SUPPLIERS';
 
 export type GeolappDomainMode = 'STOCKPILE';
 
 export type SupplyDomainMode =
+    | 'CONTROL'
     | 'DEMAND'
     | 'WAREHOUSE'
     | 'PROCUREMENT'

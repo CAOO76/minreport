@@ -15,6 +15,7 @@ export {
 } from '../../contracts/supply.contracts';
 
 export type SupplyDomainMode =
+    | 'CONTROL'
     | 'DEMAND'
     | 'WAREHOUSE'
     | 'PROCUREMENT'

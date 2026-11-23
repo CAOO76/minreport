@@ -10,7 +10,8 @@ import BrandingManager from '../../components/admin/BrandingManager';
 import M3LinearProgress from '../../components/common/M3LinearProgress';
 import M3CircularProgress from '../../components/common/M3CircularProgress';
 import { useMinReportSession } from '../../context/MinReportSessionContext';
-import { isGeolappOnlyDevStage } from '../../config/releaseStage';
+import { isDevModuleEnabled, isGeolappOnlyDevStage } from '../../config/releaseStage';
+import { FUTURE_MODULE_IDS } from '../../core/modules/module-registry';
 import { ModuleHost, M3ModuleHudFallback } from '../../core/modules/ModuleHost';
 import { getApiUrl } from '../../utils/network';
 import {
@@ -36,7 +37,8 @@ export type DevSection =
     | 'MODULE_OPERMAQ_SYMBOLOGY'
     | 'MODULE_OPERMAQ_MANUFACTURERS'
     | 'MODULE_OPERMAQ_SUPPLIERS'
-    | 'MODULE_SUPPLY';
+    | 'MODULE_SUPPLY'
+    | 'MODULE_HR';
 
 function formatCountdownMmSs(seconds: number): string {
     const safe = Math.max(0, Math.floor(seconds));
@@ -99,7 +101,19 @@ export const DevVaultGateway: React.FC = () => {
     const { t } = useTranslation();
     const { session, isLoaded } = useMinReportSession();
     const geolappOnlyStage = isGeolappOnlyDevStage();
-    const defaultSection: DevSection = geolappOnlyStage ? 'MODULE_STOCKPILE' : 'MODULE_OPERMAQ_CATALOG';
+    const stockpileEnabled = isDevModuleEnabled('stockpile');
+    const opermaqEnabled = isDevModuleEnabled('opermaq');
+    const supplyEnabled = isDevModuleEnabled('supply');
+    const hrEnabled = FUTURE_MODULE_IDS.includes('hr') && isDevModuleEnabled('hr');
+    const defaultSection: DevSection = opermaqEnabled
+        ? 'MODULE_OPERMAQ_CATALOG'
+        : stockpileEnabled
+            ? 'MODULE_STOCKPILE'
+            : supplyEnabled
+                ? 'MODULE_SUPPLY'
+                : hrEnabled
+                    ? 'MODULE_HR'
+                    : 'BRANDING';
     const [activeSection, setActiveSection] = useState<DevSection>(defaultSection);
     const isModuleSection = activeSection.startsWith('MODULE_');
 
@@ -175,10 +189,14 @@ export const DevVaultGateway: React.FC = () => {
 
     useEffect(() => {
         const handleOpenCatalogAsset = () => {
-            setActiveSection('MODULE_OPERMAQ_CATALOG');
+            if (opermaqEnabled) {
+                setActiveSection('MODULE_OPERMAQ_CATALOG');
+            }
         };
         const handleOpenSupplyModule = () => {
-            setActiveSection('MODULE_SUPPLY');
+            if (supplyEnabled) {
+                setActiveSection('MODULE_SUPPLY');
+            }
         };
         window.addEventListener('opermaq:open-catalog-asset', handleOpenCatalogAsset);
         window.addEventListener('supply:open-module', handleOpenSupplyModule);
@@ -186,7 +204,7 @@ export const DevVaultGateway: React.FC = () => {
             window.removeEventListener('opermaq:open-catalog-asset', handleOpenCatalogAsset);
             window.removeEventListener('supply:open-module', handleOpenSupplyModule);
         };
-    }, []);
+    }, [opermaqEnabled, supplyEnabled]);
 
     useEffect(() => {
         window.name = 'minreport_dev_terminal';
@@ -781,7 +799,7 @@ export const DevVaultGateway: React.FC = () => {
                                         disabled={loginLoading}
                                         title={t('core_dev_vault.auth.verify_user_btn')}
                                         aria-label={t('core_dev_vault.auth.verify_user_btn')}
-                                        className="w-full min-h-[52px] py-3 bg-[#C68346] hover:bg-[#b0743e] text-white font-mono font-bold text-data-dense uppercase tracking-wider transition-colors disabled:opacity-50 cursor-pointer rounded-none outline-none flex items-center justify-center"
+                                        className="w-full min-h-[52px] py-3 bg-[#C68346] hover:bg-[#b0743e] text-[#000000] font-mono font-bold text-data-dense uppercase tracking-wider transition-colors disabled:opacity-50 cursor-pointer rounded-none outline-none flex items-center justify-center"
                                     >
                                         {loginLoading ? (
                                             <M3CircularProgress size={18} strokeWidth={3} ariaLabel={t('core_dev_vault.auth.processing')} />
@@ -840,7 +858,7 @@ export const DevVaultGateway: React.FC = () => {
                                         disabled={loginLoading}
                                         title={t('core_dev_vault.auth.unlock_btn')}
                                         aria-label={t('core_dev_vault.auth.unlock_btn')}
-                                        className="w-full min-h-[52px] py-3 bg-[#C68346] hover:bg-[#b0743e] text-white font-mono font-bold text-data-dense uppercase tracking-wider transition-colors disabled:opacity-50 cursor-pointer rounded-none outline-none flex items-center justify-center"
+                                        className="w-full min-h-[52px] py-3 bg-[#C68346] hover:bg-[#b0743e] text-[#000000] font-mono font-bold text-data-dense uppercase tracking-wider transition-colors disabled:opacity-50 cursor-pointer rounded-none outline-none flex items-center justify-center"
                                     >
                                         {loginLoading ? (
                                             <M3CircularProgress size={18} strokeWidth={3} ariaLabel={t('core_dev_vault.auth.processing')} />
@@ -962,7 +980,7 @@ export const DevVaultGateway: React.FC = () => {
                                         disabled={loginLoading}
                                         title={t('core_dev_vault.auth.rotate_and_unlock_btn')}
                                         aria-label={t('core_dev_vault.auth.rotate_and_unlock_btn')}
-                                        className="w-full min-h-[52px] py-3 bg-[#C68346] hover:bg-[#b0743e] text-white font-mono font-bold text-data-dense uppercase tracking-wider transition-colors disabled:opacity-50 cursor-pointer rounded-none outline-none flex items-center justify-center"
+                                        className="w-full min-h-[52px] py-3 bg-[#C68346] hover:bg-[#b0743e] text-[#000000] font-mono font-bold text-data-dense uppercase tracking-wider transition-colors disabled:opacity-50 cursor-pointer rounded-none outline-none flex items-center justify-center"
                                     >
                                         {loginLoading ? (
                                             <M3CircularProgress size={18} strokeWidth={3} ariaLabel={t('core_dev_vault.auth.processing')} />
@@ -1095,25 +1113,29 @@ export const DevVaultGateway: React.FC = () => {
                     <div className="w-7 h-[1px] bg-[#CBD5E1] dark:bg-[#5A6072]/50 my-[13px] shrink-0" />
 
                     {/* GRUPO 2: MÓDULO ACOPIOS (MINREPORT) */}
-                    <div className="flex flex-col items-center gap-1 w-full">
-                        <button
-                            type="button"
-                            onClick={() => setActiveSection('MODULE_STOCKPILE')}
-                            title={t('core_dev_vault.nav.stockpile_title')}
-                            aria-label={t('core_dev_vault.nav.stockpile_aria')}
-                            className={`min-w-[48px] min-h-[48px] w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'MODULE_STOCKPILE'
-                                ? 'text-[#C68346]'
-                                : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                                }`}
-                        >
-                            {activeSection === 'MODULE_STOCKPILE' && (
-                                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-5 bg-[#C68346]" />
-                            )}
-                            <span className="material-symbols-outlined text-[22px]">layers</span>
-                        </button>
-                    </div>
+                    {stockpileEnabled && (
+                        <>
+                            <div className="flex flex-col items-center gap-1 w-full">
+                                <button
+                                    type="button"
+                                    onClick={() => setActiveSection('MODULE_STOCKPILE')}
+                                    title={t('core_dev_vault.nav.stockpile_title')}
+                                    aria-label={t('core_dev_vault.nav.stockpile_aria')}
+                                    className={`min-w-[48px] min-h-[48px] w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'MODULE_STOCKPILE'
+                                        ? 'text-[#C68346]'
+                                        : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                                        }`}
+                                >
+                                    {activeSection === 'MODULE_STOCKPILE' && (
+                                        <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-5 bg-[#C68346]" />
+                                    )}
+                                    <span className="material-symbols-outlined text-[22px]">layers</span>
+                                </button>
+                            </div>
+                        </>
+                    )}
 
-                    {!geolappOnlyStage && (
+                    {opermaqEnabled && (
                         <>
                             {/* SEPARADOR DE PRECISIÓN FIBONACCI — MÓDULO OPERMAQ */}
                             <div className="w-7 h-[1px] bg-[#CBD5E1] dark:bg-[#5A6072]/50 my-[13px] shrink-0" />
@@ -1215,7 +1237,11 @@ export const DevVaultGateway: React.FC = () => {
                                     <span className="material-symbols-outlined text-[22px]">storefront</span>
                                 </button>
                             </div>
+                        </>
+                    )}
 
+                    {supplyEnabled && (
+                        <>
                             {/* SEPARADOR DE PRECISIÓN FIBONACCI — MÓDULO ABASTECIMIENTO */}
                             <div className="w-7 h-[1px] bg-[#CBD5E1] dark:bg-[#5A6072]/50 my-[13px] shrink-0" />
 
@@ -1238,6 +1264,32 @@ export const DevVaultGateway: React.FC = () => {
                                         <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-5 bg-[#C68346]" />
                                     )}
                                     <span className="material-symbols-outlined text-[22px]">inventory_2</span>
+                                </button>
+                            </div>
+                        </>
+                    )}
+
+                    {hrEnabled && (
+                        <>
+                            {/* SEPARADOR DE PRECISIÓN FIBONACCI — SLOT FUTURO RRHH */}
+                            <div className="w-7 h-[1px] bg-[#CBD5E1] dark:bg-[#5A6072]/50 my-[13px] shrink-0" />
+
+                            {/* GRUPO 5: SLOT RESERVADO MÓDULO RRHH (FUTURE_MODULE_IDS: 'hr') */}
+                            <div className="flex flex-col items-center gap-1 w-full">
+                                <button
+                                    type="button"
+                                    onClick={() => setActiveSection('MODULE_HR')}
+                                    title={t('core_dev_vault.nav.hr_title')}
+                                    aria-label={t('core_dev_vault.nav.hr_aria')}
+                                    className={`min-w-[48px] min-h-[48px] w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'MODULE_HR'
+                                        ? 'text-[#C68346]'
+                                        : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                                        }`}
+                                >
+                                    {activeSection === 'MODULE_HR' && (
+                                        <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-5 bg-[#C68346]" />
+                                    )}
+                                    <span className="material-symbols-outlined text-[22px]">badge</span>
                                 </button>
                             </div>
                         </>
@@ -1636,16 +1688,35 @@ export const DevVaultGateway: React.FC = () => {
                         )}
 
                         {/* MÓDULO INDUSTRIAL 3: ABASTECIMIENTO (MINREPORT · ABASTECIMIENTO) */}
-                        {activeSection === 'MODULE_SUPPLY' && (
+                        {activeSection === 'MODULE_SUPPLY' && supplyEnabled && (
                             <div className="w-full h-full min-h-0 overflow-hidden flex-1 flex flex-col">
                                 <ModuleHost
                                     key="dev-supply"
                                     moduleId="supply"
                                     embedded={true}
-                                    domainMode="DEMAND"
+                                    domainMode="CONTROL"
                                     hostScope="DEV_GATEWAY"
                                     enforceEntitlement={false}
                                 />
+                            </div>
+                        )}
+
+                        {/* SLOT RESERVADO FUTURO MÓDULO RRHH (FUTURE_MODULE_IDS: 'hr') */}
+                        {activeSection === 'MODULE_HR' && hrEnabled && (
+                            <div className="w-full h-full min-h-0 flex-1 flex items-center justify-center p-fib-34 bg-[#FFFFFF] dark:bg-[#000000]">
+                                <div className="w-full max-w-md border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] p-fib-21 rounded-none shadow-none space-y-fib-13">
+                                    <div className="flex items-center justify-between border-b border-[#E2E8F0] dark:border-[#12151C] pb-fib-8">
+                                        <span className="font-mono text-microcopy uppercase tracking-widest text-[#C68346]">
+                                            {t('core_dev_vault.nav.hr_title')}
+                                        </span>
+                                        <span className="material-symbols-outlined text-[20px] text-[#475569] dark:text-[#8A93A6]">
+                                            lock
+                                        </span>
+                                    </div>
+                                    <p className="font-mono text-data-dense text-[#475569] dark:text-[#8A93A6]">
+                                        {t('core_shell.future_module_reserved', '[Pendiente de registro]')}
+                                    </p>
+                                </div>
                             </div>
                         )}
 
