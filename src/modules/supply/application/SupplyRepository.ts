@@ -13,12 +13,28 @@ import {
 import {
     LEY21719_MIN_K_ANONYMITY,
     type TenantDemandObservation,
+    calculateDynamicReorderPoint,
+    computeSupplyBusinessUnitKpis,
+    evaluateDs594FromPotableTanks,
     evaluateDs594WaterGuardrail,
     forecastSkuDemand,
     isHumanPotableWaterCategory,
     isSandboxTenantId,
     projectAnonymousDemandSignals,
 } from '../domain/DemandAndCostForecaster';
+import {
+    ConfirmWarehouseReceptionV3RequestSchema,
+    CreateSupplyWarehouseRequestSchema,
+    RecordStockMovementRequestSchema,
+    type SupplyBusinessUnitKpis,
+    type SupplyReceptionDiscrepancy,
+    type SupplyTankTelemetry,
+    type SupplyWarehouse,
+    type SupplyWarehouseBalance,
+    TankCycleCountRequestSchema,
+    normalizeLegacyProcurementBucket,
+    normalizeLegacySupplyCategoryCode,
+} from '../../../contracts/supply.contracts';
 import { matchPurchaseToRequisitions } from '../domain/RequisitionFulfillmentMatcher';
 import {
     buildSiiDedupeKey as buildDomainSiiDedupeKey,
@@ -56,6 +72,7 @@ import {
     type DemandForecast,
     type DemandForecastLine,
     type DemandPoolSignal,
+    type EvidenceCasRef,
     type FulfillmentAllocation,
     type PaymentMethod,
     type PurchaseMode,
@@ -96,6 +113,10 @@ export const SUPPLY_COLLECTIONS = {
     PURCHASES: 'supply_purchases',
     FULFILLMENT_ALLOCATIONS: 'supply_fulfillment_allocations',
     ASSETS: 'supply_assets',
+    WAREHOUSES: 'supply_warehouses',
+    WAREHOUSE_BALANCES: 'supply_warehouse_balances',
+    TANK_TELEMETRY: 'supply_tank_telemetry',
+    RECEPTION_DISCREPANCIES: 'supply_reception_discrepancies',
     STOCK_LEDGER: 'supply_stock_ledger',
     CASH_LEDGER: 'supply_cash_ledger',
     SII_DOCUMENTS: 'supply_sii_documents',
@@ -263,6 +284,15 @@ function buildSiiDocId(tenantId: string, dedupeKey: string): string {
 
 function buildInventoryDocId(tenantId: string, siteId: string, canonicalSkuId: string): string {
     return `${safeDocIdPart(tenantId)}__${safeDocIdPart(siteId)}__${safeDocIdPart(canonicalSkuId)}`;
+}
+
+function buildWarehouseBalanceDocId(
+    tenantId: string,
+    siteId: string,
+    warehouseId: string,
+    canonicalSkuId: string
+): string {
+    return `${safeDocIdPart(tenantId)}__${safeDocIdPart(siteId)}__${safeDocIdPart(warehouseId)}__${safeDocIdPart(canonicalSkuId)}`;
 }
 
 function computeRequisitionAggregateStatus(lines: SupplyRequisition['lines']): RequisitionStatus {
@@ -1625,7 +1655,18 @@ export class SupplyRepository {
         params: {
             tenantId: string;
             purchaseId: string;
+            warehouseId?: string;
             receivedLines?: Array<{ purchaseLineId: string; qtyReceived: number }>;
+            lineDetails?: Array<{
+                purchaseLineId: string;
+                warehouseId?: string;
+                shrinkageQty?: number;
+                shrinkageReason?: string;
+                lotNumber?: string;
+                expiryDateIso?: string;
+                evidenceCasRef?: EvidenceCasRef;
+            }>;
+            evidenceCasRef?: EvidenceCasRef;
             notes?: string;
         },
         actor: AuditActorContext
@@ -1634,6 +1675,9 @@ export class SupplyRepository {
         receptionOutcome: 'RECEIVED_OK' | 'PARTIAL_DISCREPANCY';
         receivedItemCount: number;
         affectedRequisitions: SupplyRequisition[];
+        discrepancies: SupplyReceptionDiscrepancy[];
+        urgentRcvAlert: boolean;
+        suggestCreditNote61: boolean;
     }> {
         const ref = db.collection(SUPPLY_COLLECTIONS.PURCHASES).doc(params.purchaseId);
         const now = new Date().toISOString();
@@ -1648,6 +1692,28 @@ export class SupplyRepository {
                 );
             }
             receivedMap.set(item.purchaseLineId, qty);
+        }
+
+        const lineDetailMap = new Map<
+            string,
+            {
+                warehouseId?: string;
+                shrinkageQty: number;
+                shrinkageReason?: string;
+                lotNumber?: string;
+                expiryDateIso?: string;
+                evidenceCasRef?: EvidenceCasRef;
+            }
+        >();
+        for (const det of params.lineDetails || []) {
+            lineDetailMap.set(det.purchaseLineId, {
+                warehouseId: det.warehouseId?.trim() || params.warehouseId?.trim(),
+                shrinkageQty: Math.max(0, Number(det.shrinkageQty || 0)),
+                shrinkageReason: det.shrinkageReason,
+                lotNumber: det.lotNumber,
+                expiryDateIso: det.expiryDateIso,
+                evidenceCasRef: det.evidenceCasRef || params.evidenceCasRef,
+            });
         }
 
         // Allocations de esta compra (inmutables tras alta de compra)
@@ -1670,6 +1736,9 @@ export class SupplyRepository {
         let receptionOutcome: 'RECEIVED_OK' | 'PARTIAL_DISCREPANCY' = 'RECEIVED_OK';
         let receivedItemCount = 0;
         let affectedRequisitions: SupplyRequisition[] = [];
+        let createdDiscrepancies: SupplyReceptionDiscrepancy[] = [];
+        let urgentRcvAlert = false;
+        let suggestCreditNote61 = false;
 
         await db.runTransaction(async (tx) => {
             // FASE 1: TODAS LAS LECTURAS PRIMERO
@@ -1728,6 +1797,18 @@ export class SupplyRepository {
                 });
             }
 
+            // Leer documento SII asociado para verificar urgencia RCV Ley 19.983
+            let siiDocId: string | null = null;
+            if (loaded.dedupeKey) {
+                const candidateSiiId = buildSiiDocId(params.tenantId, loaded.dedupeKey);
+                const siiSnap = await tx.get(
+                    db.collection(SUPPLY_COLLECTIONS.SII_DOCUMENTS).doc(candidateSiiId)
+                );
+                if (siiSnap.exists) {
+                    siiDocId = (siiSnap.data() as SiiDocumentRecord).docId || candidateSiiId;
+                }
+            }
+
             // Leer ítems de inventario involucrados
             const uniqueInvKeys = Array.from(
                 new Set(
@@ -1740,6 +1821,52 @@ export class SupplyRepository {
             for (const invDocId of uniqueInvKeys) {
                 const invSnap = await tx.get(db.collection(SUPPLY_COLLECTIONS.INVENTORY_ITEMS).doc(invDocId));
                 invByDocId.set(invDocId, invSnap.exists ? (invSnap.data() as SupplyInventoryItem) : null);
+            }
+
+            // Leer bodegas físicas y saldos por bodega si se indicó warehouseId
+            const targetWarehouseIds = Array.from(
+                new Set(
+                    inTransitLines
+                        .map(
+                            (l) =>
+                                lineDetailMap.get(l.purchaseLineId)?.warehouseId ||
+                                params.warehouseId?.trim() ||
+                                ''
+                        )
+                        .filter(Boolean)
+                )
+            );
+            const warehouseById = new Map<string, SupplyWarehouse>();
+            for (const whId of targetWarehouseIds) {
+                const whSnap = await tx.get(db.collection(SUPPLY_COLLECTIONS.WAREHOUSES).doc(whId));
+                if (whSnap.exists) {
+                    const whData = whSnap.data() as SupplyWarehouse;
+                    if (whData.tenantId === params.tenantId) {
+                        warehouseById.set(whId, whData);
+                    }
+                }
+            }
+            const whBalanceByDocId = new Map<string, SupplyWarehouseBalance | null>();
+            for (const line of inTransitLines) {
+                const whId =
+                    lineDetailMap.get(line.purchaseLineId)?.warehouseId ||
+                    params.warehouseId?.trim();
+                if (!whId || !warehouseById.has(whId)) continue;
+                const balId = buildWarehouseBalanceDocId(
+                    params.tenantId,
+                    loaded.siteId,
+                    whId,
+                    line.canonicalSkuId
+                );
+                if (!whBalanceByDocId.has(balId)) {
+                    const balSnap = await tx.get(
+                        db.collection(SUPPLY_COLLECTIONS.WAREHOUSE_BALANCES).doc(balId)
+                    );
+                    whBalanceByDocId.set(
+                        balId,
+                        balSnap.exists ? (balSnap.data() as SupplyWarehouseBalance) : null
+                    );
+                }
             }
 
             // Leer requisiciones enlazadas
@@ -1777,8 +1904,9 @@ export class SupplyRepository {
                 return line.qtyPurchased > 0 ? Math.round(costBasis / line.qtyPurchased) : Math.round(line.unitPriceClp || 0);
             };
 
-            confirmWarehouseReception({
-                receptionId: `rec_${loaded.purchaseId}_${Date.now().toString(36)}`,
+            const receptionId = `rec_${loaded.purchaseId}_${Date.now().toString(36)}`;
+            const domainReception = confirmWarehouseReception({
+                receptionId,
                 tenantId: params.tenantId,
                 siteId: loaded.siteId,
                 purchaseId: loaded.purchaseId,
@@ -1796,15 +1924,31 @@ export class SupplyRepository {
                 }),
             });
 
+            const rcvEval = computeRcvAcceptanceDeadline(loaded.issueDate, loaded.documentType);
+            const rcvDaysRemaining =
+                rcvEval.applicable && typeof rcvEval.daysRemaining === 'number'
+                    ? rcvEval.daysRemaining
+                    : null;
+            const isUrgentRcv =
+                typeof rcvDaysRemaining === 'number' && rcvDaysRemaining >= 0 && rcvDaysRemaining <= 3;
+
             let txReceivedItemCount = 0;
             const txUpdatedInventory = new Map<string, SupplyInventoryItem>();
+            const txUpdatedWhBalances = new Map<string, SupplyWarehouseBalance>();
             const txStockLedgers: StockLedgerEntry[] = [];
+            const txDiscrepancies: SupplyReceptionDiscrepancy[] = [];
 
             const updatedPurchaseLines: PurchaseLineWithReceptionProgress[] = (
                 loaded.lines as PurchaseLineWithReceptionProgress[]
             ).map((line) => {
                 if (line.destination !== 'STOCK_IN_TRANSIT') return line;
                 const prog = incomingByLineId.get(line.purchaseLineId)!;
+                const det = lineDetailMap.get(line.purchaseLineId);
+                const targetWhId = det?.warehouseId || params.warehouseId?.trim();
+                const shrinkageQty = Math.min(prog.incoming, Math.max(0, Number(det?.shrinkageQty || 0)));
+                const netUsableReceived = Math.max(0, Number((prog.incoming - shrinkageQty).toFixed(3)));
+                const netUnitCost = resolveLineNetUnitCostClp(line);
+
                 if (prog.incoming > 0) {
                     txReceivedItemCount += 1;
                     const invDocId = buildInventoryDocId(params.tenantId, loaded.siteId, line.canonicalSkuId);
@@ -1818,16 +1962,117 @@ export class SupplyRepository {
                         procurementBucket: line.procurementBucket,
                         unitSi: line.unitSi,
                         inTransitDelta: -prog.incoming,
-                        inWarehouseDelta: prog.incoming,
-                        unitCostClp: resolveLineNetUnitCostClp(line),
+                        inWarehouseDelta: netUsableReceived,
+                        unitCostClp: netUnitCost,
                         movementType: 'RECEIPT_AT_WAREHOUSE',
                         referenceId: loaded.purchaseId,
                         actorUid: actor.actorUid,
                         now,
                     });
+                    computed.ledgerEntry.warehouseId = targetWhId;
+                    computed.ledgerEntry.lotNumber = det?.lotNumber || null;
+                    computed.ledgerEntry.expiryDateIso = det?.expiryDateIso || null;
                     txUpdatedInventory.set(invDocId, computed.record);
                     txStockLedgers.push(computed.ledgerEntry);
+
+                    if (shrinkageQty > 0) {
+                        txStockLedgers.push({
+                            entryId: `stk_${Date.now().toString(36)}_${crypto.randomBytes(4).toString('hex')}`,
+                            tenantId: params.tenantId,
+                            siteId: loaded.siteId,
+                            warehouseId: targetWhId,
+                            canonicalSkuId: line.canonicalSkuId,
+                            movementType: 'SHRINKAGE_WASTE',
+                            qtyDelta: -shrinkageQty,
+                            unitSi: line.unitSi,
+                            unitCostClp: netUnitCost,
+                            shrinkageReason: det?.shrinkageReason || 'Merma detectada en recepción física 4-Way',
+                            lotNumber: det?.lotNumber || null,
+                            expiryDateIso: det?.expiryDateIso || null,
+                            referenceId: loaded.purchaseId,
+                            actorUid: actor.actorUid,
+                            createdAt: now,
+                        });
+                    }
+
+                    // Actualizar balance en bodega física si fue indicada y pertenece al tenant
+                    if (targetWhId && warehouseById.has(targetWhId) && netUsableReceived > 0) {
+                        const wh = warehouseById.get(targetWhId)!;
+                        const balDocId = buildWarehouseBalanceDocId(
+                            params.tenantId,
+                            loaded.siteId,
+                            targetWhId,
+                            line.canonicalSkuId
+                        );
+                        const prevBal = txUpdatedWhBalances.get(balDocId) ?? whBalanceByDocId.get(balDocId) ?? null;
+                        const prevQty = Number(prevBal?.qtyOnHand || 0);
+                        const prevPmp = Number(prevBal?.pmpNetClp || 0);
+                        const nextQty = Number((prevQty + netUsableReceived).toFixed(3));
+                        const nextPmp =
+                            netUnitCost > 0
+                                ? Math.round((prevQty * prevPmp + netUsableReceived * netUnitCost) / Math.max(1, nextQty))
+                                : prevPmp;
+                        txUpdatedWhBalances.set(balDocId, {
+                            balanceId: balDocId,
+                            tenantId: params.tenantId,
+                            siteId: loaded.siteId,
+                            warehouseId: targetWhId,
+                            warehouseClass: wh.warehouseClass,
+                            canonicalSkuId: line.canonicalSkuId,
+                            itemName: prevBal?.itemName || line.description,
+                            categoryCode: line.categoryCode,
+                            procurementBucket: line.procurementBucket,
+                            unitSi: line.unitSi,
+                            qtyOnHand: nextQty,
+                            qtyInTransit: 0,
+                            pmpNetClp: nextPmp,
+                            totalValueNetClp: Math.round(nextQty * nextPmp),
+                            fullCount: prevBal?.fullCount ?? null,
+                            emptyCount: prevBal?.emptyCount ?? null,
+                            lotNumber: det?.lotNumber || prevBal?.lotNumber || null,
+                            expiryDateIso: det?.expiryDateIso || prevBal?.expiryDateIso || null,
+                            updatedAt: now,
+                        });
+                    }
                 }
+
+                // Persistir discrepancia real de recepción o merma por línea
+                const expectedQty = Math.max(0, Number((line.qtyPurchased - prog.prev).toFixed(3)));
+                const domainDisc = domainReception.discrepancies.find(
+                    (d) => d.canonicalSkuId === line.canonicalSkuId
+                );
+                if ((domainDisc && (domainDisc.shortageQty > 0 || domainDisc.excessQty > 0)) || shrinkageQty > 0) {
+                    const shortageQty = prog.incoming < expectedQty ? Number((expectedQty - prog.incoming).toFixed(3)) : 0;
+                    const excessQty = prog.incoming > expectedQty ? Number((prog.incoming - expectedQty).toFixed(3)) : 0;
+                    const needCreditNote = shortageQty > 0 || shrinkageQty > 0;
+                    txDiscrepancies.push({
+                        discrepancyId: `disc_${loaded.purchaseId}_${line.purchaseLineId}_${Date.now().toString(36)}`,
+                        tenantId: params.tenantId,
+                        siteId: loaded.siteId,
+                        purchaseId: loaded.purchaseId,
+                        purchaseLineId: line.purchaseLineId,
+                        warehouseId: targetWhId || null,
+                        canonicalSkuId: line.canonicalSkuId,
+                        itemName: line.description,
+                        unitSi: line.unitSi,
+                        expectedQty,
+                        receivedQty: prog.incoming,
+                        shortageQty,
+                        excessQty,
+                        shrinkageQty,
+                        shrinkageReason: det?.shrinkageReason || null,
+                        evidenceCasRef: det?.evidenceCasRef || params.evidenceCasRef || null,
+                        siiDocId,
+                        rcvDaysRemaining,
+                        urgentRcvClaimRequired: isUrgentRcv && needCreditNote,
+                        suggestCreditNote61: needCreditNote,
+                        status: 'OPEN',
+                        actorUid: actor.actorUid,
+                        createdAtIso: now,
+                        updatedAtIso: now,
+                    });
+                }
+
                 return {
                     ...line,
                     qtyReceivedSoFar: prog.next,
@@ -1838,12 +2083,12 @@ export class SupplyRepository {
                 .filter((l) => l.destination === 'STOCK_IN_TRANSIT')
                 .every((l) => Number(l.qtyReceivedSoFar ?? 0) >= Number(l.qtyPurchased) - 1e-6);
 
-            const nextStatus: SupplyPurchase['receptionStatus'] = allInTransitComplete
-                ? 'RECEIVED'
-                : 'PARTIAL_DISCREPANCY';
-            const nextOutcome: 'RECEIVED_OK' | 'PARTIAL_DISCREPANCY' = allInTransitComplete
-                ? 'RECEIVED_OK'
-                : 'PARTIAL_DISCREPANCY';
+            const nextStatus: SupplyPurchase['receptionStatus'] =
+                allInTransitComplete && txDiscrepancies.every((d) => d.shrinkageQty === 0)
+                    ? 'RECEIVED'
+                    : 'PARTIAL_DISCREPANCY';
+            const nextOutcome: 'RECEIVED_OK' | 'PARTIAL_DISCREPANCY' =
+                nextStatus === 'RECEIVED' ? 'RECEIVED_OK' : 'PARTIAL_DISCREPANCY';
 
             // Distribuir qty entrante hacia requisiciones sin doble conteo entre recepciones parciales
             const txAffectedReqs: SupplyRequisition[] = [];
@@ -1899,8 +2144,16 @@ export class SupplyRepository {
                     merge: true,
                 });
             }
+            for (const [balDocId, balRecord] of txUpdatedWhBalances.entries()) {
+                tx.set(db.collection(SUPPLY_COLLECTIONS.WAREHOUSE_BALANCES).doc(balDocId), balRecord, {
+                    merge: true,
+                });
+            }
             for (const ledgerEntry of txStockLedgers) {
                 tx.set(db.collection(SUPPLY_COLLECTIONS.STOCK_LEDGER).doc(ledgerEntry.entryId), ledgerEntry);
+            }
+            for (const disc of txDiscrepancies) {
+                tx.set(db.collection(SUPPLY_COLLECTIONS.RECEPTION_DISCREPANCIES).doc(disc.discrepancyId), disc);
             }
             for (const reqItem of txAffectedReqs) {
                 tx.set(db.collection(SUPPLY_COLLECTIONS.REQUISITIONS).doc(reqItem.reqId), reqItem, {
@@ -1912,13 +2165,36 @@ export class SupplyRepository {
             receptionOutcome = nextOutcome;
             receivedItemCount = txReceivedItemCount;
             affectedRequisitions = txAffectedReqs;
+            createdDiscrepancies = txDiscrepancies;
+            urgentRcvAlert = txDiscrepancies.some((d) => d.urgentRcvClaimRequired);
+            suggestCreditNote61 = txDiscrepancies.some((d) => d.suggestCreditNote61);
         });
+
+        if (urgentRcvAlert) {
+            await this.recordPolicyAudit({
+                tenantId: params.tenantId,
+                siteId: updatedPurchase.siteId,
+                actorUid: actor.actorUid,
+                eventType: 'SII_FISCAL_WARNING',
+                policyCode: 'RCV_URGENT_DISCREPANCY_CLAIM',
+                severity: 'HIGH',
+                entityId: updatedPurchase.purchaseId,
+                details: {
+                    discrepancyCount: createdDiscrepancies.length,
+                    suggestCreditNote61,
+                    rcvDaysRemaining: createdDiscrepancies[0]?.rcvDaysRemaining ?? null,
+                },
+            });
+        }
 
         await this.recordAudit(params.tenantId, actor, 'SUPPLY_PURCHASE_RECEPTION_CONFIRMED', updatedPurchase.purchaseId, {
             hitlConfirmed: true,
             receptionStatus: updatedPurchase.receptionStatus,
             receptionOutcome,
             receivedItemCount,
+            discrepancyCount: createdDiscrepancies.length,
+            urgentRcvAlert,
+            suggestCreditNote61,
             affectedRequisitionIds: affectedRequisitions.map((r) => r.reqId),
         });
 
@@ -1927,6 +2203,752 @@ export class SupplyRepository {
             receptionOutcome,
             receivedItemCount,
             affectedRequisitions,
+            discrepancies: createdDiscrepancies,
+            urgentRcvAlert,
+            suggestCreditNote61,
+        };
+    }
+
+    // -----------------------------------------------------------------------
+    // V3-E04: Bodegas Físicas (`supply_warehouses`), Kardex Transaccional & Aforos
+    // -----------------------------------------------------------------------
+
+    public static async listWarehouses(
+        tenantId: string,
+        siteId?: string,
+        limit?: number
+    ): Promise<SupplyWarehouse[]> {
+        const snap = await db
+            .collection(SUPPLY_COLLECTIONS.WAREHOUSES)
+            .where('tenantId', '==', tenantId)
+            .limit(resolveListLimit(limit))
+            .get();
+        let list = snap.docs.map((d) => d.data() as SupplyWarehouse);
+        if (siteId) list = list.filter((w) => w.siteId === siteId);
+        return list.sort((a, b) => a.code.localeCompare(b.code, 'es'));
+    }
+
+    public static async upsertWarehouse(
+        tenantId: string,
+        rawInput: unknown,
+        actor: AuditActorContext
+    ): Promise<SupplyWarehouse> {
+        const parsed = CreateSupplyWarehouseRequestSchema.safeParse(rawInput);
+        if (!parsed.success) {
+            throw new SupplyValidationError(
+                'INVALID_WAREHOUSE_PAYLOAD',
+                parsed.error.issues[0]?.message || 'Payload inválido para bodega física.'
+            );
+        }
+
+        const input = parsed.data;
+        const now = new Date().toISOString();
+        const codeSlug = input.code
+            .toLowerCase()
+            .replace(/[^a-z0-9_-]+/g, '-')
+            .replace(/^-+|-+$/g, '')
+            .slice(0, 48);
+        const warehouseId =
+            input.warehouseId?.trim() ||
+            `wh_${safeDocIdPart(tenantId)}_${safeDocIdPart(input.siteId)}_${codeSlug || crypto.randomBytes(3).toString('hex')}`;
+
+        const ref = db.collection(SUPPLY_COLLECTIONS.WAREHOUSES).doc(warehouseId);
+        const existingSnap = await ref.get();
+        if (existingSnap.exists) {
+            const prev = existingSnap.data() as SupplyWarehouse;
+            if (prev.tenantId && prev.tenantId !== tenantId) {
+                throw new SupplyForbiddenError(
+                    'TENANT_ACCESS_DENIED: La bodega pertenece a otra cuenta organizacional.'
+                );
+            }
+        }
+
+        const existingData = existingSnap.exists ? (existingSnap.data() as SupplyWarehouse) : null;
+        const warehouse: SupplyWarehouse = {
+            warehouseId,
+            tenantId,
+            siteId: input.siteId,
+            code: input.code,
+            name: input.name,
+            warehouseClass: input.warehouseClass,
+            allowedChannelIds: Array.from(new Set(input.allowedChannelIds)),
+            defaultCostCenter: input.defaultCostCenter,
+            capacityUnitSi: input.capacityUnitSi,
+            maxCapacitySi: input.maxCapacitySi,
+            secTc4Code: input.secTc4Code ?? existingData?.secTc4Code ?? null,
+            dgmnResolutionCode: input.dgmnResolutionCode ?? existingData?.dgmnResolutionCode ?? null,
+            geoFix: input.geoFix ?? existingData?.geoFix ?? null,
+            status: input.status,
+            createdAt: existingData?.createdAt || now,
+            updatedAt: now,
+        };
+
+        await ref.set(warehouse, { merge: true });
+        await this.recordAudit(tenantId, actor, 'SUPPLY_WAREHOUSE_UPSERTED', warehouseId, {
+            hitlConfirmed: true,
+            siteId: warehouse.siteId,
+            warehouseClass: warehouse.warehouseClass,
+            code: warehouse.code,
+        });
+        return warehouse;
+    }
+
+    public static async listWarehouseBalances(
+        tenantId: string,
+        filters?: { siteId?: string; warehouseId?: string; canonicalSkuId?: string; limit?: number }
+    ): Promise<SupplyWarehouseBalance[]> {
+        const snap = await db
+            .collection(SUPPLY_COLLECTIONS.WAREHOUSE_BALANCES)
+            .where('tenantId', '==', tenantId)
+            .limit(resolveListLimit(filters?.limit))
+            .get();
+        let list = snap.docs.map((d) => d.data() as SupplyWarehouseBalance);
+        if (filters?.siteId) list = list.filter((b) => b.siteId === filters.siteId);
+        if (filters?.warehouseId) list = list.filter((b) => b.warehouseId === filters.warehouseId);
+        if (filters?.canonicalSkuId) list = list.filter((b) => b.canonicalSkuId === filters.canonicalSkuId);
+        return list.sort((a, b) => {
+            if (a.expiryDateIso && b.expiryDateIso) {
+                return a.expiryDateIso.localeCompare(b.expiryDateIso);
+            }
+            if (a.expiryDateIso) return -1;
+            if (b.expiryDateIso) return 1;
+            return a.itemName.localeCompare(b.itemName, 'es');
+        });
+    }
+
+    public static async listStockLedger(
+        tenantId: string,
+        filters?: {
+            siteId?: string;
+            warehouseId?: string;
+            canonicalSkuId?: string;
+            movementType?: string;
+            limit?: number;
+        }
+    ): Promise<StockLedgerEntry[]> {
+        const snap = await db
+            .collection(SUPPLY_COLLECTIONS.STOCK_LEDGER)
+            .where('tenantId', '==', tenantId)
+            .limit(resolveListLimit(filters?.limit))
+            .get();
+        let list = snap.docs.map((d) => d.data() as StockLedgerEntry);
+        if (filters?.siteId) list = list.filter((e) => e.siteId === filters.siteId);
+        if (filters?.warehouseId) {
+            list = list.filter(
+                (e) => e.warehouseId === filters.warehouseId || e.toWarehouseId === filters.warehouseId
+            );
+        }
+        if (filters?.canonicalSkuId) list = list.filter((e) => e.canonicalSkuId === filters.canonicalSkuId);
+        if (filters?.movementType) list = list.filter((e) => e.movementType === filters.movementType);
+        return list.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    }
+
+    public static async listReceptionDiscrepancies(
+        tenantId: string,
+        filters?: { siteId?: string; purchaseId?: string; status?: string; limit?: number }
+    ): Promise<SupplyReceptionDiscrepancy[]> {
+        const snap = await db
+            .collection(SUPPLY_COLLECTIONS.RECEPTION_DISCREPANCIES)
+            .where('tenantId', '==', tenantId)
+            .limit(resolveListLimit(filters?.limit))
+            .get();
+        let list = snap.docs.map((d) => d.data() as SupplyReceptionDiscrepancy);
+        if (filters?.siteId) list = list.filter((d) => d.siteId === filters.siteId);
+        if (filters?.purchaseId) list = list.filter((d) => d.purchaseId === filters.purchaseId);
+        if (filters?.status) list = list.filter((d) => d.status === filters.status);
+        return list.sort((a, b) => b.createdAtIso.localeCompare(a.createdAtIso));
+    }
+
+    public static async listTankTelemetry(
+        tenantId: string,
+        filters?: { siteId?: string; warehouseId?: string; limit?: number }
+    ): Promise<SupplyTankTelemetry[]> {
+        const snap = await db
+            .collection(SUPPLY_COLLECTIONS.TANK_TELEMETRY)
+            .where('tenantId', '==', tenantId)
+            .limit(resolveListLimit(filters?.limit))
+            .get();
+        let list = snap.docs.map((d) => d.data() as SupplyTankTelemetry);
+        if (filters?.siteId) list = list.filter((t) => t.siteId === filters.siteId);
+        if (filters?.warehouseId) list = list.filter((t) => t.warehouseId === filters.warehouseId);
+        return list.sort((a, b) => b.measuredAtIso.localeCompare(a.measuredAtIso));
+    }
+
+    public static async recordKardexMovement(
+        tenantId: string,
+        rawInput: unknown,
+        actor: AuditActorContext
+    ): Promise<{
+        entries: StockLedgerEntry[];
+        originBalance: SupplyWarehouseBalance;
+        destinationBalance?: SupplyWarehouseBalance;
+        transferGroupId?: string;
+    }> {
+        const parsed = RecordStockMovementRequestSchema.safeParse(rawInput);
+        if (!parsed.success) {
+            throw new SupplyValidationError(
+                'INVALID_KARDEX_MOVEMENT_PAYLOAD',
+                parsed.error.issues[0]?.message || 'Payload inválido para movimiento de Kardex.'
+            );
+        }
+        const input = parsed.data;
+        const catalogSku = findDomainCanonicalSkuById(input.canonicalSkuId);
+        const categoryCode = normalizeLegacySupplyCategoryCode(
+            input.categoryCode || catalogSku?.categoryCode || 'OTROS_OPERACIONAL'
+        );
+        const procurementBucket = normalizeLegacyProcurementBucket(
+            input.procurementBucket || catalogSku?.procurementBucket || 'FERRETERIA_INSUMOS'
+        );
+        const itemName = input.itemName || catalogSku?.name || input.canonicalSkuId;
+        const unitSi = input.unitSi || catalogSku?.baseUnitSi || 'un';
+
+        if (
+            input.movementType === 'ISSUE_CONSUMPTION' &&
+            (categoryCode === 'COMBUSTIBLE_FLOTA_PROD' ||
+                categoryCode === 'REPUESTOS_MAQUINARIA' ||
+                categoryCode === 'LUBRICANTES_FILTROS')
+        ) {
+            if (!input.linkedAssetId || !input.linkedAssetId.trim()) {
+                throw new SupplyValidationError(
+                    'ASSET_ID_REQUIRED_FOR_FLEET_ISSUE',
+                    'Los despachos de combustible flota, lubricantes y repuestos requieren linkedAssetId (código equipo OPERMAQ).'
+                );
+            }
+            if (
+                categoryCode === 'COMBUSTIBLE_FLOTA_PROD' &&
+                (typeof input.horometer !== 'number' || !Number.isFinite(input.horometer) || input.horometer < 0)
+            ) {
+                throw new SupplyValidationError(
+                    'HOROMETER_REQUIRED_FOR_FLEET_FUEL',
+                    'Los despachos de combustible flota requieren lectura de horómetro válida (>= 0).'
+                );
+            }
+        }
+
+        const now = new Date().toISOString();
+        const originWhRef = db.collection(SUPPLY_COLLECTIONS.WAREHOUSES).doc(input.warehouseId);
+        const originBalDocId = buildWarehouseBalanceDocId(
+            tenantId,
+            input.siteId,
+            input.warehouseId,
+            input.canonicalSkuId
+        );
+        const originBalRef = db.collection(SUPPLY_COLLECTIONS.WAREHOUSE_BALANCES).doc(originBalDocId);
+        const invDocId = buildInventoryDocId(tenantId, input.siteId, input.canonicalSkuId);
+        const invRef = db.collection(SUPPLY_COLLECTIONS.INVENTORY_ITEMS).doc(invDocId);
+
+        const isTransfer = input.movementType === 'TRANSFER_OUT';
+        const destWhId = isTransfer ? input.toWarehouseId! : undefined;
+        const destWhRef = destWhId ? db.collection(SUPPLY_COLLECTIONS.WAREHOUSES).doc(destWhId) : null;
+        const destBalDocId = destWhId
+            ? buildWarehouseBalanceDocId(tenantId, input.siteId, destWhId, input.canonicalSkuId)
+            : null;
+        const destBalRef = destBalDocId
+            ? db.collection(SUPPLY_COLLECTIONS.WAREHOUSE_BALANCES).doc(destBalDocId)
+            : null;
+
+        let resultEntries: StockLedgerEntry[] = [];
+        let resultOriginBalance!: SupplyWarehouseBalance;
+        let resultDestBalance: SupplyWarehouseBalance | undefined;
+        let transferGroupId: string | undefined;
+
+        await db.runTransaction(async (tx) => {
+            const originWhSnap = await tx.get(originWhRef);
+            if (!originWhSnap.exists) {
+                throw new SupplyNotFoundError(`Bodega origen ${input.warehouseId} no encontrada.`);
+            }
+            const originWh = originWhSnap.data() as SupplyWarehouse;
+            if (originWh.tenantId !== tenantId) {
+                throw new SupplyForbiddenError('TENANT_ACCESS_DENIED: Bodega origen pertenece a otro tenant.');
+            }
+            if (originWh.siteId !== input.siteId) {
+                throw new SupplyValidationError(
+                    'SITE_WAREHOUSE_MISMATCH',
+                    `Bodega ${input.warehouseId} no pertenece al sitio ${input.siteId}.`
+                );
+            }
+
+            let destWh: SupplyWarehouse | null = null;
+            if (destWhRef) {
+                const destSnap = await tx.get(destWhRef);
+                if (!destSnap.exists) {
+                    throw new SupplyNotFoundError(`Bodega destino ${destWhId} no encontrada.`);
+                }
+                destWh = destSnap.data() as SupplyWarehouse;
+                if (destWh.tenantId !== tenantId) {
+                    throw new SupplyForbiddenError('TENANT_ACCESS_DENIED: Bodega destino pertenece a otro tenant.');
+                }
+                if (destWh.siteId !== input.siteId) {
+                    throw new SupplyValidationError(
+                        'SITE_WAREHOUSE_MISMATCH',
+                        `Bodega destino ${destWhId} no pertenece al sitio ${input.siteId}.`
+                    );
+                }
+            }
+
+            const originBalSnap = await tx.get(originBalRef);
+            const prevOriginBal = originBalSnap.exists
+                ? (originBalSnap.data() as SupplyWarehouseBalance)
+                : null;
+            const destBalSnap = destBalRef ? await tx.get(destBalRef) : null;
+            const prevDestBal =
+                destBalSnap && destBalSnap.exists
+                    ? (destBalSnap.data() as SupplyWarehouseBalance)
+                    : null;
+            const invSnap = await tx.get(invRef);
+            const prevInv = invSnap.exists ? (invSnap.data() as SupplyInventoryItem) : null;
+
+            const isInbound =
+                input.movementType === 'DIRECT_RECEIPT' ||
+                input.movementType === 'RECEIPT_AT_WAREHOUSE' ||
+                input.movementType === 'TRANSFER_IN' ||
+                input.movementType === 'RETURN_TO_WAREHOUSE';
+            const isOutbound =
+                input.movementType === 'ISSUE_CONSUMPTION' ||
+                input.movementType === 'TRANSFER_OUT' ||
+                input.movementType === 'SHRINKAGE_WASTE';
+
+            const prevQty = Number(prevOriginBal?.qtyOnHand || 0);
+            const prevPmp = Number(prevOriginBal?.pmpNetClp || 0);
+
+            if (isOutbound && prevQty + 1e-6 < input.qtySi) {
+                throw new SupplyConflictError(
+                    'INSUFFICIENT_WAREHOUSE_STOCK',
+                    `Saldo insuficiente en bodega ${input.warehouseId} para ${input.canonicalSkuId}: disponible ${prevQty} ${unitSi}, solicitado ${input.qtySi} ${unitSi}.`
+                );
+            }
+
+            const signedDelta = isOutbound ? -input.qtySi : input.qtySi;
+            const nextQty = Math.max(0, Number((prevQty + signedDelta).toFixed(3)));
+            const inputCost = Number(input.unitCostNetClp ?? prevPmp ?? catalogSku?.referenceUnitPriceClp ?? 0);
+            const nextPmp =
+                isInbound && inputCost > 0 && nextQty > 0
+                    ? Math.round((prevQty * prevPmp + input.qtySi * inputCost) / nextQty)
+                    : prevPmp || inputCost;
+            const entryUnitCost = isOutbound ? prevPmp || inputCost : inputCost;
+
+            const nextFullCount =
+                typeof input.fullCount === 'number'
+                    ? input.fullCount
+                    : prevOriginBal?.fullCount ?? null;
+            const nextEmptyCount =
+                typeof input.emptyCount === 'number'
+                    ? input.emptyCount
+                    : prevOriginBal?.emptyCount ?? null;
+
+            const nextOriginBal: SupplyWarehouseBalance = {
+                balanceId: originBalDocId,
+                tenantId,
+                siteId: input.siteId,
+                warehouseId: input.warehouseId,
+                warehouseClass: originWh.warehouseClass,
+                canonicalSkuId: input.canonicalSkuId,
+                itemName: prevOriginBal?.itemName || itemName,
+                categoryCode,
+                procurementBucket,
+                unitSi,
+                qtyOnHand: nextQty,
+                qtyInTransit: Number(prevOriginBal?.qtyInTransit || 0),
+                pmpNetClp: nextPmp,
+                totalValueNetClp: Math.round(nextQty * nextPmp),
+                fullCount: nextFullCount,
+                emptyCount: nextEmptyCount,
+                lotNumber: input.lotNumber ?? prevOriginBal?.lotNumber ?? null,
+                expiryDateIso: input.expiryDateIso ?? prevOriginBal?.expiryDateIso ?? null,
+                updatedAt: now,
+            };
+
+            const effectiveTransferGroup = isTransfer
+                ? `trf_${Date.now().toString(36)}_${crypto.randomBytes(3).toString('hex')}`
+                : undefined;
+
+            const primaryEntry: StockLedgerEntry = {
+                entryId: `stk_${Date.now().toString(36)}_${crypto.randomBytes(4).toString('hex')}`,
+                tenantId,
+                siteId: input.siteId,
+                warehouseId: input.warehouseId,
+                ...(destWhId ? { toWarehouseId: destWhId } : {}),
+                canonicalSkuId: input.canonicalSkuId,
+                movementType: input.movementType,
+                qtyDelta: signedDelta,
+                unitSi,
+                unitCostClp: entryUnitCost,
+                costCenter: input.costCenter || originWh.defaultCostCenter,
+                linkedAssetId: input.linkedAssetId ?? null,
+                horometer: input.horometer ?? null,
+                fullCount: input.fullCount ?? null,
+                emptyCount: input.emptyCount ?? null,
+                transferGroupId: effectiveTransferGroup ?? null,
+                lotNumber: input.lotNumber ?? null,
+                expiryDateIso: input.expiryDateIso ?? null,
+                shrinkageReason: input.shrinkageReason ?? null,
+                notes: input.notes,
+                referenceId: input.referenceId || effectiveTransferGroup || input.warehouseId,
+                actorUid: actor.actorUid,
+                createdAt: now,
+            };
+
+            const entriesToWrite: StockLedgerEntry[] = [primaryEntry];
+            let nextDestBal: SupplyWarehouseBalance | undefined;
+
+            if (isTransfer && destWh && destBalDocId) {
+                const destPrevQty = Number(prevDestBal?.qtyOnHand || 0);
+                const destPrevPmp = Number(prevDestBal?.pmpNetClp || 0);
+                const transferUnitCost = prevPmp || inputCost;
+                const destNextQty = Number((destPrevQty + input.qtySi).toFixed(3));
+                const destNextPmp =
+                    transferUnitCost > 0 && destNextQty > 0
+                        ? Math.round((destPrevQty * destPrevPmp + input.qtySi * transferUnitCost) / destNextQty)
+                        : destPrevPmp;
+
+                nextDestBal = {
+                    balanceId: destBalDocId,
+                    tenantId,
+                    siteId: input.siteId,
+                    warehouseId: destWh.warehouseId,
+                    warehouseClass: destWh.warehouseClass,
+                    canonicalSkuId: input.canonicalSkuId,
+                    itemName: prevDestBal?.itemName || itemName,
+                    categoryCode,
+                    procurementBucket,
+                    unitSi,
+                    qtyOnHand: destNextQty,
+                    qtyInTransit: Number(prevDestBal?.qtyInTransit || 0),
+                    pmpNetClp: destNextPmp,
+                    totalValueNetClp: Math.round(destNextQty * destNextPmp),
+                    fullCount: prevDestBal?.fullCount ?? null,
+                    emptyCount: prevDestBal?.emptyCount ?? null,
+                    lotNumber: input.lotNumber ?? prevDestBal?.lotNumber ?? null,
+                    expiryDateIso: input.expiryDateIso ?? prevDestBal?.expiryDateIso ?? null,
+                    updatedAt: now,
+                };
+
+                entriesToWrite.push({
+                    entryId: `stk_${Date.now().toString(36)}_${crypto.randomBytes(4).toString('hex')}`,
+                    tenantId,
+                    siteId: input.siteId,
+                    warehouseId: destWh.warehouseId,
+                    canonicalSkuId: input.canonicalSkuId,
+                    movementType: 'TRANSFER_IN',
+                    qtyDelta: input.qtySi,
+                    unitSi,
+                    unitCostClp: transferUnitCost,
+                    costCenter: input.costCenter || destWh.defaultCostCenter,
+                    transferGroupId: effectiveTransferGroup!,
+                    lotNumber: input.lotNumber ?? null,
+                    expiryDateIso: input.expiryDateIso ?? null,
+                    notes: input.notes,
+                    referenceId: effectiveTransferGroup!,
+                    actorUid: actor.actorUid,
+                    createdAt: now,
+                });
+            }
+
+            let nextInvRecord: SupplyInventoryItem | null = null;
+            if (!isTransfer) {
+                const prevSiteQty = Number(prevInv?.qtyInWarehouse || 0);
+                const nextSiteQty = Math.max(0, Number((prevSiteQty + signedDelta).toFixed(3)));
+                const prevSiteAvg = Number(prevInv?.avgUnitCostClp || 0);
+                const nextSiteAvg =
+                    isInbound && entryUnitCost > 0 && nextSiteQty > 0
+                        ? Math.round((prevSiteQty * prevSiteAvg + input.qtySi * entryUnitCost) / nextSiteQty)
+                        : prevSiteAvg || nextPmp;
+                nextInvRecord = {
+                    inventoryKey: invDocId,
+                    tenantId,
+                    siteId: input.siteId,
+                    canonicalSkuId: input.canonicalSkuId,
+                    itemName: prevInv?.itemName || itemName,
+                    categoryCode: prevInv?.categoryCode || categoryCode,
+                    procurementBucket: prevInv?.procurementBucket || procurementBucket,
+                    unitSi: prevInv?.unitSi || unitSi,
+                    qtyInTransit: Number(prevInv?.qtyInTransit || 0),
+                    qtyInWarehouse: nextSiteQty,
+                    avgUnitCostClp: nextSiteAvg,
+                    updatedAt: now,
+                };
+            }
+
+            tx.set(originBalRef, nextOriginBal, { merge: true });
+            if (destBalRef && nextDestBal) {
+                tx.set(destBalRef, nextDestBal, { merge: true });
+            }
+            for (const entry of entriesToWrite) {
+                tx.set(db.collection(SUPPLY_COLLECTIONS.STOCK_LEDGER).doc(entry.entryId), entry);
+            }
+            if (nextInvRecord) {
+                tx.set(invRef, nextInvRecord, { merge: true });
+            }
+
+            resultEntries = entriesToWrite;
+            resultOriginBalance = nextOriginBal;
+            resultDestBalance = nextDestBal;
+            transferGroupId = effectiveTransferGroup;
+        });
+
+        await this.recordAudit(
+            tenantId,
+            actor,
+            isTransfer ? 'SUPPLY_WAREHOUSE_TRANSFER_RECORDED' : 'SUPPLY_KARDEX_MOVEMENT_RECORDED',
+            resultEntries[0].entryId,
+            {
+                warehouseId: input.warehouseId,
+                toWarehouseId: destWhId || null,
+                transferGroupId: transferGroupId || null,
+                canonicalSkuId: input.canonicalSkuId,
+                movementType: input.movementType,
+                qtySi: input.qtySi,
+                linkedAssetId: input.linkedAssetId || null,
+                horometer: input.horometer ?? null,
+            }
+        );
+
+        return {
+            entries: resultEntries,
+            originBalance: resultOriginBalance,
+            ...(resultDestBalance ? { destinationBalance: resultDestBalance } : {}),
+            ...(transferGroupId ? { transferGroupId } : {}),
+        };
+    }
+
+    public static async recordTankCycleCount(
+        tenantId: string,
+        rawInput: unknown,
+        actor: AuditActorContext
+    ): Promise<{
+        telemetry: SupplyTankTelemetry;
+        ledgerEntry: StockLedgerEntry;
+        balance: SupplyWarehouseBalance;
+        anomalyAlertCode: string | null;
+    }> {
+        const parsed = TankCycleCountRequestSchema.safeParse(rawInput);
+        if (!parsed.success) {
+            throw new SupplyValidationError(
+                'INVALID_TANK_CYCLE_COUNT_PAYLOAD',
+                parsed.error.issues[0]?.message || 'Payload inválido para aforo de estanque/polvorín.'
+            );
+        }
+
+        const input = parsed.data;
+        const now = new Date().toISOString();
+        const measuredAtIso = input.measuredAtIso || now;
+        const catalogSku = findDomainCanonicalSkuById(input.canonicalSkuId);
+
+        const whRef = db.collection(SUPPLY_COLLECTIONS.WAREHOUSES).doc(input.warehouseId);
+        const balDocId = buildWarehouseBalanceDocId(
+            tenantId,
+            input.siteId,
+            input.warehouseId,
+            input.canonicalSkuId
+        );
+        const balRef = db.collection(SUPPLY_COLLECTIONS.WAREHOUSE_BALANCES).doc(balDocId);
+        const invDocId = buildInventoryDocId(tenantId, input.siteId, input.canonicalSkuId);
+        const invRef = db.collection(SUPPLY_COLLECTIONS.INVENTORY_ITEMS).doc(invDocId);
+
+        let resultTelemetry!: SupplyTankTelemetry;
+        let resultLedger!: StockLedgerEntry;
+        let resultBalance!: SupplyWarehouseBalance;
+        let anomalyAlertCode: string | null = null;
+
+        await db.runTransaction(async (tx) => {
+            const whSnap = await tx.get(whRef);
+            if (!whSnap.exists) {
+                throw new SupplyNotFoundError(`Bodega/Estanque ${input.warehouseId} no encontrado.`);
+            }
+            const wh = whSnap.data() as SupplyWarehouse;
+            if (wh.tenantId !== tenantId) {
+                throw new SupplyForbiddenError('TENANT_ACCESS_DENIED: Estanque pertenece a otro tenant.');
+            }
+            if (wh.siteId !== input.siteId) {
+                throw new SupplyValidationError(
+                    'SITE_WAREHOUSE_MISMATCH',
+                    `Estanque ${input.warehouseId} no pertenece al sitio ${input.siteId}.`
+                );
+            }
+
+            const balSnap = await tx.get(balRef);
+            const prevBal = balSnap.exists ? (balSnap.data() as SupplyWarehouseBalance) : null;
+            const invSnap = await tx.get(invRef);
+            const prevInv = invSnap.exists ? (invSnap.data() as SupplyInventoryItem) : null;
+
+            const categoryCode = normalizeLegacySupplyCategoryCode(
+                prevBal?.categoryCode || catalogSku?.categoryCode || 'OTROS_OPERACIONAL'
+            );
+            const procurementBucket = normalizeLegacyProcurementBucket(
+                prevBal?.procurementBucket || catalogSku?.procurementBucket || 'FERRETERIA_INSUMOS'
+            );
+            const unitSi = prevBal?.unitSi || catalogSku?.baseUnitSi || wh.capacityUnitSi || 'L';
+            const itemName = prevBal?.itemName || catalogSku?.name || input.canonicalSkuId;
+
+            const bookBalanceSi = Number(prevBal?.qtyOnHand || 0);
+            const varianceSi = Number((input.measuredLevelSi - bookBalanceSi).toFixed(3));
+            const variancePct =
+                bookBalanceSi > 0
+                    ? Number(((Math.abs(varianceSi) / bookBalanceSi) * 100).toFixed(2))
+                    : input.measuredLevelSi > 0
+                      ? 100
+                      : 0;
+            const capacitySi = Math.max(0, Number(wh.maxCapacitySi || 0));
+            const occupancyPct =
+                capacitySi > 0
+                    ? Math.min(200, Number(((input.measuredLevelSi / capacitySi) * 100).toFixed(2)))
+                    : 0;
+
+            const isMagazine =
+                wh.warehouseClass === 'MAGAZINE_DGMN' || categoryCode === 'EXPLOSIVOS_REGULADO';
+            const isFuelTank =
+                wh.warehouseClass === 'FUEL_TANK_CAMP' || wh.warehouseClass === 'FUEL_TANK_FLEET';
+            const anomalyFlag =
+                (isMagazine && Math.abs(varianceSi) > 0) || (isFuelTank && variancePct > 2.5);
+
+            if (isMagazine && Math.abs(varianceSi) > 0) {
+                anomalyAlertCode = 'DGMN_MAGAZINE_VARIANCE_ALERT';
+            } else if (isFuelTank && variancePct > 2.5) {
+                anomalyAlertCode = 'FUEL_TANK_VARIANCE_OVER_2_5_PCT';
+            }
+
+            const telemetryId = `tlm_${Date.now().toString(36)}_${crypto.randomBytes(4).toString('hex')}`;
+            const telemetry: SupplyTankTelemetry = {
+                telemetryId,
+                tenantId,
+                siteId: input.siteId,
+                warehouseId: wh.warehouseId,
+                warehouseClass: wh.warehouseClass,
+                canonicalSkuId: input.canonicalSkuId,
+                measuredAtIso,
+                measuredLevelSi: input.measuredLevelSi,
+                capacitySi,
+                occupancyPct,
+                bookBalanceSi,
+                varianceSi,
+                variancePct,
+                anomalyFlag,
+                measuredByUid: actor.actorUid,
+                notes: input.notes,
+                evidenceCasRef: input.evidenceCasRef || null,
+                createdAt: now,
+            };
+
+            const pmpNetClp = Number(prevBal?.pmpNetClp || prevInv?.avgUnitCostClp || 0);
+            const nextBalance: SupplyWarehouseBalance = {
+                balanceId: balDocId,
+                tenantId,
+                siteId: input.siteId,
+                warehouseId: wh.warehouseId,
+                warehouseClass: wh.warehouseClass,
+                canonicalSkuId: input.canonicalSkuId,
+                itemName,
+                categoryCode,
+                procurementBucket,
+                unitSi,
+                qtyOnHand: input.measuredLevelSi,
+                qtyInTransit: Number(prevBal?.qtyInTransit || 0),
+                pmpNetClp,
+                totalValueNetClp: Math.round(input.measuredLevelSi * pmpNetClp),
+                fullCount: prevBal?.fullCount ?? null,
+                emptyCount: prevBal?.emptyCount ?? null,
+                lotNumber: prevBal?.lotNumber ?? null,
+                expiryDateIso: prevBal?.expiryDateIso ?? null,
+                updatedAt: now,
+            };
+
+            const ledgerEntry: StockLedgerEntry = {
+                entryId: `stk_${Date.now().toString(36)}_${crypto.randomBytes(4).toString('hex')}`,
+                tenantId,
+                siteId: input.siteId,
+                warehouseId: wh.warehouseId,
+                canonicalSkuId: input.canonicalSkuId,
+                movementType: 'CYCLE_COUNT_ADJUSTMENT',
+                qtyDelta: varianceSi,
+                unitSi,
+                unitCostClp: pmpNetClp,
+                costCenter: wh.defaultCostCenter,
+                variancePct,
+                anomalyFlag,
+                notes:
+                    input.notes ||
+                    `Aforo varilla/cíclico: libro ${bookBalanceSi} -> medido ${input.measuredLevelSi} (${variancePct}%)`,
+                referenceId: telemetryId,
+                actorUid: actor.actorUid,
+                createdAt: now,
+            };
+
+            const nextSiteQty = Math.max(
+                0,
+                Number((Number(prevInv?.qtyInWarehouse || 0) + varianceSi).toFixed(3))
+            );
+            const nextInvRecord: SupplyInventoryItem = {
+                inventoryKey: invDocId,
+                tenantId,
+                siteId: input.siteId,
+                canonicalSkuId: input.canonicalSkuId,
+                itemName: prevInv?.itemName || itemName,
+                categoryCode: prevInv?.categoryCode || categoryCode,
+                procurementBucket: prevInv?.procurementBucket || procurementBucket,
+                unitSi: prevInv?.unitSi || unitSi,
+                qtyInTransit: Number(prevInv?.qtyInTransit || 0),
+                qtyInWarehouse: nextSiteQty,
+                avgUnitCostClp: prevInv?.avgUnitCostClp || pmpNetClp,
+                updatedAt: now,
+            };
+
+            tx.set(db.collection(SUPPLY_COLLECTIONS.TANK_TELEMETRY).doc(telemetryId), telemetry);
+            tx.set(balRef, nextBalance, { merge: true });
+            tx.set(db.collection(SUPPLY_COLLECTIONS.STOCK_LEDGER).doc(ledgerEntry.entryId), ledgerEntry);
+            tx.set(invRef, nextInvRecord, { merge: true });
+
+            resultTelemetry = telemetry;
+            resultLedger = ledgerEntry;
+            resultBalance = nextBalance;
+        });
+
+        if (anomalyAlertCode) {
+            await this.recordPolicyAudit({
+                tenantId,
+                siteId: input.siteId,
+                actorUid: actor.actorUid,
+                eventType:
+                    anomalyAlertCode === 'DGMN_MAGAZINE_VARIANCE_ALERT'
+                        ? 'DGMN_EXPLOSIVES_BLOCK'
+                        : 'ATYPICAL_FLAG',
+                policyCode: anomalyAlertCode,
+                severity: anomalyAlertCode === 'DGMN_MAGAZINE_VARIANCE_ALERT' ? 'CRITICAL' : 'HIGH',
+                entityId: resultTelemetry.telemetryId,
+                details: {
+                    warehouseId: input.warehouseId,
+                    warehouseClass: resultTelemetry.warehouseClass,
+                    canonicalSkuId: input.canonicalSkuId,
+                    bookBalanceSi: resultTelemetry.bookBalanceSi,
+                    measuredLevelSi: resultTelemetry.measuredLevelSi,
+                    varianceSi: resultTelemetry.varianceSi,
+                    variancePct: resultTelemetry.variancePct,
+                },
+            });
+        }
+
+        await this.recordAudit(
+            tenantId,
+            actor,
+            anomalyAlertCode ? 'SUPPLY_TANK_CYCLE_COUNT_ALERT' : 'SUPPLY_TANK_CYCLE_COUNT_RECORDED',
+            resultTelemetry.telemetryId,
+            {
+                hitlConfirmed: true,
+                warehouseId: input.warehouseId,
+                warehouseClass: resultTelemetry.warehouseClass,
+                canonicalSkuId: input.canonicalSkuId,
+                bookBalanceSi: resultTelemetry.bookBalanceSi,
+                measuredLevelSi: resultTelemetry.measuredLevelSi,
+                variancePct: resultTelemetry.variancePct,
+                anomalyFlag: resultTelemetry.anomalyFlag,
+                anomalyAlertCode,
+            }
+        );
+
+        return {
+            telemetry: resultTelemetry,
+            ledgerEntry: resultLedger,
+            balance: resultBalance,
+            anomalyAlertCode,
         };
     }
 
@@ -2320,9 +3342,11 @@ export class SupplyRepository {
         const now = new Date().toISOString();
 
         for (const site of effectiveSites) {
-            const [inventory, cashEntries] = await Promise.all([
+            const [inventory, cashEntries, warehouses, warehouseBalances] = await Promise.all([
                 this.listInventory(tenantId, site.siteId),
                 this.listCashLedger(tenantId, site.siteId),
+                this.listWarehouses(tenantId, site.siteId),
+                this.listWarehouseBalances(tenantId, { siteId: site.siteId }),
             ]);
 
             const headcount = Math.max(0, Number(site.currentHeadcount || 0));
@@ -2331,16 +3355,20 @@ export class SupplyRepository {
             const ds594Target = Math.max(100, Number(site.ds594DailyWaterTargetLPerPax || 120));
             const waterStorageCapacityL = Math.round(Number(site.waterStorageCapacityL || 0));
 
-            // Stock REAL de agua potable humana en bodega y tránsito (`supply_inventory_items`) — jamás incluir agua industrial ni asumir tanque lleno
+            const hasPotableTanks = warehouses.some((w) => w.warehouseClass === 'POTABLE_WATER_TANK');
             const waterItems = inventory.filter((inv) => isHumanPotableWaterCategory(inv.categoryCode));
-            const waterWarehouseL = waterItems.reduce(
-                (acc, inv) => acc + Math.max(0, Number(inv.qtyInWarehouse || 0)),
-                0
-            );
             const waterInTransitL = waterItems.reduce(
                 (acc, inv) => acc + Math.max(0, Number(inv.qtyInTransit || 0)),
                 0
             );
+            const waterWarehouseL = hasPotableTanks
+                ? warehouseBalances
+                      .filter((b) => b.warehouseClass === 'POTABLE_WATER_TANK' && b.unitSi === 'L')
+                      .reduce((acc, b) => acc + Math.max(0, Number(b.qtyOnHand || 0)), 0)
+                : waterItems.reduce(
+                      (acc, inv) => acc + Math.max(0, Number(inv.qtyInWarehouse || 0)),
+                      0
+                  );
 
             const domainSite: DomainSupplySite = {
                 siteId: site.siteId,
@@ -2357,11 +3385,17 @@ export class SupplyRepository {
                 marketplaceOptIn: site.marketplaceOptIn,
             };
 
-            const ds594Guard = evaluateDs594WaterGuardrail({
-                site: domainSite,
-                currentWaterWarehouseL: waterWarehouseL,
-                currentWaterInTransitL: waterInTransitL,
-            });
+            const ds594Guard = hasPotableTanks
+                ? evaluateDs594FromPotableTanks({
+                      site: domainSite,
+                      balances: warehouseBalances,
+                      extraInTransitPotableL: waterInTransitL,
+                  })
+                : evaluateDs594WaterGuardrail({
+                      site: domainSite,
+                      currentWaterWarehouseL: waterWarehouseL,
+                      currentWaterInTransitL: waterInTransitL,
+                  });
 
             const altitudeMultiplier = ds594Guard.altitudeFactorApplied;
             const requiredWaterReserveL = Math.round(ds594Guard.requiredReserveL);
@@ -2472,6 +3506,151 @@ export class SupplyRepository {
         }
 
         return forecasts;
+    }
+
+    /**
+     * Calcula KPIs reales por unidad de negocio (Campamento, Flota & Taller, Mina/Planta, Finanzas SII)
+     * y evalúa los 3 drivers dinámicos de Punto de Reorden (PER_PAX, PER_ASSET_HOUR, DAILY_SITE_OR_MINMAX).
+     */
+    public static async computeBusinessUnitKpis(
+        tenantId: string,
+        siteId?: string,
+        options?: { periodDays?: number; mineTonnageProcessed?: number }
+    ): Promise<SupplyBusinessUnitKpis> {
+        const sites = siteId
+            ? ([await this.getSite(tenantId, siteId)].filter(Boolean) as SupplySite[])
+            : await this.listSites(tenantId);
+
+        const targetSite: SupplySite =
+            sites[0] || {
+                siteId: siteId || 'default-site',
+                tenantId,
+                name: 'Faena Principal',
+                districtCode: 'CL-ANTOFAGASTA',
+                shiftPattern: '7x7',
+                currentHeadcount: 0,
+                waterStorageCapacityL: 0,
+                ds594DailyWaterTargetLPerPax: 120,
+                leadTimeDays: 7,
+                marketplaceOptIn: false,
+                roleMismatchMode: 'FLAG_AND_ACCEPT',
+                directPurchaseAlertThresholdClp: 500000,
+            };
+
+        const effectiveSiteId = targetSite.siteId;
+        const [
+            balances,
+            stockMovements,
+            cashEntries,
+            siiDocuments,
+            purchases,
+            discrepancies,
+            tankTelemetry,
+            inventory,
+        ] = await Promise.all([
+            this.listWarehouseBalances(tenantId, { siteId: effectiveSiteId }),
+            this.listStockLedger(tenantId, { siteId: effectiveSiteId, limit: 500 }),
+            this.listCashLedger(tenantId, effectiveSiteId, 500),
+            this.listSiiDocuments(tenantId, { siteId: effectiveSiteId, limit: 500 }),
+            this.listPurchases(tenantId, effectiveSiteId, 500),
+            this.listReceptionDiscrepancies(tenantId, { siteId: effectiveSiteId, status: 'OPEN', limit: 200 }),
+            this.listTankTelemetry(tenantId, { siteId: effectiveSiteId, limit: 200 }),
+            this.listInventory(tenantId, effectiveSiteId, 500),
+        ]);
+
+        const domainSite: DomainSupplySite = {
+            siteId: targetSite.siteId,
+            tenantId: targetSite.tenantId,
+            name: targetSite.name,
+            districtCode: targetSite.districtCode,
+            altitudeMeters: Number(targetSite.geoFix?.altitudeM || 0),
+            shiftPattern: targetSite.shiftPattern,
+            currentHeadcount: Math.max(0, Number(targetSite.currentHeadcount || 0)),
+            waterStorageCapacityL: Math.max(0, Number(targetSite.waterStorageCapacityL || 0)),
+            ds594DailyWaterTargetLPerPax: Math.max(100, Number(targetSite.ds594DailyWaterTargetLPerPax || 120)),
+            leadTimeDays: Math.max(1, Number(targetSite.leadTimeDays || 7)),
+            monthlyBudgetClp: targetSite.monthlyBudgetClp,
+            marketplaceOptIn: targetSite.marketplaceOptIn,
+        };
+
+        // Consolidar stock por SKU para evaluación ROP dinámica
+        const stockBySku = new Map<
+            string,
+            {
+                canonicalSkuId: string;
+                categoryCode: SupplyInventoryItem['categoryCode'];
+                unitSi: SupplyInventoryItem['unitSi'];
+                onHand: number;
+                inTransit: number;
+            }
+        >();
+        for (const bal of balances) {
+            const prev = stockBySku.get(bal.canonicalSkuId);
+            if (prev) {
+                prev.onHand += Number(bal.qtyOnHand || 0);
+                prev.inTransit += Number(bal.qtyInTransit || 0);
+            } else {
+                stockBySku.set(bal.canonicalSkuId, {
+                    canonicalSkuId: bal.canonicalSkuId,
+                    categoryCode: bal.categoryCode,
+                    unitSi: bal.unitSi,
+                    onHand: Number(bal.qtyOnHand || 0),
+                    inTransit: Number(bal.qtyInTransit || 0),
+                });
+            }
+        }
+        for (const inv of inventory) {
+            if (!stockBySku.has(inv.canonicalSkuId)) {
+                stockBySku.set(inv.canonicalSkuId, {
+                    canonicalSkuId: inv.canonicalSkuId,
+                    categoryCode: inv.categoryCode,
+                    unitSi: inv.unitSi,
+                    onHand: Number(inv.qtyInWarehouse || 0),
+                    inTransit: Number(inv.qtyInTransit || 0),
+                });
+            }
+        }
+
+        const ropEvaluations = Array.from(stockBySku.values()).map((sku) =>
+            calculateDynamicReorderPoint({
+                canonicalSkuId: sku.canonicalSkuId,
+                categoryCode: sku.categoryCode,
+                unitSi: sku.unitSi,
+                site: domainSite,
+                currentWarehouseStockSi: sku.onHand,
+                currentInTransitStockSi: sku.inTransit,
+                ewmaDailyPerPaxSi: isHumanPotableWaterCategory(sku.categoryCode) ? domainSite.ds594DailyWaterTargetLPerPax : 0.4,
+                ewmaDailySiteSi: 1,
+                consumptionPerAssetHourSi: 2,
+            })
+        );
+
+        return computeSupplyBusinessUnitKpis({
+            tenantId,
+            site: domainSite,
+            periodDays: options?.periodDays,
+            mineTonnageProcessed: options?.mineTonnageProcessed,
+            balances,
+            stockMovements: stockMovements.map((m) => ({
+                movementType: m.movementType,
+                categoryCode:
+                    stockBySku.get(m.canonicalSkuId)?.categoryCode ||
+                    findDomainCanonicalSkuById(m.canonicalSkuId)?.categoryCode,
+                canonicalSkuId: m.canonicalSkuId,
+                unitSi: m.unitSi,
+                qtyDelta: m.qtyDelta,
+                unitCostClp: m.unitCostClp,
+                linkedAssetId: m.linkedAssetId,
+                horometer: m.horometer,
+                createdAt: m.createdAt,
+            })),
+            cashEntries,
+            siiDocuments,
+            purchases,
+            openDiscrepanciesCount: discrepancies.length,
+            tankTelemetry,
+            ropEvaluations,
+        });
     }
 
     /**

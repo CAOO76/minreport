@@ -418,3 +418,510 @@ export function projectAnonymousDemandSignals(
         enforcedK,
     };
 }
+
+// ---------------------------------------------------------------------------
+// V3-E04: 3 Drivers de Punto de Reorden (ROP), DS 594 por Estanque Potable & KPIs
+// ---------------------------------------------------------------------------
+
+export type ReorderDriverType = 'PER_PAX' | 'PER_ASSET_HOUR' | 'DAILY_SITE_OR_MINMAX';
+
+export interface DynamicRopInput {
+    canonicalSkuId: string;
+    categoryCode: SupplyCategoryCode;
+    unitSi: SupplyUnitSi;
+    site: SupplySite;
+    currentWarehouseStockSi: number;
+    currentInTransitStockSi: number;
+    ewmaDailyPerPaxSi?: number;
+    activeAssetCount?: number;
+    avgDailyHoursPerAsset?: number;
+    consumptionPerAssetHourSi?: number;
+    ewmaDailySiteSi?: number;
+    minStockSi?: number;
+    targetMaxStockSi?: number;
+    safetyDays?: number;
+    targetCoverageDays?: number;
+}
+
+export interface DynamicRopResult {
+    canonicalSkuId: string;
+    driver: ReorderDriverType;
+    dailyDemandSi: number;
+    leadTimeDays: number;
+    safetyDays: number;
+    mountainFactorApplied: number;
+    reorderPointSi: number;
+    targetStockSi: number;
+    effectiveStockSi: number;
+    recommendedOrderQtySi: number;
+    isCritical: boolean;
+}
+
+export function resolveReorderDriverForCategory(
+    categoryCode: string | undefined | null
+): ReorderDriverType {
+    const upper = String(categoryCode || '').trim().toUpperCase();
+    if (
+        upper === 'VIVERES_ALIMENTACION' ||
+        upper === 'AGUA_POTABLE_BEBESTIBLE' ||
+        upper === 'AGUA_POTABLE_SANITAR' ||
+        upper === 'AGUA_POTABLE' ||
+        upper === 'GAS_DOMESTICO_GLP'
+    ) {
+        return 'PER_PAX';
+    }
+    if (
+        upper === 'COMBUSTIBLE_FLOTA_PROD' ||
+        upper === 'LUBRICANTES_FILTROS' ||
+        upper === 'REPUESTOS_MAQUINARIA'
+    ) {
+        return 'PER_ASSET_HOUR';
+    }
+    return 'DAILY_SITE_OR_MINMAX';
+}
+
+export function resolveMountainSafetyFactor(altitudeMeters?: number): number {
+    if (!altitudeMeters || !Number.isFinite(altitudeMeters) || altitudeMeters <= DS28_HIGH_ALTITUDE_THRESHOLD_M) {
+        return 1.0;
+    }
+    if (altitudeMeters > DS28_VERY_HIGH_ALTITUDE_THRESHOLD_M) {
+        return 1.35;
+    }
+    return 1.25;
+}
+
+/**
+ * Calcula Punto de Reorden (ROP) dinámico bajo los 3 drivers mineros oficiales:
+ * 1) `PER_PAX`: campamento / alimentación / agua potable humana (`max(EWMA, DS594*DS28)`) / GLP.
+ * 2) `PER_ASSET_HOUR`: combustible flota / lubricantes / repuestos (`flota × hrs/día × tasa/hr`).
+ * 3) `DAILY_SITE_OR_MINMAX`: agua industrial, campamento, ferretería/EPP con factor cordillera.
+ */
+export function calculateDynamicReorderPoint(input: DynamicRopInput): DynamicRopResult {
+    const driver = resolveReorderDriverForCategory(input.categoryCode);
+    const leadTimeDays = Math.max(1, Number(input.site.leadTimeDays || 7));
+    const safetyDays = Math.max(0, Number(input.safetyDays ?? 2));
+    const targetCoverageDays = Math.max(
+        leadTimeDays + safetyDays,
+        Number(input.targetCoverageDays ?? leadTimeDays + safetyDays + 7)
+    );
+    const warehouse = roundSupplyQty(Math.max(0, input.currentWarehouseStockSi));
+    const inTransit = roundSupplyQty(Math.max(0, input.currentInTransitStockSi));
+    const effectiveStockSi = roundSupplyQty(warehouse + inTransit);
+
+    let dailyDemandSi = 0;
+    let mountainFactorApplied = 1.0;
+    let reorderPointSi = 0;
+    let targetStockSi = 0;
+
+    if (driver === 'PER_PAX') {
+        const headcount = Math.max(0, Number(input.site.currentHeadcount || 0));
+        let perPaxDaily = Math.max(0, Number(input.ewmaDailyPerPaxSi || 0));
+        if (isHumanPotableWaterCategory(input.categoryCode) && input.unitSi === 'L') {
+            const ds594 = evaluateDs594WaterGuardrail({
+                site: input.site,
+                currentWaterWarehouseL: warehouse,
+                currentWaterInTransitL: inTransit,
+            });
+            perPaxDaily = Math.max(perPaxDaily, ds594.requiredDailyLPerPax);
+            mountainFactorApplied = ds594.altitudeFactorApplied;
+        }
+        dailyDemandSi = roundSupplyQty(perPaxDaily * headcount);
+        reorderPointSi = roundSupplyQty(dailyDemandSi * (leadTimeDays + safetyDays));
+        targetStockSi = roundSupplyQty(dailyDemandSi * targetCoverageDays);
+    } else if (driver === 'PER_ASSET_HOUR') {
+        const assetCount = Math.max(0, Number(input.activeAssetCount ?? 1));
+        const dailyHours = Math.max(0, Number(input.avgDailyHoursPerAsset ?? 8));
+        const ratePerHour = Math.max(0, Number(input.consumptionPerAssetHourSi ?? 0));
+        dailyDemandSi = roundSupplyQty(assetCount * dailyHours * ratePerHour);
+        mountainFactorApplied = resolveMountainSafetyFactor(input.site.altitudeMeters);
+        reorderPointSi = roundSupplyQty(
+            dailyDemandSi * (leadTimeDays + safetyDays) * mountainFactorApplied
+        );
+        targetStockSi = roundSupplyQty(
+            Math.max(reorderPointSi, dailyDemandSi * targetCoverageDays * mountainFactorApplied)
+        );
+    } else {
+        mountainFactorApplied = resolveMountainSafetyFactor(input.site.altitudeMeters);
+        dailyDemandSi = roundSupplyQty(Math.max(0, Number(input.ewmaDailySiteSi ?? 0)));
+        const calculatedRop = roundSupplyQty(
+            dailyDemandSi * (leadTimeDays + safetyDays) * mountainFactorApplied
+        );
+        const floorMin = roundSupplyQty(Math.max(0, Number(input.minStockSi ?? 0)));
+        reorderPointSi = Math.max(calculatedRop, floorMin);
+        const calcTarget = roundSupplyQty(
+            dailyDemandSi * targetCoverageDays * mountainFactorApplied
+        );
+        const explicitMax = roundSupplyQty(Math.max(0, Number(input.targetMaxStockSi ?? 0)));
+        targetStockSi = Math.max(reorderPointSi, calcTarget, explicitMax);
+    }
+
+    const isCritical = effectiveStockSi < reorderPointSi;
+    const recommendedOrderQtySi = isCritical
+        ? roundSupplyQty(Math.max(0, targetStockSi - effectiveStockSi))
+        : 0;
+
+    return {
+        canonicalSkuId: input.canonicalSkuId,
+        driver,
+        dailyDemandSi,
+        leadTimeDays,
+        safetyDays,
+        mountainFactorApplied,
+        reorderPointSi,
+        targetStockSi,
+        effectiveStockSi,
+        recommendedOrderQtySi,
+        isCritical,
+    };
+}
+
+/**
+ * Evalúa el guardrail sanitario DS 594 Art. 14 + DS 28 sumando ÚNICAMENTE
+ * los saldos almacenados en estanques físicos de clase `POTABLE_WATER_TANK`
+ * (jamás incluye `INDUSTRIAL_WATER_POND` ni agua de proceso).
+ */
+export function evaluateDs594FromPotableTanks(params: {
+    site: SupplySite;
+    balances: ReadonlyArray<{
+        warehouseClass: string;
+        categoryCode?: string;
+        unitSi: string;
+        qtyOnHand: number;
+        qtyInTransit?: number;
+    }>;
+    extraInTransitPotableL?: number;
+}): Ds594WaterGuardrailEvaluation {
+    const potableTankBalances = params.balances.filter(
+        (b) => b.warehouseClass === 'POTABLE_WATER_TANK' && b.unitSi === 'L'
+    );
+    const warehouseL = potableTankBalances.reduce(
+        (acc, b) => acc + Math.max(0, Number(b.qtyOnHand || 0)),
+        0
+    );
+    const balanceTransitL = potableTankBalances.reduce(
+        (acc, b) => acc + Math.max(0, Number(b.qtyInTransit || 0)),
+        0
+    );
+    return evaluateDs594WaterGuardrail({
+        site: params.site,
+        currentWaterWarehouseL: warehouseL,
+        currentWaterInTransitL: balanceTransitL + Math.max(0, Number(params.extraInTransitPotableL || 0)),
+    });
+}
+
+export interface ComputeBusinessUnitKpisInput {
+    tenantId: string;
+    site: SupplySite;
+    periodDays?: number;
+    mineTonnageProcessed?: number;
+    balances: ReadonlyArray<{
+        warehouseId: string;
+        warehouseClass: string;
+        canonicalSkuId: string;
+        categoryCode: SupplyCategoryCode;
+        unitSi: SupplyUnitSi;
+        qtyOnHand: number;
+        qtyInTransit: number;
+        pmpNetClp: number;
+        fullCount?: number | null;
+        emptyCount?: number | null;
+        updatedAt: string;
+    }>;
+    stockMovements: ReadonlyArray<{
+        movementType: string;
+        categoryCode?: string;
+        canonicalSkuId: string;
+        unitSi: SupplyUnitSi;
+        qtyDelta: number;
+        unitCostClp: number;
+        linkedAssetId?: string | null;
+        horometer?: number | null;
+        createdAt: string;
+    }>;
+    cashEntries: ReadonlyArray<{
+        isCapex: boolean;
+        direction?: string;
+        categoryCode?: string;
+        costCenter: string;
+        netAmountClp: number;
+        vatCreditClp: number;
+        createdAt: string;
+    }>;
+    siiDocuments: ReadonlyArray<{
+        rcvDaysRemaining?: number | null;
+        netAmountClp: number;
+        vatCreditRecoverableClp: number;
+    }>;
+    purchases: ReadonlyArray<{
+        receptionStatus: string;
+    }>;
+    openDiscrepanciesCount: number;
+    tankTelemetry: ReadonlyArray<{
+        variancePct: number;
+        anomalyFlag: boolean;
+    }>;
+    ropEvaluations?: readonly DynamicRopResult[];
+    nowIso?: string;
+}
+
+export function computeSupplyBusinessUnitKpis(input: ComputeBusinessUnitKpisInput) {
+    const nowIso = input.nowIso || new Date().toISOString();
+    const nowMs = Date.parse(nowIso);
+    const periodDays = Math.max(1, Math.floor(input.periodDays ?? 30));
+    const windowStartMs = (Number.isFinite(nowMs) ? nowMs : Date.now()) - periodDays * 24 * 60 * 60 * 1000;
+    const headcount = Math.max(0, Number(input.site.currentHeadcount || 0));
+
+    // 1. Campamento (OPEX alimentario estricto: solo VIVERES_ALIMENTACION + agua potable, cero aseo/CAPEX)
+    const periodCash = input.cashEntries.filter((c) => {
+        const ms = Date.parse(c.createdAt);
+        return !Number.isFinite(ms) || ms >= windowStartMs;
+    });
+    const foodOpex30dClp = roundClp(
+        periodCash
+            .filter((c) => {
+                if (c.isCapex) return false;
+                if (c.direction && c.direction !== 'EXPENSE_RENDERED' && c.direction !== 'REIMBURSEMENT_DUE') {
+                    return false;
+                }
+                if (c.categoryCode) {
+                    return c.categoryCode === 'VIVERES_ALIMENTACION' || isHumanPotableWaterCategory(c.categoryCode);
+                }
+                const cc = String(c.costCenter || '').toUpperCase();
+                return cc === 'CC-CAMP-ALIMENTACION' || cc === 'CC-CAMP-AGUA';
+            })
+            .reduce((acc, c) => acc + Math.max(0, Number(c.netAmountClp || 0)), 0)
+    );
+    const foodOpexPerPaxDayClp =
+        headcount > 0 ? roundClp(foodOpex30dClp / (headcount * periodDays)) : 0;
+
+    // Agua potable únicamente desde POTABLE_WATER_TANK
+    const potableBalances = input.balances.filter(
+        (b) => b.warehouseClass === 'POTABLE_WATER_TANK' && b.unitSi === 'L'
+    );
+    const potableWaterWarehouseL = roundSupplyQty(
+        potableBalances.reduce((acc, b) => acc + Math.max(0, Number(b.qtyOnHand || 0)), 0)
+    );
+    const ds594Eval = evaluateDs594FromPotableTanks({
+        site: input.site,
+        balances: input.balances,
+    });
+    const periodIssues = input.stockMovements.filter((m) => {
+        if (m.movementType !== 'ISSUE_CONSUMPTION') return false;
+        const ms = Date.parse(m.createdAt);
+        return !Number.isFinite(ms) || ms >= windowStartMs;
+    });
+    const potableConsumedL = periodIssues
+        .filter((m) => isHumanPotableWaterCategory(m.categoryCode) && m.unitSi === 'L')
+        .reduce((acc, m) => acc + Math.abs(Number(m.qtyDelta || 0)), 0);
+    const potableWaterLPerPaxDay =
+        headcount > 0
+            ? roundSupplyQty(
+                  potableConsumedL > 0
+                      ? potableConsumedL / (headcount * periodDays)
+                      : potableWaterWarehouseL / (headcount * Math.max(1, input.site.leadTimeDays))
+              )
+            : 0;
+    const ds594CompliancePct = ds594Eval.requiredReserveL > 0
+        ? Math.min(100, roundSupplyQty((ds594Eval.currentAvailableL / ds594Eval.requiredReserveL) * 100))
+        : 100;
+
+    const glpConsumedKg = periodIssues
+        .filter((m) => m.categoryCode === 'GAS_DOMESTICO_GLP' && m.unitSi === 'kg')
+        .reduce((acc, m) => acc + Math.abs(Number(m.qtyDelta || 0)), 0);
+    const glpKgPerPaxDay = headcount > 0 ? roundSupplyQty(glpConsumedKg / (headcount * periodDays)) : 0;
+
+    const campDieselConsumedL = periodIssues
+        .filter((m) => m.categoryCode === 'COMBUSTIBLE_CAMPAMENTO' && m.unitSi === 'L')
+        .reduce((acc, m) => acc + Math.abs(Number(m.qtyDelta || 0)), 0);
+    const campDieselLPerDay = roundSupplyQty(campDieselConsumedL / periodDays);
+
+    // 2. Flota & Taller
+    const fleetFuelIssues = periodIssues.filter(
+        (m) => m.categoryCode === 'COMBUSTIBLE_FLOTA_PROD' && m.unitSi === 'L'
+    );
+    const fleetFuelDispensed30dL = roundSupplyQty(
+        fleetFuelIssues.reduce((acc, m) => acc + Math.abs(Number(m.qtyDelta || 0)), 0)
+    );
+    const assetIds = new Set(
+        fleetFuelIssues.map((m) => String(m.linkedAssetId || '').trim()).filter(Boolean)
+    );
+    const horometersByAsset = new Map<string, number[]>();
+    for (const m of fleetFuelIssues) {
+        const aid = String(m.linkedAssetId || '').trim();
+        if (aid && typeof m.horometer === 'number' && Number.isFinite(m.horometer) && m.horometer >= 0) {
+            const arr = horometersByAsset.get(aid) || [];
+            arr.push(m.horometer);
+            horometersByAsset.set(aid, arr);
+        }
+    }
+    let totalHorometerDelta = 0;
+    for (const hrs of horometersByAsset.values()) {
+        if (hrs.length >= 2) {
+            totalHorometerDelta += Math.max(0, Math.max(...hrs) - Math.min(...hrs));
+        }
+    }
+    const fleetAvgLitersPerHour =
+        totalHorometerDelta > 0 ? roundSupplyQty(fleetFuelDispensed30dL / totalHorometerDelta) : 0;
+
+    const tankCycleCountVariancePctMax =
+        input.tankTelemetry.length > 0
+            ? roundSupplyQty(Math.max(...input.tankTelemetry.map((t) => Math.abs(Number(t.variancePct || 0)))))
+            : 0;
+    const tankAnomalyCount = input.tankTelemetry.filter((t) => t.anomalyFlag).length;
+
+    const cylinderBalances = input.balances.filter(
+        (b) => b.warehouseClass === 'GLP_CAGE' || b.warehouseClass === 'INDUSTRIAL_GAS_CAGE'
+    );
+    const cylinderFullCount = cylinderBalances.reduce(
+        (acc, b) => acc + Math.max(0, Math.round(Number(b.fullCount ?? b.qtyOnHand ?? 0))),
+        0
+    );
+    const cylinderEmptyCount = cylinderBalances.reduce(
+        (acc, b) => acc + Math.max(0, Math.round(Number(b.emptyCount ?? 0))),
+        0
+    );
+    const cylinderStayDaysAvg =
+        cylinderBalances.length > 0
+            ? roundSupplyQty(
+                  cylinderBalances.reduce((acc, b) => {
+                      const updatedMs = Date.parse(b.updatedAt);
+                      const ageDays = Number.isFinite(updatedMs) && Number.isFinite(nowMs)
+                          ? Math.max(0, (nowMs - updatedMs) / (24 * 60 * 60 * 1000))
+                          : 0;
+                      return acc + ageDays;
+                  }, 0) / cylinderBalances.length
+              )
+            : 0;
+
+    // 3. Mina & Planta
+    const industrialWaterBalances = input.balances.filter(
+        (b) => b.warehouseClass === 'INDUSTRIAL_WATER_POND' || b.categoryCode === 'AGUA_INDUSTRIAL'
+    );
+    const industrialWaterStockM3 = roundSupplyQty(
+        industrialWaterBalances.reduce((acc, b) => {
+            const qty = Math.max(0, Number(b.qtyOnHand || 0));
+            return acc + (b.unitSi === 'm3' ? qty : b.unitSi === 'L' ? qty / 1000 : 0);
+        }, 0)
+    );
+    const industrialWaterConsumedM3 = periodIssues
+        .filter((m) => m.categoryCode === 'AGUA_INDUSTRIAL')
+        .reduce((acc, m) => {
+            const qty = Math.abs(Number(m.qtyDelta || 0));
+            return acc + (m.unitSi === 'm3' ? qty : m.unitSi === 'L' ? qty / 1000 : 0);
+        }, 0);
+    const tonnage = Math.max(0, Number(input.mineTonnageProcessed ?? 0));
+    const industrialWaterM3PerTon =
+        tonnage > 0 ? roundSupplyQty(industrialWaterConsumedM3 / tonnage) : 0;
+
+    const operationalOpexClp = periodCash
+        .filter((c) => {
+            if (c.isCapex) return false;
+            const cat = String(c.categoryCode || '');
+            return (
+                cat === 'PERFORACION_ACEROS' ||
+                cat === 'FORTIFICACION' ||
+                cat === 'EXPLOSIVOS_REGULADO' ||
+                cat === 'QUIMICOS_REGULADOS' ||
+                cat === 'FERRETERIA_CONSTRUCCION' ||
+                cat === 'HERRAMIENTAS' ||
+                cat === 'AGUA_INDUSTRIAL'
+            );
+        })
+        .reduce((acc, c) => acc + Math.max(0, Number(c.netAmountClp || 0)), 0);
+    const operationalSupplyCostPerTonClp =
+        tonnage > 0 ? roundClp(operationalOpexClp / tonnage) : 0;
+
+    const uniqueSkus = new Set(input.balances.map((b) => b.canonicalSkuId));
+    const stockoutCount = input.balances.filter((b) => b.qtyOnHand <= 0).length;
+    const totalInventoryValueClp = input.balances.reduce(
+        (acc, b) => acc + Math.max(0, Number(b.qtyOnHand || 0)) * Math.max(0, Number(b.pmpNetClp || 0)),
+        0
+    );
+    const cogsPeriodClp = periodIssues.reduce(
+        (acc, m) => acc + Math.abs(Number(m.qtyDelta || 0)) * Math.max(0, Number(m.unitCostClp || 0)),
+        0
+    );
+    const avgInventoryTurnover =
+        totalInventoryValueClp > 0 ? roundSupplyQty(cogsPeriodClp / totalInventoryValueClp) : 0;
+
+    const applicableReceptions = input.purchases.filter(
+        (p) => p.receptionStatus === 'RECEIVED' || p.receptionStatus === 'PARTIAL_DISCREPANCY'
+    );
+    const completeReceptions = applicableReceptions.filter((p) => p.receptionStatus === 'RECEIVED').length;
+    const otifPct =
+        applicableReceptions.length > 0
+            ? roundSupplyQty((completeReceptions / applicableReceptions.length) * 100)
+            : 100;
+
+    // 4. Finanzas SII
+    const totalNetPurchasesClp = roundClp(
+        input.siiDocuments.reduce((acc, d) => acc + Math.max(0, Number(d.netAmountClp || 0)), 0)
+    );
+    const totalVatRecoverableClp = roundClp(
+        input.siiDocuments.reduce((acc, d) => acc + Math.max(0, Number(d.vatCreditRecoverableClp || 0)), 0)
+    );
+    const vatRecoveryRatePct =
+        totalNetPurchasesClp > 0
+            ? Math.min(100, roundSupplyQty((totalVatRecoverableClp / (totalNetPurchasesClp * 0.19)) * 100))
+            : 0;
+    const rcvUrgentUnder48hCount = input.siiDocuments.filter(
+        (d) => typeof d.rcvDaysRemaining === 'number' && d.rcvDaysRemaining >= 0 && d.rcvDaysRemaining <= 2
+    ).length;
+
+    const rops = input.ropEvaluations || [];
+    const byDriver = {
+        PER_PAX: rops.filter((r) => r.driver === 'PER_PAX').length,
+        PER_ASSET_HOUR: rops.filter((r) => r.driver === 'PER_ASSET_HOUR').length,
+        DAILY_SITE_OR_MINMAX: rops.filter((r) => r.driver === 'DAILY_SITE_OR_MINMAX').length,
+    };
+
+    return {
+        tenantId: input.tenantId,
+        siteId: input.site.siteId,
+        generatedAtIso: nowIso,
+        periodDays,
+        camp: {
+            headcountBasis: headcount,
+            foodOpex30dClp,
+            foodOpexPerPaxDayClp,
+            potableWaterWarehouseL,
+            potableWaterLPerPaxDay,
+            ds594CompliancePct,
+            glpKgPerPaxDay,
+            campDieselLPerDay,
+        },
+        fleetAndWorkshop: {
+            fleetFuelDispensed30dL,
+            fleetAvgLitersPerHour,
+            activeMachineryCount: assetIds.size,
+            tankCycleCountVariancePctMax,
+            tankAnomalyCount,
+            cylinderFullCount,
+            cylinderEmptyCount,
+            cylinderStayDaysAvg,
+        },
+        mineAndPlant: {
+            industrialWaterStockM3,
+            industrialWaterM3PerTon,
+            operationalSupplyCostPerTonClp,
+            activeSkusCount: uniqueSkus.size,
+            stockoutCount,
+            avgInventoryTurnover,
+            otifPct,
+        },
+        financeSii: {
+            totalNetPurchasesClp,
+            totalVatRecoverableClp,
+            vatRecoveryRatePct,
+            rcvUrgentUnder48hCount,
+            openDiscrepanciesCount: input.openDiscrepanciesCount,
+            capexInOpexCount: 0,
+            capexLeakagePct: 0,
+        },
+        ropSummary: {
+            totalEvaluatedSkus: rops.length,
+            criticalReorderCount: rops.filter((r) => r.isCritical).length,
+            byDriver,
+        },
+    };
+}

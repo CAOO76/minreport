@@ -78,10 +78,14 @@ import {
 } from './SupplierZeroFrictionRfqService';
 import {
     ConfirmSupplyProfileOptInRequestSchema,
+    ConfirmWarehouseReceptionV3RequestSchema,
+    CreateSupplyWarehouseRequestSchema,
     ExportConversationQuerySchema,
     GrantTemporaryChannelRequestSchema,
+    RecordStockMovementRequestSchema,
     RevokeTemporaryChannelRequestSchema,
     SupplyWhatsAppChannelIdSchema,
+    TankCycleCountRequestSchema,
     UpdateSupplyProfileChannelsRequestSchema,
     UpsertSupplyProfileRequestSchema,
 } from '../../../contracts/supply.contracts';
@@ -3804,6 +3808,298 @@ router.post(
             });
         } catch (err) {
             return handleProfilePortError(res, err, 'Error exportando historial de conversación.');
+        }
+    }
+);
+
+// ---------------------------------------------------------------------------
+// V3-E04: Bodegas & Estanques Físicos, Kardex Transaccional, Recepción 4-Way y KPIs
+// ---------------------------------------------------------------------------
+
+router.get(
+    '/warehouses',
+    requireSupplyTenantScope,
+    async (req: SupplyRequest, res: Response) => {
+        try {
+            const ctx = req.supplyContext!;
+            const siteId =
+                typeof req.query.siteId === 'string' && req.query.siteId.trim()
+                    ? req.query.siteId.trim()
+                    : undefined;
+            const limitRaw = req.query.limit ? Number(req.query.limit) : undefined;
+            const [warehouses, balances] = await Promise.all([
+                SupplyRepository.listWarehouses(ctx.tenantId, siteId, limitRaw),
+                SupplyRepository.listWarehouseBalances(ctx.tenantId, { siteId, limit: limitRaw }),
+            ]);
+            return res.status(200).json({
+                warehouses,
+                balances,
+                count: warehouses.length,
+            });
+        } catch (err) {
+            return handleProfilePortError(res, err, 'Error listando bodegas físicas.');
+        }
+    }
+);
+
+router.post(
+    '/warehouses',
+    requireSupplyTenantScope,
+    requireSupplyMutationAllowed,
+    mutationRateLimiter,
+    async (req: SupplyRequest, res: Response) => {
+        try {
+            const ctx = req.supplyContext!;
+            const parsed = CreateSupplyWarehouseRequestSchema.safeParse(req.body);
+            if (!parsed.success) {
+                return res.status(400).json({
+                    error: 'Payload inválido o falta confirmación HITL "ACTUALIZAR".',
+                    code: 'INVALID_WAREHOUSE_PAYLOAD',
+                    details: parsed.error.flatten(),
+                });
+            }
+            const warehouse = await SupplyRepository.upsertWarehouse(ctx.tenantId, parsed.data, {
+                actorUid: ctx.actorUid,
+                actorEmail: ctx.actorEmail,
+                ipAddress: extractClientIp(req),
+            });
+            return res.status(200).json({
+                success: true,
+                warehouse,
+            });
+        } catch (err) {
+            return handleProfilePortError(res, err, 'Error creando/actualizando bodega física.');
+        }
+    }
+);
+
+router.get(
+    '/kardex',
+    requireSupplyTenantScope,
+    async (req: SupplyRequest, res: Response) => {
+        try {
+            const ctx = req.supplyContext!;
+            const siteId =
+                typeof req.query.siteId === 'string' && req.query.siteId.trim()
+                    ? req.query.siteId.trim()
+                    : undefined;
+            const warehouseId =
+                typeof req.query.warehouseId === 'string' && req.query.warehouseId.trim()
+                    ? req.query.warehouseId.trim()
+                    : undefined;
+            const canonicalSkuId =
+                typeof req.query.canonicalSkuId === 'string' && req.query.canonicalSkuId.trim()
+                    ? req.query.canonicalSkuId.trim()
+                    : undefined;
+            const movementType =
+                typeof req.query.movementType === 'string' && req.query.movementType.trim()
+                    ? req.query.movementType.trim()
+                    : undefined;
+            const limitRaw = req.query.limit ? Number(req.query.limit) : undefined;
+
+            const [entries, balances, tankTelemetry] = await Promise.all([
+                SupplyRepository.listStockLedger(ctx.tenantId, {
+                    siteId,
+                    warehouseId,
+                    canonicalSkuId,
+                    movementType,
+                    limit: limitRaw,
+                }),
+                SupplyRepository.listWarehouseBalances(ctx.tenantId, {
+                    siteId,
+                    warehouseId,
+                    canonicalSkuId,
+                    limit: limitRaw,
+                }),
+                SupplyRepository.listTankTelemetry(ctx.tenantId, {
+                    siteId,
+                    warehouseId,
+                    limit: 50,
+                }),
+            ]);
+            return res.status(200).json({
+                entries,
+                balances,
+                tankTelemetry,
+                count: entries.length,
+            });
+        } catch (err) {
+            return handleProfilePortError(res, err, 'Error consultando Kardex de bodega.');
+        }
+    }
+);
+
+router.post(
+    '/kardex',
+    requireSupplyTenantScope,
+    requireSupplyMutationAllowed,
+    mutationRateLimiter,
+    async (req: SupplyRequest, res: Response) => {
+        try {
+            const ctx = req.supplyContext!;
+            const actor = {
+                actorUid: ctx.actorUid,
+                actorEmail: ctx.actorEmail,
+                ipAddress: extractClientIp(req),
+            };
+            const isCycleCount =
+                req.body?.measuredLevelSi !== undefined ||
+                req.body?.movementType === 'CYCLE_COUNT_ADJUSTMENT' ||
+                req.body?.action === 'TANK_CYCLE_COUNT';
+
+            if (isCycleCount) {
+                const parsedCycle = TankCycleCountRequestSchema.safeParse(req.body);
+                if (!parsedCycle.success) {
+                    return res.status(400).json({
+                        error: 'Aforo de estanque/polvorín inválido o falta confirmación HITL "ACTUALIZAR".',
+                        code: 'INVALID_TANK_CYCLE_COUNT_PAYLOAD',
+                        details: parsedCycle.error.flatten(),
+                    });
+                }
+                const result = await SupplyRepository.recordTankCycleCount(
+                    ctx.tenantId,
+                    parsedCycle.data,
+                    actor
+                );
+                return res.status(200).json({
+                    success: true,
+                    ...result,
+                });
+            }
+
+            const parsedMove = RecordStockMovementRequestSchema.safeParse(req.body);
+            if (!parsedMove.success) {
+                return res.status(400).json({
+                    error: 'Payload inválido para movimiento Kardex.',
+                    code: 'INVALID_KARDEX_MOVEMENT_PAYLOAD',
+                    details: parsedMove.error.flatten(),
+                });
+            }
+            const result = await SupplyRepository.recordKardexMovement(
+                ctx.tenantId,
+                parsedMove.data,
+                actor
+            );
+            return res.status(200).json({
+                success: true,
+                ...result,
+            });
+        } catch (err) {
+            return handleProfilePortError(res, err, 'Error registrando movimiento de Kardex.');
+        }
+    }
+);
+
+router.post(
+    '/warehouses/receptions',
+    requireSupplyTenantScope,
+    requireSupplyMutationAllowed,
+    mutationRateLimiter,
+    async (req: SupplyRequest, res: Response) => {
+        try {
+            const ctx = req.supplyContext!;
+            const parsed = ConfirmWarehouseReceptionV3RequestSchema.safeParse(req.body);
+            if (!parsed.success) {
+                return res.status(400).json({
+                    error: 'Recepción física 4-Way inválida o falta confirmación HITL "ACTUALIZAR".',
+                    code: 'INVALID_WAREHOUSE_RECEPTION_PAYLOAD',
+                    details: parsed.error.flatten(),
+                });
+            }
+
+            const result = await SupplyRepository.confirmPurchaseReception(
+                {
+                    tenantId: ctx.tenantId,
+                    purchaseId: parsed.data.purchaseId,
+                    warehouseId: parsed.data.warehouseId,
+                    receivedLines: parsed.data.receivedLines.map((l) => ({
+                        purchaseLineId: l.purchaseLineId,
+                        qtyReceived: l.qtyReceivedNow,
+                    })),
+                    lineDetails: parsed.data.receivedLines.map((l) => ({
+                        purchaseLineId: l.purchaseLineId,
+                        warehouseId: l.warehouseId || parsed.data.warehouseId,
+                        shrinkageQty: l.shrinkageQty,
+                        shrinkageReason: l.shrinkageReason,
+                        lotNumber: l.lotNumber,
+                        expiryDateIso: l.expiryDateIso,
+                        evidenceCasRef: l.evidenceCasRef || parsed.data.evidenceCasRef || undefined,
+                    })),
+                    evidenceCasRef: parsed.data.evidenceCasRef || undefined,
+                    notes: parsed.data.notes,
+                },
+                {
+                    actorUid: ctx.actorUid,
+                    actorEmail: ctx.actorEmail,
+                    ipAddress: extractClientIp(req),
+                }
+            );
+
+            for (const reqItem of result.affectedRequisitions) {
+                const activePhone = await SupplyRepository.resolveActiveMemberPhoneE164(
+                    ctx.tenantId,
+                    reqItem.requesterUid
+                );
+                const fallbackUnmasked =
+                    reqItem.requesterPhoneE164 &&
+                    !reqItem.requesterPhoneE164.includes('*') &&
+                    /^\+[1-9]\d{6,14}$/.test(reqItem.requesterPhoneE164.trim())
+                        ? reqItem.requesterPhoneE164.trim()
+                        : null;
+                const targetPhone = activePhone || fallbackUnmasked;
+                if (targetPhone) {
+                    const summaryLines = reqItem.lines.map(
+                        (l) => `${l.itemName}: ${l.qtyReceived}/${l.qtyRequested} ${l.unitSi} recibido`
+                    );
+                    await EmailAndWhatsAppNotifier.sendFieldStatusUpdate({
+                        toE164: targetPhone,
+                        requisitionId: reqItem.reqId,
+                        statusLabel:
+                            result.receptionOutcome === 'RECEIVED_OK'
+                                ? 'RECEPCIÓN EN BODEGA CONFIRMADA'
+                                : 'RECEPCIÓN PARCIAL CON DISCREPANCIAS',
+                        summaryLines,
+                    }).catch(() => {});
+                }
+            }
+
+            return res.status(200).json({
+                success: true,
+                purchase: result.purchase,
+                receptionOutcome: result.receptionOutcome,
+                receivedItemCount: result.receivedItemCount,
+                affectedRequisitionIds: result.affectedRequisitions.map((r) => r.reqId),
+                discrepancies: result.discrepancies,
+                urgentRcvAlert: result.urgentRcvAlert,
+                suggestCreditNote61: result.suggestCreditNote61,
+            });
+        } catch (err) {
+            return handleProfilePortError(res, err, 'Error confirmando recepción física 4-Way.');
+        }
+    }
+);
+
+router.get(
+    '/kpis',
+    requireSupplyTenantScope,
+    async (req: SupplyRequest, res: Response) => {
+        try {
+            const ctx = req.supplyContext!;
+            const siteId =
+                typeof req.query.siteId === 'string' && req.query.siteId.trim()
+                    ? req.query.siteId.trim()
+                    : undefined;
+            const periodDays = req.query.periodDays ? Number(req.query.periodDays) : undefined;
+            const mineTonnageProcessed = req.query.tonnage ? Number(req.query.tonnage) : undefined;
+            const kpis = await SupplyRepository.computeBusinessUnitKpis(ctx.tenantId, siteId, {
+                periodDays: Number.isFinite(periodDays) ? periodDays : undefined,
+                mineTonnageProcessed: Number.isFinite(mineTonnageProcessed)
+                    ? mineTonnageProcessed
+                    : undefined,
+            });
+            return res.status(200).json({ kpis });
+        } catch (err) {
+            return handleProfilePortError(res, err, 'Error calculando KPIs operacionales.');
         }
     }
 );

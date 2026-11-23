@@ -1691,3 +1691,224 @@ export const ExportConversationQuerySchema = z.object({
     confirmationKeyword: z.literal('ACTUALIZAR').optional(),
 });
 export type ExportConversationQuery = z.input<typeof ExportConversationQuerySchema>;
+
+// ── 17. Bodegas Físicas, Kardex Transaccional, Recepción 4-Way y KPIs (V3-E04) ──
+
+export const CreateSupplyWarehouseRequestSchema = z.object({
+    warehouseId: z.string().trim().min(2).max(128).optional(),
+    siteId: z.string().trim().min(1).max(128),
+    code: z.string().trim().min(2).max(64),
+    name: z.string().trim().min(2).max(180),
+    warehouseClass: SupplyWarehouseClassSchema,
+    allowedChannelIds: z.array(SupplyWhatsAppChannelIdSchema).default([]),
+    defaultCostCenter: z.string().trim().min(2).max(64).default('CC-OPS-MINA'),
+    capacityUnitSi: SupplyUnitSiSchema.default('un'),
+    maxCapacitySi: z.number().nonnegative().default(0),
+    secTc4Code: z.string().trim().max(64).nullable().optional(),
+    dgmnResolutionCode: z.string().trim().max(64).nullable().optional(),
+    geoFix: CanonicalGeoFixSchema.nullable().optional(),
+    status: z.enum(['ACTIVE', 'PAUSED', 'CLOSED']).default('ACTIVE'),
+    confirmationKeyword: z.literal('ACTUALIZAR'),
+});
+export type CreateSupplyWarehouseRequest = z.infer<typeof CreateSupplyWarehouseRequestSchema>;
+
+export const SupplyWarehouseBalanceSchema = z.object({
+    balanceId: z.string().trim().min(1).max(200),
+    tenantId: z.string().trim().min(1).max(128),
+    siteId: z.string().trim().min(1).max(128),
+    warehouseId: z.string().trim().min(1).max(128),
+    warehouseClass: SupplyWarehouseClassSchema,
+    canonicalSkuId: z.string().trim().min(1).max(128),
+    itemName: z.string().trim().min(1).max(200),
+    categoryCode: SupplyCategoryCodeSchema,
+    procurementBucket: ProcurementBucketSchema,
+    unitSi: SupplyUnitSiSchema,
+    qtyOnHand: z.number().nonnegative().default(0),
+    qtyInTransit: z.number().nonnegative().default(0),
+    pmpNetClp: z.number().nonnegative().default(0),
+    totalValueNetClp: z.number().nonnegative().default(0),
+    fullCount: z.number().int().nonnegative().nullable().optional(),
+    emptyCount: z.number().int().nonnegative().nullable().optional(),
+    lotNumber: z.string().trim().max(80).nullable().optional(),
+    expiryDateIso: z.string().trim().max(40).nullable().optional(),
+    updatedAt: z.string().min(10).max(40),
+});
+export type SupplyWarehouseBalance = z.infer<typeof SupplyWarehouseBalanceSchema>;
+
+export const RecordStockMovementRequestSchema = z
+    .object({
+        siteId: z.string().trim().min(1).max(128),
+        warehouseId: z.string().trim().min(1).max(128),
+        toWarehouseId: z.string().trim().min(1).max(128).optional(),
+        canonicalSkuId: z.string().trim().min(1).max(128),
+        itemName: z.string().trim().max(200).optional(),
+        categoryCode: SupplyCategoryCodeSchema.optional(),
+        procurementBucket: ProcurementBucketSchema.optional(),
+        unitSi: SupplyUnitSiSchema.optional(),
+        movementType: StockLedgerMovementTypeSchema,
+        qtySi: z.number().positive(),
+        unitCostNetClp: z.number().nonnegative().optional(),
+        costCenter: z.string().trim().min(2).max(64).optional(),
+        linkedAssetId: z.string().trim().max(128).nullable().optional(),
+        horometer: z.number().nonnegative().nullable().optional(),
+        fullCount: z.number().int().nonnegative().nullable().optional(),
+        emptyCount: z.number().int().nonnegative().nullable().optional(),
+        lotNumber: z.string().trim().max(80).nullable().optional(),
+        expiryDateIso: z.string().trim().max(40).nullable().optional(),
+        shrinkageReason: z.string().trim().max(240).nullable().optional(),
+        evidenceCasRef: SupplyEvidenceCasRefSchema.nullable().optional(),
+        referenceId: z.string().trim().max(128).optional(),
+        notes: z.string().trim().max(500).optional(),
+        confirmationKeyword: z.literal('ACTUALIZAR').optional(),
+    })
+    .superRefine((val, ctx) => {
+        if (val.movementType === 'TRANSFER_OUT') {
+            if (!val.toWarehouseId) {
+                ctx.addIssue({
+                    code: z.ZodIssueCode.custom,
+                    path: ['toWarehouseId'],
+                    message: 'TRANSFER_OUT requiere toWarehouseId destino.',
+                });
+            } else if (val.toWarehouseId === val.warehouseId) {
+                ctx.addIssue({
+                    code: z.ZodIssueCode.custom,
+                    path: ['toWarehouseId'],
+                    message: 'La bodega destino debe ser distinta de la bodega origen.',
+                });
+            }
+        }
+        if (val.movementType === 'CYCLE_COUNT_ADJUSTMENT' && val.confirmationKeyword !== 'ACTUALIZAR') {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ['confirmationKeyword'],
+                message: 'CYCLE_COUNT_ADJUSTMENT exige confirmación HITL "ACTUALIZAR".',
+            });
+        }
+    });
+export type RecordStockMovementRequest = z.infer<typeof RecordStockMovementRequestSchema>;
+
+export const TankCycleCountRequestSchema = z.object({
+    siteId: z.string().trim().min(1).max(128),
+    warehouseId: z.string().trim().min(1).max(128),
+    canonicalSkuId: z.string().trim().min(1).max(128),
+    measuredLevelSi: z.number().nonnegative(),
+    measuredAtIso: z.string().min(10).max(40).optional(),
+    notes: z.string().trim().max(500).optional(),
+    evidenceCasRef: SupplyEvidenceCasRefSchema.nullable().optional(),
+    confirmationKeyword: z.literal('ACTUALIZAR'),
+});
+export type TankCycleCountRequest = z.infer<typeof TankCycleCountRequestSchema>;
+
+export const ConfirmWarehouseReceptionV3LineSchema = z.object({
+    purchaseLineId: z.string().trim().min(1).max(128),
+    qtyReceivedNow: z.number().nonnegative(),
+    warehouseId: z.string().trim().min(1).max(128).optional(),
+    shrinkageQty: z.number().nonnegative().default(0),
+    shrinkageReason: z.string().trim().max(240).optional(),
+    lotNumber: z.string().trim().max(80).optional(),
+    expiryDateIso: z.string().trim().max(40).optional(),
+    evidenceCasRef: SupplyEvidenceCasRefSchema.nullable().optional(),
+});
+export type ConfirmWarehouseReceptionV3Line = z.infer<typeof ConfirmWarehouseReceptionV3LineSchema>;
+
+export const ConfirmWarehouseReceptionV3RequestSchema = z.object({
+    purchaseId: z.string().trim().min(1).max(128),
+    warehouseId: z.string().trim().min(1).max(128).optional(),
+    receivedLines: z.array(ConfirmWarehouseReceptionV3LineSchema).min(1).max(200),
+    notes: z.string().trim().max(500).optional(),
+    evidenceCasRef: SupplyEvidenceCasRefSchema.nullable().optional(),
+    confirmationKeyword: z.literal('ACTUALIZAR'),
+});
+export type ConfirmWarehouseReceptionV3Request = z.infer<
+    typeof ConfirmWarehouseReceptionV3RequestSchema
+>;
+
+export const SupplyReceptionDiscrepancySchema = z.object({
+    discrepancyId: z.string().trim().min(1).max(160),
+    tenantId: z.string().trim().min(1).max(128),
+    siteId: z.string().trim().min(1).max(128),
+    purchaseId: z.string().trim().min(1).max(128),
+    purchaseLineId: z.string().trim().max(128).nullable().optional(),
+    warehouseId: z.string().trim().max(128).nullable().optional(),
+    canonicalSkuId: z.string().trim().min(1).max(128),
+    itemName: z.string().trim().min(1).max(200),
+    unitSi: SupplyUnitSiSchema,
+    expectedQty: z.number().nonnegative(),
+    receivedQty: z.number().nonnegative(),
+    shortageQty: z.number().nonnegative(),
+    excessQty: z.number().nonnegative(),
+    shrinkageQty: z.number().nonnegative().default(0),
+    shrinkageReason: z.string().trim().max(240).nullable().optional(),
+    evidenceCasRef: SupplyEvidenceCasRefSchema.nullable().optional(),
+    siiDocId: z.string().trim().max(160).nullable().optional(),
+    rcvDaysRemaining: z.number().int().nullable().optional(),
+    urgentRcvClaimRequired: z.boolean().default(false),
+    suggestCreditNote61: z.boolean().default(false),
+    status: z.enum(['OPEN', 'NC61_REQUESTED', 'RCV_CLAIMED', 'RESOLVED']).default('OPEN'),
+    actorUid: z.string().trim().min(1).max(128),
+    createdAtIso: z.string().min(10).max(40),
+    updatedAtIso: z.string().min(10).max(40),
+});
+export type SupplyReceptionDiscrepancy = z.infer<typeof SupplyReceptionDiscrepancySchema>;
+
+export const ReorderDriverTypeSchema = z.enum([
+    'PER_PAX',
+    'PER_ASSET_HOUR',
+    'DAILY_SITE_OR_MINMAX',
+]);
+export type ReorderDriverType = z.infer<typeof ReorderDriverTypeSchema>;
+
+export const SupplyBusinessUnitKpisSchema = z.object({
+    tenantId: z.string().trim().min(1).max(128),
+    siteId: z.string().trim().min(1).max(128),
+    generatedAtIso: z.string().min(10).max(40),
+    periodDays: z.number().int().positive().default(30),
+    camp: z.object({
+        headcountBasis: z.number().int().nonnegative(),
+        foodOpex30dClp: z.number().nonnegative(),
+        foodOpexPerPaxDayClp: z.number().nonnegative(),
+        potableWaterWarehouseL: z.number().nonnegative(),
+        potableWaterLPerPaxDay: z.number().nonnegative(),
+        ds594CompliancePct: z.number().min(0).max(100),
+        glpKgPerPaxDay: z.number().nonnegative(),
+        campDieselLPerDay: z.number().nonnegative(),
+    }),
+    fleetAndWorkshop: z.object({
+        fleetFuelDispensed30dL: z.number().nonnegative(),
+        fleetAvgLitersPerHour: z.number().nonnegative(),
+        activeMachineryCount: z.number().int().nonnegative(),
+        tankCycleCountVariancePctMax: z.number().nonnegative(),
+        tankAnomalyCount: z.number().int().nonnegative(),
+        cylinderFullCount: z.number().int().nonnegative(),
+        cylinderEmptyCount: z.number().int().nonnegative(),
+        cylinderStayDaysAvg: z.number().nonnegative(),
+    }),
+    mineAndPlant: z.object({
+        industrialWaterStockM3: z.number().nonnegative(),
+        industrialWaterM3PerTon: z.number().nonnegative(),
+        operationalSupplyCostPerTonClp: z.number().nonnegative(),
+        activeSkusCount: z.number().int().nonnegative(),
+        stockoutCount: z.number().int().nonnegative(),
+        avgInventoryTurnover: z.number().nonnegative(),
+        otifPct: z.number().min(0).max(100),
+    }),
+    financeSii: z.object({
+        totalNetPurchasesClp: z.number().nonnegative(),
+        totalVatRecoverableClp: z.number().nonnegative(),
+        vatRecoveryRatePct: z.number().min(0).max(100),
+        rcvUrgentUnder48hCount: z.number().int().nonnegative(),
+        openDiscrepanciesCount: z.number().int().nonnegative(),
+        capexInOpexCount: z.number().int().nonnegative().default(0),
+        capexLeakagePct: z.number().nonnegative().default(0),
+    }),
+    ropSummary: z.object({
+        totalEvaluatedSkus: z.number().int().nonnegative(),
+        criticalReorderCount: z.number().int().nonnegative(),
+        byDriver: z.object({
+            PER_PAX: z.number().int().nonnegative(),
+            PER_ASSET_HOUR: z.number().int().nonnegative(),
+            DAILY_SITE_OR_MINMAX: z.number().int().nonnegative(),
+        }),
+    }),
+});
+export type SupplyBusinessUnitKpis = z.infer<typeof SupplyBusinessUnitKpisSchema>;

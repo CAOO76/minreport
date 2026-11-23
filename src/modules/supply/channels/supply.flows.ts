@@ -1307,11 +1307,49 @@ async function handleReception4WayFlow(
     }
 
     const rawLines = payload.received_lines ?? payload.receivedLines;
+    const defaultWarehouseId =
+        typeof (payload.warehouse_id || payload.warehouseId) === 'string' &&
+        String(payload.warehouse_id || payload.warehouseId).trim()
+            ? String(payload.warehouse_id || payload.warehouseId).trim()
+            : undefined;
     let receivedLines: Array<{ purchaseLineId: string; qtyReceived: number }> | undefined;
+    let lineDetails:
+        | Array<{
+              purchaseLineId: string;
+              warehouseId?: string;
+              shrinkageQty?: number;
+              shrinkageReason?: string;
+              lotNumber?: string;
+              expiryDateIso?: string;
+              evidenceCasRef?: any;
+          }>
+        | undefined;
     if (Array.isArray(rawLines) && rawLines.length > 0) {
         receivedLines = rawLines.map((line: any) => ({
             purchaseLineId: String(line.purchaseLineId || line.purchase_line_id || '').trim(),
             qtyReceived: Number(line.qtyReceived ?? line.qty_received ?? line.qtyReceivedNow ?? 0),
+        }));
+        lineDetails = rawLines.map((line: any) => ({
+            purchaseLineId: String(line.purchaseLineId || line.purchase_line_id || '').trim(),
+            warehouseId:
+                typeof (line.warehouseId || line.warehouse_id) === 'string' &&
+                String(line.warehouseId || line.warehouse_id).trim()
+                    ? String(line.warehouseId || line.warehouse_id).trim()
+                    : defaultWarehouseId,
+            shrinkageQty: Number(line.shrinkageQty ?? line.shrinkage_qty ?? 0) || 0,
+            shrinkageReason:
+                typeof (line.shrinkageReason || line.shrinkage_reason) === 'string'
+                    ? String(line.shrinkageReason || line.shrinkage_reason).trim().slice(0, 240)
+                    : undefined,
+            lotNumber:
+                typeof (line.lotNumber || line.lot_number) === 'string'
+                    ? String(line.lotNumber || line.lot_number).trim().slice(0, 80)
+                    : undefined,
+            expiryDateIso:
+                typeof (line.expiryDateIso || line.expiry_date_iso) === 'string'
+                    ? String(line.expiryDateIso || line.expiry_date_iso).trim().slice(0, 40)
+                    : undefined,
+            evidenceCasRef: line.evidenceCasRef ?? line.evidence_cas_ref ?? undefined,
         }));
     }
 
@@ -1320,7 +1358,10 @@ async function handleReception4WayFlow(
             {
                 tenantId: claims.tenantId,
                 purchaseId,
+                warehouseId: defaultWarehouseId,
                 receivedLines,
+                lineDetails,
+                evidenceCasRef: payload.evidenceCasRef ?? payload.evidence_cas_ref ?? undefined,
                 notes:
                     typeof payload.notes === 'string' && payload.notes.trim()
                         ? `[WA_FLOW_4WAY] ${payload.notes.trim().slice(0, 450)}`
@@ -1340,12 +1381,16 @@ async function handleReception4WayFlow(
                 receptionOutcome: result.receptionOutcome,
                 receivedItemCount: result.receivedItemCount,
                 affectedRequisitionIds: result.affectedRequisitions.map((r) => r.reqId),
+                discrepancies: result.discrepancies,
+                urgentRcvAlert: result.urgentRcvAlert,
+                suggestCreditNote61: result.suggestCreditNote61,
                 extension_message_response: {
                     params: {
                         flow_token: body.flow_token || '',
                         purchaseId: result.purchase.purchaseId,
                         receptionStatus: result.purchase.receptionStatus,
                         receptionOutcome: result.receptionOutcome,
+                        discrepanciesCount: result.discrepancies.length,
                     },
                 },
             },
