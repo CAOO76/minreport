@@ -784,6 +784,7 @@
     "checking_btn": "AVALIANDO IA...",
     "loading_aria": "Verificando hardware móvel",
     "check_error": "Não foi possível verificar a compatibilidade com evidência web.",
+    "check_timeout_error": "Tempo limite esgotado ao consultar evidência web (HTTP 504). Tente novamente.",
     "source_cache": "CACHE BD (0 TOKENS)",
     "source_live_ai": "AVALIAÇÃO IA GROUNDED",
     "copy_key": "Copiar chave",

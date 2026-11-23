@@ -104,7 +104,7 @@ export const DesktopDeviceCompatibilityView: React.FC = () => {
             if (!res.ok) {
                 throw new Error(
                     data?.error ||
-                        t('compatibility.load_error', 'Error consultando registro de equipos.')
+                    t('compatibility.load_error', 'Error consultando registro de equipos.')
                 );
             }
             const nextRegistry = data.registry || data.catalog || null;
@@ -136,20 +136,40 @@ export const DesktopDeviceCompatibilityView: React.FC = () => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ query: clean, forceRefresh }),
             });
-            const data = (await res.json().catch(() => ({}))) as {
+            const rawBody = await res.text().catch(() => '');
+            let data: {
                 device?: DeviceCompatibilityRecord;
                 cached?: boolean;
                 registry?: DeviceCompatibilityRegistrySnapshot;
                 error?: string;
-            };
+                code?: string;
+            } = {};
+            if (rawBody) {
+                try {
+                    data = JSON.parse(rawBody);
+                } catch {
+                    data = {};
+                }
+            }
             if (!res.ok) {
-                throw new Error(
-                    data?.error ||
+                if (data?.error) {
+                    const codeSuffix =
+                        data.code && !data.error.includes(data.code) ? ` [${data.code}]` : '';
+                    throw new Error(`${data.error}${codeSuffix}`);
+                }
+                if (res.status === 504 || res.status === 524) {
+                    throw new Error(
                         t(
-                            'compatibility.check_error',
-                            'No se pudo verificar compatibilidad con evidencia web.'
+                            'compatibility.check_timeout_error',
+                            'Tiempo de espera agotado al consultar evidencia web (HTTP 504). Reintente.'
                         )
+                    );
+                }
+                const baseMsg = t(
+                    'compatibility.check_error',
+                    'No se pudo verificar compatibilidad con evidencia web.'
                 );
+                throw new Error(`${baseMsg} (HTTP ${res.status})`);
             }
             if (data.device) {
                 setActiveVerdict({ device: data.device, cached: Boolean(data.cached) });
@@ -164,9 +184,9 @@ export const DesktopDeviceCompatibilityView: React.FC = () => {
                 err instanceof Error
                     ? err.message
                     : t(
-                          'compatibility.check_error',
-                          'No se pudo verificar compatibilidad con evidencia web.'
-                      )
+                        'compatibility.check_error',
+                        'No se pudo verificar compatibilidad con evidencia web.'
+                    )
             );
         } finally {
             setChecking(false);
@@ -348,10 +368,10 @@ export const DesktopDeviceCompatibilityView: React.FC = () => {
                                 {activeVerdict.device.lidarSupported === true
                                     ? 'LIDAR'
                                     : formatBoolCap(
-                                          activeVerdict.device.depthSupported,
-                                          'DEPTH API',
-                                          'NO'
-                                      )}
+                                        activeVerdict.device.depthSupported,
+                                        'DEPTH API',
+                                        'NO'
+                                    )}
                             </div>
                         </div>
                         <div>
@@ -516,12 +536,11 @@ export const DesktopDeviceCompatibilityView: React.FC = () => {
                                                     'compatibility.recheck_action',
                                                     'Re-evaluar'
                                                 )}
-                                                className={`bg-transparent border-0 outline-none p-1 cursor-pointer rounded-none ${
-                                                    refreshingKey ===
+                                                className={`bg-transparent border-0 outline-none p-1 cursor-pointer rounded-none ${refreshingKey ===
                                                     `${dev.manufacturer} ${dev.model}`
-                                                        ? 'text-[#C68346]'
-                                                        : 'text-[#475569] dark:text-[#8A93A6] hover:text-[#00AEEF]'
-                                                }`}
+                                                    ? 'text-[#C68346]'
+                                                    : 'text-[#475569] dark:text-[#8A93A6] hover:text-[#00AEEF]'
+                                                    }`}
                                             >
                                                 <span className="material-symbols-outlined text-[18px]">
                                                     refresh

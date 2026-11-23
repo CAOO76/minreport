@@ -104,6 +104,8 @@ export interface AIInferenceRequest {
     fileParts?: FileUriPart[];
     cachedContent?: string;
     dataClassification?: 'TENANT_PRIVATE' | 'GLOBAL_OEM' | 'SYMBOLOGY_MASTER';
+    attemptTimeoutMs?: number;
+    maxTotalBudgetMs?: number;
 }
 
 export type EmbeddingTaskType =
@@ -233,7 +235,7 @@ export const SWARM_MODELS: Record<SwarmTier, string> = {
     ),
     ANCHOR_HA: normalizeSwarmModelSlug(
         process.env.LITE_GEMINI_MODEL || process.env.GEMINI_FLASH_LITE_MODEL,
-        'gemini-3.1-flash-lite-preview'
+        'gemini-3.5-flash-lite'
     ),
 };
 
@@ -241,9 +243,9 @@ export const DECISION_MODEL =
     (process.env.GEMINI_DECISION_MODEL || 'gemini-decision-1').trim() || 'gemini-decision-1';
 
 const SWARM_TIER_FALLBACK_CANDIDATES: Record<SwarmTier, string[]> = {
-    PRIMARY: ['gemini-3.1-pro-preview', 'gemini-3-flash-preview', 'gemini-2.5-flash'],
-    SECONDARY: ['gemini-3-flash-preview', 'gemini-2.5-flash'],
-    ANCHOR_HA: ['gemini-3.1-flash-lite-preview', 'gemini-2.5-flash-lite', 'gemini-3-flash-preview'],
+    PRIMARY: ['gemini-3.1-pro-preview', 'gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3-flash-preview'],
+    SECONDARY: ['gemini-3-flash-preview', 'gemini-3.8-flash', 'gemini-3.6-flash'],
+    ANCHOR_HA: ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-3.1-flash-lite-preview', 'gemini-3-flash-preview'],
 };
 
 const IMAGE_GEN_MODELS = [
@@ -841,7 +843,7 @@ export class ResilientAIClient {
                             : 'high');
 
             const levelMap: Record<ThinkingLevel, GenAIThinkingLevel> = {
-                none: GenAIThinkingLevel.MINIMAL,
+                none: model.includes('3.8') || isPro ? GenAIThinkingLevel.LOW : GenAIThinkingLevel.MINIMAL,
                 low: GenAIThinkingLevel.LOW,
                 medium: GenAIThinkingLevel.MEDIUM,
                 high: GenAIThinkingLevel.HIGH,
@@ -1127,14 +1129,26 @@ export class ResilientAIClient {
         }
 
         const tiers = this.buildTierOrder(this.resolveEffectiveTier(req));
+        const maxTotalBudgetMs =
+            typeof req.maxTotalBudgetMs === 'number' && Number.isFinite(req.maxTotalBudgetMs) && req.maxTotalBudgetMs > 0
+                ? req.maxTotalBudgetMs
+                : null;
         let lastError: Error | null = null;
         let hadUngroundedAttempt = false;
 
         for (const tier of tiers) {
+            if (maxTotalBudgetMs !== null && maxTotalBudgetMs - (Date.now() - startTime) < 2_500) {
+                break;
+            }
             let modelName = SWARM_MODELS[tier];
             const triedModelsInTier = new Set<string>([modelName]);
 
             for (let attempt = 0; attempt <= this.MAX_RETRIES_PER_TIER; attempt++) {
+                const remainingBeforeAttemptMs =
+                    maxTotalBudgetMs !== null ? maxTotalBudgetMs - (Date.now() - startTime) : null;
+                if (remainingBeforeAttemptMs !== null && remainingBeforeAttemptMs < 2_500) {
+                    break;
+                }
                 try {
                     const parts: any[] = [];
 
@@ -1202,8 +1216,10 @@ export class ResilientAIClient {
 
                     // En llamadas con googleSearch usar 'low' por defecto para evitar la latencia de 'HIGH' en Gemini 3.x;
                     // en extracciones deterministas sin herramientas (temp <= 0.1) usar 'none' (MINIMAL) por defecto.
+                    const allowMediumEscalation =
+                        !(typeof req.maxOutputTokens === 'number' && req.maxOutputTokens < 1600);
                     const effectiveThinkingLevel: ThinkingLevel | undefined = hasGroundingTools
-                        ? hadUngroundedAttempt
+                        ? hadUngroundedAttempt && allowMediumEscalation
                             ? 'medium'
                             : req.thinkingLevel === 'none'
                             ? 'low'
@@ -1215,7 +1231,18 @@ export class ResilientAIClient {
                         config.thinkingConfig = thinkingCfg;
                     }
 
-                    const attemptTimeoutMs = hasGroundingTools ? 45_000 : 40_000;
+                    const baseAttemptTimeoutMs =
+                        typeof req.attemptTimeoutMs === 'number' &&
+                        Number.isFinite(req.attemptTimeoutMs) &&
+                        req.attemptTimeoutMs >= 3_000
+                            ? req.attemptTimeoutMs
+                            : hasGroundingTools
+                            ? 45_000
+                            : 40_000;
+                    const attemptTimeoutMs =
+                        remainingBeforeAttemptMs !== null
+                            ? Math.min(baseAttemptTimeoutMs, Math.max(3_000, remainingBeforeAttemptMs - 500))
+                            : baseAttemptTimeoutMs;
                     const abortController = new AbortController();
                     config.abortSignal = abortController.signal;
 
@@ -1407,12 +1434,18 @@ export class ResilientAIClient {
                             // Tras un reintento con directiva reforzada en este tier, saltar sin demora al siguiente modelo del enjambre
                             break;
                         }
+                        if (maxTotalBudgetMs !== null && maxTotalBudgetMs - (Date.now() - startTime) < 3_000) {
+                            break;
+                        }
                         await this.sleep(250 + Math.round(Math.random() * 250));
                         continue;
                     }
 
                     if (attempt < this.MAX_RETRIES_PER_TIER) {
                         const waitMs = this.computeBackoffMs(attempt);
+                        if (maxTotalBudgetMs !== null && maxTotalBudgetMs - (Date.now() - startTime) - waitMs < 2_500) {
+                            break;
+                        }
                         await this.sleep(waitMs);
                     }
                 }
@@ -1434,7 +1467,7 @@ export class ResilientAIClient {
      */
     public static async generateStructured<T>(
         req: AIInferenceRequest,
-        zodSchema?: z.ZodType<T>
+        zodSchema?: z.ZodType<T, z.ZodTypeDef, any>
     ): Promise<{ data: T; meta: AIInferenceResponse }> {
         const effectiveReq: AIInferenceRequest = {
             ...req,

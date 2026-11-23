@@ -784,6 +784,7 @@
     "checking_btn": "EVALUANDO IA...",
     "loading_aria": "Verificando hardware móvil",
     "check_error": "No se pudo verificar compatibilidad con evidencia web.",
+    "check_timeout_error": "Tiempo de espera agotado al consultar evidencia web (HTTP 504). Reintente.",
     "source_cache": "CACHÉ BD (0 TOKENS)",
     "source_live_ai": "EVALUACIÓN IA GROUNDED",
     "copy_key": "Copiar clave",

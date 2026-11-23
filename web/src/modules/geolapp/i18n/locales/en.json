@@ -784,6 +784,7 @@
     "checking_btn": "EVALUATING AI...",
     "loading_aria": "Verifying mobile hardware",
     "check_error": "Unable to verify compatibility with web evidence.",
+    "check_timeout_error": "Request timed out while verifying web evidence (HTTP 504). Please retry.",
     "source_cache": "DB CACHE (0 TOKENS)",
     "source_live_ai": "GROUNDED AI EVALUATION",
     "copy_key": "Copy key",

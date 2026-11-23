@@ -166,6 +166,7 @@ const {
     computeDeterministicDeviceTier,
     listRegisteredDeviceCompatibility,
     normalizeDeviceQueryKey,
+    stripRetailNoiseFromDeviceQuery,
 } = require('../../modules/geolapp/device-compatibility.service') as typeof import('../../modules/geolapp/device-compatibility.service');
 const geolappController =
     require('../../api/geolapp.controller') as typeof import('../../api/geolapp.controller');
@@ -209,6 +210,18 @@ test('Motor On-Demand device-compatibility: normalización, veredicto determiní
     dbCollections.clear();
 
     assert.equal(normalizeDeviceQueryKey('  Samsung   Galaxy A17 5G '), 'samsung-galaxy-a17-5g');
+    assert.equal(
+        stripRetailNoiseFromDeviceQuery('Samsung Galaxy A17 5G 128GB Negro'),
+        'Samsung Galaxy A17 5G'
+    );
+    assert.equal(
+        stripRetailNoiseFromDeviceQuery('iPhone 16 Pro Max 256GB Titanio Negro Liberado'),
+        'iPhone 16 Pro Max'
+    );
+    assert.equal(
+        stripRetailNoiseFromDeviceQuery('CAT S75 Dual SIM 128GB'),
+        'CAT S75'
+    );
     assert.equal(
         computeDeterministicDeviceTier({
             hasGyroscope: false,
@@ -498,5 +511,121 @@ test('Endpoints HTTP on-demand, Fail-Closed Ungrounded (422), validateSovereignM
             false,
             `${relPath} no debe exponer marcas heredadas`
         );
+    }
+});
+
+test('Motor On-Demand 2-Pasadas: Pasada 1 prosa Google Search + Pasada 2 JSON estructurado y caché unificado para variantes retail', async () => {
+    dbCollections.clear();
+
+    const originalGenerate = ResilientAIClient.generate;
+    const originalGenerateStructured = ResilientAIClient.generateStructured;
+    const originalAuditRecord = AuditLedger.record;
+
+    const pass1Calls: Array<Record<string, any>> = [];
+    const pass2Calls: Array<Record<string, any>> = [];
+
+    (ResilientAIClient as any).generate = async (opts: any) => {
+        pass1Calls.push(opts);
+        return {
+            text: [
+                '- Fabricante: Samsung',
+                '- Modelo base: Galaxy A17 5G',
+                '- Código OEM: SM-A176B',
+                '- Plataforma: ANDROID · SoC Exynos 1330',
+                '- Giroscopio hardware: Sí',
+                '- Google Play Services for AR (ARCore): Soportado oficialmente',
+                '- ARCore Depth API: Soportado',
+                '- LiDAR: No',
+                '- Resumen: Samsung Galaxy A17 5G (Exynos 1330) cuenta con giroscopio hardware y certificación ARCore con Depth API.',
+            ].join('\n'),
+            model: 'gemini-3-flash-preview',
+            tierUsed: 'SECONDARY',
+            latencyMs: 11200,
+            requiresHumanApproval: false,
+            groundingSources: [
+                {
+                    title: 'ARCore supported devices | Google for Developers',
+                    uri: 'https://developers.google.com/ar/devices',
+                },
+            ],
+            webSearchQueries: ['Samsung Galaxy A17 5G ARCore supported devices'],
+        };
+    };
+
+    (ResilientAIClient as any).generateStructured = async (opts: any, zodSchema?: any) => {
+        pass2Calls.push(opts);
+        const payload = {
+            manufacturer: 'Samsung',
+            model: 'Galaxy A17 5G',
+            deviceCode: 'SM-A176B',
+            platform: 'ANDROID',
+            hasGyroscope: true,
+            arSupported: true,
+            depthSupported: true,
+            lidarSupported: false,
+            rugged: false,
+            ruggedRating: null,
+            verdictSummary:
+                'Samsung Galaxy A17 5G (Exynos 1330) soporta ARCore y Depth API con giroscopio hardware.',
+        };
+        return {
+            data: zodSchema ? zodSchema.parse(payload) : payload,
+            meta: {
+                text: JSON.stringify(payload),
+                model: 'gemini-3-flash-preview',
+                tierUsed: 'SECONDARY',
+                latencyMs: 950,
+                requiresHumanApproval: false,
+                groundingSources: [],
+                webSearchQueries: [],
+            },
+        };
+    };
+
+    (AuditLedger as any).record = async () => 'audit_2pass_1';
+
+    try {
+        const res1 = await checkDeviceCompatibilityOnDemand({
+            query: 'Samsung Galaxy A17 5G 128GB Negro',
+            actor: { uid: 'uid-dev', email: 'dev@minreport.com', tenantId: 'global' },
+        });
+
+        assert.equal(res1.cached, false);
+        assert.equal(pass1Calls.length, 1);
+        assert.equal(pass2Calls.length, 1);
+        assert.equal(pass1Calls[0].useGoogleSearch, true);
+        assert.equal(pass1Calls[0].requireGroundedEvidence, true);
+        assert.equal(pass1Calls[0].dataClassification, 'GLOBAL_OEM');
+        assert.ok(pass1Calls[0].maxOutputTokens >= 2048);
+        assert.ok(pass1Calls[0].maxTotalBudgetMs <= 40_000);
+        assert.equal(pass1Calls[0].prompt.includes('Samsung Galaxy A17 5G'), true);
+        assert.equal(pass1Calls[0].prompt.includes('128GB'), false);
+        assert.equal(pass2Calls[0].useGoogleSearch, false);
+        assert.ok(pass2Calls[0].responseSchema);
+        assert.equal(res1.device.tier, 'OPTIMAL_SPATIAL');
+        assert.equal(res1.device.depthSupported, true);
+        assert.ok(res1.device.aliases.includes('samsung-galaxy-a17-5g-128gb-negro'));
+        assert.ok(res1.device.aliases.includes('samsung-galaxy-a17-5g'));
+
+        const res2 = await checkDeviceCompatibilityOnDemand({
+            query: 'Samsung Galaxy A17 5G',
+            actor: { uid: 'uid-dev', email: 'dev@minreport.com', tenantId: 'global' },
+        });
+        assert.equal(res2.cached, true);
+        assert.equal(pass1Calls.length, 1);
+        assert.equal(pass2Calls.length, 1);
+        assert.equal(res2.device.queryCount, 2);
+
+        const res3 = await checkDeviceCompatibilityOnDemand({
+            query: 'Samsung Galaxy A17 5G 128GB Negro',
+            actor: { uid: 'uid-dev', email: 'dev@minreport.com', tenantId: 'global' },
+        });
+        assert.equal(res3.cached, true);
+        assert.equal(pass1Calls.length, 1);
+        assert.equal(res3.device.queryCount, 3);
+    } finally {
+        (ResilientAIClient as any).generate = originalGenerate;
+        (ResilientAIClient as any).generateStructured = originalGenerateStructured;
+        (AuditLedger as any).record = originalAuditRecord;
     }
 });

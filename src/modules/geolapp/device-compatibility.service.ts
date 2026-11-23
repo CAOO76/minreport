@@ -1,7 +1,11 @@
 import { z } from 'zod';
 import { db } from '../../config/firebase';
 import { AuditLedger } from '../../core/audit-ledger';
-import { ResilientAIClient } from '../../core/resilient-ai-client';
+import {
+    AISwarmUnavailableError,
+    ResilientAIClient,
+    Type,
+} from '../../core/resilient-ai-client';
 
 export const DEVICE_COMPATIBILITY_COLLECTION = 'device_compatibility_registry';
 
@@ -109,6 +113,74 @@ const AiDeviceEvaluationSchema = z.object({
     ruggedRating: z.string().trim().max(120).nullable().optional(),
     verdictSummary: z.string().trim().min(1).max(400),
 });
+
+type AiDeviceEvaluation = z.infer<typeof AiDeviceEvaluationSchema>;
+
+const AI_DEVICE_EVALUATION_RESPONSE_SCHEMA = {
+    type: Type.OBJECT,
+    properties: {
+        manufacturer: { type: Type.STRING },
+        model: { type: Type.STRING },
+        deviceCode: { type: Type.STRING, nullable: true },
+        platform: { type: Type.STRING, enum: ['ANDROID', 'IOS'] },
+        hasGyroscope: { type: Type.BOOLEAN, nullable: true },
+        arSupported: { type: Type.BOOLEAN, nullable: true },
+        depthSupported: { type: Type.BOOLEAN, nullable: true },
+        lidarSupported: { type: Type.BOOLEAN, nullable: true },
+        rugged: { type: Type.BOOLEAN },
+        ruggedRating: { type: Type.STRING, nullable: true },
+        verdictSummary: { type: Type.STRING },
+    },
+    required: [
+        'manufacturer',
+        'model',
+        'deviceCode',
+        'platform',
+        'hasGyroscope',
+        'arSupported',
+        'depthSupported',
+        'lidarSupported',
+        'rugged',
+        'ruggedRating',
+        'verdictSummary',
+    ],
+};
+
+const RETAIL_STORAGE_REGEX = /\b\d{1,2}\s*[+/]\s*\d{2,4}\s*(?:gb|tb)\b|\b(?:16|32|64|128|256|512)\s*gb\b|\b[12]\s*tb\b|\b\d{1,2}\s*gb\s*ram\b|\bram\b/gi;
+const RETAIL_COLOR_REGEX = /\b(?:negro|black|blanco|white|azul|blue|verde|green|gris|gray|grey|plata|silver|dorado|gold|rojo|red|morado|violeta|purple|rosado|pink|titanio|titanium|grafito|graphite|celeste|crema|naranja|orange|amarillo|yellow|bronce|bronze|cobre|midnight|starlight|awesome)\b/gi;
+const RETAIL_TAG_REGEX = /\b(?:dual\s*sim|single\s*sim|esim|liberado|desbloqueado|unlocked|factory\s*unlocked|sellado|nuevo|global\s*version|version\s*global|entel|movistar|wom|claro|chile)\b/gi;
+
+/**
+ * Elimina modificadores comerciales de retail (almacenamiento, color, operador/estado)
+ * que no alteran la compatibilidad espacial del modelo base ni el caché en Firestore.
+ */
+export function stripRetailNoiseFromDeviceQuery(rawQuery: string): string {
+    const collapsed = String(rawQuery || '').trim().replace(/\s+/g, ' ');
+    if (!collapsed) return '';
+    const stripped = collapsed
+        .replace(RETAIL_STORAGE_REGEX, ' ')
+        .replace(RETAIL_COLOR_REGEX, ' ')
+        .replace(RETAIL_TAG_REGEX, ' ')
+        .replace(/[()[\]|/+,-]+\s*$/g, ' ')
+        .replace(/^\s*[()[\]|/+,-]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    return stripped.length >= 2 ? stripped : collapsed;
+}
+
+function tryParseAiEvaluation(rawText: string): AiDeviceEvaluation | null {
+    const trimmed = String(rawText || '').trim();
+    if (!trimmed) return null;
+    try {
+        const extracted = ResilientAIClient.extractJsonString(trimmed);
+        if (!extracted.startsWith('{')) return null;
+        const parsedJson = JSON.parse(extracted);
+        const parsed = AiDeviceEvaluationSchema.safeParse(parsedJson);
+        return parsed.success ? parsed.data : null;
+    } catch {
+        return null;
+    }
+}
 
 const inFlightChecks = new Map<string, Promise<OnDemandCompatibilityCheckResult>>();
 
@@ -247,9 +319,12 @@ export async function checkDeviceCompatibilityOnDemand(params: {
         );
     }
 
-    const queryKey = normalizeDeviceQueryKey(cleanQuery);
-    const compactQuery = compactAlnumKey(cleanQuery);
-    if (!queryKey || queryKey.length < 2) {
+    const searchQuery = stripRetailNoiseFromDeviceQuery(cleanQuery);
+    const rawQueryKey = normalizeDeviceQueryKey(cleanQuery);
+    const searchQueryKey = normalizeDeviceQueryKey(searchQuery) || rawQueryKey;
+    const compactSearchQuery = compactAlnumKey(searchQuery);
+    const compactRawQuery = compactAlnumKey(cleanQuery);
+    if (!rawQueryKey || rawQueryKey.length < 2 || !searchQueryKey || searchQueryKey.length < 2) {
         throw new DeviceCompatibilityValidationError(
             'El modelo ingresado debe contener caracteres alfanuméricos válidos.',
             400,
@@ -257,7 +332,7 @@ export async function checkDeviceCompatibilityOnDemand(params: {
         );
     }
 
-    const dedupKey = `${queryKey}:${Boolean(params.forceRefresh)}`;
+    const dedupKey = `${searchQueryKey}:${Boolean(params.forceRefresh)}`;
     const existingFlight = inFlightChecks.get(dedupKey);
     if (existingFlight) {
         return existingFlight;
@@ -266,12 +341,17 @@ export async function checkDeviceCompatibilityOnDemand(params: {
     const task = (async (): Promise<OnDemandCompatibilityCheckResult> => {
         const records = await readAllRegisteredRecords();
         const cachedMatch = !params.forceRefresh
-            ? findMatchingRegisteredRecord(records, queryKey, compactQuery)
+            ? findMatchingRegisteredRecord(records, searchQueryKey, compactSearchQuery) ||
+            (rawQueryKey !== searchQueryKey
+                ? findMatchingRegisteredRecord(records, rawQueryKey, compactRawQuery)
+                : null)
             : null;
 
         if (cachedMatch) {
             const now = Date.now();
-            const mergedAliases = Array.from(new Set([...cachedMatch.aliases, queryKey])).slice(0, 32);
+            const mergedAliases = Array.from(
+                new Set([...cachedMatch.aliases, searchQueryKey, rawQueryKey])
+            ).slice(0, 32);
             const updatedRecord: DeviceCompatibilityRecord = {
                 ...cachedMatch,
                 aliases: mergedAliases,
@@ -298,67 +378,121 @@ export async function checkDeviceCompatibilityOnDemand(params: {
             };
         }
 
-        const prompt = [
-            `Evalúa técnicamente la compatibilidad espacial del dispositivo móvil consultado para fotogrametría AR / escaneo 3D de terreno (MINREPORT · ACOPIOS):`,
-            `Dispositivo consultado: "${cleanQuery}"`,
-            `Consulta en la web especificaciones oficiales verificables (lista oficial Google Play Services for AR / ARCore devices, Apple ARKit, presencia de giroscopio hardware, soporte ARCore Depth API o LiDAR, código de modelo OEM y certificación industrial IP68/MIL-STD-810H si aplica).`,
-            `Reglas estrictas de veracidad:`,
-            `- No adivines capacidades: si no existe evidencia concluyente sobre ARCore, Depth API o giroscopio, devuelve null en ese booleano.`,
-            `- Una cámara OIS sin hardware ToF/LiDAR puede usar Depth API monocular por software si y solo si el equipo figura con soporte ARCore Depth API en la documentación verificada.`,
-            `- "verdictSummary" debe ser técnico, conciso (1 oración, español, máx 280 chars) citando el SoC o sensor clave verificado.`,
-            `Responde ÚNICAMENTE con un objeto JSON válido (sin texto adicional) con exactamente estas llaves:`,
-            `{`,
-            `  "manufacturer": string,`,
-            `  "model": string,`,
-            `  "deviceCode": string | null,`,
-            `  "platform": "ANDROID" | "IOS",`,
-            `  "hasGyroscope": boolean | null,`,
-            `  "arSupported": boolean | null,`,
-            `  "depthSupported": boolean | null,`,
-            `  "lidarSupported": boolean | null,`,
-            `  "rugged": boolean,`,
-            `  "ruggedRating": string | null,`,
-            `  "verdictSummary": string`,
-            `}`,
+        // Pasada 1: Investigación web grounded en prosa técnica natural (maximiza invocación de googleSearch)
+        const pass1Prompt = [
+            `Investiga en Google Search la compatibilidad espacial del dispositivo móvil "${searchQuery}" ejecutando obligatoriamente estas consultas focalizadas:`,
+            `1) site:developers.google.com/ar/devices "${searchQuery}" (verifica si figura en la tabla oficial de Google Play Services for AR / ARCore y si indica "Supports Depth API") o documentación oficial Apple ARKit si es iPhone/iPad.`,
+            `2) Especificaciones técnicas oficiales del fabricante / GSMArena para "${searchQuery}" (código OEM, SoC/chipset, giroscopio hardware físico, LiDAR, clasificación IP/MIL-STD-810H).`,
+            `Responde en español técnico conciso (texto/viñetas claras, SIN formato JSON) cubriendo obligatoriamente:`,
+            `- Fabricante oficial y nombre de modelo base comercial (sin almacenamiento GB ni color).`,
+            `- Código de modelo OEM (ej. SM-S928B, A3296) si figura en las fuentes.`,
+            `- Plataforma (ANDROID o IOS) y SoC / chipset.`,
+            `- Giroscopio físico por hardware (Sí / No / No verificado).`,
+            `- Listado oficialmente en developers.google.com/ar/devices (ARCore) o Apple ARKit (Sí / No / No verificado; cita el texto exacto de la tabla si aparece).`,
+            `- Soporte oficial de ARCore Depth API o escáner LiDAR (Sí / No / No verificado; nota: OIS sin ToF/LiDAR solo cuenta como Depth API si figura expresamente como "Supports Depth API" en la documentación oficial).`,
+            `- Certificación rugerizada / IP / MIL-STD-810H si aplica.`,
+            `- Resumen técnico de 1 oración en español (máx. 280 caracteres) citando el SoC o sensor clave verificado.`,
+            `Regla crítica: si tras ejecutar las búsquedas anteriores un dato no consta de forma concluyente, indica explícitamente "No verificado".`,
         ].join('\n');
 
-        const aiRes = await ResilientAIClient.generate({
+        const pass1Res = await ResilientAIClient.generate({
             module: 'stockpile',
             tenantId: 'GLOBAL',
+            dataClassification: 'GLOBAL_OEM',
             preferredTier: 'SECONDARY',
             useGoogleSearch: true,
             requireGroundedEvidence: true,
             bypassCache: Boolean(params.forceRefresh),
-            temperature: 0.1,
+            temperature: 0.2,
             thinkingLevel: 'low',
-            maxOutputTokens: 900,
+            maxOutputTokens: 2048,
+            attemptTimeoutMs: 22_000,
+            maxTotalBudgetMs: 36_000,
             systemInstruction:
-                'Eres un ingeniero especialista en hardware móvil industrial y ARCore/ARKit para MINREPORT. Solo reportas capacidades técnicas verificadas con búsqueda web.',
-            prompt,
+                'Eres un ingeniero especialista en hardware móvil industrial y ARCore/ARKit para MINREPORT. Debes ejecutar Google Search obligatoriamente consultando developers.google.com/ar/devices y fichas OEM, y reportar únicamente capacidades verificadas en fuentes web reales.',
+            prompt: pass1Prompt,
         });
 
-        const extractedJson = ResilientAIClient.extractJsonString(aiRes.text);
-        let rawObj: unknown;
-        try {
-            rawObj = JSON.parse(extractedJson);
-        } catch {
+        const validSources: DeviceGroundingSource[] = (pass1Res.groundingSources || [])
+            .map((src) => ({
+                title: String(src?.title || src?.uri || 'Fuente web').trim().slice(0, 240),
+                uri: String(src?.uri || '').trim().slice(0, 1024),
+            }))
+            .filter((src) => src.title.length > 0 && /^https?:\/\//i.test(src.uri))
+            .slice(0, 16);
+
+        if (validSources.length === 0) {
             throw new DeviceCompatibilityValidationError(
-                'La evaluación IA no devolvió una ficha técnica JSON estructurada válida.',
+                'No se obtuvieron fuentes web verificables para respaldar el dispositivo.',
                 422,
-                'INVALID_AI_EVALUATION_JSON'
+                'UNGROUNDED_DEVICE_EVALUATION'
             );
         }
 
-        const parsedAi = AiDeviceEvaluationSchema.safeParse(rawObj);
-        if (!parsedAi.success) {
-            throw new DeviceCompatibilityValidationError(
-                'La evaluación de hardware no superó la validación de esquema técnico.',
-                422,
-                'INVALID_AI_EVALUATION_SCHEMA'
-            );
+        // Pasada 2: Extracción estructurada determinista con responseSchema + Zod
+        let evalData = tryParseAiEvaluation(pass1Res.text);
+        let modelUsed = pass1Res.model;
+
+        if (!evalData) {
+            const sourcesContext = validSources
+                .map((src, idx) => `[${idx + 1}] ${src.title} -> ${src.uri}`)
+                .join('\n');
+            const pass2Prompt = [
+                `Extrae en formato JSON estricto la ficha técnica de compatibilidad espacial del dispositivo "${searchQuery}" usando EXCLUSIVAMENTE la evidencia recuperada en Pasada 1:`,
+                `EVIDENCIA PASADA 1:`,
+                `"""`,
+                pass1Res.text.slice(0, 8000),
+                `"""`,
+                `FUENTES CONSULTADAS:`,
+                sourcesContext,
+                `Reglas estrictas de mapeo:`,
+                `- "model" debe contener únicamente el nombre de modelo base comercial limpio (sin almacenamiento GB/TB ni color).`,
+                `- Si la evidencia indica "No verificado" o no confirma de forma concluyente "hasGyroscope", "arSupported", "depthSupported" o "lidarSupported", asigna null en ese campo booleano (nunca adivines).`,
+                `- "verdictSummary" debe ser una sola oración técnica concisa en español (máx. 280 caracteres) citando el SoC o sensor clave verificado.`,
+            ].join('\n');
+
+            try {
+                const pass2Res = await ResilientAIClient.generateStructured<AiDeviceEvaluation>(
+                    {
+                        module: 'stockpile',
+                        tenantId: 'GLOBAL',
+                        dataClassification: 'GLOBAL_OEM',
+                        preferredTier: 'SECONDARY',
+                        useGoogleSearch: false,
+                        bypassCache: Boolean(params.forceRefresh),
+                        temperature: 0,
+                        thinkingLevel: 'none',
+                        maxOutputTokens: 1024,
+                        attemptTimeoutMs: 12_000,
+                        maxTotalBudgetMs: 15_000,
+                        responseSchema: AI_DEVICE_EVALUATION_RESPONSE_SCHEMA,
+                        systemInstruction:
+                            'Extractor determinista de fichas técnicas ARCore/ARKit para MINREPORT. Prohibido inferir o inventar capacidades ausentes en la evidencia.',
+                        prompt: pass2Prompt,
+                    },
+                    AiDeviceEvaluationSchema
+                );
+                evalData = pass2Res.data;
+                modelUsed = pass2Res.meta?.model || pass1Res.model;
+            } catch (err: unknown) {
+                if (err instanceof AISwarmUnavailableError) {
+                    throw err;
+                }
+                if (err instanceof SyntaxError) {
+                    throw new DeviceCompatibilityValidationError(
+                        'La evaluación IA no devolvió una ficha técnica JSON estructurada válida.',
+                        422,
+                        'INVALID_AI_EVALUATION_JSON'
+                    );
+                }
+                throw new DeviceCompatibilityValidationError(
+                    'La evaluación de hardware no superó la validación de esquema técnico.',
+                    422,
+                    'INVALID_AI_EVALUATION_SCHEMA'
+                );
+            }
         }
 
-        const evalData = parsedAi.data;
         const deviceCode = sanitizeOptionalText(evalData.deviceCode, 120);
         const ruggedRating = evalData.rugged
             ? sanitizeOptionalText(evalData.ruggedRating, 120)
@@ -377,33 +511,18 @@ export async function checkDeviceCompatibilityOnDemand(params: {
                 ? evalData.model
                 : `${evalData.manufacturer} ${evalData.model}`
         );
-        const canonicalKey = baseCanonical || queryKey;
+        const canonicalKey = baseCanonical || searchQueryKey;
 
         const existingCanonical = records.find((r) => r.canonicalKey === canonicalKey);
         const aliasCandidates = [
             canonicalKey,
-            queryKey,
+            searchQueryKey,
+            rawQueryKey,
             normalizeDeviceQueryKey(evalData.model),
             ...(deviceCode ? [normalizeDeviceQueryKey(deviceCode)] : []),
             ...(existingCanonical?.aliases || []),
         ].filter((a) => a.length >= 2);
         const aliases = Array.from(new Set(aliasCandidates)).slice(0, 32);
-
-        const validSources: DeviceGroundingSource[] = (aiRes.groundingSources || [])
-            .map((src) => ({
-                title: String(src?.title || src?.uri || 'Fuente web').trim().slice(0, 240),
-                uri: String(src?.uri || '').trim().slice(0, 1024),
-            }))
-            .filter((src) => src.title.length > 0 && /^https?:\/\//i.test(src.uri))
-            .slice(0, 16);
-
-        if (validSources.length === 0) {
-            throw new DeviceCompatibilityValidationError(
-                'No se obtuvieron fuentes web verificables para respaldar el dispositivo.',
-                422,
-                'UNGROUNDED_DEVICE_EVALUATION'
-            );
-        }
 
         const now = Date.now();
         const record: DeviceCompatibilityRecord = DeviceCompatibilityRecordSchema.parse({
@@ -445,6 +564,7 @@ export async function checkDeviceCompatibilityOnDemand(params: {
             targetEntity: `${DEVICE_COMPATIBILITY_COLLECTION}/${canonicalKey}`,
             details: {
                 query: cleanQuery,
+                searchQuery,
                 canonicalKey,
                 tier: record.tier,
                 platform: record.platform,
@@ -453,11 +573,11 @@ export async function checkDeviceCompatibilityOnDemand(params: {
                 depthSupported: record.depthSupported,
                 lidarSupported: record.lidarSupported,
                 sourcesCount: record.groundingSources.length,
-                modelUsed: aiRes.model,
+                modelUsed,
                 forceRefresh: Boolean(params.forceRefresh),
             },
             ipAddress: params.actor.ipAddress,
-        }).catch(() => {});
+        }).catch(() => { });
 
         const refreshed = await readAllRegisteredRecords();
         const snapshotDevices =
