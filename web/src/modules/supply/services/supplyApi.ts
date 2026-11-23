@@ -27,6 +27,8 @@ import {
     type SiiExpenseReportStatus,
     type SupplyAssetRecord,
     type SupplyCategoryCode,
+    type SupplyConversationThread,
+    type SupplyConversationTurn,
     type SupplyDemandNature,
     type SupplyDemandOrigin,
     type SupplyInventoryItem,
@@ -1679,7 +1681,138 @@ export const supplyApi = {
         const json = await parseJsonResponse<Record<string, unknown>>(res);
         return normalizeSupplyProfileMutationResponse(json);
     },
+
+    async listSupplyConversationThreads(
+        params: { profileId?: string; channelId?: SupplyWhatsAppChannelId; limit?: number } = {},
+        tenantId?: string
+    ): Promise<SupplyConversationThread[]> {
+        const qs = buildQuery(params);
+        const res = await coreAuthFetch(`${SUPPLY_API_BASE}/conversations${qs}`, {
+            method: 'GET',
+            headers: buildHeaders(tenantId),
+        });
+        const json = await parseJsonResponse<Record<string, unknown>>(res);
+        return unwrapArray<SupplyConversationThread>(json, 'threads');
+    },
+
+    async listSupplyConversationTurns(
+        threadId: string,
+        params: { limit?: number } = {},
+        tenantId?: string
+    ): Promise<SupplyConversationTurnsResponse> {
+        const qs = buildQuery(params);
+        const res = await coreAuthFetch(
+            `${SUPPLY_API_BASE}/conversations/${encodeURIComponent(threadId)}/turns${qs}`,
+            {
+                method: 'GET',
+                headers: buildHeaders(tenantId),
+            }
+        );
+        const json = await parseJsonResponse<Record<string, unknown>>(res);
+        const rawChain =
+            json?.chainVerification && typeof json.chainVerification === 'object'
+                ? (json.chainVerification as Record<string, unknown>)
+                : {};
+        const turns = unwrapArray<SupplyConversationTurn>(json, 'turns');
+        return {
+            thread: json.thread as SupplyConversationThread,
+            turns,
+            chainVerification: {
+                valid: rawChain.valid !== false,
+                turnCount:
+                    typeof rawChain.turnCount === 'number' ? rawChain.turnCount : turns.length,
+                brokenAtSeq:
+                    typeof rawChain.brokenAtSeq === 'number' ? rawChain.brokenAtSeq : undefined,
+                reason: typeof rawChain.reason === 'string' ? rawChain.reason : undefined,
+            },
+        };
+    },
+
+    async exportSupplyConversation(
+        threadId: string,
+        format: 'JSON' | 'CSV',
+        tenantId?: string
+    ): Promise<SupplyConversationExportResult> {
+        const res = await coreAuthFetch(
+            `${SUPPLY_API_BASE}/conversations/${encodeURIComponent(threadId)}/export`,
+            {
+                method: 'POST',
+                headers: buildHeaders(tenantId, true),
+                body: JSON.stringify({ format }),
+            }
+        );
+        const headerSha = res.headers.get('X-Content-SHA256') || '';
+        const contentType = res.headers.get('Content-Type') || '';
+        if (format === 'CSV' || contentType.toLowerCase().includes('text/csv')) {
+            if (!res.ok) {
+                const errText = await res.text();
+                let parsedErr: Record<string, unknown> | null = null;
+                try {
+                    parsedErr = errText ? (JSON.parse(errText) as Record<string, unknown>) : null;
+                } catch {
+                    parsedErr = null;
+                }
+                const msg =
+                    typeof parsedErr?.error === 'string' && parsedErr.error.trim()
+                        ? parsedErr.error
+                        : `HTTP ${res.status}`;
+                throw new Error(msg);
+            }
+            const bodyText = await res.text();
+            return {
+                format: 'CSV',
+                filename: `${threadId}.csv`,
+                sha256: headerSha,
+                bodyText,
+            };
+        }
+
+        const json = await parseJsonResponse<Record<string, unknown>>(res);
+        const sha256 =
+            typeof json?.sha256 === 'string' && json.sha256.trim()
+                ? json.sha256.trim()
+                : headerSha;
+        const payload = json?.payload ?? json;
+        return {
+            format: 'JSON',
+            filename:
+                typeof json?.filename === 'string' && json.filename.trim()
+                    ? json.filename
+                    : `${threadId}.json`,
+            sha256,
+            turnCount: typeof json?.turnCount === 'number' ? json.turnCount : undefined,
+            chainVerification:
+                json?.chainVerification && typeof json.chainVerification === 'object'
+                    ? (json.chainVerification as SupplyConversationChainVerification)
+                    : undefined,
+            bodyText: JSON.stringify(payload, null, 2),
+            payload,
+        };
+    },
 };
+
+export interface SupplyConversationChainVerification {
+    valid: boolean;
+    turnCount: number;
+    brokenAtSeq?: number;
+    reason?: string;
+}
+
+export interface SupplyConversationTurnsResponse {
+    thread: SupplyConversationThread;
+    turns: SupplyConversationTurn[];
+    chainVerification: SupplyConversationChainVerification;
+}
+
+export interface SupplyConversationExportResult {
+    format: 'JSON' | 'CSV';
+    filename: string;
+    sha256: string;
+    turnCount?: number;
+    chainVerification?: SupplyConversationChainVerification;
+    bodyText: string;
+    payload?: unknown;
+}
 
 function normalizeSupplyProfileView(raw: Record<string, unknown>): SupplyProfileViewRecord {
     const temporaryGrants = Array.isArray(raw.temporaryGrants)

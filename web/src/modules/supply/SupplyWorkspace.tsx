@@ -14,6 +14,7 @@ import { SiiRendicionesView } from './components/SiiRendicionesView';
 import { ReceiptScannerModal } from './components/ReceiptScannerModal';
 import { ReconciliationHitlDrawer } from './components/ReconciliationHitlDrawer';
 import { SupplyProfilesChannelsView } from './components/SupplyProfilesChannelsView';
+import { SupplyConversationsAuditView } from './components/SupplyConversationsAuditView';
 import {
     computeRcvDaysRemaining,
     type ConsolidatedShoppingBucketGroup,
@@ -22,6 +23,7 @@ import {
     type SiiDocumentRecord,
     type SiiExpenseReport,
     type SupplyAssetRecord,
+    type SupplyConversationThread,
     type SupplyDomainMode,
     type SupplyInventoryItem,
     type SupplyProfileViewRecord,
@@ -74,7 +76,6 @@ function parseTabQueryParam(raw?: string | null): SupplyPrimaryTab | null {
 function resolveTabFromDomainMode(mode?: string): SupplyPrimaryTab {
     switch (String(mode || '').toUpperCase()) {
         case 'DEMAND':
-        case 'WHATSAPP_CHANNELS':
             return 'DEMAND';
         case 'PROCUREMENT':
             return 'PROCUREMENT';
@@ -82,6 +83,7 @@ function resolveTabFromDomainMode(mode?: string): SupplyPrimaryTab {
         case 'FORECAST':
             return 'WAREHOUSE';
         case 'CONVERSATIONS':
+        case 'WHATSAPP_CHANNELS':
             return 'CONVERSATIONS';
         case 'SII_EXPENSES':
         case 'FINANCE_RECON':
@@ -245,6 +247,7 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
     const [siiDocuments, setSiiDocuments] = useState<SiiDocumentRecord[]>([]);
     const [expenseReports, setExpenseReports] = useState<SiiExpenseReport[]>([]);
     const [wsProfiles, setWsProfiles] = useState<SupplyProfileViewRecord[]>([]);
+    const [conversationThreads, setConversationThreads] = useState<SupplyConversationThread[]>([]);
 
     useEffect(() => {
         if (domainMode) setActiveTab(resolveTabFromDomainMode(domainMode));
@@ -367,6 +370,12 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                     supplyApi.listSupplyProfiles({}, resolvedTenantId),
                 ]);
                 if (profRes.status === 'fulfilled') setWsProfiles(profRes.value);
+            } else if (targetTab === 'CONVERSATIONS') {
+                const [, threadsRes] = await Promise.allSettled([
+                    safeSites,
+                    supplyApi.listSupplyConversationThreads({}, resolvedTenantId),
+                ]);
+                if (threadsRes.status === 'fulfilled') setConversationThreads(threadsRes.value);
             } else {
                 await Promise.allSettled([safeSites]);
             }
@@ -649,14 +658,16 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                         <button
                             type="button"
                             onClick={() => {
-                                setActiveTab('DEMAND');
-                                setSimulatorOpen((prev) => !prev);
+                                setActiveTab('CONVERSATIONS');
+                                setSimulatorOpen((prev) =>
+                                    activeTab === 'CONVERSATIONS' ? !prev : true
+                                );
                             }}
                             aria-label={t('supply.nav.wa_simulator')}
                             title={t('supply.nav.wa_simulator')}
                             className={cn(
                                 'bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center transition-colors cursor-pointer rounded-none shadow-none',
-                                simulatorOpen
+                                activeTab === 'CONVERSATIONS' && simulatorOpen
                                     ? 'text-[#0369A1] dark:text-[#00AEEF]'
                                     : 'text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
                             )}
@@ -755,8 +766,10 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                             loading={loading}
                             canMutate={canMutateSupply}
                             canAccessSimulator={canAccessSimulator}
-                            simulatorOpen={simulatorOpen}
-                            onToggleSimulator={setSimulatorOpen}
+                            onOpenConversationsTab={() => {
+                                setActiveTab('CONVERSATIONS');
+                                setSimulatorOpen(true);
+                            }}
                             onRequisitionCreated={() => void loadTabData('DEMAND')}
                         />
                     )}
@@ -777,15 +790,30 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                     )}
 
                     {activeTab === 'CONVERSATIONS' && (
-                        <div data-testid="supply-conversations-placeholder" className="p-fib-34 space-y-fib-13">
-                            <div className="flex items-center gap-fib-8 font-mono text-microcopy uppercase font-bold text-[#0F172A] dark:text-[#F3F4F6]">
-                                <span className="material-symbols-outlined text-[20px] text-[#00AEEF]">forum</span>
-                                <span>{t('supply.conversations.title')}</span>
-                            </div>
-                            <p className="font-mono text-data-dense text-[#475569] dark:text-[#8A93A6]">
-                                {t('supply.conversations.pending_stage')}
-                            </p>
-                        </div>
+                        <SupplyConversationsAuditView
+                            threads={conversationThreads}
+                            sites={sites}
+                            defaultSiteId={selectedSiteId || sites[0]?.siteId}
+                            tenantId={resolvedTenantId}
+                            loading={loading}
+                            canAccessSimulator={canAccessSimulator}
+                            simulatorOpen={simulatorOpen}
+                            onToggleSimulator={setSimulatorOpen}
+                            onRefreshThreads={() => void loadTabData('CONVERSATIONS')}
+                            onRequisitionCreated={() => void loadTabData('CONVERSATIONS')}
+                            onNavigateLinked={(target) => {
+                                if (typeof window !== 'undefined') {
+                                    window.dispatchEvent(
+                                        new CustomEvent('supply:navigate-entity', {
+                                            detail: target,
+                                        })
+                                    );
+                                }
+                                if (target.type === 'REQ') setActiveTab('DEMAND');
+                                else if (target.type === 'PUR') setActiveTab('WAREHOUSE');
+                                else if (target.type === 'DTE') setActiveTab('FINANCE_SII');
+                            }}
+                        />
                     )}
 
                     {activeTab === 'FINANCE_SII' && (

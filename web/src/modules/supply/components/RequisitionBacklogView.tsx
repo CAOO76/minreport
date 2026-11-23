@@ -10,11 +10,9 @@ import {
     type RequisitionUrgency,
     type SupplyCategoryCode,
     type SupplyDemandOrigin,
-    type SupplyOperationalRole,
     type SupplyRequisition,
     type SupplySite,
     type SupplyUnitSi,
-    type WhatsAppSimMessage,
 } from '../types';
 
 export interface RequisitionBacklogViewProps {
@@ -24,9 +22,8 @@ export interface RequisitionBacklogViewProps {
     tenantId?: string;
     loading: boolean;
     canMutate?: boolean;
-    canAccessSimulator: boolean;
-    simulatorOpen: boolean;
-    onToggleSimulator: (open: boolean) => void;
+    canAccessSimulator?: boolean;
+    onOpenConversationsTab?: () => void;
     onRequisitionCreated: () => void;
 }
 
@@ -41,16 +38,6 @@ const DEMAND_ORIGINS: SupplyDemandOrigin[] = [
     'MODULE_OPERMAQ',
     'MODULE_STOCKPILE',
     'DESKTOP_MANUAL',
-];
-
-const SIM_ROLES: SupplyOperationalRole[] = [
-    'CAMP_MANAGER',
-    'MECHANIC_TECH',
-    'OPS_FOREMAN',
-    'WAREHOUSE_KEEPER',
-    'HSEC_OFFICER',
-    'BUYER',
-    'OWNER_EXEC',
 ];
 
 interface DraftLine {
@@ -80,9 +67,8 @@ export const RequisitionBacklogView: React.FC<RequisitionBacklogViewProps> = ({
     tenantId,
     loading: _loading,
     canMutate = true,
-    canAccessSimulator,
-    simulatorOpen,
-    onToggleSimulator,
+    canAccessSimulator = false,
+    onOpenConversationsTab,
     onRequisitionCreated,
 }) => {
     const { t } = useTranslation();
@@ -97,13 +83,6 @@ export const RequisitionBacklogView: React.FC<RequisitionBacklogViewProps> = ({
     const [draftLines, setDraftLines] = useState<DraftLine[]>([createDraftLine()]);
     const [submittingReq, setSubmittingReq] = useState(false);
     const [formNotice, setFormNotice] = useState<{ tone: 'copper' | 'cyan'; text: string } | null>(null);
-
-    // DEV / TEST-PILOT Interactive WhatsApp Simulator State
-    const [simPhone, setSimPhone] = useState('+56911112222');
-    const [simRole, setSimRole] = useState<SupplyOperationalRole>('CAMP_MANAGER');
-    const [simInput, setSimInput] = useState('');
-    const [simBusy, setSimBusy] = useState(false);
-    const [simMessages, setSimMessages] = useState<WhatsAppSimMessage[]>([]);
 
     const filteredReqs = useMemo(() => {
         const q = searchQuery.trim().toLowerCase();
@@ -168,70 +147,6 @@ export const RequisitionBacklogView: React.FC<RequisitionBacklogViewProps> = ({
         }
     };
 
-    const sendSimulatedMessage = async (textOverride?: string, resetSession: boolean = false) => {
-        if (!canAccessSimulator) return;
-        const messageText = (textOverride ?? simInput).trim();
-        if (!messageText && !resetSession) return;
-
-        if (resetSession) {
-            setSimMessages([]);
-        } else {
-            setSimMessages((prev) => [
-                ...prev,
-                {
-                    id: `in_${Date.now()}`,
-                    direction: 'INBOUND',
-                    text: messageText,
-                    timestamp: new Date().toISOString(),
-                },
-            ]);
-            setSimInput('');
-        }
-
-        setSimBusy(true);
-        try {
-            const res = await supplyApi.simulateWhatsAppMessage(
-                {
-                    siteId: defaultSiteId || sites[0]?.siteId || 'site-main',
-                    phoneE164: simPhone.trim(),
-                    simulateSenderRole: simRole,
-                    text: resetSession ? '/reset' : messageText,
-                    resetSession,
-                },
-                tenantId
-            );
-            setSimMessages((prev) => [
-                ...prev,
-                {
-                    id: `out_${Date.now()}`,
-                    direction: 'OUTBOUND',
-                    text: res.replyText,
-                    fsmState: res.fsmState,
-                    hardDeniedItems: res.hardDeniedItems,
-                    atypicalFlags: res.atypicalFlags,
-                    missingSlots: res.missingSlots,
-                    committedReqId: res.committedReqId,
-                    timestamp: new Date().toISOString(),
-                },
-            ]);
-            if (res.committedReqId) {
-                onRequisitionCreated();
-            }
-        } catch (err) {
-            setSimMessages((prev) => [
-                ...prev,
-                {
-                    id: `err_${Date.now()}`,
-                    direction: 'OUTBOUND',
-                    text: err instanceof Error ? err.message : 'SIM_ERROR',
-                    timestamp: new Date().toISOString(),
-                },
-            ]);
-        } finally {
-            setSimBusy(false);
-        }
-    };
-
     return (
         <section className="w-full flex flex-col bg-[#FFFFFF] dark:bg-[#000000] select-none">
             {/* Controls Strip */}
@@ -292,20 +207,16 @@ export const RequisitionBacklogView: React.FC<RequisitionBacklogViewProps> = ({
                         </button>
                     )}
 
-                    {canAccessSimulator && (
+                    {canAccessSimulator && onOpenConversationsTab && (
                         <button
                             type="button"
-                            onClick={() => onToggleSimulator(!simulatorOpen)}
-                            aria-label={t('supply.backlog.open_simulator')}
-                            title={t('supply.backlog.open_simulator')}
-                            className={cn(
-                                'bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center transition-colors cursor-pointer rounded-none shadow-none',
-                                simulatorOpen
-                                    ? 'text-[#0369A1] dark:text-[#00AEEF]'
-                                    : 'text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
-                            )}
+                            onClick={onOpenConversationsTab}
+                            aria-label={t('supply.backlog.open_conversations')}
+                            title={t('supply.backlog.open_conversations')}
+                            data-testid="backlog-open-conversations-btn"
+                            className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center transition-colors cursor-pointer rounded-none shadow-none text-[#475569] dark:text-[#8A93A6] hover:text-[#0369A1] dark:hover:text-[#00AEEF]"
                         >
-                            <span className="material-symbols-outlined text-[22px]">chat</span>
+                            <span className="material-symbols-outlined text-[22px]">forum</span>
                         </button>
                     )}
                 </div>
@@ -534,217 +445,6 @@ export const RequisitionBacklogView: React.FC<RequisitionBacklogViewProps> = ({
                         </button>
                     </div>
                 </form>
-            )}
-
-            {/* DEV / TEST-PILOT WhatsApp Campamento Simulator Drawer */}
-            {canAccessSimulator && simulatorOpen && (
-                <div className="border-b border-[#00AEEF] bg-[#F8FAFC] dark:bg-[#07090D] p-fib-21 space-y-fib-13">
-                    <div className="flex flex-wrap items-center justify-between gap-fib-8 border-b border-[#E2E8F0] dark:border-[#12151C] pb-fib-13">
-                        <div className="flex items-center gap-fib-8">
-                            <span className="material-symbols-outlined text-[20px] text-[#0369A1] dark:text-[#00AEEF]">
-                                chat
-                            </span>
-                            <span className="font-mono text-data-dense font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6]">
-                                {t('supply.backlog.sim_title')}
-                            </span>
-                        </div>
-                        <div className="flex items-center gap-fib-8">
-                            <button
-                                type="button"
-                                onClick={() => void sendSimulatedMessage(undefined, true)}
-                                aria-label={t('supply.backlog.sim_reset')}
-                                title={t('supply.backlog.sim_reset')}
-                                className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#475569] dark:text-[#8A93A6] hover:text-[#7C3F0E] dark:hover:text-[#C68346] cursor-pointer rounded-none shadow-none"
-                            >
-                                <span className="material-symbols-outlined text-[18px]">refresh</span>
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => onToggleSimulator(false)}
-                                aria-label={t('supply.common.close')}
-                                title={t('supply.common.close')}
-                                className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] cursor-pointer rounded-none shadow-none"
-                            >
-                                <span className="material-symbols-outlined text-[18px]">close</span>
-                            </button>
-                        </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-fib-13">
-                        <div className="space-y-fib-8">
-                            <label
-                                htmlFor={`${uid}-sim-phone`}
-                                className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]"
-                            >
-                                {t('supply.backlog.sim_phone')}
-                            </label>
-                            <input
-                                id={`${uid}-sim-phone`}
-                                type="text"
-                                value={simPhone}
-                                onChange={(e) => setSimPhone(e.target.value)}
-                                autoComplete="off"
-                                spellCheck={false}
-                                aria-label={t('supply.backlog.sim_phone')}
-                                placeholder="+56911112222"
-                                className="w-full min-h-[48px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-data-dense tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
-                            />
-                        </div>
-                        <div className="space-y-fib-8">
-                            <label
-                                htmlFor={`${uid}-sim-role`}
-                                className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]"
-                            >
-                                {t('supply.backlog.sim_role')}
-                            </label>
-                            <select
-                                id={`${uid}-sim-role`}
-                                value={simRole}
-                                onChange={(e) => setSimRole(e.target.value as SupplyOperationalRole)}
-                                aria-label={t('supply.backlog.sim_role')}
-                                className="w-full min-h-[48px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
-                            >
-                                {SIM_ROLES.map((r) => (
-                                    <option key={r} value={r}>
-                                        {r}
-                                    </option>
-                                ))}
-                            </select>
-                        </div>
-                    </div>
-
-                    {/* Deterministic Scenario Presets */}
-                    <div className="flex flex-wrap items-center gap-fib-8">
-                        <button
-                            type="button"
-                            disabled={simBusy}
-                            onClick={() =>
-                                void sendSimulatedMessage(t('supply.backlog.sim_preset_slots_msg'))
-                            }
-                            className="min-h-[48px] px-fib-13 border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] hover:border-[#00AEEF] font-mono text-microcopy text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none cursor-pointer"
-                        >
-                            {t('supply.backlog.sim_preset_slots')}
-                        </button>
-                        <button
-                            type="button"
-                            disabled={simBusy}
-                            onClick={() =>
-                                void sendSimulatedMessage(t('supply.backlog.sim_preset_deny_msg'))
-                            }
-                            className="min-h-[48px] px-fib-13 border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] hover:border-[#C68346] font-mono text-microcopy text-[#7C3F0E] dark:text-[#C68346] rounded-none shadow-none cursor-pointer"
-                        >
-                            {t('supply.backlog.sim_preset_deny')}
-                        </button>
-                        <button
-                            type="button"
-                            disabled={simBusy}
-                            onClick={() =>
-                                void sendSimulatedMessage(
-                                    t('supply.backlog.sim_preset_atypical_msg')
-                                )
-                            }
-                            className="min-h-[48px] px-fib-13 border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] hover:border-[#C68346] font-mono text-microcopy text-[#7C3F0E] dark:text-[#C68346] rounded-none shadow-none cursor-pointer"
-                        >
-                            {t('supply.backlog.sim_preset_atypical')}
-                        </button>
-                        <button
-                            type="button"
-                            disabled={simBusy}
-                            onClick={() => void sendSimulatedMessage('OK')}
-                            className="min-h-[48px] px-fib-13 border border-[#00AEEF] bg-[#FFFFFF] dark:bg-[#000000] font-mono text-microcopy text-[#0369A1] dark:text-[#00AEEF] rounded-none shadow-none cursor-pointer"
-                        >
-                            {t('supply.backlog.sim_preset_confirm')}
-                        </button>
-                    </div>
-
-                    {simBusy && <M3LinearProgress indeterminate ariaLabel={t('supply.common.loading')} />}
-
-                    {/* Transcript */}
-                    {simMessages.length > 0 && (
-                        <div className="max-h-60 overflow-y-auto divide-y divide-[#E2E8F0] dark:divide-[#12151C] border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000]">
-                            {simMessages.map((msg) => (
-                                <div
-                                    key={msg.id}
-                                    className={cn(
-                                        'px-fib-13 py-fib-8 space-y-fib-8 border-l-[3px]',
-                                        msg.hardDeniedItems?.length || msg.atypicalFlags?.length
-                                            ? 'border-[#C68346]'
-                                            : msg.direction === 'OUTBOUND'
-                                              ? 'border-[#00AEEF]'
-                                              : 'border-transparent'
-                                    )}
-                                >
-                                    <div className="flex items-center justify-between font-mono text-microcopy tabular-nums text-[#475569] dark:text-[#8A93A6]">
-                                        <span>{msg.direction === 'INBOUND' ? simRole : 'MINREPORT BOT'}</span>
-                                        {msg.fsmState && (
-                                            <span className="text-[#0369A1] dark:text-[#00AEEF] font-bold">
-                                                {t('supply.backlog.fsm_state')}: {msg.fsmState}
-                                            </span>
-                                        )}
-                                    </div>
-                                    <div className="text-data-dense text-[#0F172A] dark:text-[#F3F4F6] whitespace-pre-wrap select-text">
-                                        {msg.text}
-                                    </div>
-                                    {msg.hardDeniedItems && msg.hardDeniedItems.length > 0 && (
-                                        <div className="font-mono text-microcopy text-[#7C3F0E] dark:text-[#C68346]">
-                                            {t('supply.backlog.hard_denied')}: {msg.hardDeniedItems.join(', ')}
-                                        </div>
-                                    )}
-                                    {msg.atypicalFlags && msg.atypicalFlags.length > 0 && (
-                                        <div className="font-mono text-microcopy text-[#7C3F0E] dark:text-[#C68346]">
-                                            {msg.atypicalFlags
-                                                .map((f) => t(`supply.atypicals.${f}`))
-                                                .join(' · ')}
-                                        </div>
-                                    )}
-                                    {msg.committedReqId && (
-                                        <div className="flex items-center gap-fib-8 font-mono text-microcopy text-[#0369A1] dark:text-[#00AEEF] select-text">
-                                            <span>REQ: {msg.committedReqId}</span>
-                                            <CopyButton
-                                                value={msg.committedReqId}
-                                                title={t('supply.common.copy_code')}
-                                            />
-                                        </div>
-                                    )}
-                                </div>
-                            ))}
-                        </div>
-                    )}
-
-                    <form
-                        onSubmit={(e) => {
-                            e.preventDefault();
-                            void sendSimulatedMessage();
-                        }}
-                        autoComplete="off"
-                        spellCheck={false}
-                        className="flex items-center gap-fib-8"
-                    >
-                        <label htmlFor={`${uid}-sim-input`} className="sr-only">
-                            {t('supply.backlog.sim_input_placeholder')}
-                        </label>
-                        <input
-                            id={`${uid}-sim-input`}
-                            type="text"
-                            value={simInput}
-                            onChange={(e) => setSimInput(e.target.value)}
-                            autoComplete="off"
-                            spellCheck={false}
-                            aria-label={t('supply.backlog.sim_input_placeholder')}
-                            placeholder={t('supply.backlog.sim_input_placeholder')}
-                            className="flex-1 min-h-[48px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#00AEEF] outline-none text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
-                        />
-                        <button
-                            type="submit"
-                            disabled={simBusy || !simInput.trim()}
-                            aria-label={t('supply.backlog.sim_send')}
-                            title={t('supply.backlog.sim_send')}
-                            className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#0369A1] dark:text-[#00AEEF] hover:opacity-80 cursor-pointer rounded-none shadow-none disabled:opacity-40"
-                        >
-                            <span className="material-symbols-outlined text-[22px]">send</span>
-                        </button>
-                    </form>
-                </div>
             )}
 
             {/* Requisition Rows */}

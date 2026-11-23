@@ -18,6 +18,10 @@ export {
     type InventoryAndAssetsViewProps,
 } from './components/InventoryAndAssetsView';
 export { SiiRendicionesView, type SiiRendicionesViewProps } from './components/SiiRendicionesView';
+export {
+    SupplyConversationsAuditView,
+    type SupplyConversationsAuditViewProps,
+} from './components/SupplyConversationsAuditView';
 export { supplyApi } from './services/supplyApi';
 export { registerSupplyLocales } from './locales/registerSupplyLocales';
 export * from './types';
