@@ -49,6 +49,9 @@ import type {
     LinePricingBasis,
     ProcurementBucket,
     SupplyCategoryCode,
+    SupplyProfileGrant,
+    SupplyWhatsAppChannelId,
+    TemporaryChannelGrant,
 } from '../../contracts/supply.contracts';
 
 export type SupplyDomainMode =
@@ -495,6 +498,16 @@ export interface WhatsAppSimMessage {
     missingSlots?: string[];
     committedReqId?: string;
     timestamp: string;
+}
+
+export interface SupplyProfileViewRecord extends SupplyProfileGrant {
+    effectiveChannels: SupplyWhatsAppChannelId[];
+    activeTemporaryGrants: TemporaryChannelGrant[];
+    expiredTemporaryGrantsCount: number;
+    effectiveMaxAmountClp: number;
+    effectiveAllowedSiteIds: string[];
+    hasValidDgmnLicense: boolean;
+    whatsappDispatchAllowed: boolean;
 }
 
 import {

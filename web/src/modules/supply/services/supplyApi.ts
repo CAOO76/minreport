@@ -11,6 +11,7 @@ import {
     type ConsolidatedShoppingItem,
     type DemandForecastSummary,
     type FulfillmentAllocationDraft,
+    type GrantTemporaryChannelRequest,
     type PaymentMethod,
     type ProcurementBucket,
     type PurchaseLineDestination,
@@ -30,6 +31,7 @@ import {
     type SupplyDemandOrigin,
     type SupplyInventoryItem,
     type SupplyOperationalRole,
+    type SupplyProfileViewRecord,
     type SupplyPurchaseDraft,
     type SupplyPurchaseLineDraft,
     type SupplyPurchaseReceptionStatus,
@@ -38,6 +40,10 @@ import {
     type SupplyRequisitionLine,
     type SupplySite,
     type SupplyUnitSi,
+    type SupplyWhatsAppChannelId,
+    type TemporaryChannelGrant,
+    type UpdateSupplyProfileChannelsRequest,
+    type UpsertSupplyProfileRequest,
     type WhatsAppSimMessage,
 } from '../types';
 
@@ -1577,6 +1583,167 @@ export const supplyApi = {
             committedReqId,
         };
     },
+
+    async listSupplyProfiles(
+        params: { atIso?: string } = {},
+        tenantId?: string
+    ): Promise<SupplyProfileViewRecord[]> {
+        const qs = buildQuery(params);
+        const res = await coreAuthFetch(`${SUPPLY_API_BASE}/profiles${qs}`, {
+            method: 'GET',
+            headers: buildHeaders(tenantId),
+        });
+        const json = await parseJsonResponse<Record<string, unknown>>(res);
+        return unwrapArray<Record<string, unknown>>(json, 'profiles').map(normalizeSupplyProfileView);
+    },
+
+    async upsertSupplyProfile(
+        payload: UpsertSupplyProfileRequest,
+        tenantId?: string
+    ): Promise<SupplyProfileViewRecord> {
+        const res = await coreAuthFetch(`${SUPPLY_API_BASE}/profiles`, {
+            method: 'POST',
+            headers: buildHeaders(tenantId, true),
+            body: JSON.stringify(payload),
+        });
+        const json = await parseJsonResponse<Record<string, unknown>>(res);
+        return normalizeSupplyProfileMutationResponse(json);
+    },
+
+    async updateSupplyProfileChannels(
+        profileId: string,
+        payload: UpdateSupplyProfileChannelsRequest,
+        tenantId?: string
+    ): Promise<SupplyProfileViewRecord> {
+        const res = await coreAuthFetch(
+            `${SUPPLY_API_BASE}/profiles/${encodeURIComponent(profileId)}/channels`,
+            {
+                method: 'PATCH',
+                headers: buildHeaders(tenantId, true),
+                body: JSON.stringify(payload),
+            }
+        );
+        const json = await parseJsonResponse<Record<string, unknown>>(res);
+        return normalizeSupplyProfileMutationResponse(json);
+    },
+
+    async grantTemporarySupplyChannel(
+        profileId: string,
+        payload: GrantTemporaryChannelRequest,
+        tenantId?: string
+    ): Promise<SupplyProfileViewRecord> {
+        const res = await coreAuthFetch(
+            `${SUPPLY_API_BASE}/profiles/${encodeURIComponent(profileId)}/temporary-grants`,
+            {
+                method: 'POST',
+                headers: buildHeaders(tenantId, true),
+                body: JSON.stringify(payload),
+            }
+        );
+        const json = await parseJsonResponse<Record<string, unknown>>(res);
+        return normalizeSupplyProfileMutationResponse(json);
+    },
+
+    async revokeTemporarySupplyChannel(
+        profileId: string,
+        grantItemId: string,
+        confirmationKeyword: 'ACTUALIZAR',
+        tenantId?: string
+    ): Promise<SupplyProfileViewRecord> {
+        const res = await coreAuthFetch(
+            `${SUPPLY_API_BASE}/profiles/${encodeURIComponent(profileId)}/temporary-grants/${encodeURIComponent(grantItemId)}`,
+            {
+                method: 'DELETE',
+                headers: buildHeaders(tenantId, true),
+                body: JSON.stringify({ confirmationKeyword }),
+            }
+        );
+        const json = await parseJsonResponse<Record<string, unknown>>(res);
+        return normalizeSupplyProfileMutationResponse(json);
+    },
+
+    async confirmSupplyProfileOptIn(
+        profileId: string,
+        action: 'CONFIRM' | 'REVOKE_STOP',
+        confirmationKeyword: 'ACTUALIZAR',
+        tenantId?: string
+    ): Promise<SupplyProfileViewRecord> {
+        const res = await coreAuthFetch(
+            `${SUPPLY_API_BASE}/profiles/${encodeURIComponent(profileId)}/opt-in/confirm`,
+            {
+                method: 'POST',
+                headers: buildHeaders(tenantId, true),
+                body: JSON.stringify({ action, confirmationKeyword }),
+            }
+        );
+        const json = await parseJsonResponse<Record<string, unknown>>(res);
+        return normalizeSupplyProfileMutationResponse(json);
+    },
 };
+
+function normalizeSupplyProfileView(raw: Record<string, unknown>): SupplyProfileViewRecord {
+    const temporaryGrants = Array.isArray(raw.temporaryGrants)
+        ? (raw.temporaryGrants as TemporaryChannelGrant[])
+        : [];
+    const activeTemporaryGrants = Array.isArray(raw.activeTemporaryGrants)
+        ? (raw.activeTemporaryGrants as TemporaryChannelGrant[])
+        : [];
+    const permanentChannels = Array.isArray(raw.permanentChannels)
+        ? (raw.permanentChannels as SupplyWhatsAppChannelId[])
+        : [];
+    const effectiveChannels = Array.isArray(raw.effectiveChannels)
+        ? (raw.effectiveChannels as SupplyWhatsAppChannelId[])
+        : permanentChannels;
+    const allowedSiteIds = Array.isArray(raw.allowedSiteIds)
+        ? (raw.allowedSiteIds as string[])
+        : [];
+    const effectiveAllowedSiteIds = Array.isArray(raw.effectiveAllowedSiteIds)
+        ? (raw.effectiveAllowedSiteIds as string[])
+        : allowedSiteIds;
+    const maxAmountClp = Number(raw.maxAmountClp ?? 500_000) || 0;
+    const effectiveMaxAmountClp =
+        typeof raw.effectiveMaxAmountClp === 'number'
+            ? raw.effectiveMaxAmountClp
+            : maxAmountClp;
+
+    return {
+        ...(raw as unknown as SupplyProfileViewRecord),
+        permanentChannels,
+        temporaryGrants,
+        effectiveChannels,
+        activeTemporaryGrants,
+        expiredTemporaryGrantsCount:
+            typeof raw.expiredTemporaryGrantsCount === 'number'
+                ? raw.expiredTemporaryGrantsCount
+                : Math.max(0, temporaryGrants.length - activeTemporaryGrants.length),
+        allowedSiteIds,
+        allowedWarehouseIds: Array.isArray(raw.allowedWarehouseIds)
+            ? (raw.allowedWarehouseIds as string[])
+            : [],
+        maxAmountClp,
+        effectiveMaxAmountClp,
+        effectiveAllowedSiteIds,
+        hasValidDgmnLicense: Boolean(raw.hasValidDgmnLicense),
+        whatsappDispatchAllowed: Boolean(raw.whatsappDispatchAllowed),
+    };
+}
+
+function normalizeSupplyProfileMutationResponse(
+    json: Record<string, unknown>
+): SupplyProfileViewRecord {
+    const profileObj =
+        json?.profile && typeof json.profile === 'object'
+            ? (json.profile as Record<string, unknown>)
+            : json;
+    return normalizeSupplyProfileView({
+        ...profileObj,
+        effectiveChannels: json?.effectiveChannels ?? profileObj.effectiveChannels,
+        activeTemporaryGrants: json?.activeTemporaryGrants ?? profileObj.activeTemporaryGrants,
+        hasValidDgmnLicense: json?.hasValidDgmnLicense ?? profileObj.hasValidDgmnLicense,
+        whatsappDispatchAllowed:
+            json?.whatsappDispatchAllowed ?? profileObj.whatsappDispatchAllowed,
+        optInStatus: json?.optInStatus ?? profileObj.optInStatus,
+    });
+}
 
 export default supplyApi;

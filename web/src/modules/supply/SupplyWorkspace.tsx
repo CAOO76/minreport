@@ -13,6 +13,7 @@ import { InventoryAndAssetsView } from './components/InventoryAndAssetsView';
 import { SiiRendicionesView } from './components/SiiRendicionesView';
 import { ReceiptScannerModal } from './components/ReceiptScannerModal';
 import { ReconciliationHitlDrawer } from './components/ReconciliationHitlDrawer';
+import { SupplyProfilesChannelsView } from './components/SupplyProfilesChannelsView';
 import {
     computeRcvDaysRemaining,
     type ConsolidatedShoppingBucketGroup,
@@ -23,6 +24,7 @@ import {
     type SupplyAssetRecord,
     type SupplyDomainMode,
     type SupplyInventoryItem,
+    type SupplyProfileViewRecord,
     type SupplyPurchaseDraft,
     type SupplyPurchaseRecord,
     type SupplyRequisition,
@@ -38,19 +40,32 @@ export interface SupplyWorkspaceProps {
     resetKey?: number;
 }
 
-type SupplyPrimaryTab = 'PROCUREMENT' | 'DEMAND' | 'WAREHOUSE' | 'SII_EXPENSES';
+export type SupplyPrimaryTab =
+    | 'CONTROL'
+    | 'DEMAND'
+    | 'PROCUREMENT'
+    | 'WAREHOUSE'
+    | 'CONVERSATIONS'
+    | 'FINANCE_SII'
+    | 'PROFILES_WS';
 
 function parseTabQueryParam(raw?: string | null): SupplyPrimaryTab | null {
     switch (String(raw || '').trim().toUpperCase()) {
         case 'CONTROL':
-        case 'PROCUREMENT':
-            return 'PROCUREMENT';
+            return 'CONTROL';
         case 'DEMAND':
             return 'DEMAND';
+        case 'PROCUREMENT':
+            return 'PROCUREMENT';
         case 'WAREHOUSE':
             return 'WAREHOUSE';
+        case 'CONVERSATIONS':
+            return 'CONVERSATIONS';
+        case 'FINANCE_SII':
         case 'SII_EXPENSES':
-            return 'SII_EXPENSES';
+            return 'FINANCE_SII';
+        case 'PROFILES_WS':
+            return 'PROFILES_WS';
         default:
             return null;
     }
@@ -61,16 +76,21 @@ function resolveTabFromDomainMode(mode?: string): SupplyPrimaryTab {
         case 'DEMAND':
         case 'WHATSAPP_CHANNELS':
             return 'DEMAND';
+        case 'PROCUREMENT':
+            return 'PROCUREMENT';
         case 'WAREHOUSE':
         case 'FORECAST':
             return 'WAREHOUSE';
+        case 'CONVERSATIONS':
+            return 'CONVERSATIONS';
         case 'SII_EXPENSES':
         case 'FINANCE_RECON':
-            return 'SII_EXPENSES';
+            return 'FINANCE_SII';
+        case 'PROFILES_WS':
+            return 'PROFILES_WS';
         case 'CONTROL':
-        case 'PROCUREMENT':
         default:
-            return 'PROCUREMENT';
+            return 'CONTROL';
     }
 }
 
@@ -110,9 +130,7 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
     const resolvedTenantId = useMemo(() => {
         if (propTenantId && propTenantId.trim()) return propTenantId.trim();
         if (hostScope === 'DEV_GATEWAY') {
-            return session?.isDevRoot && session.tenantId
-                ? session.tenantId
-                : 'dev-master-sandbox';
+            return session?.isDevRoot && session.tenantId ? session.tenantId : 'dev-master-sandbox';
         }
         return session?.tenantId || undefined;
     }, [propTenantId, hostScope, session]);
@@ -168,20 +186,24 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
         );
     }, [canMutateSupply, session, sessionRoleUpper, supplyPermissions]);
 
-    // Guard estricto: cuentas 5º EDU y 3º TEST-PILOT jamás pueden activar marketplaceOptIn
+    const canAdministerProfiles = useMemo(() => {
+        if (!canMutateSupply) return false;
+        return Boolean(
+            session?.isDevRoot ||
+                session?.isSuperAdmin ||
+                sessionRoleUpper === 'OWNER' ||
+                sessionRoleUpper === 'ADMIN' ||
+                sessionRoleUpper === 'OWNER_EXEC' ||
+                sessionRoleUpper === 'SITE_ADMIN'
+        );
+    }, [canMutateSupply, session, sessionRoleUpper]);
+
     const isMarketplaceBlocked = useMemo(
-        () =>
-            Boolean(
-                session?.isEduSandbox ||
-                    session?.isTestPilot ||
-                    hostScope === 'TEST_PILOT'
-            ),
+        () => Boolean(session?.isEduSandbox || session?.isTestPilot || hostScope === 'TEST_PILOT'),
         [hostScope, session]
     );
 
     const canScanAndBuy = canMutateSupply;
-
-    // WhatsApp Campamento interactive simulator strictly gated to DEV & TEST-PILOT
     const canAccessSimulator = useMemo(
         () =>
             Boolean(
@@ -212,12 +234,9 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
     );
     const [deadLetterCount, setDeadLetterCount] = useState<number>(0);
 
-    // Data state
     const [loading, setLoading] = useState(false);
     const [sites, setSites] = useState<SupplySite[]>([]);
-    const [consolidatedLists, setConsolidatedLists] = useState<ConsolidatedShoppingBucketGroup[]>(
-        []
-    );
+    const [consolidatedLists, setConsolidatedLists] = useState<ConsolidatedShoppingBucketGroup[]>([]);
     const [requisitions, setRequisitions] = useState<SupplyRequisition[]>([]);
     const [purchases, setPurchases] = useState<SupplyPurchaseRecord[]>([]);
     const [inventory, setInventory] = useState<SupplyInventoryItem[]>([]);
@@ -225,25 +244,17 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
     const [forecast, setForecast] = useState<DemandForecastSummary | null>(null);
     const [siiDocuments, setSiiDocuments] = useState<SiiDocumentRecord[]>([]);
     const [expenseReports, setExpenseReports] = useState<SiiExpenseReport[]>([]);
+    const [wsProfiles, setWsProfiles] = useState<SupplyProfileViewRecord[]>([]);
 
     useEffect(() => {
-        if (domainMode) {
-            setActiveTab(resolveTabFromDomainMode(domainMode));
-        } else if (resetKey !== undefined) {
-            setActiveTab(resolveInitialSupplyTab(embedded, domainMode));
-        }
-        if (String(domainMode || '').toUpperCase() === 'FINANCE_RECON') {
-            setReconcilerOpen(true);
-        }
-        if (
-            String(domainMode || '').toUpperCase() === 'WHATSAPP_CHANNELS' &&
-            canAccessSimulator
-        ) {
+        if (domainMode) setActiveTab(resolveTabFromDomainMode(domainMode));
+        else if (resetKey !== undefined) setActiveTab(resolveInitialSupplyTab(embedded, domainMode));
+        if (String(domainMode || '').toUpperCase() === 'FINANCE_RECON') setReconcilerOpen(true);
+        if (String(domainMode || '').toUpperCase() === 'WHATSAPP_CHANNELS' && canAccessSimulator) {
             setSimulatorOpen(true);
         }
     }, [domainMode, resetKey, canAccessSimulator, embedded]);
 
-    // Sincronizar activeTab <-> query param ?tab= cuando !embedded
     useEffect(() => {
         if (embedded || typeof window === 'undefined') return;
         try {
@@ -260,9 +271,7 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
     useEffect(() => {
         if (embedded || typeof window === 'undefined') return;
         const handlePopState = () => {
-            const fromUrl = parseTabQueryParam(
-                new URLSearchParams(window.location.search).get('tab')
-            );
+            const fromUrl = parseTabQueryParam(new URLSearchParams(window.location.search).get('tab'));
             if (fromUrl) setActiveTab(fromUrl);
         };
         window.addEventListener('popstate', handlePopState);
@@ -291,85 +300,111 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
 
     useEffect(() => {
         void refreshDeadLetterCount();
-        return syncQueueEngine.subscribe((state) => {
-            setOfflinePendingCount(state.pendingCount);
-        });
+        return syncQueueEngine.subscribe((state) => setOfflinePendingCount(state.pendingCount));
     }, [refreshDeadLetterCount]);
 
-    const loadAllData = useCallback(async () => {
-        setLoading(true);
-        const siteFilter = selectedSiteId || undefined;
-        const [
-            sitesRes,
-            listsRes,
-            reqsRes,
-            purchasesRes,
-            invRes,
-            assetsRes,
-            forecastRes,
-            siiDocsRes,
-            siiRepsRes,
-        ] = await Promise.allSettled([
-            supplyApi.listSites(resolvedTenantId),
-            supplyApi.getConsolidatedShoppingLists({ siteId: siteFilter }, resolvedTenantId),
-            supplyApi.listRequisitions({ siteId: siteFilter }, resolvedTenantId),
-            supplyApi.listPurchases({ siteId: siteFilter }, resolvedTenantId),
-            supplyApi.listInventory({ siteId: siteFilter }, resolvedTenantId),
-            supplyApi.listAssets({ siteId: siteFilter }, resolvedTenantId),
-            supplyApi.getForecast({ siteId: siteFilter }, resolvedTenantId),
-            supplyApi.listSiiDocuments({ siteId: siteFilter }, resolvedTenantId),
-            supplyApi.listSiiExpenseReports({ siteId: siteFilter }, resolvedTenantId),
-        ]);
+    // Fetch diferido por tab activo (cero ráfaga simultánea de 9 endpoints al montar)
+    const loadTabData = useCallback(
+        async (targetTab: SupplyPrimaryTab) => {
+            setLoading(true);
+            const siteFilter = selectedSiteId || undefined;
+            const safeSites = supplyApi.listSites(resolvedTenantId).then((res) => {
+                setSites(res);
+                return res;
+            });
 
-        if (sitesRes.status === 'fulfilled') setSites(sitesRes.value);
-        if (listsRes.status === 'fulfilled') setConsolidatedLists(listsRes.value);
-        if (reqsRes.status === 'fulfilled') setRequisitions(reqsRes.value);
-        if (purchasesRes.status === 'fulfilled') setPurchases(purchasesRes.value);
-        if (invRes.status === 'fulfilled') setInventory(invRes.value);
-        if (assetsRes.status === 'fulfilled') setAssets(assetsRes.value);
-        if (forecastRes.status === 'fulfilled') setForecast(forecastRes.value);
-        if (siiDocsRes.status === 'fulfilled') setSiiDocuments(siiDocsRes.value);
-        if (siiRepsRes.status === 'fulfilled') setExpenseReports(siiRepsRes.value);
-        setLoading(false);
-    }, [resolvedTenantId, selectedSiteId]);
+            if (targetTab === 'CONTROL') {
+                const [, reqRes, purRes, docRes, assetRes, fcRes] = await Promise.allSettled([
+                    safeSites,
+                    supplyApi.listRequisitions({ siteId: siteFilter }, resolvedTenantId),
+                    supplyApi.listPurchases({ siteId: siteFilter }, resolvedTenantId),
+                    supplyApi.listSiiDocuments({ siteId: siteFilter }, resolvedTenantId),
+                    supplyApi.listAssets({ siteId: siteFilter }, resolvedTenantId),
+                    supplyApi.getForecast({ siteId: siteFilter }, resolvedTenantId),
+                ]);
+                if (reqRes.status === 'fulfilled') setRequisitions(reqRes.value);
+                if (purRes.status === 'fulfilled') setPurchases(purRes.value);
+                if (docRes.status === 'fulfilled') setSiiDocuments(docRes.value);
+                if (assetRes.status === 'fulfilled') setAssets(assetRes.value);
+                if (fcRes.status === 'fulfilled') setForecast(fcRes.value);
+            } else if (targetTab === 'DEMAND') {
+                const [, reqRes] = await Promise.allSettled([
+                    safeSites,
+                    supplyApi.listRequisitions({ siteId: siteFilter }, resolvedTenantId),
+                ]);
+                if (reqRes.status === 'fulfilled') setRequisitions(reqRes.value);
+            } else if (targetTab === 'PROCUREMENT') {
+                const [, listRes, reqRes] = await Promise.allSettled([
+                    safeSites,
+                    supplyApi.getConsolidatedShoppingLists({ siteId: siteFilter }, resolvedTenantId),
+                    supplyApi.listRequisitions({ siteId: siteFilter }, resolvedTenantId),
+                ]);
+                if (listRes.status === 'fulfilled') setConsolidatedLists(listRes.value);
+                if (reqRes.status === 'fulfilled') setRequisitions(reqRes.value);
+            } else if (targetTab === 'WAREHOUSE') {
+                const [, invRes, assetRes, purRes, fcRes] = await Promise.allSettled([
+                    safeSites,
+                    supplyApi.listInventory({ siteId: siteFilter }, resolvedTenantId),
+                    supplyApi.listAssets({ siteId: siteFilter }, resolvedTenantId),
+                    supplyApi.listPurchases({ siteId: siteFilter }, resolvedTenantId),
+                    supplyApi.getForecast({ siteId: siteFilter }, resolvedTenantId),
+                ]);
+                if (invRes.status === 'fulfilled') setInventory(invRes.value);
+                if (assetRes.status === 'fulfilled') setAssets(assetRes.value);
+                if (purRes.status === 'fulfilled') setPurchases(purRes.value);
+                if (fcRes.status === 'fulfilled') setForecast(fcRes.value);
+            } else if (targetTab === 'FINANCE_SII') {
+                const [, docRes, repRes] = await Promise.allSettled([
+                    safeSites,
+                    supplyApi.listSiiDocuments({ siteId: siteFilter }, resolvedTenantId),
+                    supplyApi.listSiiExpenseReports({ siteId: siteFilter }, resolvedTenantId),
+                ]);
+                if (docRes.status === 'fulfilled') setSiiDocuments(docRes.value);
+                if (repRes.status === 'fulfilled') setExpenseReports(repRes.value);
+            } else if (targetTab === 'PROFILES_WS') {
+                const [, profRes] = await Promise.allSettled([
+                    safeSites,
+                    supplyApi.listSupplyProfiles({}, resolvedTenantId),
+                ]);
+                if (profRes.status === 'fulfilled') setWsProfiles(profRes.value);
+            } else {
+                await Promise.allSettled([safeSites]);
+            }
+            setLoading(false);
+        },
+        [resolvedTenantId, selectedSiteId]
+    );
 
     useEffect(() => {
-        void loadAllData();
-    }, [loadAllData]);
+        void loadTabData(activeTab);
+    }, [activeTab, loadTabData]);
 
-    // Suscripción reactiva a eventos de SyncQueueEngine (reconexión offline + dead-letter)
     useEffect(() => {
         if (typeof window === 'undefined') return;
         const onSynced = () => {
-            void loadAllData();
+            void loadTabData(activeTab);
             void refreshDeadLetterCount();
         };
         const onDeadLetter = () => {
             setDeadLetterCount((prev) => prev + 1);
             void refreshDeadLetterCount();
         };
-        for (const evName of SUPPLY_SYNC_EVENTS) {
-            window.addEventListener(evName, onSynced);
-        }
+        for (const evName of SUPPLY_SYNC_EVENTS) window.addEventListener(evName, onSynced);
         window.addEventListener('minreport:sync-dead-letter', onDeadLetter);
         return () => {
-            for (const evName of SUPPLY_SYNC_EVENTS) {
-                window.removeEventListener(evName, onSynced);
-            }
+            for (const evName of SUPPLY_SYNC_EVENTS) window.removeEventListener(evName, onSynced);
             window.removeEventListener('minreport:sync-dead-letter', onDeadLetter);
         };
-    }, [loadAllData, refreshDeadLetterCount]);
+    }, [activeTab, loadTabData, refreshDeadLetterCount]);
 
     const activeSite = useMemo(
         () => sites.find((s) => s.siteId === selectedSiteId) || sites[0] || null,
         [sites, selectedSiteId]
     );
-
     const openRequisitions = useMemo(
         () => requisitions.filter((r) => r.status === 'OPEN' || r.status === 'PARTIAL'),
         [requisitions]
     );
-
     const inTransitPurchases = useMemo(
         () =>
             purchases.filter(
@@ -383,16 +418,17 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
         [purchases]
     );
 
-    // NASA OpenMCT Monochrome Telemetry Strip Counters (ISA-101 Color by Exception)
     const telemetry = useMemo(() => {
         const pendingLines = openRequisitions.reduce(
             (sum, r) => sum + (r.lines || []).filter((l) => l.qtyPending > 0).length,
             0
         );
+        const stockoutRisk = inventory.filter(
+            (it) => it.qtyInWarehouse <= it.minSafetyQty || (it.doiDays !== null && it.doiDays <= 3)
+        ).length;
         const atypicalCount = openRequisitions.reduce(
             (sum, r) =>
-                sum +
-                (r.lines || []).reduce((ls, l) => ls + (l.atypicalFlags?.length ? 1 : 0), 0),
+                sum + (r.lines || []).reduce((ls, l) => ls + (l.atypicalFlags?.length ? 1 : 0), 0),
             0
         );
         const rcvUrgent = siiDocuments.filter((d) => {
@@ -410,15 +446,35 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
         const assetsWithoutInvoice = assets.filter(
             (a) => a.missingInvoiceAlert || (a.invoiceDteType !== 33 && a.invoiceDteType !== 34)
         ).length;
+        const sec160Alerts = inventory.filter(
+            (it) =>
+                (it.categoryCode === 'COMBUSTIBLE_CAMPAMENTO' ||
+                    it.categoryCode === 'COMBUSTIBLE_FLOTA_PROD') &&
+                it.qtyInWarehouse <= it.minSafetyQty
+        ).length;
+        const wsAlerts = atypicalCount + wsProfiles.filter((p) => p.optInStatus === 'PENDING_DOUBLE_OPT_IN').length;
 
         return {
             pendingLines,
+            stockoutRisk,
             atypicalCount,
             inTransitCount: inTransitPurchases.length,
             rcvUrgent,
             assetsWithoutInvoice,
+            sec160Alerts,
+            wsAlerts,
         };
-    }, [openRequisitions, inTransitPurchases, siiDocuments, assets]);
+    }, [openRequisitions, inventory, siiDocuments, assets, inTransitPurchases, wsProfiles]);
+
+    const NAV_TABS: Array<{ id: SupplyPrimaryTab; icon: string; label: string }> = [
+        { id: 'CONTROL', icon: 'monitoring', label: t('supply.nav.control') },
+        { id: 'DEMAND', icon: 'assignment', label: t('supply.nav.demand') },
+        { id: 'PROCUREMENT', icon: 'shopping_cart', label: t('supply.nav.procurement') },
+        { id: 'WAREHOUSE', icon: 'warehouse', label: t('supply.nav.warehouse') },
+        { id: 'CONVERSATIONS', icon: 'forum', label: t('supply.nav.conversations') },
+        { id: 'FINANCE_SII', icon: 'receipt_long', label: t('supply.nav.sii') },
+        { id: 'PROFILES_WS', icon: 'manage_accounts', label: t('supply.nav.profiles_ws') },
+    ];
 
     const containerClass = embedded
         ? 'w-full h-full min-h-0 flex-1 flex flex-col bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] font-sans rounded-none shadow-none overflow-hidden select-none'
@@ -429,37 +485,13 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
             className={containerClass}
             data-marketplace-opt-in={isMarketplaceBlocked ? 'blocked' : 'allowed'}
         >
-            {/* Single 56px Contextual Header (MBUX Zero-Layer — Zero Stacked Headers) */}
+            {/* Single 56px Contextual Header (MBUX Zero-Layer — 7 Tabs Icon-First) */}
             <header className="min-h-[56px] shrink-0 px-fib-13 sm:px-fib-21 bg-[#F8FAFC] dark:bg-[#07090D] border-b border-[#E2E8F0] dark:border-[#12151C] flex flex-wrap items-center justify-between gap-fib-8">
-                {/* Left: Icon-First Mode Tabs + Always-Visible Site Selector (<1280px included) */}
                 <nav
                     aria-label={t('supply.module_title')}
-                    className="flex items-center gap-fib-8 min-w-0"
+                    className="flex items-center gap-fib-8 min-w-0 overflow-x-auto"
                 >
-                    {(
-                        [
-                            {
-                                id: 'PROCUREMENT' as const,
-                                icon: 'checklist',
-                                label: t('supply.nav.procurement'),
-                            },
-                            {
-                                id: 'DEMAND' as const,
-                                icon: 'assignment',
-                                label: t('supply.nav.demand'),
-                            },
-                            {
-                                id: 'WAREHOUSE' as const,
-                                icon: 'warehouse',
-                                label: t('supply.nav.warehouse'),
-                            },
-                            {
-                                id: 'SII_EXPENSES' as const,
-                                icon: 'receipt_long',
-                                label: t('supply.nav.sii'),
-                            },
-                        ] as const
-                    ).map((item) => {
+                    {NAV_TABS.map((item) => {
                         const isActive = activeTab === item.id;
                         return (
                             <button
@@ -469,16 +501,15 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                                 aria-label={item.label}
                                 title={item.label}
                                 aria-current={isActive ? 'page' : undefined}
+                                data-testid={`supply-tab-${item.id}`}
                                 className={cn(
-                                    'bg-transparent border-0 border-b-2 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center transition-colors cursor-pointer rounded-none shadow-none',
+                                    'bg-transparent border-0 border-b-2 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center transition-colors cursor-pointer rounded-none shadow-none shrink-0',
                                     isActive
                                         ? 'border-[#C68346] text-[#7C3F0E] dark:text-[#C68346]'
                                         : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
                                 )}
                             >
-                                <span className="material-symbols-outlined text-[22px]">
-                                    {item.icon}
-                                </span>
+                                <span className="material-symbols-outlined text-[22px]">{item.icon}</span>
                             </button>
                         );
                     })}
@@ -489,7 +520,7 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                             value={selectedSiteId}
                             onChange={(e) => setSelectedSiteId(e.target.value)}
                             aria-label={t('supply.common.site_selector')}
-                            className="ml-fib-8 min-h-[48px] max-w-[160px] sm:max-w-[200px] px-fib-8 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-microcopy text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
+                            className="ml-fib-8 min-h-[48px] max-w-[160px] sm:max-w-[200px] px-fib-8 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-microcopy text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none shrink-0"
                         >
                             <option value="">{t('supply.common.all_sites')}</option>
                             {sites.map((s) => (
@@ -501,79 +532,48 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                     )}
                 </nav>
 
-                {/* Center: NASA OpenMCT Monochrome Telemetry Strip (ISA-101 Color by Exception) */}
-                <div className="hidden xl:flex items-center gap-fib-21 font-mono text-microcopy tabular-nums">
-                    <div className="flex items-center gap-fib-8">
-                        <span className="text-[#475569] dark:text-[#8A93A6]">
-                            {t('supply.telemetry.open_lines')}
-                        </span>
-                        <span className="text-data-dense font-bold text-[#0F172A] dark:text-[#F3F4F6]">
-                            {telemetry.pendingLines}
+                {/* Always-Visible NASA OpenMCT Telemetry Strip (PEND | QUIEBRE | DS594 | SEC160 | RCV<=2d | WS!) */}
+                <div
+                    data-testid="supply-telemetry-strip"
+                    className="flex items-center gap-fib-13 sm:gap-fib-21 overflow-x-auto font-mono text-microcopy tabular-nums"
+                >
+                    <div className="flex items-center gap-fib-8 shrink-0">
+                        <span className="text-[#475569] dark:text-[#8A93A6]">{t('supply.telemetry.open_lines')}</span>
+                        <span className="text-data-dense font-bold text-[#0F172A] dark:text-[#F3F4F6]">{telemetry.pendingLines}</span>
+                    </div>
+                    <div className="flex items-center gap-fib-8 shrink-0">
+                        <span className="text-[#475569] dark:text-[#8A93A6]">{t('supply.telemetry.stockout_risk')}</span>
+                        <span className={cn('text-data-dense font-bold', telemetry.stockoutRisk > 0 ? 'text-[#7C3F0E] dark:text-[#C68346]' : 'text-[#0F172A] dark:text-[#F3F4F6]')}>
+                            {telemetry.stockoutRisk}
                         </span>
                     </div>
-                    <div className="flex items-center gap-fib-8">
-                        <span className="text-[#475569] dark:text-[#8A93A6]">
-                            {t('supply.telemetry.atypical_flags')}
-                        </span>
-                        <span
-                            className={cn(
-                                'text-data-dense font-bold',
-                                telemetry.atypicalCount > 0
-                                    ? 'text-[#7C3F0E] dark:text-[#C68346]'
-                                    : 'text-[#0F172A] dark:text-[#F3F4F6]'
-                            )}
-                        >
-                            {telemetry.atypicalCount}
+                    <div className="flex items-center gap-fib-8 shrink-0">
+                        <span className="text-[#475569] dark:text-[#8A93A6]">{t('supply.telemetry.ds594_status')}</span>
+                        <span className={cn('text-data-dense font-bold', forecast && !forecast.waterCompliantDs594 ? 'text-[#7C3F0E] dark:text-[#C68346]' : 'text-[#0369A1] dark:text-[#00AEEF]')}>
+                            {forecast ? `${forecast.waterCoverageDays}${t('supply.common.days_short')}` : '—'}
                         </span>
                     </div>
-                    <div className="flex items-center gap-fib-8">
-                        <span className="text-[#475569] dark:text-[#8A93A6]">
-                            {t('supply.telemetry.in_transit')}
-                        </span>
-                        <span
-                            className={cn(
-                                'text-data-dense font-bold',
-                                telemetry.inTransitCount > 0
-                                    ? 'text-[#7C3F0E] dark:text-[#C68346]'
-                                    : 'text-[#0F172A] dark:text-[#F3F4F6]'
-                            )}
-                        >
-                            {telemetry.inTransitCount}
+                    <div className="flex items-center gap-fib-8 shrink-0">
+                        <span className="text-[#475569] dark:text-[#8A93A6]">{t('supply.telemetry.sec160_status')}</span>
+                        <span className={cn('text-data-dense font-bold', telemetry.sec160Alerts > 0 ? 'text-[#7C3F0E] dark:text-[#C68346]' : 'text-[#0F172A] dark:text-[#F3F4F6]')}>
+                            {telemetry.sec160Alerts}
                         </span>
                     </div>
-                    <div className="flex items-center gap-fib-8">
-                        <span className="text-[#475569] dark:text-[#8A93A6]">
-                            {t('supply.telemetry.rcv_urgent')}
-                        </span>
-                        <span
-                            className={cn(
-                                'text-data-dense font-bold',
-                                telemetry.rcvUrgent > 0
-                                    ? 'text-[#7C3F0E] dark:text-[#C68346]'
-                                    : 'text-[#0F172A] dark:text-[#F3F4F6]'
-                            )}
-                        >
+                    <div className="flex items-center gap-fib-8 shrink-0">
+                        <span className="text-[#475569] dark:text-[#8A93A6]">{t('supply.telemetry.rcv_urgent')}</span>
+                        <span className={cn('text-data-dense font-bold', telemetry.rcvUrgent > 0 ? 'text-[#7C3F0E] dark:text-[#C68346]' : 'text-[#0F172A] dark:text-[#F3F4F6]')}>
                             {telemetry.rcvUrgent}
                         </span>
                     </div>
-                    <div className="flex items-center gap-fib-8">
-                        <span className="text-[#475569] dark:text-[#8A93A6]">
-                            {t('supply.telemetry.assets_no_dte')}
-                        </span>
-                        <span
-                            className={cn(
-                                'text-data-dense font-bold',
-                                telemetry.assetsWithoutInvoice > 0
-                                    ? 'text-[#7C3F0E] dark:text-[#C68346]'
-                                    : 'text-[#0F172A] dark:text-[#F3F4F6]'
-                            )}
-                        >
-                            {telemetry.assetsWithoutInvoice}
+                    <div className="flex items-center gap-fib-8 shrink-0">
+                        <span className="text-[#475569] dark:text-[#8A93A6]">{t('supply.telemetry.ws_alerts')}</span>
+                        <span className={cn('text-data-dense font-bold', telemetry.wsAlerts > 0 ? 'text-[#7C3F0E] dark:text-[#C68346]' : 'text-[#0F172A] dark:text-[#F3F4F6]')}>
+                            {telemetry.wsAlerts}
                         </span>
                     </div>
                 </div>
 
-                {/* Right: Always-Visible Offline/DLQ Indicator + Role Guard + Icon-First Contextual Actions */}
+                {/* Right: Offline/DLQ Indicator + Role Guard + Icon-First Contextual Actions */}
                 <div className="flex items-center gap-fib-8 shrink-0">
                     {(!isOnline || offlinePendingCount > 0 || deadLetterCount > 0) && (
                         <div
@@ -624,9 +624,7 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                             title={t('supply.nav.scanner')}
                             className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#7C3F0E] dark:text-[#C68346] hover:opacity-80 transition-colors cursor-pointer rounded-none shadow-none"
                         >
-                            <span className="material-symbols-outlined text-[24px]">
-                                add_a_photo
-                            </span>
+                            <span className="material-symbols-outlined text-[24px]">add_a_photo</span>
                         </button>
                     )}
 
@@ -644,9 +642,7 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                                   : 'text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
                         )}
                     >
-                        <span className="material-symbols-outlined text-[22px]">
-                            compare_arrows
-                        </span>
+                        <span className="material-symbols-outlined text-[22px]">compare_arrows</span>
                     </button>
 
                     {canAccessSimulator && (
@@ -671,7 +667,7 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
 
                     <button
                         type="button"
-                        onClick={() => void loadAllData()}
+                        onClick={() => void loadTabData(activeTab)}
                         disabled={loading}
                         aria-label={t('supply.common.refresh')}
                         title={t('supply.common.refresh')}
@@ -694,6 +690,50 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                 )}
             >
                 <main className="min-h-0 flex-1 overflow-y-auto bg-[#FFFFFF] dark:bg-[#000000]">
+                    {activeTab === 'CONTROL' && (
+                        <div data-testid="supply-control-summary" className="p-fib-21 space-y-fib-21">
+                            <div className="flex items-center justify-between border-b border-[#E2E8F0] dark:border-[#12151C] pb-fib-13">
+                                <h2 className="font-mono text-microcopy uppercase font-bold tracking-wider text-[#0F172A] dark:text-[#F3F4F6]">
+                                    {t('supply.control.title')}
+                                </h2>
+                                <span className={cn('font-mono text-microcopy uppercase font-bold', telemetry.rcvUrgent > 0 || telemetry.assetsWithoutInvoice > 0 ? 'text-[#9A5B21] dark:text-[#C68346]' : 'text-[#0369A1] dark:text-[#00AEEF]')}>
+                                    {telemetry.rcvUrgent > 0 || telemetry.assetsWithoutInvoice > 0
+                                        ? t('supply.control.status_alert')
+                                        : t('supply.control.status_nominal')}
+                                </span>
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-fib-13 font-mono tabular-nums">
+                                <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] p-fib-21 space-y-fib-8">
+                                    <span className="text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">{t('supply.control.kpi_open_reqs')}</span>
+                                    <div className="text-kpi-display font-bold text-[#0F172A] dark:text-[#F3F4F6]">{openRequisitions.length}</div>
+                                </div>
+                                <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] p-fib-21 space-y-fib-8">
+                                    <span className="text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">{t('supply.control.kpi_in_transit')}</span>
+                                    <div className="text-kpi-display font-bold text-[#C68346]">{telemetry.inTransitCount}</div>
+                                </div>
+                                <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] p-fib-21 space-y-fib-8">
+                                    <span className="text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">{t('supply.control.kpi_water_coverage')}</span>
+                                    <div className="text-kpi-display font-bold text-[#00AEEF]">
+                                        {forecast ? `${forecast.waterCoverageDays} ${t('supply.common.days_short')}` : '—'}
+                                    </div>
+                                </div>
+                                <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] p-fib-21 space-y-fib-8">
+                                    <span className="text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">{t('supply.control.kpi_rcv_urgent')}</span>
+                                    <div className="text-kpi-display font-bold text-[#0F172A] dark:text-[#F3F4F6]">{telemetry.rcvUrgent}</div>
+                                </div>
+                                <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] p-fib-21 space-y-fib-8">
+                                    <span className="text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">{t('supply.control.kpi_assets_no_dte')}</span>
+                                    <div className="text-kpi-display font-bold text-[#0F172A] dark:text-[#F3F4F6]">{telemetry.assetsWithoutInvoice}</div>
+                                </div>
+                                <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] p-fib-21 space-y-fib-8">
+                                    <span className="text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">{t('supply.control.kpi_sites_active')}</span>
+                                    <div className="text-kpi-display font-bold text-[#0F172A] dark:text-[#F3F4F6]">{sites.length}</div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
                     {activeTab === 'PROCUREMENT' && (
                         <ConsolidatedShoppingListsView
                             groups={consolidatedLists}
@@ -717,7 +757,7 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                             canAccessSimulator={canAccessSimulator}
                             simulatorOpen={simulatorOpen}
                             onToggleSimulator={setSimulatorOpen}
-                            onRequisitionCreated={() => void loadAllData()}
+                            onRequisitionCreated={() => void loadTabData('DEMAND')}
                         />
                     )}
 
@@ -732,11 +772,23 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                             loading={loading}
                             canMutate={canMutateSupply}
                             canManageCapex={canManageCapex}
-                            onMutated={() => void loadAllData()}
+                            onMutated={() => void loadTabData('WAREHOUSE')}
                         />
                     )}
 
-                    {activeTab === 'SII_EXPENSES' && (
+                    {activeTab === 'CONVERSATIONS' && (
+                        <div data-testid="supply-conversations-placeholder" className="p-fib-34 space-y-fib-13">
+                            <div className="flex items-center gap-fib-8 font-mono text-microcopy uppercase font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                                <span className="material-symbols-outlined text-[20px] text-[#00AEEF]">forum</span>
+                                <span>{t('supply.conversations.title')}</span>
+                            </div>
+                            <p className="font-mono text-data-dense text-[#475569] dark:text-[#8A93A6]">
+                                {t('supply.conversations.pending_stage')}
+                            </p>
+                        </div>
+                    )}
+
+                    {activeTab === 'FINANCE_SII' && (
                         <SiiRendicionesView
                             documents={siiDocuments}
                             expenseReports={expenseReports}
@@ -745,7 +797,18 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                             loading={loading}
                             canMutate={canMutateSupply}
                             canApproveExpenseReports={canApproveExpenseReports}
-                            onMutated={() => void loadAllData()}
+                            onMutated={() => void loadTabData('FINANCE_SII')}
+                        />
+                    )}
+
+                    {activeTab === 'PROFILES_WS' && (
+                        <SupplyProfilesChannelsView
+                            profiles={wsProfiles}
+                            sites={sites}
+                            tenantId={resolvedTenantId}
+                            loading={loading}
+                            canAdminister={canAdministerProfiles}
+                            onMutated={() => void loadTabData('PROFILES_WS')}
                         />
                     )}
                 </main>
@@ -762,7 +825,7 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                             onClearDraft={() => setPendingDraft(null)}
                             onCommitted={() => {
                                 setPendingDraft(null);
-                                void loadAllData();
+                                void loadTabData(activeTab);
                             }}
                         />
                     </div>
@@ -784,7 +847,7 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                         setReconcilerOpen(true);
                     }}
                     onCommitted={() => {
-                        void loadAllData();
+                        void loadTabData(activeTab);
                     }}
                 />
             )}
