@@ -58,8 +58,10 @@ rules_version = '2';
 //     * /global_suppliers/{supplierId}: Ya gobernado en §8.1 (`allow read: if isAuthenticated(); allow write: if false;`).
 //     * /supply_whatsapp_sessions/{sessionId}, /supply_whatsapp_wamids/{wamid}: Secretos/estado conversacional efímero WhatsApp y guardia atómica de idempotencia (Ley N° 21.719) — Bloqueo total cliente (`read/write == false`).
 //     * /supply_policy_audit/{eventId}: Auditoría de políticas de abastecimiento — Lectura tenant-scoped exclusiva OWNER/ADMIN ACTIVO del tenant auditable o 1º DEV / 2º ADMIN (sin bypass por claim obsoleto ni TEST_PILOT); escritura cliente denegada (`write == false`).
-//     * /market_demand_signals/{signalId}: Señales anónimas de demanda agregadas k>=3 (Ley N° 21.719, sin tenantId ni GPS) — Lectura autenticada activa, escritura exclusiva Admin SDK (`write == false`).
-//     * Colecciones operativas y ledgers multi-tenant (`tenant_suppliers`, `supply_sites`, `supply_warehouses`, `supply_inventory_items`, `supply_requisitions` + subcolección `lines`, `supply_requisition_lines`, `supply_purchases` + subcolección `lines`, `supply_purchase_lines`, `supply_fulfillment_allocations`, `supply_assets`, `supply_stock_ledger`, `supply_cash_ledger`, `supply_sii_documents`, `supply_expense_reports`, `supply_demand_forecasts`): Todas portan `tenantId`; lectura estrictamente aislada por `tenantId` (miembro directo ACTIVO B2B/EDU, 1º DEV / 2º ADMIN, o 3º TEST-PILOT hermético verificado en `/test_pilots/{uid}` confinado estrictamente a `pilot-{uid}` o `pilotAccountId`); toda escritura cliente denegada (`create, update, delete == false`).
+//     * /supply_channel_grants/{grantId}: Perfiles provisorios y casillas WhatsApp (V3-E02; `phoneCiphertext`, `phoneHashSha256`, `linkedMemberUid`) — Lectura exclusiva miembros activos del mismo `accountId` (`tenantId`), `DEV_ROOT` / `SUPER_ADMIN`; escritura cliente bloqueada (`write == false`).
+//     * /supply_conversation_threads/{threadId}, /supply_conversation_turns/{turnId}: Archivo conversacional auditable inmutable SHA-256 (V3-E03/V3-E04, retención tributaria 6 años / `LEGAL_HOLD`) — Lectura restringida a `DEV_ROOT` / `SUPER_ADMIN`, `OWNER`/`ADMIN` activo del `accountId` (`tenantId`) o titular (`linkedMemberUid == auth.uid` dentro del mismo tenant); `create, update, delete == false`.
+//     * /market_demand_signals/{signalId}: Señales anónimas de demanda agregadas k >= 5 (`ANONYMITY_K_MIN = 5`, Ley N° 21.719, sin tenantId ni GPS) — Lectura autenticada activa con `participatingEntitiesCount >= 5` (o `isAdmin()`), escritura exclusiva Admin SDK (`write == false`).
+//     * Colecciones operativas y ledgers multi-tenant (`tenant_suppliers`, `tenant_supplier_sku_map`, `supply_sites`, `supply_warehouses`, `supply_inventory_items`, `supply_reception_discrepancies`, `supply_requisitions` + subcolección `lines`, `supply_requisition_lines`, `supply_purchases` + subcolección `lines`, `supply_purchase_lines`, `supply_fulfillment_allocations`, `supply_assets`, `supply_stock_ledger`, `supply_cash_ledger`, `supply_sii_documents`, `supply_expense_reports`, `supply_demand_forecasts`): Todas portan `tenantId` (`accountId`); lectura estrictamente aislada por tenant (miembro directo ACTIVO B2B/EDU, 1º DEV / 2º ADMIN, o 3º TEST-PILOT hermético verificado en `/test_pilots/{uid}` confinado estrictamente a `pilot-{uid}` o `pilotAccountId`); toda escritura cliente denegada (`create, update, delete == false` / `write == false`).
 // ===============================================================
 
 service cloud.firestore {
@@ -805,18 +807,56 @@ service cloud.firestore {
         (!('accountId' in data) || data.accountId == null || data.accountId == '');
     }
 
+    // Helper de pertenencia activa multi-tenant para ABASTECIMIENTO (B2B/EDU activo o sandbox propio 3º TEST-PILOT)
+    function isSupplyTenantMemberOrSandbox(tid) {
+      return tid is string &&
+        tid.size() > 0 &&
+        tid.size() <= 128 &&
+        (
+          isDirectAccountMember(tid) ||
+          isMatchingTestPilotSandbox(tid)
+        );
+    }
+
     // Lectura multi-tenant hermética para colecciones operativas de ABASTECIMIENTO (`tenantId` obligatorio)
     // Permite miembro directo ACTIVO B2B/EDU del tenant o 3º TEST-PILOT hermético exclusivamente en su propio sandbox `pilot-*`
     // (1º DEV / 2º ADMIN se evalúan antes mediante isAdmin() para soportar get sobre docs inexistentes)
     function canReadSupplyTenantDoc(data) {
       return data is map &&
         'tenantId' in data &&
-        data.tenantId is string &&
-        data.tenantId.size() > 0 &&
-        data.tenantId.size() <= 128 &&
+        isSupplyTenantMemberOrSandbox(data.tenantId);
+    }
+
+    // Lectura multi-tenant hermética soportando `tenantId` y `accountId` (compatible con query planner estático de Firestore)
+    function canReadSupplyTenantOrAccountDoc(data) {
+      return data is map &&
         (
-          isDirectAccountMember(data.tenantId) ||
-          isMatchingTestPilotSandbox(data.tenantId)
+          ('tenantId' in data && isSupplyTenantMemberOrSandbox(data.tenantId)) ||
+          ('accountId' in data && isSupplyTenantMemberOrSandbox(data.accountId))
+        );
+    }
+
+    // Lectura estricta de hilos/turnos conversacionales auditables SHA-256 (V3-E03/V3-E04):
+    // Exclusivo OWNER/ADMIN activo del mismo `accountId` (`tenantId`) o titular `linkedMemberUid` dentro del mismo tenant
+    function canReadSupplyConversationForTenant(data, tid) {
+      return tid is string &&
+        tid.size() > 0 &&
+        tid.size() <= 128 &&
+        (
+          isTenantAdminOrOwner(tid) ||
+          (
+            'linkedMemberUid' in data &&
+            data.linkedMemberUid == request.auth.uid &&
+            isSupplyTenantMemberOrSandbox(tid)
+          )
+        );
+    }
+
+    function canReadSupplyConversationDoc(data) {
+      return data is map &&
+        (
+          ('tenantId' in data && canReadSupplyConversationForTenant(data, data.tenantId)) ||
+          ('accountId' in data && canReadSupplyConversationForTenant(data, data.accountId))
         );
     }
 
@@ -2172,17 +2212,51 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // --- 8.2.3 Señales Anónimas de Demanda Marketplace (Ley N° 21.719 k>=3) ---
+    // Perfiles provisorios y casillas WhatsApp (V3-E02 — `phoneCiphertext` AES-256-GCM; mutación exclusiva Core API + AuditLedger)
+    match /supply_channel_grants/{grantId} {
+      allow read: if isAdmin() || (
+        isActiveAuthenticatedUser() &&
+        resource != null &&
+        canReadSupplyTenantOrAccountDoc(resource.data)
+      );
+      allow write: if false;
+    }
 
-    // Señales agregadas anónimas generadas exclusivamente por backend Admin SDK tras agregación k>=3 (sin tenantId ni GPS)
+    // Hilos conversacionales auditables SHA-256 (V3-E03/V3-E04 — retención tributaria 6 años / LEGAL_HOLD; mutación exclusiva Admin SDK)
+    match /supply_conversation_threads/{threadId} {
+      allow read: if isAdmin() || (
+        isActiveAuthenticatedUser() &&
+        resource != null &&
+        canReadSupplyConversationDoc(resource.data)
+      );
+      allow create, update, delete: if false;
+    }
+
+    // Turnos conversacionales inmutables append-only SHA-256 (V3-E03/V3-E04 — 100% Admin SDK + verificación criptográfica; ni cliente ni titular puede alterar o borrar bajo LEGAL_HOLD)
+    match /supply_conversation_turns/{turnId} {
+      allow read: if isAdmin() || (
+        isActiveAuthenticatedUser() &&
+        resource != null &&
+        canReadSupplyConversationDoc(resource.data)
+      );
+      allow create, update, delete: if false;
+    }
+
+    // --- 8.2.3 Señales Anónimas de Demanda Marketplace (Ley N° 21.719 k >= 5; ANONYMITY_K_MIN = 5) ---
+
+    // Señales agregadas anónimas generadas exclusivamente por backend Admin SDK tras agregación k >= 5 (sin tenantId ni GPS)
     match /market_demand_signals/{signalId} {
-      allow read: if isAdmin() || isActiveAuthenticatedUser();
+      allow read: if isAdmin() || (
+        isActiveAuthenticatedUser() &&
+        resource != null &&
+        resource.data.participatingEntitiesCount >= 5
+      );
       allow write: if false;
     }
 
     // --- 8.2.4 Colecciones Operativas y Ledgers Multi-Tenant (Server-Authoritative vía `/api/supply/*` Admin SDK) ---
-    // Todas portan `tenantId`: lectura aislada por tenant (miembro directo B2B/EDU, 1º DEV / 2º ADMIN, o 3º TEST-PILOT
-    // hermético a su propio sandbox `pilot-*`); toda mutación cliente bloqueada (`create, update, delete == false`) para
+    // Todas portan `tenantId` (`accountId`): lectura aislada por tenant (miembro directo B2B/EDU, 1º DEV / 2º ADMIN, o 3º TEST-PILOT
+    // hermético a su propio sandbox `pilot-*`); toda mutación cliente bloqueada (`create, update, delete == false` / `write == false`) para
     // garantizar contratos Zod, AuditLedger SHA-256, MediaDigestorServer CAS, anti-duplicación SII y HITL "ACTUALIZAR".
 
     match /tenant_suppliers/{docId} {
@@ -2190,19 +2264,44 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
+    // Mapeo privado por tenant de SKUs de proveedor a catálogo canónico (V3-E05; lectura miembros activos del tenant + DEV_ROOT/SUPER_ADMIN; escritura exclusiva Core API + AuditLedger)
+    match /tenant_supplier_sku_map/{mapId} {
+      allow read: if isAdmin() || (
+        isActiveAuthenticatedUser() &&
+        resource != null &&
+        canReadSupplyTenantOrAccountDoc(resource.data)
+      );
+      allow write: if false;
+    }
+
     match /supply_sites/{siteId} {
       allow read: if isAdmin() || (isAuthenticated() && resource != null && canReadSupplyTenantDoc(resource.data));
       allow create, update, delete: if false;
     }
 
-    match /supply_warehouses/{whId} {
-      allow read: if isAdmin() || (isAuthenticated() && resource != null && canReadSupplyTenantDoc(resource.data));
+    // Bodegas y almacenes multi-tenant (V3-E04/V3-E05 — lectura miembros activos del `accountId`/`tenantId`; mutación exclusiva Core API + AuditLedger)
+    match /supply_warehouses/{warehouseId} {
+      allow read: if isAdmin() || (
+        isActiveAuthenticatedUser() &&
+        resource != null &&
+        canReadSupplyTenantOrAccountDoc(resource.data)
+      );
       allow create, update, delete: if false;
     }
 
     match /supply_inventory_items/{itemId} {
       allow read: if isAdmin() || (isAuthenticated() && resource != null && canReadSupplyTenantDoc(resource.data));
       allow create, update, delete: if false;
+    }
+
+    // Discrepancias de recepción física en bodega vs OC/DTE (V3-E05; lectura miembros activos del `accountId`/`tenantId` + DEV_ROOT/SUPER_ADMIN; escritura exclusiva Core API + AuditLedger)
+    match /supply_reception_discrepancies/{discrepancyId} {
+      allow read: if isAdmin() || (
+        isActiveAuthenticatedUser() &&
+        resource != null &&
+        canReadSupplyTenantOrAccountDoc(resource.data)
+      );
+      allow write: if false;
     }
 
     match /supply_requisitions/{reqId} {
