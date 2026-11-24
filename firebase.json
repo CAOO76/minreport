@@ -137,7 +137,7 @@
       "codebase": "default",
       "region": "southamerica-west1",
       "source": "services/functions",
-      "runtime": "nodejs20",
+      "runtime": "nodejs22",
       "ignore": [
         "node_modules",
         ".git",
