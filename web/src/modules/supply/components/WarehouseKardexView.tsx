@@ -159,13 +159,13 @@ export const WarehouseKardexView: React.FC<WarehouseKardexViewProps> = ({
     }, [pendingPayload]);
 
     const inputClass =
-        'w-full min-h-[48px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-data-dense tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none';
+        'w-full min-h-[48px] px-fib-13 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[15px] tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none';
 
     return (
         <div data-testid="warehouse-kardex-view" className="w-full flex flex-col space-y-fib-13">
             {/* Controls Strip */}
-            <div className="px-fib-21 py-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C] flex flex-wrap items-center justify-between gap-fib-8">
-                <div className="flex flex-wrap items-center gap-fib-8">
+            <div className="px-fib-21 py-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C] flex flex-wrap items-center justify-between gap-fib-13">
+                <div className="flex flex-wrap items-center gap-fib-13">
                     <select
                         value={movementFilter}
                         onChange={(e) =>
@@ -173,12 +173,12 @@ export const WarehouseKardexView: React.FC<WarehouseKardexViewProps> = ({
                         }
                         aria-label={t('supply.warehouse.kardex_filter_type')}
                         data-testid="kardex-type-filter"
-                        className="min-h-[48px] px-fib-13 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-microcopy text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
+                        className="min-h-[48px] px-fib-13 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[15px] text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none cursor-pointer"
                     >
                         <option value="ALL">{t('supply.warehouse.kardex_all_types')}</option>
                         {CANONICAL_STOCK_LEDGER_MOVEMENT_TYPES.map((mt) => (
                             <option key={mt} value={mt}>
-                                {t(`supply.warehouse.mv_${mt}`)} ({mt})
+                                {t(`supply.warehouse.mv_${mt}`)}
                             </option>
                         ))}
                     </select>
@@ -187,7 +187,7 @@ export const WarehouseKardexView: React.FC<WarehouseKardexViewProps> = ({
                         value={warehouseFilter}
                         onChange={(e) => setWarehouseFilter(e.target.value)}
                         aria-label={t('supply.warehouse.target_warehouse')}
-                        className="min-h-[48px] px-fib-13 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-microcopy text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
+                        className="min-h-[48px] px-fib-13 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[15px] text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none cursor-pointer"
                     >
                         <option value="ALL">{t('supply.warehouse.all_warehouses')}</option>
                         {warehouses.map((w) => (
@@ -205,7 +205,7 @@ export const WarehouseKardexView: React.FC<WarehouseKardexViewProps> = ({
                         spellCheck={false}
                         aria-label={t('supply.common.search_placeholder')}
                         placeholder={t('supply.common.search_placeholder')}
-                        className="w-48 min-h-[48px] px-fib-13 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
+                        className="w-56 min-h-[48px] px-fib-13 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[15px] text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
                     />
                 </div>
 
@@ -219,7 +219,7 @@ export const WarehouseKardexView: React.FC<WarehouseKardexViewProps> = ({
                                 )
                             }
                             data-testid="kardex-new-movement-btn"
-                            className="min-h-[48px] px-fib-13 bg-[#C68346] border border-[#C68346] text-[#000000] font-mono text-microcopy font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer hover:opacity-90"
+                            className="min-h-[48px] px-fib-21 bg-[#C68346] border border-[#C68346] text-[#000000] text-[15px] font-bold rounded-none shadow-none cursor-pointer hover:opacity-90"
                         >
                             {t('supply.warehouse.kardex_new_movement')}
                         </button>
@@ -231,7 +231,7 @@ export const WarehouseKardexView: React.FC<WarehouseKardexViewProps> = ({
                                 )
                             }
                             data-testid="kardex-cycle-count-btn"
-                            className="min-h-[48px] px-fib-13 bg-transparent border border-[#00AEEF] text-[#0369A1] dark:text-[#00AEEF] font-mono text-microcopy font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer hover:opacity-80"
+                            className="min-h-[48px] px-fib-21 bg-transparent border border-[#00AEEF] text-[#0369A1] dark:text-[#00AEEF] text-[15px] font-semibold rounded-none shadow-none cursor-pointer hover:opacity-80"
                         >
                             {t('supply.warehouse.kardex_cycle_count')}
                         </button>
@@ -244,7 +244,7 @@ export const WarehouseKardexView: React.FC<WarehouseKardexViewProps> = ({
             {notice && (
                 <div
                     className={cn(
-                        'mx-fib-21 border-l-[3px] pl-fib-13 py-fib-8 font-mono text-data-dense tabular-nums',
+                        'mx-fib-21 border-l-[3px] pl-fib-13 py-fib-8 text-[15px] tabular-nums',
                         notice.tone === 'copper'
                             ? 'border-[#C68346] text-[#7C3F0E] dark:text-[#C68346]'
                             : 'border-[#00AEEF] text-[#0369A1] dark:text-[#00AEEF]'
@@ -261,7 +261,7 @@ export const WarehouseKardexView: React.FC<WarehouseKardexViewProps> = ({
                     autoComplete="off"
                     spellCheck={false}
                     data-testid="kardex-action-form"
-                    className="mx-fib-21 p-fib-13 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] space-y-fib-13"
+                    className="px-fib-21 py-fib-21 border-b border-[#E2E8F0] dark:border-[#12151C] space-y-fib-13"
                 >
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-fib-13">
                         <select
@@ -302,9 +302,9 @@ export const WarehouseKardexView: React.FC<WarehouseKardexViewProps> = ({
                             onChange={(e) => setCanonicalSkuId(e.target.value)}
                             autoComplete="off"
                             spellCheck={false}
-                            placeholder="SKU-..."
+                            placeholder={t('supply.warehouse.col_item')}
                             aria-label={t('supply.warehouse.col_item')}
-                            className={`${inputClass} select-text`}
+                            className={`${inputClass} font-mono select-text`}
                         />
 
                         {actionMode === 'CYCLE_COUNT' ? (
@@ -319,7 +319,7 @@ export const WarehouseKardexView: React.FC<WarehouseKardexViewProps> = ({
                                 spellCheck={false}
                                 aria-label={t('supply.warehouse.measured_level')}
                                 placeholder={t('supply.warehouse.measured_level')}
-                                className={`${inputClass} select-text`}
+                                className={`${inputClass} font-mono select-text`}
                             />
                         ) : (
                             <select
@@ -332,7 +332,7 @@ export const WarehouseKardexView: React.FC<WarehouseKardexViewProps> = ({
                             >
                                 {CANONICAL_STOCK_LEDGER_MOVEMENT_TYPES.map((mt) => (
                                     <option key={mt} value={mt}>
-                                        {t(`supply.warehouse.mv_${mt}`)} ({mt})
+                                        {t(`supply.warehouse.mv_${mt}`)}
                                     </option>
                                 ))}
                             </select>
@@ -352,7 +352,7 @@ export const WarehouseKardexView: React.FC<WarehouseKardexViewProps> = ({
                                 spellCheck={false}
                                 aria-label={t('supply.backlog.qty')}
                                 placeholder={t('supply.backlog.qty')}
-                                className={`${inputClass} select-text`}
+                                className={`${inputClass} font-mono select-text`}
                             />
 
                             {movementType === 'TRANSFER_OUT' ? (
@@ -405,7 +405,7 @@ export const WarehouseKardexView: React.FC<WarehouseKardexViewProps> = ({
                                 autoComplete="off"
                                 spellCheck={false}
                                 placeholder={t('supply.warehouse.horometer_hr')}
-                                className={`${inputClass} select-text`}
+                                className={`${inputClass} font-mono select-text`}
                             />
                         </div>
                     )}
@@ -424,7 +424,7 @@ export const WarehouseKardexView: React.FC<WarehouseKardexViewProps> = ({
                             type="submit"
                             disabled={saving}
                             data-testid="kardex-submit-btn"
-                            className="min-h-[48px] px-fib-21 bg-[#C68346] border border-[#C68346] text-[#000000] font-mono text-microcopy font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer hover:opacity-90 disabled:opacity-40"
+                            className="min-h-[48px] px-fib-21 bg-[#C68346] border border-[#C68346] text-[#000000] text-[15px] font-bold rounded-none shadow-none cursor-pointer hover:opacity-90 disabled:opacity-40"
                         >
                             {t('supply.common.save')}
                         </button>
@@ -435,32 +435,32 @@ export const WarehouseKardexView: React.FC<WarehouseKardexViewProps> = ({
             {/* Tank Cycle-Count Telemetry */}
             {tankTelemetry.length > 0 && (
                 <div className="px-fib-21 space-y-fib-8">
-                    <div className="font-mono text-microcopy uppercase font-bold text-[#475569] dark:text-[#8A93A6]">
+                    <div className="text-[15px] font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
                         {t('supply.warehouse.tank_telemetry_title')}
                     </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-fib-8 font-mono text-microcopy tabular-nums">
+                    <div className="divide-y divide-[#E2E8F0] dark:divide-[#12151C] tabular-nums">
                         {tankTelemetry.slice(0, 6).map((tk) => (
                             <div
                                 key={tk.telemetryId}
                                 className={cn(
-                                    'p-fib-8 border border-[#E2E8F0] dark:border-[#12151C] border-l-[3px] flex items-center justify-between gap-fib-8',
+                                    'py-fib-8 pl-fib-13 border-l-[3px] flex items-center justify-between gap-fib-13 text-[15px]',
                                     tk.anomalyFlag
                                         ? 'border-l-[#C68346]'
                                         : 'border-l-[#00AEEF]'
                                 )}
                             >
-                                <span>
+                                <span className="font-mono text-[#0F172A] dark:text-[#F3F4F6]">
                                     {tk.warehouseId} · {tk.canonicalSkuId}
                                 </span>
                                 <span
                                     className={cn(
-                                        'font-bold',
+                                        'font-mono font-bold',
                                         tk.anomalyFlag
                                             ? 'text-[#7C3F0E] dark:text-[#C68346]'
                                             : 'text-[#0369A1] dark:text-[#00AEEF]'
                                     )}
                                 >
-                                    {tk.measuredLevelSi} / {tk.bookBalanceSi} (Δ{' '}
+                                    {tk.measuredLevelSi} / {tk.bookBalanceSi} ({tk.variancePct >= 0 ? '+' : ''}
                                     {tk.variancePct.toFixed(1)}%)
                                 </span>
                             </div>
@@ -472,7 +472,7 @@ export const WarehouseKardexView: React.FC<WarehouseKardexViewProps> = ({
             {/* Immutable Kardex Rows */}
             <div className="divide-y divide-[#E2E8F0] dark:divide-[#12151C]">
                 {filteredEntries.length === 0 ? (
-                    <div className="px-fib-21 py-fib-34 text-center font-mono text-data-dense text-[#475569] dark:text-[#8A93A6]">
+                    <div className="px-fib-21 py-fib-34 text-center text-[15px] text-[#475569] dark:text-[#8A93A6]">
                         {t('supply.common.no_records')}
                     </div>
                 ) : (
@@ -485,7 +485,7 @@ export const WarehouseKardexView: React.FC<WarehouseKardexViewProps> = ({
                                 key={entry.ledgerId}
                                 data-testid={`kardex-row-${entry.ledgerId}`}
                                 className={cn(
-                                    'px-fib-21 py-fib-13 border-l-[3px] flex flex-wrap items-center justify-between gap-fib-13 font-mono tabular-nums',
+                                    'px-fib-21 py-fib-13 border-l-[3px] flex flex-wrap items-center justify-between gap-fib-13 tabular-nums',
                                     isAlert
                                         ? 'border-l-[#C68346]'
                                         : entry.movementType === 'RECEIPT_AT_WAREHOUSE' ||
@@ -496,27 +496,27 @@ export const WarehouseKardexView: React.FC<WarehouseKardexViewProps> = ({
                             >
                                 <div className="space-y-1 min-w-0">
                                     <div className="flex flex-wrap items-center gap-fib-8">
-                                        <span className="text-microcopy font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6]">
+                                        <span className="text-[16px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
                                             {t(`supply.warehouse.mv_${entry.movementType}`)}
                                         </span>
-                                        <span className="text-data-dense font-bold text-[#0F172A] dark:text-[#F3F4F6] select-text">
+                                        <span className="text-[16px] text-[#0F172A] dark:text-[#F3F4F6]">
+                                            {entry.itemName}
+                                        </span>
+                                        <span className="font-mono text-[14px] text-[#475569] dark:text-[#8A93A6] select-text">
                                             {entry.canonicalSkuId}
                                         </span>
                                         <CopyButton
                                             value={entry.canonicalSkuId}
                                             title={t('supply.common.copy_code')}
                                         />
-                                        <span className="text-data-dense text-[#475569] dark:text-[#8A93A6]">
-                                            {entry.itemName}
-                                        </span>
                                     </div>
 
-                                    <div className="flex flex-wrap items-center gap-fib-13 text-microcopy text-[#475569] dark:text-[#8A93A6]">
+                                    <div className="flex flex-wrap items-center gap-fib-13 text-[14px] text-[#475569] dark:text-[#8A93A6]">
                                         <span>{entry.warehouseId || entry.siteId}</span>
                                         {entry.costCenter && <span>{entry.costCenter}</span>}
                                         {entry.linkedAssetId && (
                                             <span className="text-[#0369A1] dark:text-[#00AEEF]">
-                                                OPERMAQ: {entry.linkedAssetId}
+                                                Maquinaria: {entry.linkedAssetId}
                                                 {entry.horometer !== null &&
                                                 entry.horometer !== undefined
                                                     ? ` (${entry.horometer} hr)`
@@ -524,21 +524,20 @@ export const WarehouseKardexView: React.FC<WarehouseKardexViewProps> = ({
                                             </span>
                                         )}
                                         {entry.transferGroupId && (
-                                            <span className="select-text">
-                                                TX: {entry.transferGroupId}
+                                            <span className="font-mono select-text">
+                                                Traslado: {entry.transferGroupId}
                                             </span>
                                         )}
                                     </div>
                                 </div>
 
                                 <div className="text-right space-y-1 shrink-0">
-                                    <div className="text-data-dense font-bold text-[#0F172A] dark:text-[#F3F4F6]">
-                                        Δ {entry.deltaInWarehouse >= 0 ? '+' : ''}
-                                        {entry.deltaInWarehouse} {entry.unitSi} ·{' '}
-                                        {entry.balanceInWarehouseAfter} {entry.unitSi}
+                                    <div className="font-mono text-[16px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                                        {entry.deltaInWarehouse >= 0 ? '+' : ''}
+                                        {entry.deltaInWarehouse} {entry.unitSi} · Saldo {entry.balanceInWarehouseAfter} {entry.unitSi}
                                     </div>
-                                    <div className="text-microcopy text-[#475569] dark:text-[#8A93A6]">
-                                        PMP {formatClp(entry.unitCostNetClp)}
+                                    <div className="font-mono text-[14px] text-[#475569] dark:text-[#8A93A6]">
+                                        {t('supply.warehouse.unit_cost_label')}: {formatClp(entry.unitCostNetClp)}
                                     </div>
                                 </div>
                             </div>

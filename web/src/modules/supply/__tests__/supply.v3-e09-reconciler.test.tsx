@@ -244,8 +244,8 @@ describe('V3-E09c — ReconciliationHitlDrawer 4-Way AI Diff, Proration, Anomali
         });
 
         // Verificar badges semánticos y costo unitario landed
-        expect(screen.getByTestId('reconciler-class-pl-1')).toHaveTextContent('SUSTITUTO (HITL)');
-        expect(screen.getByTestId('reconciler-class-pl-2')).toHaveTextContent('FLETE / CARGO ACCESORIO');
+        expect(screen.getByTestId('reconciler-class-pl-1')).toHaveTextContent('Producto sustituto (revisar)');
+        expect(screen.getByTestId('reconciler-class-pl-2')).toHaveTextContent('Flete o cargo adicional');
         expect(screen.getByTestId('reconciler-landed-pl-1')).toHaveTextContent('67.500');
 
         // Aceptar 1-a-1 línea pl-1 (SUBSTITUTE_CANDIDATE)
@@ -257,7 +257,7 @@ describe('V3-E09c — ReconciliationHitlDrawer 4-Way AI Diff, Proration, Anomali
         expect(kwInput).toHaveAttribute('spellcheck', 'false');
         fireEvent.change(kwInput, { target: { value: 'ACTUALIZAR' } });
 
-        const commitBtn = screen.getByRole('button', { name: /CONSOLIDAR COMPRA/i });
+        const commitBtn = screen.getByRole('button', { name: /Confirmar y guardar compra/i });
         expect(commitBtn.className).toContain('bg-[#C68346]');
         expect(commitBtn.className).toContain('text-[#000000]');
         fireEvent.click(commitBtn);

@@ -352,7 +352,7 @@ describe('E14 UI Certification — SupplyWorkspace, SiiRendicionesView & Reconci
         );
 
         // Cambiar a tab FACTURAS (DTE 33)
-        fireEvent.click(screen.getByRole('button', { name: /Facturas 33\/34/i }));
+        fireEvent.click(screen.getByRole('button', { name: /Facturas y plazo SII/i }));
 
         const articles = Array.from(container.querySelectorAll('article'));
         expect(articles).toHaveLength(3);
@@ -419,7 +419,7 @@ describe('E14 UI Certification — SupplyWorkspace, SiiRendicionesView & Reconci
         const keywordInput = screen.getByPlaceholderText('ACTUALIZAR');
         fireEvent.change(keywordInput, { target: { value: 'ACTUALIZAR' } });
 
-        const commitBtn = screen.getByRole('button', { name: /CONSOLIDAR COMPRA/i });
+        const commitBtn = screen.getByRole('button', { name: /Confirmar y guardar compra/i });
         expect(commitBtn).not.toBeDisabled();
         expect(commitBtn.className).toContain('bg-[#C68346]');
         expect(commitBtn.className).toContain('text-[#000000]');

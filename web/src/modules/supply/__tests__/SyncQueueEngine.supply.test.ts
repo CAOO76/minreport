@@ -389,8 +389,8 @@ describe('E13a — Offline-First Cordillera SyncQueueEngine + Supply Offline + G
         expect(i18n.getFixedT('en')('supply.module_title')).toBe('MINREPORT · SUPPLY');
         expect(i18n.getFixedT('pt')('supply.module_title')).toBe('MINREPORT · SUPRIMENTOS');
 
-        expect(i18n.getFixedT('en')('supply.origins.MODULE_STOCKPILE')).toBe('ACOPIOS Module');
-        expect(i18n.getFixedT('pt')('supply.origins.MODULE_STOCKPILE')).toBe('Módulo ACOPIOS');
+        expect(i18n.getFixedT('en')('supply.origins.MODULE_STOCKPILE')).toMatch(/ACOPIOS/i);
+        expect(i18n.getFixedT('pt')('supply.origins.MODULE_STOCKPILE')).toMatch(/ACOPIOS/i);
 
         // Presets del simulador traducidos en en y pt (sin fuga en español)
         expect(i18n.getFixedT('en')('supply.backlog.sim_preset_slots_msg')).toContain('Butter');

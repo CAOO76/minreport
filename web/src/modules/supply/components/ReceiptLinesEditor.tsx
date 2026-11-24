@@ -86,7 +86,7 @@ export const ReceiptLinesEditor: React.FC<ReceiptLinesEditorProps> = ({
     return (
         <div className="space-y-fib-13 border-t border-[#E2E8F0] dark:border-[#12151C] pt-fib-13">
             <div className="flex items-center justify-between">
-                <span className="font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">
+                <span className="text-[15px] font-semibold text-[#475569] dark:text-[#8A93A6]">
                     {t('supply.scanner.lines_title')} ({lines.length})
                 </span>
                 <button
@@ -94,9 +94,10 @@ export const ReceiptLinesEditor: React.FC<ReceiptLinesEditorProps> = ({
                     onClick={onAddLine}
                     aria-label={t('supply.scanner.add_item')}
                     title={t('supply.scanner.add_item')}
-                    className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#0369A1] dark:text-[#00AEEF] hover:opacity-80 cursor-pointer rounded-none shadow-none"
+                    className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center gap-fib-8 text-[14px] font-semibold text-[#0369A1] dark:text-[#00AEEF] hover:opacity-80 cursor-pointer rounded-none shadow-none"
                 >
                     <span className="material-symbols-outlined text-[20px]">add</span>
+                    <span>{t('supply.scanner.add_item')}</span>
                 </button>
             </div>
 
@@ -123,7 +124,7 @@ export const ReceiptLinesEditor: React.FC<ReceiptLinesEditorProps> = ({
                             autoComplete="off"
                             spellCheck={false}
                             placeholder={t('supply.backlog.sku_name')}
-                            className="md:col-span-3 min-h-[48px] px-fib-8 bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
+                            className="md:col-span-3 min-h-[48px] px-fib-8 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[15px] text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
                         />
                         <select
                             aria-label={`${t('supply.backlog.category')} #${idx + 1}`}
@@ -133,7 +134,7 @@ export const ReceiptLinesEditor: React.FC<ReceiptLinesEditorProps> = ({
                                     categoryCode: e.target.value as SupplyCategoryCode,
                                 })
                             }
-                            className="md:col-span-2 min-h-[48px] px-fib-8 bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] outline-none text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
+                            className="md:col-span-2 min-h-[48px] px-fib-8 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[15px] text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none cursor-pointer"
                         >
                             {SUPPLY_CATEGORIES.map((cat) => (
                                 <option key={cat} value={cat}>
@@ -149,9 +150,9 @@ export const ReceiptLinesEditor: React.FC<ReceiptLinesEditorProps> = ({
                                     costCenter: e.target.value || undefined,
                                 })
                             }
-                            className="md:col-span-1 min-h-[48px] px-fib-8 bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] outline-none font-mono text-microcopy text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
+                            className="md:col-span-1 min-h-[48px] px-fib-8 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-[14px] text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none cursor-pointer"
                         >
-                            <option value="">CC-*</option>
+                            <option value="">Área</option>
                             {STANDARD_SUPPLY_COST_CENTERS.map((cc) => (
                                 <option key={cc} value={cc}>
                                     {cc}
@@ -169,7 +170,7 @@ export const ReceiptLinesEditor: React.FC<ReceiptLinesEditorProps> = ({
                             }
                             autoComplete="off"
                             spellCheck={false}
-                            className="md:col-span-1 min-h-[48px] px-fib-8 bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] outline-none font-mono text-data-dense tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
+                            className="md:col-span-1 min-h-[48px] px-fib-8 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-[15px] tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
                         />
                         <select
                             aria-label={`${t('supply.backlog.unit')} #${idx + 1}`}
@@ -179,7 +180,7 @@ export const ReceiptLinesEditor: React.FC<ReceiptLinesEditorProps> = ({
                                     unitSi: e.target.value as SupplyUnitSi,
                                 })
                             }
-                            className="md:col-span-1 min-h-[48px] px-fib-8 bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] outline-none font-mono text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
+                            className="md:col-span-1 min-h-[48px] px-fib-8 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-[15px] text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none cursor-pointer"
                         >
                             {SUPPLY_UNITS_SI.map((u) => (
                                 <option key={u} value={u}>
@@ -200,7 +201,7 @@ export const ReceiptLinesEditor: React.FC<ReceiptLinesEditorProps> = ({
                             autoComplete="off"
                             spellCheck={false}
                             placeholder="CLP"
-                            className="md:col-span-1 min-h-[48px] px-fib-8 bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] outline-none font-mono text-data-dense tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
+                            className="md:col-span-1 min-h-[48px] px-fib-8 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-[15px] tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
                         />
                         <select
                             aria-label={`${t('supply.scanner.destination_label')} #${idx + 1}`}
@@ -210,7 +211,7 @@ export const ReceiptLinesEditor: React.FC<ReceiptLinesEditorProps> = ({
                                     destination: e.target.value as PurchaseLineDestination,
                                 })
                             }
-                            className="md:col-span-2 min-h-[48px] px-fib-8 bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] outline-none text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
+                            className="md:col-span-2 min-h-[48px] px-fib-8 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[15px] text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none cursor-pointer"
                         >
                             <option value="STOCK_IN_TRANSIT">
                                 {t('supply.destinations.STOCK_IN_TRANSIT')}
@@ -226,7 +227,7 @@ export const ReceiptLinesEditor: React.FC<ReceiptLinesEditorProps> = ({
                             </option>
                         </select>
                         <div className="md:col-span-1 flex items-center justify-end gap-fib-8">
-                            <span className="font-mono text-data-dense tabular-nums text-[#0F172A] dark:text-[#F3F4F6]">
+                            <span className="font-mono text-[15px] font-semibold tabular-nums text-[#0F172A] dark:text-[#F3F4F6]">
                                 {formatClp(line.subtotalClp)}
                             </span>
                             {lines.length > 1 && (
@@ -237,7 +238,7 @@ export const ReceiptLinesEditor: React.FC<ReceiptLinesEditorProps> = ({
                                     title={t('supply.common.remove')}
                                     className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#475569] dark:text-[#8A93A6] hover:text-[#C68346] cursor-pointer rounded-none shadow-none"
                                 >
-                                    <span className="material-symbols-outlined text-[18px]">
+                                    <span className="material-symbols-outlined text-[20px]">
                                         delete
                                     </span>
                                 </button>

@@ -95,24 +95,24 @@ describe('ReceiptScannerModal — E12 HITL 1-a-1 IA, Reset Estado, Bloqueo Invá
         );
 
         // Inyectar timbre determinístico TED antes de analizar con IA (bloquea RUT y Folio)
-        fireEvent.click(screen.getByRole('button', { name: /Leer timbre PDF417/i }));
-        const tedTextarea = screen.getByRole('textbox', { name: /Leer timbre PDF417/i });
+        fireEvent.click(screen.getByRole('button', { name: /Leer timbre SII de la factura/i }));
+        const tedTextarea = screen.getByRole('textbox', { name: /Leer timbre SII de la factura/i });
         fireEvent.change(tedTextarea, {
             target: {
                 value: '<TED><DD><RE>76123456-0</RE><TD>33</TD><F>4501</F><FE>2026-11-18</FE><MNT>119000</MNT></DD></TED>',
             },
         });
 
-        const rutInput = screen.getByLabelText(/RUT Emisor/i) as HTMLInputElement;
-        const folioInput = screen.getByLabelText(/Folio/i) as HTMLInputElement;
-        const supplierInput = screen.getByLabelText(/Razón Social/i) as HTMLInputElement;
+        const rutInput = screen.getByLabelText(/RUT del proveedor/i) as HTMLInputElement;
+        const folioInput = screen.getByLabelText(/Número de folio/i) as HTMLInputElement;
+        const supplierInput = screen.getByLabelText(/Nombre del proveedor/i) as HTMLInputElement;
 
         expect(rutInput.value).toBe('76.123.456-0');
         expect(folioInput.value).toBe('4501');
         expect(supplierInput.value).toBe('');
 
         // Disparar análisis IA OCR
-        fireEvent.click(screen.getByRole('button', { name: /Analizar documento/i }));
+        fireEvent.click(screen.getByRole('button', { name: /Leer documento con ayuda IA/i }));
         await waitFor(() => expect(analyzeSpy).toHaveBeenCalledTimes(1));
 
         // Verificar que OCR IA NO sobrescribió ningún campo automáticamente
@@ -125,11 +125,11 @@ describe('ReceiptScannerModal — E12 HITL 1-a-1 IA, Reset Estado, Bloqueo Invá
         expect(screen.queryByTestId('ai-accept-header-supplierTaxId')).not.toBeInTheDocument();
         expect(screen.queryByTestId('ai-accept-header-folio')).not.toBeInTheDocument();
         expect(screen.getByTestId('ai-proposal-header-supplierTaxId')).toHaveTextContent(
-            'PROTEGIDO TED / XML'
+            'Dato oficial del SII'
         );
 
         // Mientras haya propuestas PENDING, el submit permanece bloqueado
-        const commitBtn = screen.getByRole('button', { name: /Registrar Compra/i });
+        const commitBtn = screen.getByRole('button', { name: /Guardar compra/i });
         expect(commitBtn).toBeDisabled();
 
         // Aceptar Razón Social (1-a-1) y Descartar Fecha si difiere; aceptar línea SKU #1
@@ -144,7 +144,7 @@ describe('ReceiptScannerModal — E12 HITL 1-a-1 IA, Reset Estado, Bloqueo Invá
         // Verificar que fecha NO se aplicó al ser descartada y RUT/Folio TED permanecen intactos
         expect(rutInput.value).toBe('76.123.456-0');
         expect(folioInput.value).toBe('4501');
-        expect((screen.getByLabelText(/Fecha emisión/i) as HTMLInputElement).value).toBe('2026-11-18');
+        expect((screen.getByLabelText(/Fecha de emisión/i) as HTMLInputElement).value).toBe('2026-11-18');
         expect(commitBtn).not.toBeDisabled();
     });
 
@@ -162,9 +162,9 @@ describe('ReceiptScannerModal — E12 HITL 1-a-1 IA, Reset Estado, Bloqueo Invá
             />
         );
 
-        const rutInput = screen.getByLabelText(/RUT Emisor/i) as HTMLInputElement;
-        const supplierInput = screen.getByLabelText(/Razón Social/i) as HTMLInputElement;
-        const folioInput = screen.getByLabelText(/Folio/i) as HTMLInputElement;
+        const rutInput = screen.getByLabelText(/RUT del proveedor/i) as HTMLInputElement;
+        const supplierInput = screen.getByLabelText(/Nombre del proveedor/i) as HTMLInputElement;
+        const folioInput = screen.getByLabelText(/Número de folio/i) as HTMLInputElement;
 
         fireEvent.change(rutInput, { target: { value: '76.123.456-0' } });
         fireEvent.change(supplierInput, { target: { value: 'Proveedor Escaneo 1' } });
@@ -199,10 +199,10 @@ describe('ReceiptScannerModal — E12 HITL 1-a-1 IA, Reset Estado, Bloqueo Invá
             />
         );
 
-        expect((screen.getByLabelText(/RUT Emisor/i) as HTMLInputElement).value).toBe('');
-        expect((screen.getByLabelText(/Razón Social/i) as HTMLInputElement).value).toBe('');
-        expect((screen.getByLabelText(/Folio/i) as HTMLInputElement).value).toBe('');
-        expect((screen.getByLabelText(/^Total CLP$/i) as HTMLInputElement).value).toBe('0');
+        expect((screen.getByLabelText(/RUT del proveedor/i) as HTMLInputElement).value).toBe('');
+        expect((screen.getByLabelText(/Nombre del proveedor/i) as HTMLInputElement).value).toBe('');
+        expect((screen.getByLabelText(/Número de folio/i) as HTMLInputElement).value).toBe('');
+        expect((screen.getByLabelText(/^Total pagado$/i) as HTMLInputElement).value).toBe('0');
     });
 
     it('3. Bloquea submit con RUT inválido, razón social vacía/not_declared, folio=0, descuadre o 0 líneas y nunca persiste not_declared', () => {
@@ -221,15 +221,15 @@ describe('ReceiptScannerModal — E12 HITL 1-a-1 IA, Reset Estado, Bloqueo Invá
             />
         );
 
-        const commitBtn = screen.getByRole('button', { name: /Registrar Compra/i });
-        const reconcileBtn = screen.getByRole('button', { name: /Conciliar contra Backlog/i });
-        const rutInput = screen.getByLabelText(/RUT Emisor/i);
-        const supplierInput = screen.getByLabelText(/Razón Social/i);
-        const dteSelect = screen.getByLabelText(/Tipo DTE/i);
-        const folioInput = screen.getByLabelText(/Folio/i);
-        const totalInput = screen.getByLabelText(/^Total CLP$/i);
-        const lineDescInput = screen.getByLabelText(/Descripción \/ SKU #1/i);
-        const linePriceInput = screen.getByLabelText(/Total CLP #1/i);
+        const commitBtn = screen.getByRole('button', { name: /Guardar compra/i });
+        const reconcileBtn = screen.getByRole('button', { name: /Cuadrar con pedidos pendientes/i });
+        const rutInput = screen.getByLabelText(/RUT del proveedor/i);
+        const supplierInput = screen.getByLabelText(/Nombre del proveedor/i);
+        const dteSelect = screen.getByLabelText(/Tipo de documento/i);
+        const folioInput = screen.getByLabelText(/Número de folio/i);
+        const totalInput = screen.getByLabelText(/^Total pagado$/i);
+        const lineDescInput = screen.getByLabelText(/Qué se necesita #1/i);
+        const linePriceInput = screen.getByLabelText(/Total pagado #1/i);
 
         // Estado inicial vacío -> ambos botones bloqueados
         expect(commitBtn).toBeDisabled();
@@ -326,9 +326,9 @@ describe('ReceiptScannerModal — E12 HITL 1-a-1 IA, Reset Estado, Bloqueo Invá
         const telemetryBar = await screen.findByTestId('cas-telemetry-bar');
         expect(telemetryBar).toHaveTextContent('ORIG: 4.0 KB ➔ CAS: 1.0 KB (-75.0%)');
         expect(telemetryBar).toHaveTextContent(`SHA-256 ${'b'.repeat(12)}`);
-        expect((screen.getByLabelText(/Razón Social/i) as HTMLInputElement).value).toBe(
+        expect((screen.getByLabelText(/Nombre del proveedor/i) as HTMLInputElement).value).toBe(
             'Proveedor XML SpA'
         );
-        expect((screen.getByLabelText(/Folio/i) as HTMLInputElement).value).toBe('7744');
+        expect((screen.getByLabelText(/Número de folio/i) as HTMLInputElement).value).toBe('7744');
     });
 });

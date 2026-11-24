@@ -20,6 +20,21 @@ function toLocalDateTimeInput(iso: string): string {
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+function formatFriendlyWindowDate(iso: string): string {
+    const ms = Date.parse(iso);
+    if (!Number.isFinite(ms)) return iso;
+    try {
+        return new Date(ms).toLocaleString('es-CL', {
+            day: '2-digit',
+            month: 'short',
+            hour: '2-digit',
+            minute: '2-digit',
+        });
+    } catch {
+        return iso.slice(0, 16).replace('T', ' ');
+    }
+}
+
 function computeGrantWindowProgress(grant: TemporaryChannelGrant): {
     status: 'ACTIVE' | 'EXPIRED' | 'REVOKED';
     pct: number;
@@ -86,12 +101,12 @@ export const SupplyTempGrantsPanel: React.FC<SupplyTempGrantsPanelProps> = ({
             {
                 field: t('supply.profiles_ws.temp_channel'),
                 current: '—',
-                suggested: `${t(`supply.channels.${pendingGrantHitl.channelId}`)} (${pendingGrantHitl.channelId})`,
+                suggested: t(`supply.channels.${pendingGrantHitl.channelId}`),
             },
             {
                 field: `${t('supply.profiles_ws.temp_from')} ➔ ${t('supply.profiles_ws.temp_until')}`,
                 current: '—',
-                suggested: `${pendingGrantHitl.validFromIso.slice(0, 16)} ➔ ${pendingGrantHitl.validUntilIso.slice(0, 16)}`,
+                suggested: `${formatFriendlyWindowDate(pendingGrantHitl.validFromIso)} ➔ ${formatFriendlyWindowDate(pendingGrantHitl.validUntilIso)}`,
             },
             {
                 field: t('supply.profiles_ws.temp_reason'),
@@ -120,20 +135,15 @@ export const SupplyTempGrantsPanel: React.FC<SupplyTempGrantsPanelProps> = ({
         [profile.temporaryGrants]
     );
 
-    const inputClass =
-        'w-full min-h-[48px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-data-dense tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none';
+    const underlineInputClass =
+        'w-full min-h-[48px] px-fib-13 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[16px] text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none';
 
     return (
-        <section className="space-y-fib-13 border-t border-[#E2E8F0] dark:border-[#12151C] pt-fib-21">
+        <section className="space-y-fib-21 border-t border-[#E2E8F0] dark:border-[#12151C] pt-fib-21">
             <div className="flex items-center justify-between gap-fib-13">
-                <div className="flex items-center gap-fib-8">
-                    <span className="material-symbols-outlined text-[18px] text-[#00AEEF]">
-                        schedule
-                    </span>
-                    <h4 className="font-mono text-microcopy uppercase font-bold tracking-wider text-[#0F172A] dark:text-[#F3F4F6]">
-                        {t('supply.profiles_ws.temp_title')}
-                    </h4>
-                </div>
+                <h4 className="text-[18px] font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
+                    {t('supply.profiles_ws.temp_title')}
+                </h4>
                 {canAdminister && (
                     <button
                         type="button"
@@ -141,10 +151,15 @@ export const SupplyTempGrantsPanel: React.FC<SupplyTempGrantsPanelProps> = ({
                         aria-label={t('supply.profiles_ws.temp_add_btn')}
                         title={t('supply.profiles_ws.temp_add_btn')}
                         data-testid="toggle-temp-grant-form"
-                        className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#C68346] hover:opacity-80 cursor-pointer rounded-none shadow-none"
+                        className="bg-transparent border-0 outline-none px-fib-13 min-h-[48px] inline-flex items-center gap-fib-8 text-[15px] font-semibold text-[#7C3F0E] dark:text-[#C68346] hover:opacity-80 cursor-pointer rounded-none shadow-none"
                     >
                         <span className="material-symbols-outlined text-[22px]">
                             {formOpen ? 'close' : 'add'}
+                        </span>
+                        <span>
+                            {formOpen
+                                ? t('supply.common.close')
+                                : t('supply.profiles_ws.temp_add_btn')}
                         </span>
                     </button>
                 )}
@@ -171,28 +186,28 @@ export const SupplyTempGrantsPanel: React.FC<SupplyTempGrantsPanelProps> = ({
                             confirmationKeyword: 'ACTUALIZAR',
                         });
                     }}
-                    className="border border-[#E2E8F0] dark:border-[#12151C] border-l-[3px] border-l-[#00AEEF] bg-[#F8FAFC] dark:bg-[#07090D] p-fib-13 space-y-fib-13 rounded-none shadow-none"
+                    className="border-l-[3px] border-l-[#00AEEF] pl-fib-21 py-fib-13 space-y-fib-21"
                 >
-                    <div className="flex flex-wrap items-center gap-fib-8">
+                    <div className="flex flex-wrap items-center gap-fib-13">
                         <button
                             type="button"
                             onClick={() => applyPresetHours(48)}
-                            className="min-h-[48px] px-fib-13 border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] font-mono text-microcopy uppercase text-[#0F172A] dark:text-[#F3F4F6] hover:border-[#C68346] cursor-pointer rounded-none shadow-none"
+                            className="min-h-[48px] px-fib-13 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] text-[15px] font-medium text-[#0F172A] dark:text-[#F3F4F6] cursor-pointer rounded-none shadow-none"
                         >
                             {t('supply.profiles_ws.temp_preset_weekend')}
                         </button>
                         <button
                             type="button"
                             onClick={() => applyPresetHours(12)}
-                            className="min-h-[48px] px-fib-13 border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] font-mono text-microcopy uppercase text-[#0F172A] dark:text-[#F3F4F6] hover:border-[#C68346] cursor-pointer rounded-none shadow-none"
+                            className="min-h-[48px] px-fib-13 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] text-[15px] font-medium text-[#0F172A] dark:text-[#F3F4F6] cursor-pointer rounded-none shadow-none"
                         >
                             {t('supply.profiles_ws.temp_preset_shift12')}
                         </button>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-fib-13">
-                        <div className="space-y-fib-8">
-                            <label className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-fib-21">
+                        <div className="space-y-1">
+                            <label className="block text-[14px] font-medium text-[#475569] dark:text-[#8A93A6]">
                                 {t('supply.profiles_ws.temp_channel')}
                             </label>
                             <select
@@ -200,24 +215,25 @@ export const SupplyTempGrantsPanel: React.FC<SupplyTempGrantsPanelProps> = ({
                                 onChange={(e) =>
                                     setChannelId(e.target.value as SupplyWhatsAppChannelId)
                                 }
-                                className={inputClass}
+                                className={underlineInputClass}
                             >
                                 {CANONICAL_WHATSAPP_CHANNEL_IDS.map((ch) => (
                                     <option
                                         key={ch}
                                         value={ch}
                                         disabled={
-                                            ch === 'CH_CONTROLLED_DGMN' && !profile.hasValidDgmnLicense
+                                            ch === 'CH_CONTROLLED_DGMN' &&
+                                            !profile.hasValidDgmnLicense
                                         }
                                     >
-                                        {t(`supply.channels.${ch}`)} ({ch})
+                                        {t(`supply.channels.${ch}`)}
                                     </option>
                                 ))}
                             </select>
                         </div>
 
-                        <div className="space-y-fib-8">
-                            <label className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">
+                        <div className="space-y-1">
+                            <label className="block text-[14px] font-medium text-[#475569] dark:text-[#8A93A6]">
                                 {t('supply.profiles_ws.temp_max_clp')}
                             </label>
                             <input
@@ -227,12 +243,12 @@ export const SupplyTempGrantsPanel: React.FC<SupplyTempGrantsPanelProps> = ({
                                 onChange={(e) => setMaxAmountOverride(e.target.value)}
                                 autoComplete="off"
                                 spellCheck={false}
-                                className={`${inputClass} select-text`}
+                                className={`${underlineInputClass} font-mono tabular-nums select-text`}
                             />
                         </div>
 
-                        <div className="space-y-fib-8">
-                            <label className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">
+                        <div className="space-y-1">
+                            <label className="block text-[14px] font-medium text-[#475569] dark:text-[#8A93A6]">
                                 {t('supply.profiles_ws.temp_from')}
                             </label>
                             <input
@@ -241,12 +257,12 @@ export const SupplyTempGrantsPanel: React.FC<SupplyTempGrantsPanelProps> = ({
                                 onChange={(e) => setValidFromLocal(e.target.value)}
                                 autoComplete="off"
                                 spellCheck={false}
-                                className={`${inputClass} select-text`}
+                                className={`${underlineInputClass} font-mono tabular-nums select-text`}
                             />
                         </div>
 
-                        <div className="space-y-fib-8">
-                            <label className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">
+                        <div className="space-y-1">
+                            <label className="block text-[14px] font-medium text-[#475569] dark:text-[#8A93A6]">
                                 {t('supply.profiles_ws.temp_until')}
                             </label>
                             <input
@@ -255,13 +271,13 @@ export const SupplyTempGrantsPanel: React.FC<SupplyTempGrantsPanelProps> = ({
                                 onChange={(e) => setValidUntilLocal(e.target.value)}
                                 autoComplete="off"
                                 spellCheck={false}
-                                className={`${inputClass} select-text`}
+                                className={`${underlineInputClass} font-mono tabular-nums select-text`}
                             />
                         </div>
                     </div>
 
-                    <div className="space-y-fib-8">
-                        <label className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">
+                    <div className="space-y-1">
+                        <label className="block text-[14px] font-medium text-[#475569] dark:text-[#8A93A6]">
                             {t('supply.profiles_ws.temp_reason')}
                         </label>
                         <input
@@ -271,7 +287,7 @@ export const SupplyTempGrantsPanel: React.FC<SupplyTempGrantsPanelProps> = ({
                             autoComplete="off"
                             spellCheck={false}
                             data-testid="temp-grant-reason-input"
-                            className={`${inputClass} select-text`}
+                            className={`${underlineInputClass} select-text`}
                         />
                     </div>
 
@@ -280,7 +296,7 @@ export const SupplyTempGrantsPanel: React.FC<SupplyTempGrantsPanelProps> = ({
                             type="submit"
                             disabled={!canSubmitForm || saving}
                             data-testid="temp-grant-submit-btn"
-                            className="min-h-[48px] px-fib-21 bg-[#C68346] border border-[#C68346] text-[#000000] font-mono text-microcopy font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
+                            className="min-h-[48px] px-fib-21 bg-[#C68346] border border-[#C68346] text-[#000000] text-[15px] font-semibold rounded-none shadow-none cursor-pointer hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
                         >
                             {t('supply.profiles_ws.temp_add_btn')}
                         </button>
@@ -289,11 +305,11 @@ export const SupplyTempGrantsPanel: React.FC<SupplyTempGrantsPanelProps> = ({
             )}
 
             {sortedGrants.length === 0 ? (
-                <p className="font-mono text-data-dense text-[#475569] dark:text-[#8A93A6]">
+                <p className="text-[15px] text-[#475569] dark:text-[#8A93A6]">
                     {t('supply.profiles_ws.temp_empty')}
                 </p>
             ) : (
-                <div className="divide-y divide-[#E2E8F0] dark:divide-[#12151C] border border-[#E2E8F0] dark:border-[#12151C]">
+                <div className="divide-y divide-[#E2E8F0] dark:divide-[#12151C]">
                     {sortedGrants.map((grant) => {
                         const meta = computeGrantWindowProgress(grant);
                         return (
@@ -301,7 +317,7 @@ export const SupplyTempGrantsPanel: React.FC<SupplyTempGrantsPanelProps> = ({
                                 key={grant.grantItemId}
                                 data-testid={`temp-grant-${grant.grantItemId}`}
                                 className={cn(
-                                    'p-fib-13 space-y-fib-8 border-l-[3px] bg-[#FFFFFF] dark:bg-[#000000]',
+                                    'py-fib-13 pl-fib-13 space-y-fib-8 border-l-[3px]',
                                     meta.status === 'ACTIVE'
                                         ? 'border-l-[#00AEEF]'
                                         : 'border-l-transparent'
@@ -309,16 +325,16 @@ export const SupplyTempGrantsPanel: React.FC<SupplyTempGrantsPanelProps> = ({
                             >
                                 <div className="flex items-start justify-between gap-fib-13">
                                     <div className="min-w-0 space-y-1">
-                                        <div className="flex flex-wrap items-center gap-fib-8">
-                                            <span className="text-data-dense font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
+                                        <div className="flex flex-wrap items-center gap-fib-13">
+                                            <span className="text-[16px] font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
                                                 {t(`supply.channels.${grant.channelId}`)}
                                             </span>
                                             <span
                                                 className={cn(
-                                                    'font-mono text-microcopy uppercase font-bold',
+                                                    'text-[14px] font-semibold',
                                                     meta.status === 'ACTIVE'
                                                         ? 'text-[#0369A1] dark:text-[#00AEEF]'
-                                                        : 'text-[#5A6072]'
+                                                        : 'text-[#475569] dark:text-[#8A93A6]'
                                                 )}
                                             >
                                                 {meta.status === 'ACTIVE'
@@ -328,14 +344,14 @@ export const SupplyTempGrantsPanel: React.FC<SupplyTempGrantsPanelProps> = ({
                                                       : t('supply.profiles_ws.temp_expired_tag')}
                                             </span>
                                         </div>
-                                        <div className="font-mono text-microcopy tabular-nums text-[#475569] dark:text-[#8A93A6]">
-                                            {grant.validFromIso.slice(0, 16).replace('T', ' ')} ➔{' '}
-                                            {grant.validUntilIso.slice(0, 16).replace('T', ' ')}
+                                        <div className="text-[14px] tabular-nums text-[#475569] dark:text-[#8A93A6]">
+                                            {formatFriendlyWindowDate(grant.validFromIso)} ➔{' '}
+                                            {formatFriendlyWindowDate(grant.validUntilIso)}
                                             {typeof grant.maxAmountClpOverride === 'number'
                                                 ? ` · ${formatClp(grant.maxAmountClpOverride)}`
                                                 : ''}
                                         </div>
-                                        <div className="font-mono text-data-dense text-[#0F172A] dark:text-[#F3F4F6]">
+                                        <div className="text-[15px] text-[#0F172A] dark:text-[#F3F4F6]">
                                             {grant.reason}
                                         </div>
                                     </div>
@@ -349,7 +365,7 @@ export const SupplyTempGrantsPanel: React.FC<SupplyTempGrantsPanelProps> = ({
                                             title={t('supply.profiles_ws.temp_revoke_btn')}
                                             className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#475569] dark:text-[#8A93A6] hover:text-[#C68346] cursor-pointer rounded-none shadow-none"
                                         >
-                                            <span className="material-symbols-outlined text-[20px]">
+                                            <span className="material-symbols-outlined text-[22px]">
                                                 delete
                                             </span>
                                         </button>

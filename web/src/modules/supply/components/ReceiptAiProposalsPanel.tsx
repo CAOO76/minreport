@@ -228,20 +228,20 @@ export const ReceiptAiProposalsPanel: React.FC<ReceiptAiProposalsPanelProps> = (
             data-testid="ai-hitl-proposals-panel"
             aria-label={t('supply.scanner.ai_proposals_title')}
             className={cn(
-                'border border-[#E2E8F0] dark:border-[#12151C] border-l-[3px] bg-[#F8FAFC] dark:bg-[#07090D] p-fib-13 space-y-fib-13 rounded-none shadow-none',
+                'border-b border-[#E2E8F0] dark:border-[#12151C] border-l-[3px] pl-fib-13 py-fib-13 space-y-fib-13 rounded-none shadow-none',
                 pendingCount > 0 ? 'border-l-[#C68346]' : 'border-l-[#00AEEF]'
             )}
         >
             <div className="flex items-center justify-between gap-fib-8">
-                <div className="flex items-center gap-fib-8 font-mono text-microcopy uppercase font-bold text-[#0F172A] dark:text-[#F3F4F6]">
-                    <span className="material-symbols-outlined text-[18px] text-[#00AEEF]">
+                <div className="flex items-center gap-fib-8 text-[15px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                    <span className="material-symbols-outlined text-[20px] text-[#00AEEF]">
                         smart_toy
                     </span>
                     <span>{t('supply.scanner.ai_proposals_title')}</span>
                 </div>
                 <span
                     className={cn(
-                        'font-mono text-microcopy uppercase tabular-nums',
+                        'text-[14px] font-semibold tabular-nums',
                         pendingCount > 0
                             ? 'text-[#9A5B21] dark:text-[#C68346]'
                             : 'text-[#0369A1] dark:text-[#00AEEF]'
@@ -259,10 +259,10 @@ export const ReceiptAiProposalsPanel: React.FC<ReceiptAiProposalsPanelProps> = (
                         className="py-fib-8 flex flex-wrap items-center justify-between gap-fib-13"
                     >
                         <div className="min-w-0 flex-1 space-y-fib-8">
-                            <div className="font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">
+                            <div className="text-[14px] font-medium text-[#475569] dark:text-[#8A93A6]">
                                 {t(prop.labelKey)}
                             </div>
-                            <div className="font-mono text-data-dense tabular-nums flex flex-wrap items-center gap-fib-8">
+                            <div className="font-mono text-[15px] tabular-nums flex flex-wrap items-center gap-fib-8">
                                 <span className="text-[#475569] dark:text-[#8A93A6] select-text">
                                     [{prop.currentDisplay}]
                                 </span>
@@ -286,7 +286,7 @@ export const ReceiptAiProposalsPanel: React.FC<ReceiptAiProposalsPanelProps> = (
 
                         <div className="flex items-center gap-fib-8 shrink-0">
                             {prop.isDeterministicProtected ? (
-                                <span className="inline-flex items-center gap-fib-8 font-mono text-microcopy uppercase text-[#0369A1] dark:text-[#00AEEF]">
+                                <span className="inline-flex items-center gap-fib-8 text-[14px] font-semibold text-[#0369A1] dark:text-[#00AEEF]">
                                     <span className="material-symbols-outlined text-[18px]">lock</span>
                                     <span>{t('supply.scanner.ai_proposal_locked_det')}</span>
                                 </span>
@@ -320,7 +320,7 @@ export const ReceiptAiProposalsPanel: React.FC<ReceiptAiProposalsPanelProps> = (
                             ) : (
                                 <span
                                     className={cn(
-                                        'font-mono text-microcopy uppercase',
+                                        'text-[14px] font-semibold',
                                         prop.decision === 'ACCEPTED'
                                             ? 'text-[#0369A1] dark:text-[#00AEEF]'
                                             : 'text-[#475569] dark:text-[#8A93A6]'
@@ -347,10 +347,10 @@ export const ReceiptAiProposalsPanel: React.FC<ReceiptAiProposalsPanelProps> = (
                             className="py-fib-8 flex flex-wrap items-center justify-between gap-fib-13"
                         >
                             <div className="min-w-0 flex-1 space-y-fib-8">
-                                <div className="font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">
-                                    SKU #{lp.lineIndex + 1}
+                                <div className="font-mono text-[14px] font-medium text-[#475569] dark:text-[#8A93A6]">
+                                    Ítem #{lp.lineIndex + 1}
                                 </div>
-                                <div className="font-mono text-data-dense tabular-nums flex flex-wrap items-center gap-fib-8">
+                                <div className="font-mono text-[15px] tabular-nums flex flex-wrap items-center gap-fib-8">
                                     <span className="text-[#475569] dark:text-[#8A93A6] select-text">
                                         [{currentSummary}]
                                     </span>
@@ -401,7 +401,7 @@ export const ReceiptAiProposalsPanel: React.FC<ReceiptAiProposalsPanelProps> = (
                                 ) : (
                                     <span
                                         className={cn(
-                                            'font-mono text-microcopy uppercase',
+                                            'text-[14px] font-semibold',
                                             lp.decision === 'ACCEPTED'
                                                 ? 'text-[#0369A1] dark:text-[#00AEEF]'
                                                 : 'text-[#475569] dark:text-[#8A93A6]'

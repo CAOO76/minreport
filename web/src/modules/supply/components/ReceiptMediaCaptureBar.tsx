@@ -233,16 +233,16 @@ export const ReceiptMediaCaptureBar: React.FC<ReceiptMediaCaptureBarProps> = ({
     return (
         <>
             {/* Single 56px MBUX Zero-Layer Header */}
-            <header className="h-[56px] shrink-0 px-fib-21 flex items-center justify-between gap-fib-13 bg-[#F8FAFC] dark:bg-[#07090D] border-b border-[#E2E8F0] dark:border-[#12151C]">
+            <header className="h-[56px] shrink-0 px-fib-21 flex items-center justify-between gap-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border-b border-[#E2E8F0] dark:border-[#12151C]">
                 <div className="flex items-center gap-fib-13 min-w-0">
                     <span className="material-symbols-outlined text-[22px] text-[#C68346]">
                         document_scanner
                     </span>
-                    <h2 className="text-h2-section font-semibold text-[#0F172A] dark:text-[#F3F4F6] truncate uppercase">
+                    <h2 className="text-[17px] font-bold text-[#0F172A] dark:text-[#F3F4F6] truncate">
                         {t('supply.scanner.title')}
                     </h2>
                     {isExecOwner && isDirectAutonomous && (
-                        <span className="hidden sm:inline-block font-mono text-microcopy uppercase text-[#C68346] border-l border-[#E2E8F0] dark:border-[#12151C] pl-fib-13">
+                        <span className="hidden sm:inline-block text-[14px] font-semibold text-[#7C3F0E] dark:text-[#C68346] border-l border-[#E2E8F0] dark:border-[#12151C] pl-fib-13">
                             {t('supply.scanner.exec_direct_tag')}
                         </span>
                     )}
@@ -343,7 +343,7 @@ export const ReceiptMediaCaptureBar: React.FC<ReceiptMediaCaptureBarProps> = ({
                             {statusNotice && (
                                 <div
                                     className={cn(
-                                        'border-l-[3px] pl-fib-13 py-fib-8 font-mono text-data-dense tabular-nums',
+                                        'border-l-[3px] pl-fib-13 py-fib-8 text-[15px] tabular-nums',
                                         statusNotice.tone === 'copper'
                                             ? 'border-[#C68346] text-[#9A5B21] dark:text-[#C68346]'
                                             : 'border-[#00AEEF] text-[#0369A1] dark:text-[#00AEEF]'
@@ -355,16 +355,16 @@ export const ReceiptMediaCaptureBar: React.FC<ReceiptMediaCaptureBarProps> = ({
                             {casTelemetryLine && (
                                 <div
                                     data-testid="cas-telemetry-bar"
-                                    className="flex flex-wrap items-center justify-between gap-fib-8 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] px-fib-13 py-fib-8 rounded-none shadow-none"
+                                    className="flex flex-wrap items-center justify-between gap-fib-8 border-l-[3px] border-[#00AEEF] pl-fib-13 py-fib-8 rounded-none shadow-none"
                                 >
-                                    <div className="flex items-center gap-fib-8 min-w-0 font-mono text-data-dense tabular-nums text-[#0369A1] dark:text-[#00AEEF]">
-                                        <span className="material-symbols-outlined text-[18px]">
+                                    <div className="flex items-center gap-fib-8 min-w-0 font-mono text-[14px] tabular-nums text-[#0369A1] dark:text-[#00AEEF]">
+                                        <span className="material-symbols-outlined text-[20px]">
                                             verified
                                         </span>
                                         <span className="select-text truncate">{casTelemetryLine}</span>
                                     </div>
                                     {evidenceCasRef?.sha256 && (
-                                        <div className="flex items-center gap-fib-8 font-mono text-microcopy tabular-nums text-[#475569] dark:text-[#8A93A6]">
+                                        <div className="flex items-center gap-fib-8 font-mono text-[14px] tabular-nums text-[#475569] dark:text-[#8A93A6]">
                                             <span className="select-text">
                                                 SHA-256 {evidenceCasRef.sha256.slice(0, 12)}
                                             </span>
@@ -376,7 +376,7 @@ export const ReceiptMediaCaptureBar: React.FC<ReceiptMediaCaptureBarProps> = ({
                             {previewUrl && (
                                 <div
                                     data-testid="receipt-preview-stage"
-                                    className="max-h-44 overflow-hidden border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] flex items-center justify-center rounded-none shadow-none"
+                                    className="max-h-44 overflow-hidden flex items-center justify-center rounded-none shadow-none"
                                 >
                                     <SecureImage
                                         src={previewUrl}
@@ -393,7 +393,7 @@ export const ReceiptMediaCaptureBar: React.FC<ReceiptMediaCaptureBarProps> = ({
                         <div className="space-y-fib-8 border-l-[3px] border-[#00AEEF] pl-fib-13">
                             <label
                                 htmlFor={`${uid}-ted`}
-                                className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]"
+                                className="block text-[14px] text-[#475569] dark:text-[#8A93A6]"
                             >
                                 {t('supply.scanner.scan_pdf417')}
                             </label>
@@ -405,7 +405,7 @@ export const ReceiptMediaCaptureBar: React.FC<ReceiptMediaCaptureBarProps> = ({
                                 autoComplete="off"
                                 spellCheck={false}
                                 placeholder={t('supply.scanner.ted_placeholder')}
-                                className="w-full p-fib-13 bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#00AEEF] outline-none font-mono text-data-dense tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
+                                className="w-full p-fib-13 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] focus:border-[#00AEEF] outline-none font-mono text-[15px] tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
                             />
                         </div>
                     )}

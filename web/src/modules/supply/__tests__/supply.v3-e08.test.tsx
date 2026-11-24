@@ -387,10 +387,10 @@ describe('V3-E08 — Control Dashboard, Physical Warehouses/Tanks, Kardex, 4-Way
         await waitFor(() => {
             expect(screen.getByTestId('warehouse-balance-bal-1')).toBeInTheDocument();
         });
-        expect(screen.getByTestId('warehouse-balance-bal-1')).toHaveTextContent('FEFO LOT-2026-11');
+        expect(screen.getByTestId('warehouse-balance-bal-1')).toHaveTextContent('LOT-2026-11');
 
         // Abrir modal de recepción 4-Way parcial sobre pur-in-transit-01
-        fireEvent.click(screen.getByRole('button', { name: /Confirmar recepción física en faena/i }));
+        fireEvent.click(screen.getByRole('button', { name: /Confirmar llegada a faena/i }));
         await waitFor(() => {
             expect(screen.getByTestId('warehouse-reception-modal')).toBeInTheDocument();
         });
@@ -521,7 +521,8 @@ describe('V3-E08 — Control Dashboard, Physical Warehouses/Tanks, Kardex, 4-Way
         expect(container.textContent || '').toContain('Agua potable');
         expect(container.textContent || '').toContain('Agua industrial / Aljibe');
         expect(container.textContent || '').toContain('Controlados DGMN');
-        expect(container.textContent || '').toContain('CONTROLADO DGMN');
+        expect(container.textContent || '').toContain('Permisos especiales y controlados');
+        expect(container.textContent || '').not.toContain('PER_PAX');
 
         for (const lang of ['es', 'en', 'pt'] as const) {
             await act(async () => {

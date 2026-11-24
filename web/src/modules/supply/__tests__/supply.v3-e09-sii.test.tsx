@@ -303,8 +303,8 @@ describe('V3-E09b-sii — SiiRendicionesView HITL Approvals, ISO 27001 SoD & RCV
         const badge48h = screen.getByTestId('sii-rcv-badge-48h-doc-rcv-48h');
         expect(badge48h.className).toContain('bg-[#C68346]');
         expect(badge48h.className).toContain('text-[#000000]');
-        expect(badge48h).toHaveTextContent('RCV < 48H');
-        expect(screen.getByTestId('sii-rcv-badge-3d-doc-rcv-3d')).toHaveTextContent('RCV ≤ 3D');
+        expect(badge48h).toHaveTextContent('Vence en menos de 48 horas');
+        expect(screen.getByTestId('sii-rcv-badge-3d-doc-rcv-3d')).toHaveTextContent('Vence en 3 días o menos');
 
         // Paridad es/en/pt sin llaves crudas
         for (const lang of ['es', 'en', 'pt'] as const) {

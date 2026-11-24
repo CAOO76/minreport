@@ -278,24 +278,25 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                 <M3LinearProgress indeterminate ariaLabel={t('supply.common.loading')} />
             )}
 
-            {/* Icon-First Sub-module Bar */}
+            {/* Sub-module Bar */}
             <div className="px-fib-21 py-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C] flex flex-wrap items-center justify-between gap-fib-13">
-                <div className="flex items-center gap-fib-8">
+                <div className="flex flex-wrap items-center gap-fib-21">
                     <button
                         type="button"
                         onClick={() => setTab('BOLETAS')}
                         aria-label={t('supply.sii.tab_boletas')}
                         title={t('supply.sii.tab_boletas')}
                         className={cn(
-                            'bg-transparent border-0 border-b-2 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center gap-fib-8 transition-colors cursor-pointer rounded-none shadow-none',
+                            'bg-transparent border-0 border-b-2 outline-none py-fib-8 px-1 min-h-[48px] inline-flex items-center gap-fib-8 transition-colors cursor-pointer rounded-none shadow-none text-[15px]',
                             tab === 'BOLETAS'
-                                ? 'border-[#C68346] text-[#7C3F0E] dark:text-[#C68346]'
-                                : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
+                                ? 'border-[#C68346] text-[#7C3F0E] dark:text-[#C68346] font-bold'
+                                : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] font-medium'
                         )}
                     >
-                        <span className="material-symbols-outlined text-[22px]">receipt_long</span>
-                        <span className="font-mono text-microcopy tabular-nums">
-                            {boletas.length}
+                        <span className="material-symbols-outlined text-[20px]">receipt_long</span>
+                        <span>{t('supply.sii.tab_boletas')}</span>
+                        <span className="font-mono text-[14px] tabular-nums text-[#475569] dark:text-[#8A93A6]">
+                            ({boletas.length})
                         </span>
                     </button>
 
@@ -305,19 +306,20 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                         aria-label={t('supply.sii.tab_facturas')}
                         title={t('supply.sii.tab_facturas')}
                         className={cn(
-                            'bg-transparent border-0 border-b-2 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center gap-fib-8 transition-colors cursor-pointer rounded-none shadow-none',
+                            'bg-transparent border-0 border-b-2 outline-none py-fib-8 px-1 min-h-[48px] inline-flex items-center gap-fib-8 transition-colors cursor-pointer rounded-none shadow-none text-[15px]',
                             tab === 'FACTURAS'
-                                ? 'border-[#C68346] text-[#7C3F0E] dark:text-[#C68346]'
-                                : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
+                                ? 'border-[#C68346] text-[#7C3F0E] dark:text-[#C68346] font-bold'
+                                : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] font-medium'
                         )}
                     >
-                        <span className="material-symbols-outlined text-[22px]">description</span>
-                        <span className="font-mono text-microcopy tabular-nums">
-                            {facturas.length}
+                        <span className="material-symbols-outlined text-[20px]">description</span>
+                        <span>{t('supply.sii.tab_facturas')}</span>
+                        <span className="font-mono text-[14px] tabular-nums text-[#475569] dark:text-[#8A93A6]">
+                            ({facturas.length})
                         </span>
                         {rcvUrgentCount > 0 && (
-                            <span className="font-mono text-microcopy tabular-nums font-bold text-[#7C3F0E] dark:text-[#C68346]">
-                                !{rcvUrgentCount}
+                            <span className="font-mono text-[14px] tabular-nums font-bold text-[#7C3F0E] dark:text-[#C68346]">
+                                · !{rcvUrgentCount}
                             </span>
                         )}
                     </button>
@@ -328,20 +330,21 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                         aria-label={t('supply.sii.tab_envelopes')}
                         title={t('supply.sii.tab_envelopes')}
                         className={cn(
-                            'bg-transparent border-0 border-b-2 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center gap-fib-8 transition-colors cursor-pointer rounded-none shadow-none',
+                            'bg-transparent border-0 border-b-2 outline-none py-fib-8 px-1 min-h-[48px] inline-flex items-center gap-fib-8 transition-colors cursor-pointer rounded-none shadow-none text-[15px]',
                             tab === 'ENVELOPES'
-                                ? 'border-[#C68346] text-[#7C3F0E] dark:text-[#C68346]'
-                                : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
+                                ? 'border-[#C68346] text-[#7C3F0E] dark:text-[#C68346] font-bold'
+                                : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] font-medium'
                         )}
                     >
-                        <span className="material-symbols-outlined text-[22px]">folder_open</span>
-                        <span className="font-mono text-microcopy tabular-nums">
-                            {expenseReports.length}
+                        <span className="material-symbols-outlined text-[20px]">folder_open</span>
+                        <span>{t('supply.sii.tab_envelopes')}</span>
+                        <span className="font-mono text-[14px] tabular-nums text-[#475569] dark:text-[#8A93A6]">
+                            ({expenseReports.length})
                         </span>
                     </button>
                 </div>
 
-                <div className="flex items-center gap-fib-8">
+                <div className="flex flex-wrap items-center gap-fib-13">
                     <div>
                         <label htmlFor={`${uid}-search`} className="sr-only">
                             {t('supply.common.search_placeholder')}
@@ -355,7 +358,7 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                             spellCheck={false}
                             aria-label={t('supply.common.search_placeholder')}
                             placeholder={t('supply.common.search_placeholder')}
-                            className="w-52 min-h-[48px] px-fib-13 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
+                            className="w-56 min-h-[48px] px-fib-13 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[15px] text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
                         />
                     </div>
 
@@ -367,13 +370,14 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                             title={t('supply.sii.rcv_filter_urgent')}
                             data-testid="sii-rcv-urgent-filter-btn"
                             className={cn(
-                                'bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center transition-colors cursor-pointer rounded-none shadow-none',
+                                'bg-transparent border-0 outline-none p-1 min-h-[48px] inline-flex items-center gap-fib-8 text-[14px] font-semibold transition-colors cursor-pointer rounded-none shadow-none',
                                 onlyRcvUrgent
                                     ? 'text-[#7C3F0E] dark:text-[#C68346]'
                                     : 'text-[#475569] dark:text-[#8A93A6] hover:text-[#7C3F0E] dark:hover:text-[#C68346]'
                             )}
                         >
-                            <span className="material-symbols-outlined text-[22px]">schedule</span>
+                            <span className="material-symbols-outlined text-[20px]">schedule</span>
+                            <span>{t('supply.sii.rcv_filter_urgent')}</span>
                         </button>
                     )}
 
@@ -384,9 +388,10 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                         aria-label={t('supply.sii.rcv_query_live')}
                         title={t('supply.sii.rcv_query_live')}
                         data-testid="sii-rcv-query-btn"
-                        className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#7C3F0E] dark:text-[#C68346] hover:opacity-80 cursor-pointer rounded-none shadow-none disabled:opacity-40"
+                        className="bg-transparent border-0 outline-none p-1 min-h-[48px] inline-flex items-center gap-fib-8 text-[14px] font-semibold text-[#7C3F0E] dark:text-[#C68346] hover:opacity-80 cursor-pointer rounded-none shadow-none disabled:opacity-40"
                     >
-                        <span className="material-symbols-outlined text-[22px]">manage_search</span>
+                        <span className="material-symbols-outlined text-[20px]">manage_search</span>
+                        <span>{t('supply.sii.rcv_query_live')}</span>
                     </button>
 
                     {tab === 'ENVELOPES' && canMutate && (
@@ -395,11 +400,12 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                             onClick={() => setShowNewEnvelope((prev) => !prev)}
                             aria-label={t('supply.sii.new_envelope')}
                             title={t('supply.sii.new_envelope')}
-                            className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#0369A1] dark:text-[#00AEEF] hover:opacity-80 cursor-pointer rounded-none shadow-none"
+                            className="bg-transparent border border-[#00AEEF] outline-none px-fib-13 min-h-[48px] inline-flex items-center gap-fib-8 text-[14px] font-semibold text-[#0369A1] dark:text-[#00AEEF] hover:opacity-80 cursor-pointer rounded-none shadow-none"
                         >
-                            <span className="material-symbols-outlined text-[22px]">
+                            <span className="material-symbols-outlined text-[20px]">
                                 {showNewEnvelope ? 'close' : 'add'}
                             </span>
+                            <span>{showNewEnvelope ? t('supply.common.close') : t('supply.sii.new_envelope')}</span>
                         </button>
                     )}
 
@@ -409,9 +415,10 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                         disabled={exporting}
                         aria-label={t('supply.sii.export_csv')}
                         title={t('supply.sii.export_csv')}
-                        className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#0369A1] dark:text-[#00AEEF] hover:opacity-80 cursor-pointer rounded-none shadow-none disabled:opacity-40"
+                        className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center gap-fib-8 text-[14px] font-semibold text-[#0369A1] dark:text-[#00AEEF] hover:opacity-80 cursor-pointer rounded-none shadow-none disabled:opacity-40"
                     >
-                        <span className="material-symbols-outlined text-[22px]">download</span>
+                        <span className="material-symbols-outlined text-[20px]">download</span>
+                        <span className="hidden sm:inline">{t('supply.sii.export_csv')}</span>
                     </button>
                 </div>
             </div>
@@ -419,7 +426,7 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
             {notice && (
                 <div
                     className={cn(
-                        'mx-fib-21 mt-fib-13 border-l-[3px] pl-fib-13 py-fib-8 font-mono text-data-dense tabular-nums',
+                        'mx-fib-21 mt-fib-13 border-l-[3px] pl-fib-13 py-fib-8 text-[15px] tabular-nums',
                         notice.tone === 'copper'
                             ? 'border-[#C68346] text-[#7C3F0E] dark:text-[#C68346]'
                             : 'border-[#00AEEF] text-[#0369A1] dark:text-[#00AEEF]'
@@ -429,19 +436,19 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                 </div>
             )}
 
-            {/* Shielded CAS Media Preview Bar (Dual Light/Dark Sol Atacama) */}
+            {/* Shielded CAS Media Preview Bar */}
             {previewDoc && (
-                <div className="px-fib-21 py-fib-13 bg-[#F8FAFC] dark:bg-[#07090D] border-b border-[#00AEEF] space-y-fib-13">
-                    <div className="flex items-center justify-between gap-fib-13 font-mono text-data-dense tabular-nums">
-                        <div className="flex flex-wrap items-center gap-fib-8">
-                            <span className="font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                <div className="px-fib-21 py-fib-13 border-b border-[#00AEEF] space-y-fib-13">
+                    <div className="flex items-center justify-between gap-fib-13 tabular-nums">
+                        <div className="flex flex-wrap items-center gap-fib-13 text-[15px]">
+                            <span className="font-mono font-bold text-[#0F172A] dark:text-[#F3F4F6]">
                                 DTE {previewDoc.documentType} #{previewDoc.folio}
                             </span>
                             <span className="text-[#475569] dark:text-[#8A93A6]">
                                 {previewDoc.supplierName}
                             </span>
                             {formatCasTelemetry(previewDoc.evidenceCasRef) && (
-                                <span className="text-microcopy text-[#0369A1] dark:text-[#00AEEF] select-text">
+                                <span className="font-mono text-[14px] text-[#0369A1] dark:text-[#00AEEF] select-text">
                                     {formatCasTelemetry(previewDoc.evidenceCasRef)}
                                 </span>
                             )}
@@ -457,7 +464,7 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                         </button>
                     </div>
                     {previewDoc.evidenceCasRef?.downloadUrl ? (
-                        <div className="max-h-72 overflow-hidden border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] flex items-center justify-center rounded-none shadow-none">
+                        <div className="max-h-72 overflow-hidden flex items-center justify-center rounded-none shadow-none">
                             <SecureImage
                                 src={previewDoc.evidenceCasRef.downloadUrl}
                                 alt={`DTE ${previewDoc.documentType} #${previewDoc.folio}`}
@@ -466,18 +473,18 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                             />
                         </div>
                     ) : (
-                        <div className="font-mono text-microcopy text-[#475569] dark:text-[#8A93A6]">
+                        <div className="text-[14px] text-[#475569] dark:text-[#8A93A6]">
                             {t('supply.common.not_declared')}
                         </div>
                     )}
                 </div>
             )}
 
-            {/* BOLETAS (39/41/0) & FACTURAS (33/34/52/61) LISTS */}
+            {/* BOLETAS & FACTURAS LISTS */}
             {(tab === 'BOLETAS' || tab === 'FACTURAS') && (
                 <div className="divide-y divide-[#E2E8F0] dark:divide-[#12151C]">
                     {activeDocuments.length === 0 ? (
-                        <div className="px-fib-21 py-fib-55 text-center font-mono text-data-dense text-[#475569] dark:text-[#8A93A6]">
+                        <div className="px-fib-21 py-fib-55 text-center text-[15px] text-[#475569] dark:text-[#8A93A6]">
                             {t('supply.common.no_records')}
                         </div>
                     ) : (
@@ -499,7 +506,6 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                             const rcvCritical48h = rcvUrgent && rcvDays !== null && rcvDays <= 2;
                             const casLine = formatCasTelemetry(doc.evidenceCasRef);
 
-                            // ISA-101 Color por Excepción (Dark Cockpit silencioso en estado nominal)
                             const barClass =
                                 doc.isDuplicate || rcvUrgent
                                     ? 'border-l-[#C68346]'
@@ -511,14 +517,17 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                                 <article
                                     key={doc.docId}
                                     className={cn(
-                                        'px-fib-21 py-fib-13 border-l-[3px] flex flex-wrap items-center justify-between gap-fib-13',
+                                        'px-fib-21 py-fib-21 border-l-[3px] flex flex-wrap items-start justify-between gap-fib-13',
                                         barClass
                                     )}
                                 >
                                     <div className="min-w-0 flex-1 space-y-fib-8">
-                                        <div className="flex flex-wrap items-center gap-fib-8">
-                                            <span className="font-mono text-data-dense font-bold text-[#0F172A] dark:text-[#F3F4F6] tabular-nums select-text">
-                                                DTE {doc.documentType} #{doc.folio || '—'}
+                                        <div className="flex flex-wrap items-center gap-fib-13">
+                                            <span className="text-[17px] text-[#0F172A] dark:text-[#F3F4F6] font-semibold">
+                                                {doc.supplierName}
+                                            </span>
+                                            <span className="font-mono text-[15px] font-bold text-[#0F172A] dark:text-[#F3F4F6] tabular-nums select-text">
+                                                Doc. {doc.documentType} #{doc.folio || '—'}
                                             </span>
                                             {doc.folio && (
                                                 <CopyButton
@@ -526,10 +535,7 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                                                     title={t('supply.common.copy_folio')}
                                                 />
                                             )}
-                                            <span className="text-data-dense text-[#0F172A] dark:text-[#F3F4F6] font-semibold">
-                                                {doc.supplierName}
-                                            </span>
-                                            <span className="font-mono text-microcopy tabular-nums text-[#475569] dark:text-[#8A93A6] select-text">
+                                            <span className="font-mono text-[14px] tabular-nums text-[#475569] dark:text-[#8A93A6] select-text">
                                                 {doc.supplierTaxId}
                                             </span>
                                             {doc.supplierTaxId && (
@@ -538,40 +544,12 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                                                     title={t('supply.common.copy_code')}
                                                 />
                                             )}
-                                            <span className="font-mono text-microcopy tabular-nums text-[#475569] dark:text-[#8A93A6]">
+                                            <span className="font-mono text-[14px] tabular-nums text-[#475569] dark:text-[#8A93A6]">
                                                 {doc.issueDate?.slice(0, 10)}
                                             </span>
                                         </div>
 
-                                        <div className="flex flex-wrap items-center gap-fib-13 font-mono text-microcopy tabular-nums">
-                                            {/* Anti-duplication fingerprint */}
-                                            <div className="flex items-center gap-fib-8">
-                                                <span
-                                                    className={cn(
-                                                        'material-symbols-outlined text-[15px]',
-                                                        doc.isDuplicate
-                                                            ? 'text-[#7C3F0E] dark:text-[#C68346]'
-                                                            : 'text-[#0369A1] dark:text-[#00AEEF]'
-                                                    )}
-                                                >
-                                                    {doc.isDuplicate ? 'warning' : 'verified'}
-                                                </span>
-                                                <span
-                                                    className={cn(
-                                                        'select-text',
-                                                        doc.isDuplicate
-                                                            ? 'text-[#7C3F0E] dark:text-[#C68346] font-bold'
-                                                            : 'text-[#475569] dark:text-[#8A93A6]'
-                                                    )}
-                                                >
-                                                    {doc.dedupeKey}
-                                                </span>
-                                                <CopyButton
-                                                    value={doc.dedupeKey}
-                                                    title={t('supply.common.copy_folio')}
-                                                />
-                                            </div>
-
+                                        <div className="flex flex-wrap items-center gap-fib-13 text-[14px] tabular-nums">
                                             <span className="text-[#475569] dark:text-[#8A93A6]">
                                                 {t(`supply.payments.${doc.paymentMethod}`)}
                                             </span>
@@ -593,13 +571,13 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                                                         rcvDays !== null
                                                             ? rcvDays < 0
                                                                 ? ` · ${t('supply.sii.rcv_expired')}`
-                                                                : ` · ${rcvDays}${t('supply.common.days_short')}`
+                                                                : ` · ${rcvDays} ${t('supply.common.days_short')}`
                                                             : ''}
                                                     </span>
                                                     {rcvCritical48h && (
                                                         <span
                                                             data-testid={`sii-rcv-badge-48h-${doc.docId}`}
-                                                            className="px-fib-8 py-0.5 bg-[#C68346] text-[#000000] font-bold uppercase"
+                                                            className="px-fib-8 py-0.5 bg-[#C68346] text-[#000000] text-[14px] font-bold"
                                                         >
                                                             {t('supply.sii.rcv_alert_48h')}
                                                         </span>
@@ -607,7 +585,7 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                                                     {rcvUrgent && !rcvCritical48h && (
                                                         <span
                                                             data-testid={`sii-rcv-badge-3d-${doc.docId}`}
-                                                            className="px-fib-8 py-0.5 border border-[#C68346] text-[#7C3F0E] dark:text-[#C68346] font-bold uppercase"
+                                                            className="px-fib-8 py-0.5 border border-[#C68346] text-[#7C3F0E] dark:text-[#C68346] text-[14px] font-bold"
                                                         >
                                                             {t('supply.sii.rcv_alert_3d')}
                                                         </span>
@@ -615,21 +593,42 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                                                 </>
                                             )}
 
-                                            {casLine && (
-                                                <span className="text-[#0369A1] dark:text-[#00AEEF] select-text">
-                                                    {casLine}
+                                            {doc.isDuplicate && (
+                                                <span className="inline-flex items-center gap-1 font-bold text-[#7C3F0E] dark:text-[#C68346]">
+                                                    <span className="material-symbols-outlined text-[18px]">
+                                                        warning
+                                                    </span>
+                                                    <span>{t('supply.sii.duplicate_detected')}</span>
                                                 </span>
                                             )}
                                         </div>
+
+                                        <details className="text-[14px] text-[#475569] dark:text-[#8A93A6]">
+                                            <summary className="cursor-pointer font-medium">
+                                                {t('supply.sii.digital_fingerprint')}
+                                            </summary>
+                                            <div className="pt-fib-8 flex flex-wrap items-center gap-fib-13 font-mono text-[14px] tabular-nums">
+                                                <span className="select-text">{doc.dedupeKey}</span>
+                                                <CopyButton
+                                                    value={doc.dedupeKey}
+                                                    title={t('supply.common.copy_folio')}
+                                                />
+                                                {casLine && (
+                                                    <span className="text-[#0369A1] dark:text-[#00AEEF] select-text">
+                                                        {casLine}
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </details>
                                     </div>
 
                                     <div className="flex items-center gap-fib-13 shrink-0">
                                         <div className="text-right font-mono tabular-nums">
-                                            <div className="text-data-dense font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                                            <div className="text-[17px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
                                                 {formatClp(doc.totalAmountClp)}
                                             </div>
                                             {isFactura && (
-                                                <div className="text-microcopy text-[#475569] dark:text-[#8A93A6]">
+                                                <div className="text-[14px] text-[#475569] dark:text-[#8A93A6]">
                                                     {t('supply.scanner.vat_clp')}:{' '}
                                                     {formatClp(doc.vatAmountClp)}
                                                 </div>
@@ -644,7 +643,7 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                                                 title={t('supply.sii.preview_evidence')}
                                                 className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#475569] dark:text-[#8A93A6] hover:text-[#0369A1] dark:hover:text-[#00AEEF] cursor-pointer rounded-none shadow-none"
                                             >
-                                                <span className="material-symbols-outlined text-[20px]">
+                                                <span className="material-symbols-outlined text-[22px]">
                                                     visibility
                                                 </span>
                                             </button>
@@ -657,7 +656,7 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                 </div>
             )}
 
-            {/* ENVELOPES TAB (Fondos por Rendir & Sobres de Rendición) */}
+            {/* ENVELOPES TAB */}
             {tab === 'ENVELOPES' && (
                 <div>
                     {canMutate && showNewEnvelope && (
@@ -665,12 +664,12 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                             onSubmit={handleRequestCreateEnvelope}
                             autoComplete="off"
                             spellCheck={false}
-                            className="px-fib-21 py-fib-21 bg-[#F8FAFC] dark:bg-[#07090D] border-b border-[#E2E8F0] dark:border-[#12151C] grid grid-cols-1 md:grid-cols-7 gap-fib-13 items-end"
+                            className="px-fib-21 py-fib-21 border-b border-[#E2E8F0] dark:border-[#12151C] grid grid-cols-1 md:grid-cols-7 gap-fib-13 items-end"
                         >
                             <div className="space-y-fib-8">
                                 <label
                                     htmlFor={`${uid}-env-title`}
-                                    className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]"
+                                    className="block text-[14px] text-[#475569] dark:text-[#8A93A6]"
                                 >
                                     {t('supply.sii.envelope_title')}
                                 </label>
@@ -681,13 +680,13 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                                     onChange={(e) => setEnvelopeTitle(e.target.value)}
                                     autoComplete="off"
                                     spellCheck={false}
-                                    className="w-full min-h-[48px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
+                                    className="w-full min-h-[48px] px-fib-13 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[15px] text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
                                 />
                             </div>
                             <div className="space-y-fib-8">
                                 <label
                                     htmlFor={`${uid}-env-cc`}
-                                    className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]"
+                                    className="block text-[14px] text-[#475569] dark:text-[#8A93A6]"
                                 >
                                     {t('supply.sii.envelope_cost_center')}
                                 </label>
@@ -698,13 +697,13 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                                     onChange={(e) => setEnvelopeCostCenter(e.target.value)}
                                     autoComplete="off"
                                     spellCheck={false}
-                                    className="w-full min-h-[48px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
+                                    className="w-full min-h-[48px] px-fib-13 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-[15px] text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
                                 />
                             </div>
                             <div className="space-y-fib-8">
                                 <label
                                     htmlFor={`${uid}-env-holder`}
-                                    className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]"
+                                    className="block text-[14px] text-[#475569] dark:text-[#8A93A6]"
                                 >
                                     {t('supply.sii.envelope_holder')}
                                 </label>
@@ -715,13 +714,13 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                                     onChange={(e) => setHolderName(e.target.value)}
                                     autoComplete="off"
                                     spellCheck={false}
-                                    className="w-full min-h-[48px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
+                                    className="w-full min-h-[48px] px-fib-13 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[15px] text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
                                 />
                             </div>
                             <div className="space-y-fib-8">
                                 <label
                                     htmlFor={`${uid}-env-period`}
-                                    className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]"
+                                    className="block text-[14px] text-[#475569] dark:text-[#8A93A6]"
                                 >
                                     {t('supply.sii.envelope_period')}
                                 </label>
@@ -732,13 +731,13 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                                     onChange={(e) => setPeriodLabel(e.target.value)}
                                     autoComplete="off"
                                     spellCheck={false}
-                                    className="w-full min-h-[48px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-data-dense tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
+                                    className="w-full min-h-[48px] px-fib-13 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-[15px] tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
                                 />
                             </div>
                             <div className="space-y-fib-8">
                                 <label
                                     htmlFor={`${uid}-env-payment`}
-                                    className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]"
+                                    className="block text-[14px] text-[#475569] dark:text-[#8A93A6]"
                                 >
                                     {t('supply.scanner.payment_label')}
                                 </label>
@@ -749,7 +748,7 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                                     onChange={(e) =>
                                         setPaymentMethod(e.target.value as PaymentMethod)
                                     }
-                                    className="w-full min-h-[48px] px-fib-8 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
+                                    className="w-full min-h-[48px] px-fib-8 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[15px] text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none cursor-pointer"
                                 >
                                     {PAYMENT_METHODS.map((pm) => (
                                         <option key={pm} value={pm}>
@@ -761,7 +760,7 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                             <div className="space-y-fib-8">
                                 <label
                                     htmlFor={`${uid}-env-advance`}
-                                    className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]"
+                                    className="block text-[14px] text-[#475569] dark:text-[#8A93A6]"
                                 >
                                     {t('supply.sii.envelope_advance')}
                                 </label>
@@ -773,13 +772,13 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                                     onChange={(e) => setFundAdvanceClp(Number(e.target.value) || 0)}
                                     autoComplete="off"
                                     spellCheck={false}
-                                    className="w-full min-h-[48px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-data-dense tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
+                                    className="w-full min-h-[48px] px-fib-13 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-[15px] tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
                                 />
                             </div>
                             <button
                                 type="submit"
                                 disabled={creatingEnvelope || !holderName.trim() || !envelopeTitle.trim()}
-                                className="min-h-[48px] px-fib-21 bg-[#C68346] border border-[#C68346] text-[#000000] font-mono text-data-dense font-bold uppercase rounded-none shadow-none cursor-pointer disabled:opacity-40"
+                                className="min-h-[48px] px-fib-21 bg-[#C68346] border border-[#C68346] text-[#000000] text-[15px] font-bold rounded-none shadow-none cursor-pointer disabled:opacity-40"
                             >
                                 {t('supply.common.save')}
                             </button>
@@ -788,7 +787,7 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
 
                     <div className="divide-y divide-[#E2E8F0] dark:divide-[#12151C]">
                         {expenseReports.length === 0 ? (
-                            <div className="px-fib-21 py-fib-55 text-center font-mono text-data-dense text-[#475569] dark:text-[#8A93A6]">
+                            <div className="px-fib-21 py-fib-55 text-center text-[15px] text-[#475569] dark:text-[#8A93A6]">
                                 {t('supply.common.no_records')}
                             </div>
                         ) : (
@@ -825,7 +824,7 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                                     <article
                                         key={rep.reportId}
                                         className={cn(
-                                            'px-fib-21 py-fib-13 border-l-[3px] space-y-fib-8',
+                                            'px-fib-21 py-fib-21 border-l-[3px] space-y-fib-13',
                                             negativeBalance
                                                 ? 'border-l-[#C68346]'
                                                 : rep.status === 'SETTLED' ||
@@ -835,29 +834,26 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                                                   : 'border-l-transparent'
                                         )}
                                     >
-                                        <div className="flex flex-wrap items-center justify-between gap-fib-8 font-mono tabular-nums">
-                                            <div className="flex flex-wrap items-center gap-fib-8">
-                                                <span className="text-data-dense font-bold text-[#0F172A] dark:text-[#F3F4F6] select-text">
+                                        <div className="flex flex-wrap items-center justify-between gap-fib-8 tabular-nums">
+                                            <div className="flex flex-wrap items-center gap-fib-13">
+                                                <span className="text-[17px] font-bold text-[#0F172A] dark:text-[#F3F4F6] select-text">
                                                     {rep.title || rep.code}
                                                 </span>
                                                 <CopyButton
                                                     value={rep.code || rep.reportId}
                                                     title={t('supply.common.copy_code')}
                                                 />
-                                                <span className="text-microcopy text-[#475569] dark:text-[#8A93A6]">
-                                                    {rep.costCenter}
-                                                </span>
-                                                <span className="text-data-dense text-[#0F172A] dark:text-[#F3F4F6]">
+                                                <span className="text-[15px] text-[#0F172A] dark:text-[#F3F4F6]">
                                                     {rep.holderName}
                                                 </span>
-                                                <span className="text-microcopy text-[#475569] dark:text-[#8A93A6]">
-                                                    {rep.periodLabel} ·{' '}
+                                                <span className="text-[14px] text-[#475569] dark:text-[#8A93A6]">
+                                                    {rep.costCenter} · {rep.periodLabel} ·{' '}
                                                     {t(`supply.payments.${rep.paymentMethod}`)}
                                                 </span>
                                             </div>
                                             <div className="flex flex-wrap items-center gap-fib-8">
-                                                <span className="text-microcopy font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6]">
-                                                    {t(`supply.status.${rep.status}`)} ({rep.documentCount} DTE)
+                                                <span className="text-[14px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                                                    {t(`supply.status.${rep.status}`)} ({rep.documentCount} doc.)
                                                 </span>
 
                                                 {canSubmit && (
@@ -886,9 +882,9 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                                                         <span
                                                             data-testid={`sii-envelope-sod-blocked-${rep.reportId}`}
                                                             title={t('supply.sii.sod_self_approval_blocked')}
-                                                            className="inline-flex items-center gap-1 font-mono text-microcopy font-bold text-[#7C3F0E] dark:text-[#C68346]"
+                                                            className="inline-flex items-center gap-1 text-[14px] font-bold text-[#7C3F0E] dark:text-[#C68346]"
                                                         >
-                                                            <span className="material-symbols-outlined text-[16px]">
+                                                            <span className="material-symbols-outlined text-[18px]">
                                                                 lock
                                                             </span>
                                                             <span>
@@ -974,30 +970,30 @@ export const SiiRendicionesView: React.FC<SiiRendicionesViewProps> = ({
                                             </div>
                                         </div>
 
-                                        <div className="grid grid-cols-3 gap-fib-13 font-mono text-microcopy tabular-nums">
+                                        <div className="grid grid-cols-3 gap-fib-13 tabular-nums">
                                             <div>
-                                                <div className="text-[#475569] dark:text-[#8A93A6]">
+                                                <div className="text-[14px] text-[#475569] dark:text-[#8A93A6]">
                                                     {t('supply.sii.fund_advance')}
                                                 </div>
-                                                <div className="text-data-dense text-[#0F172A] dark:text-[#F3F4F6]">
+                                                <div className="font-mono text-[16px] text-[#0F172A] dark:text-[#F3F4F6]">
                                                     {formatClp(rep.fundAdvanceClp)}
                                                 </div>
                                             </div>
                                             <div>
-                                                <div className="text-[#475569] dark:text-[#8A93A6]">
+                                                <div className="text-[14px] text-[#475569] dark:text-[#8A93A6]">
                                                     {t('supply.sii.rendered_total')}
                                                 </div>
-                                                <div className="text-data-dense font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                                                <div className="font-mono text-[16px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
                                                     {formatClp(rep.renderedTotalClp)}
                                                 </div>
                                             </div>
                                             <div>
-                                                <div className="text-[#475569] dark:text-[#8A93A6]">
+                                                <div className="text-[14px] text-[#475569] dark:text-[#8A93A6]">
                                                     {t('supply.sii.balance')}
                                                 </div>
                                                 <div
                                                     className={cn(
-                                                        'text-data-dense font-bold',
+                                                        'font-mono text-[16px] font-bold',
                                                         negativeBalance
                                                             ? 'text-[#7C3F0E] dark:text-[#C68346]'
                                                             : 'text-[#0369A1] dark:text-[#00AEEF]'

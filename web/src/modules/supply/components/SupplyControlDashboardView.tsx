@@ -29,15 +29,13 @@ export interface SupplyControlDashboardViewProps {
     onNavigateTab?: (tab: SupplyPrimaryTab) => void;
 }
 
-interface ResourceStageCard {
+interface ResourceRow {
     key: 'POTABLE_WATER' | 'IND_WATER' | 'CAMP_FUEL' | 'FLEET_FUEL' | 'GAS_CYLINDERS';
-    classes: SupplyWarehouseClass[];
     icon: string;
     primaryMetric: string;
     secondaryMetric: string;
     pct: number;
     alert: boolean;
-    verified: boolean;
 }
 
 export const SupplyControlDashboardView: React.FC<SupplyControlDashboardViewProps> = ({
@@ -74,18 +72,23 @@ export const SupplyControlDashboardView: React.FC<SupplyControlDashboardViewProp
         return { capacity, onHand, count: matchingWarehouses.length };
     };
 
-    const resourceCards = useMemo<ResourceStageCard[]>(() => {
+    const resourceRows = useMemo<ResourceRow[]>(() => {
         const potable = sumClassBalance(['POTABLE_WATER_TANK']);
         const potableStoredL =
             kpis?.camp.potableWaterWarehouseL ??
-            (potable.count > 0 ? potable.onHand : forecast?.waterStoredL ?? activeSite?.waterStorageCapacityL ?? 0);
+            (potable.count > 0
+                ? potable.onHand
+                : forecast?.waterStoredL ?? activeSite?.waterStorageCapacityL ?? 0);
         const potableTargetL = forecast?.waterRequiredLeadL || potable.capacity || 0;
         const potablePct =
             potableTargetL > 0
                 ? Math.min(100, Math.round((potableStoredL / potableTargetL) * 100))
                 : kpis?.camp.ds594CompliancePct ?? 100;
-        const potableAlert =
-            (kpis ? kpis.camp.ds594CompliancePct < 100 : forecast ? !forecast.waterCompliantDs594 : false);
+        const potableAlert = kpis
+            ? kpis.camp.ds594CompliancePct < 100
+            : forecast
+              ? !forecast.waterCompliantDs594
+              : false;
 
         const indWater = sumClassBalance(['INDUSTRIAL_WATER_POND']);
         const indWaterM3 = kpis?.mineAndPlant.industrialWaterStockM3 ?? indWater.onHand;
@@ -125,59 +128,51 @@ export const SupplyControlDashboardView: React.FC<SupplyControlDashboardViewProp
                   ? Math.min(100, Math.round((gasCages.onHand / gasCages.capacity) * 100))
                   : 0;
 
+        const waterCoverageDays = forecast?.waterCoverageDays;
+
         return [
             {
                 key: 'POTABLE_WATER',
-                classes: ['POTABLE_WATER_TANK'],
                 icon: 'water_drop',
                 primaryMetric: `${potableStoredL.toLocaleString('es-CL')} L`,
-                secondaryMetric: `${kpis?.camp.potableWaterLPerPaxDay ?? 0} L/PAX/d · DS 594 ${kpis?.camp.ds594CompliancePct ?? (forecast?.waterCompliantDs594 ? 100 : 0)}%`,
+                secondaryMetric: `${waterCoverageDays !== undefined ? `${waterCoverageDays} ${t('supply.common.days_short')} · ` : ''}${kpis?.camp.potableWaterLPerPaxDay ?? 0} L/persona/día`,
                 pct: potablePct,
                 alert: potableAlert,
-                verified: !potableAlert && potableStoredL > 0,
             },
             {
                 key: 'IND_WATER',
-                classes: ['INDUSTRIAL_WATER_POND'],
                 icon: 'local_shipping',
-                primaryMetric: `${indWaterM3.toLocaleString('es-CL')} m3`,
-                secondaryMetric: `${kpis?.mineAndPlant.industrialWaterM3PerTon ?? 0} m3/t`,
+                primaryMetric: `${indWaterM3.toLocaleString('es-CL')} m³`,
+                secondaryMetric: `${kpis?.mineAndPlant.industrialWaterM3PerTon ?? 0} m³/tonelada`,
                 pct: indPct,
                 alert: false,
-                verified: indWaterM3 > 0,
             },
             {
                 key: 'CAMP_FUEL',
-                classes: ['FUEL_TANK_CAMP'],
                 icon: 'local_gas_station',
                 primaryMetric: `${campFuel.onHand.toLocaleString('es-CL')} L`,
-                secondaryMetric: `${kpis?.camp.campDieselLPerDay ?? 0} L/d · SEC DS 160`,
+                secondaryMetric: `${kpis?.camp.campDieselLPerDay ?? 0} L diarios`,
                 pct: campFuelPct,
                 alert: false,
-                verified: campFuel.onHand > 0,
             },
             {
                 key: 'FLEET_FUEL',
-                classes: ['FUEL_TANK_FLEET'],
                 icon: 'precision_manufacturing',
                 primaryMetric: `${(kpis?.fleetAndWorkshop.fleetFuelDispensed30dL ?? fleetFuel.onHand).toLocaleString('es-CL')} L`,
-                secondaryMetric: `${kpis?.fleetAndWorkshop.fleetAvgLitersPerHour ?? 0} L/hr · Δ ${fleetVariance.toFixed(1)}%`,
+                secondaryMetric: `${kpis?.fleetAndWorkshop.fleetAvgLitersPerHour ?? 0} L/hr · diferencia ${fleetVariance.toFixed(1)}%`,
                 pct: fleetPct,
                 alert: fleetAlert,
-                verified: !fleetAlert && (kpis?.fleetAndWorkshop.fleetFuelDispensed30dL ?? fleetFuel.onHand) > 0,
             },
             {
                 key: 'GAS_CYLINDERS',
-                classes: ['GLP_CAGE', 'INDUSTRIAL_GAS_CAGE'],
                 icon: 'propane_tank',
-                primaryMetric: `${fullCyl} / ${totalCyl} un`,
-                secondaryMetric: `GLP ${kpis?.camp.glpKgPerPaxDay ?? 0} kg/PAX/d · DS 108/43`,
+                primaryMetric: `${fullCyl} / ${totalCyl}`,
+                secondaryMetric: `${kpis?.camp.glpKgPerPaxDay ?? 0} kg/persona/día`,
                 pct: gasPct,
                 alert: false,
-                verified: totalCyl > 0,
             },
         ];
-    }, [activeSite, balances, forecast, kpis, warehouses]);
+    }, [activeSite, balances, forecast, kpis, t, warehouses]);
 
     const exceptions = useMemo(() => {
         const list: Array<{
@@ -203,7 +198,11 @@ export const SupplyControlDashboardView: React.FC<SupplyControlDashboardViewProp
             });
         }
 
-        if (kpis && (kpis.fleetAndWorkshop.tankCycleCountVariancePctMax > 2.5 || kpis.fleetAndWorkshop.tankAnomalyCount > 0)) {
+        if (
+            kpis &&
+            (kpis.fleetAndWorkshop.tankCycleCountVariancePctMax > 2.5 ||
+                kpis.fleetAndWorkshop.tankAnomalyCount > 0)
+        ) {
             list.push({
                 id: 'EXC_TANK_VAR',
                 label: t('supply.control.exc_tank_variance'),
@@ -216,7 +215,7 @@ export const SupplyControlDashboardView: React.FC<SupplyControlDashboardViewProp
             list.push({
                 id: 'EXC_STOCKOUT',
                 label: t('supply.control.exc_stockout'),
-                metric: `${kpis.mineAndPlant.stockoutCount} / ROP ${kpis.ropSummary.criticalReorderCount}`,
+                metric: `${kpis.mineAndPlant.stockoutCount + kpis.ropSummary.criticalReorderCount}`,
                 targetTab: 'PROCUREMENT',
             });
         }
@@ -258,65 +257,63 @@ export const SupplyControlDashboardView: React.FC<SupplyControlDashboardViewProp
             data-testid="supply-control-summary"
             className="w-full h-full min-h-0 grid grid-cols-1 lg:grid-cols-[minmax(0,61.8fr)_minmax(0,38.2fr)] bg-[#FFFFFF] dark:bg-[#000000] select-none"
         >
-            {/* Left 61.8%: 5 Separated Tanks / Resources + 4 Business Unit KPI Panels */}
-            <div className="min-h-0 overflow-y-auto p-fib-21 space-y-fib-21 border-b lg:border-b-0 lg:border-r border-[#E2E8F0] dark:border-[#12151C]">
-                <div className="flex flex-wrap items-center justify-between gap-fib-8 border-b border-[#E2E8F0] dark:border-[#12151C] pb-fib-13">
-                    <h2 className="font-mono text-microcopy uppercase font-bold tracking-wider text-[#0F172A] dark:text-[#F3F4F6]">
+            {/* Izquierda 61.8%: Lienzo Plano — Recursos críticos + Resumen por área */}
+            <div className="min-h-0 overflow-y-auto p-fib-21 sm:p-fib-34 space-y-fib-34 border-b lg:border-b-0 lg:border-r border-[#E2E8F0] dark:border-[#12151C]">
+                <header className="flex flex-wrap items-baseline justify-between gap-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C] pb-fib-13">
+                    <h2 className="text-[22px] font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
                         {t('supply.control.title')}
                     </h2>
-                    <span className="font-mono text-microcopy tabular-nums text-[#475569] dark:text-[#8A93A6]">
-                        {t('supply.control.kpi_sites_active')}: {sitesCount} ·{' '}
-                        {t('supply.control.kpi_open_reqs')}: {openRequisitionsCount} ·{' '}
-                        {t('supply.control.kpi_in_transit')}: {inTransitCount}
+                    <span className="text-[15px] tabular-nums text-[#475569] dark:text-[#8A93A6]">
+                        {sitesCount} {t('supply.control.kpi_sites_active')} · {openRequisitionsCount}{' '}
+                        {t('supply.control.kpi_open_reqs')} · {inTransitCount}{' '}
+                        {t('supply.control.kpi_in_transit')}
                     </span>
-                </div>
+                </header>
 
-                {/* 5 Separated Resources / Tanks */}
+                {/* 5 Recursos Críticos en Filas Planas (cero cajas anidadas) */}
                 <section className="space-y-fib-13" data-testid="control-separated-resources">
-                    <h3 className="font-mono text-microcopy uppercase font-bold tracking-wider text-[#475569] dark:text-[#8A93A6]">
+                    <h3 className="text-[17px] font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
                         {t('supply.control.resources_title')}
                     </h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-fib-13 font-mono tabular-nums">
-                        {resourceCards.map((card) => (
+                    <div className="divide-y divide-[#E2E8F0] dark:divide-[#12151C]">
+                        {resourceRows.map((row) => (
                             <div
-                                key={card.key}
-                                data-testid={`control-resource-${card.key}`}
+                                key={row.key}
+                                data-testid={`control-resource-${row.key}`}
                                 className={cn(
-                                    'border border-[#E2E8F0] dark:border-[#12151C] border-l-[3px] bg-[#F8FAFC] dark:bg-[#07090D] p-fib-13 space-y-fib-8 rounded-none shadow-none',
-                                    card.alert
-                                        ? 'border-l-[#C68346]'
-                                        : card.verified
-                                          ? 'border-l-[#00AEEF]'
-                                          : 'border-l-transparent'
+                                    'py-fib-13 border-l-[3px] pl-fib-13 space-y-fib-8',
+                                    row.alert ? 'border-l-[#C68346]' : 'border-l-transparent'
                                 )}
                             >
-                                <div className="flex items-center justify-between gap-fib-8">
-                                    <span className="text-microcopy uppercase font-bold text-[#0F172A] dark:text-[#F3F4F6] truncate">
-                                        {t(`supply.control.res_${card.key}`)}
-                                    </span>
-                                    <span
-                                        className={cn(
-                                            'material-symbols-outlined text-[18px]',
-                                            card.alert
-                                                ? 'text-[#C68346]'
-                                                : card.verified
-                                                  ? 'text-[#00AEEF]'
-                                                  : 'text-[#475569] dark:text-[#8A93A6]'
-                                        )}
-                                    >
-                                        {card.icon}
-                                    </span>
-                                </div>
-                                <div className="text-h1-header font-bold text-[#0F172A] dark:text-[#F3F4F6]">
-                                    {card.primaryMetric}
-                                </div>
-                                <div className="text-microcopy text-[#475569] dark:text-[#8A93A6]">
-                                    {card.secondaryMetric}
+                                <div className="flex flex-wrap items-center justify-between gap-fib-13">
+                                    <div className="flex items-center gap-fib-13 min-w-0">
+                                        <span
+                                            className={cn(
+                                                'material-symbols-outlined text-[22px]',
+                                                row.alert
+                                                    ? 'text-[#C68346]'
+                                                    : 'text-[#475569] dark:text-[#8A93A6]'
+                                            )}
+                                        >
+                                            {row.icon}
+                                        </span>
+                                        <div>
+                                            <div className="text-[17px] font-medium text-[#0F172A] dark:text-[#F3F4F6]">
+                                                {t(`supply.control.res_${row.key}`)}
+                                            </div>
+                                            <div className="text-[14px] text-[#475569] dark:text-[#8A93A6] tabular-nums">
+                                                {row.secondaryMetric}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="font-mono text-[24px] font-bold tabular-nums text-[#0F172A] dark:text-[#F3F4F6]">
+                                        {row.primaryMetric}
+                                    </div>
                                 </div>
                                 {!loading && (
                                     <M3LinearProgress
-                                        value={card.pct}
-                                        ariaLabel={t(`supply.control.res_${card.key}`)}
+                                        value={row.pct}
+                                        ariaLabel={t(`supply.control.res_${row.key}`)}
                                     />
                                 )}
                             </div>
@@ -324,77 +321,78 @@ export const SupplyControlDashboardView: React.FC<SupplyControlDashboardViewProp
                     </div>
                 </section>
 
-                {/* 4 Business Unit KPI Panels */}
-                <section className="space-y-fib-13" data-testid="control-bu-kpis">
-                    <h3 className="font-mono text-microcopy uppercase font-bold tracking-wider text-[#475569] dark:text-[#8A93A6]">
+                {/* Resumen por Área (Lienzo Plano sin cajas ni encabezados decorativos) */}
+                <section className="space-y-fib-21" data-testid="control-bu-kpis">
+                    <h3 className="text-[17px] font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
                         {t('supply.control.bu_kpis_title')}
                     </h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-fib-13 font-mono tabular-nums">
+
+                    <div className="divide-y divide-[#E2E8F0] dark:divide-[#12151C]">
                         {/* Campamento */}
-                        <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] p-fib-13 space-y-fib-8">
-                            <div className="text-microcopy uppercase font-bold text-[#C68346]">
+                        <div className="py-fib-21 space-y-fib-13">
+                            <div className="text-[16px] font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
                                 {t('supply.control.bu_camp')}
                             </div>
-                            <div className="grid grid-cols-2 gap-fib-8 text-data-dense">
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-fib-21 tabular-nums">
                                 <div>
-                                    <div className="text-microcopy text-[#475569] dark:text-[#8A93A6]">
+                                    <div className="text-[14px] text-[#475569] dark:text-[#8A93A6]">
                                         {t('supply.control.kpi_food_pax_day')}
                                     </div>
-                                    <div className="font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                                    <div className="font-mono text-[20px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
                                         {kpis ? formatClp(kpis.camp.foodOpexPerPaxDayClp) : '—'}
                                     </div>
                                 </div>
                                 <div>
-                                    <div className="text-microcopy text-[#475569] dark:text-[#8A93A6]">
+                                    <div className="text-[14px] text-[#475569] dark:text-[#8A93A6]">
                                         {t('supply.control.kpi_water_pax_day')}
                                     </div>
-                                    <div className="font-bold text-[#00AEEF]">
+                                    <div className="font-mono text-[20px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
                                         {kpis ? `${kpis.camp.potableWaterLPerPaxDay} L` : '—'}
                                     </div>
                                 </div>
                                 <div>
-                                    <div className="text-microcopy text-[#475569] dark:text-[#8A93A6]">
+                                    <div className="text-[14px] text-[#475569] dark:text-[#8A93A6]">
                                         {t('supply.control.kpi_glp_pax_day')}
                                     </div>
-                                    <div className="font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                                    <div className="font-mono text-[20px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
                                         {kpis ? `${kpis.camp.glpKgPerPaxDay} kg` : '—'}
                                     </div>
                                 </div>
                                 <div>
-                                    <div className="text-microcopy text-[#475569] dark:text-[#8A93A6]">
+                                    <div className="text-[14px] text-[#475569] dark:text-[#8A93A6]">
                                         {t('supply.control.kpi_camp_diesel_day')}
                                     </div>
-                                    <div className="font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                                    <div className="font-mono text-[20px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
                                         {kpis ? `${kpis.camp.campDieselLPerDay} L` : '—'}
                                     </div>
                                 </div>
                             </div>
                         </div>
 
-                        {/* Flota & Taller */}
-                        <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] p-fib-13 space-y-fib-8">
-                            <div className="text-microcopy uppercase font-bold text-[#0369A1] dark:text-[#00AEEF]">
+                        {/* Maquinaria y Taller */}
+                        <div className="py-fib-21 space-y-fib-13">
+                            <div className="text-[16px] font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
                                 {t('supply.control.bu_fleet')}
                             </div>
-                            <div className="grid grid-cols-2 gap-fib-8 text-data-dense">
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-fib-21 tabular-nums">
                                 <div>
-                                    <div className="text-microcopy text-[#475569] dark:text-[#8A93A6]">
+                                    <div className="text-[14px] text-[#475569] dark:text-[#8A93A6]">
                                         {t('supply.control.kpi_fleet_lph')}
                                     </div>
-                                    <div className="font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                                    <div className="font-mono text-[20px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
                                         {kpis ? `${kpis.fleetAndWorkshop.fleetAvgLitersPerHour} L/hr` : '—'}
                                     </div>
                                 </div>
                                 <div>
-                                    <div className="text-microcopy text-[#475569] dark:text-[#8A93A6]">
+                                    <div className="text-[14px] text-[#475569] dark:text-[#8A93A6]">
                                         {t('supply.control.kpi_tank_variance')}
                                     </div>
                                     <div
                                         className={cn(
-                                            'font-bold',
+                                            'font-mono text-[20px] font-bold',
                                             (kpis?.fleetAndWorkshop.tankCycleCountVariancePctMax ?? 0) > 2.5
                                                 ? 'text-[#7C3F0E] dark:text-[#C68346]'
-                                                : 'text-[#0369A1] dark:text-[#00AEEF]'
+                                                : 'text-[#0F172A] dark:text-[#F3F4F6]'
                                         )}
                                     >
                                         {kpis
@@ -403,47 +401,47 @@ export const SupplyControlDashboardView: React.FC<SupplyControlDashboardViewProp
                                     </div>
                                 </div>
                                 <div>
-                                    <div className="text-microcopy text-[#475569] dark:text-[#8A93A6]">
+                                    <div className="text-[14px] text-[#475569] dark:text-[#8A93A6]">
                                         {t('supply.control.kpi_cylinder_stay')}
                                     </div>
-                                    <div className="font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                                    <div className="font-mono text-[20px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
                                         {kpis
                                             ? `${kpis.fleetAndWorkshop.cylinderStayDaysAvg.toFixed(1)} ${t('supply.common.days_short')}`
                                             : '—'}
                                     </div>
                                 </div>
                                 <div>
-                                    <div className="text-microcopy text-[#475569] dark:text-[#8A93A6]">
+                                    <div className="text-[14px] text-[#475569] dark:text-[#8A93A6]">
                                         {t('supply.control.kpi_active_fleet')}
                                     </div>
-                                    <div className="font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                                    <div className="font-mono text-[20px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
                                         {kpis ? kpis.fleetAndWorkshop.activeMachineryCount : '—'}
                                     </div>
                                 </div>
                             </div>
                         </div>
 
-                        {/* Mina & Planta */}
-                        <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] p-fib-13 space-y-fib-8">
-                            <div className="text-microcopy uppercase font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                        {/* Mina y Planta */}
+                        <div className="py-fib-21 space-y-fib-13">
+                            <div className="text-[16px] font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
                                 {t('supply.control.bu_mine')}
                             </div>
-                            <div className="grid grid-cols-3 gap-fib-8 text-data-dense">
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-fib-21 tabular-nums">
                                 <div>
-                                    <div className="text-microcopy text-[#475569] dark:text-[#8A93A6]">
+                                    <div className="text-[14px] text-[#475569] dark:text-[#8A93A6]">
                                         {t('supply.control.kpi_ind_water_t')}
                                     </div>
-                                    <div className="font-bold text-[#0F172A] dark:text-[#F3F4F6]">
-                                        {kpis ? `${kpis.mineAndPlant.industrialWaterM3PerTon} m3/t` : '—'}
+                                    <div className="font-mono text-[20px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                                        {kpis ? `${kpis.mineAndPlant.industrialWaterM3PerTon} m³/t` : '—'}
                                     </div>
                                 </div>
                                 <div>
-                                    <div className="text-microcopy text-[#475569] dark:text-[#8A93A6]">
+                                    <div className="text-[14px] text-[#475569] dark:text-[#8A93A6]">
                                         {t('supply.control.kpi_stockouts')}
                                     </div>
                                     <div
                                         className={cn(
-                                            'font-bold',
+                                            'font-mono text-[20px] font-bold',
                                             (kpis?.mineAndPlant.stockoutCount ?? 0) > 0
                                                 ? 'text-[#7C3F0E] dark:text-[#C68346]'
                                                 : 'text-[#0F172A] dark:text-[#F3F4F6]'
@@ -453,37 +451,37 @@ export const SupplyControlDashboardView: React.FC<SupplyControlDashboardViewProp
                                     </div>
                                 </div>
                                 <div>
-                                    <div className="text-microcopy text-[#475569] dark:text-[#8A93A6]">
-                                        OTIF
+                                    <div className="text-[14px] text-[#475569] dark:text-[#8A93A6]">
+                                        {t('supply.control.kpi_otif')}
                                     </div>
-                                    <div className="font-bold text-[#0369A1] dark:text-[#00AEEF]">
+                                    <div className="font-mono text-[20px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
                                         {kpis ? `${kpis.mineAndPlant.otifPct}%` : '—'}
                                     </div>
                                 </div>
                             </div>
                         </div>
 
-                        {/* Finanzas SII */}
-                        <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] p-fib-13 space-y-fib-8">
-                            <div className="text-microcopy uppercase font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                        {/* Finanzas e Impuestos */}
+                        <div className="py-fib-21 space-y-fib-13">
+                            <div className="text-[16px] font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
                                 {t('supply.control.bu_finance')}
                             </div>
-                            <div className="grid grid-cols-3 gap-fib-8 text-data-dense">
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-fib-21 tabular-nums">
                                 <div>
-                                    <div className="text-microcopy text-[#475569] dark:text-[#8A93A6]">
+                                    <div className="text-[14px] text-[#475569] dark:text-[#8A93A6]">
                                         {t('supply.control.kpi_vat_recovered')}
                                     </div>
-                                    <div className="font-bold text-[#0369A1] dark:text-[#00AEEF]">
+                                    <div className="font-mono text-[20px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
                                         {kpis ? `${kpis.financeSii.vatRecoveryRatePct}%` : '—'}
                                     </div>
                                 </div>
                                 <div>
-                                    <div className="text-microcopy text-[#475569] dark:text-[#8A93A6]">
+                                    <div className="text-[14px] text-[#475569] dark:text-[#8A93A6]">
                                         {t('supply.control.kpi_rcv_urgent')}
                                     </div>
                                     <div
                                         className={cn(
-                                            'font-bold',
+                                            'font-mono text-[20px] font-bold',
                                             (kpis?.financeSii.rcvUrgentUnder48hCount ?? rcvUrgentCount) > 0
                                                 ? 'text-[#7C3F0E] dark:text-[#C68346]'
                                                 : 'text-[#0F172A] dark:text-[#F3F4F6]'
@@ -493,15 +491,15 @@ export const SupplyControlDashboardView: React.FC<SupplyControlDashboardViewProp
                                     </div>
                                 </div>
                                 <div>
-                                    <div className="text-microcopy text-[#475569] dark:text-[#8A93A6]">
+                                    <div className="text-[14px] text-[#475569] dark:text-[#8A93A6]">
                                         {t('supply.control.kpi_capex_leakage')}
                                     </div>
                                     <div
                                         className={cn(
-                                            'font-bold',
+                                            'font-mono text-[20px] font-bold',
                                             (kpis?.financeSii.capexLeakagePct ?? 0) > 0
                                                 ? 'text-[#7C3F0E] dark:text-[#C68346]'
-                                                : 'text-[#0369A1] dark:text-[#00AEEF]'
+                                                : 'text-[#0F172A] dark:text-[#F3F4F6]'
                                         )}
                                     >
                                         {kpis ? `${kpis.financeSii.capexLeakagePct}%` : '0%'}
@@ -513,15 +511,15 @@ export const SupplyControlDashboardView: React.FC<SupplyControlDashboardViewProp
                 </section>
             </div>
 
-            {/* Right 38.2%: ISA-101 Exceptions Panel (Color by Exception) */}
-            <aside className="min-h-0 overflow-y-auto p-fib-21 space-y-fib-21 bg-[#F8FAFC] dark:bg-[#07090D]">
-                <div className="flex items-center justify-between border-b border-[#E2E8F0] dark:border-[#12151C] pb-fib-13">
-                    <h3 className="font-mono text-microcopy uppercase font-bold tracking-wider text-[#0F172A] dark:text-[#F3F4F6]">
+            {/* Derecha 38.2%: Atención Requerida Hoy (ANSI/ISA-101 Color por Excepción) */}
+            <aside className="min-h-0 overflow-y-auto p-fib-21 sm:p-fib-34 space-y-fib-21 bg-[#FFFFFF] dark:bg-[#000000]">
+                <div className="flex items-baseline justify-between border-b border-[#E2E8F0] dark:border-[#12151C] pb-fib-13">
+                    <h3 className="text-[18px] font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
                         {t('supply.control.exceptions_title')}
                     </h3>
                     <span
                         className={cn(
-                            'font-mono text-microcopy uppercase font-bold',
+                            'text-[14px] font-semibold',
                             exceptions.length > 0
                                 ? 'text-[#7C3F0E] dark:text-[#C68346]'
                                 : 'text-[#0369A1] dark:text-[#00AEEF]'
@@ -534,24 +532,24 @@ export const SupplyControlDashboardView: React.FC<SupplyControlDashboardViewProp
                 </div>
 
                 {exceptions.length === 0 ? (
-                    <div className="border-l-[3px] border-l-[#00AEEF] bg-[#FFFFFF] dark:bg-[#000000] p-fib-13 font-mono text-data-dense text-[#0369A1] dark:text-[#00AEEF] flex items-center gap-fib-8">
-                        <span className="material-symbols-outlined text-[18px]">check_circle</span>
+                    <div className="border-l-[3px] border-l-[#00AEEF] pl-fib-13 py-fib-13 text-[16px] text-[#0369A1] dark:text-[#00AEEF] flex items-center gap-fib-8">
+                        <span className="material-symbols-outlined text-[20px]">check_circle</span>
                         <span>{t('supply.control.no_exceptions')}</span>
                     </div>
                 ) : (
-                    <div className="divide-y divide-[#E2E8F0] dark:divide-[#12151C] border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000]">
+                    <div className="divide-y divide-[#E2E8F0] dark:divide-[#12151C]">
                         {exceptions.map((exc) => (
                             <button
                                 key={exc.id}
                                 type="button"
                                 onClick={() => onNavigateTab?.(exc.targetTab)}
                                 data-testid={`control-exc-${exc.id}`}
-                                className="w-full text-left p-fib-13 min-h-[48px] border-0 border-l-[3px] border-l-[#C68346] flex items-center justify-between gap-fib-8 hover:bg-[#F8FAFC] dark:hover:bg-[#07090D] cursor-pointer rounded-none shadow-none font-mono tabular-nums"
+                                className="w-full text-left py-fib-13 pl-fib-13 pr-fib-8 min-h-[52px] border-0 border-l-[3px] border-l-[#C68346] flex items-center justify-between gap-fib-13 hover:bg-[#F8FAFC] dark:hover:bg-[#07090D] cursor-pointer rounded-none shadow-none tabular-nums"
                             >
-                                <span className="text-data-dense font-bold text-[#7C3F0E] dark:text-[#C68346]">
+                                <span className="text-[16px] font-semibold text-[#7C3F0E] dark:text-[#C68346]">
                                     {exc.label}
                                 </span>
-                                <span className="text-microcopy font-bold text-[#0F172A] dark:text-[#F3F4F6] shrink-0">
+                                <span className="font-mono text-[18px] font-bold text-[#0F172A] dark:text-[#F3F4F6] shrink-0">
                                     {exc.metric}
                                 </span>
                             </button>
@@ -560,29 +558,41 @@ export const SupplyControlDashboardView: React.FC<SupplyControlDashboardViewProp
                 )}
 
                 {kpis && (
-                    <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] p-fib-13 space-y-fib-8 font-mono text-microcopy tabular-nums">
-                        <div className="uppercase font-bold text-[#475569] dark:text-[#8A93A6]">
-                            {t('supply.control.rop_drivers_title')}
+                    <details
+                        data-testid="control-rop-details"
+                        className="border-t border-[#E2E8F0] dark:border-[#12151C] pt-fib-21"
+                    >
+                        <summary className="min-h-[48px] flex items-center justify-between cursor-pointer text-[15px] font-medium text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]">
+                            <span>{t('supply.control.rop_drivers_title')}</span>
+                            <span className="material-symbols-outlined text-[18px]">expand_more</span>
+                        </summary>
+                        <div className="pt-fib-13 space-y-fib-8 text-[15px] tabular-nums">
+                            <div className="flex items-center justify-between gap-fib-8">
+                                <span className="text-[#475569] dark:text-[#8A93A6]">
+                                    {t('supply.control.rop_driver_per_pax')}
+                                </span>
+                                <span className="font-mono font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                                    {kpis.ropSummary.byDriver.PER_PAX}
+                                </span>
+                            </div>
+                            <div className="flex items-center justify-between gap-fib-8">
+                                <span className="text-[#475569] dark:text-[#8A93A6]">
+                                    {t('supply.control.rop_driver_per_asset')}
+                                </span>
+                                <span className="font-mono font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                                    {kpis.ropSummary.byDriver.PER_ASSET_HOUR}
+                                </span>
+                            </div>
+                            <div className="flex items-center justify-between gap-fib-8">
+                                <span className="text-[#475569] dark:text-[#8A93A6]">
+                                    {t('supply.control.rop_driver_daily')}
+                                </span>
+                                <span className="font-mono font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                                    {kpis.ropSummary.byDriver.DAILY_SITE_OR_MINMAX}
+                                </span>
+                            </div>
                         </div>
-                        <div className="flex items-center justify-between">
-                            <span>PER_PAX</span>
-                            <span className="font-bold text-[#0F172A] dark:text-[#F3F4F6]">
-                                {kpis.ropSummary.byDriver.PER_PAX}
-                            </span>
-                        </div>
-                        <div className="flex items-center justify-between">
-                            <span>PER_ASSET_HOUR</span>
-                            <span className="font-bold text-[#0F172A] dark:text-[#F3F4F6]">
-                                {kpis.ropSummary.byDriver.PER_ASSET_HOUR}
-                            </span>
-                        </div>
-                        <div className="flex items-center justify-between">
-                            <span>DAILY_SITE_OR_MINMAX</span>
-                            <span className="font-bold text-[#0F172A] dark:text-[#F3F4F6]">
-                                {kpis.ropSummary.byDriver.DAILY_SITE_OR_MINMAX}
-                            </span>
-                        </div>
-                    </div>
+                    </details>
                 )}
             </aside>
         </div>

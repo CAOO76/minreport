@@ -278,8 +278,9 @@ describe('V3-E07 — SupplyConversationsAuditView (Φ 38.2/61.8, SHA-256, CAS & 
         });
         expect(threadsSpy).not.toHaveBeenCalled();
 
-        // Ir a DEMAND: no existe simulador inline en Backlog, pero sí enlace limpio a CONVERSATIONS
-        fireEvent.click(screen.getByTestId('supply-tab-DEMAND'));
+        // Ir a Pedidos -> Solicitudes recibidas: no existe simulador inline en Backlog, pero sí enlace limpio a WhatsApp
+        fireEvent.click(screen.getByTestId('supply-tab-ORDERS'));
+        fireEvent.click(await screen.findByTestId('supply-subtab-DEMAND'));
         await waitFor(() => {
             expect(screen.getByTestId('backlog-open-conversations-btn')).toBeInTheDocument();
         });
@@ -303,7 +304,7 @@ describe('V3-E07 — SupplyConversationsAuditView (Φ 38.2/61.8, SHA-256, CAS & 
         expect(view.className).toContain('38.2fr');
         expect(view.className).toContain('61.8fr');
 
-        const phoneInput = screen.getByLabelText(/Teléfono E\.164/i) as HTMLInputElement;
+        const phoneInput = screen.getByLabelText(/Teléfono de prueba/i) as HTMLInputElement;
         expect(phoneInput.value).toBe('');
         expect(phoneInput).toHaveAttribute('autocomplete', 'off');
         expect(phoneInput).toHaveAttribute('spellcheck', 'false');
@@ -329,21 +330,25 @@ describe('V3-E07 — SupplyConversationsAuditView (Φ 38.2/61.8, SHA-256, CAS & 
             expect(screen.getByTestId('conv-turn-2')).toBeInTheDocument();
         });
 
-        expect(screen.getByTestId('conv-chain-status')).toHaveTextContent('CADENA SHA-256 ÍNTEGRA');
+        // Layer 1 limpio sin jerga S1: SLOTS ni PER_PAX
+        expect(screen.getByTestId('conv-turn-1').textContent || '').not.toContain('S1: SLOTS');
+        expect(screen.getByTestId('conv-turn-1').textContent || '').not.toContain('PER_PAX');
+
+        expect(screen.getByTestId('conv-chain-status')).toHaveTextContent('Historial íntegro sin alteraciones');
         expect(screen.getByTestId('conv-retention-badge')).toHaveTextContent(
-            'RETENCIÓN TRIBUTARIA 6 AÑOS'
+            'Resguardo tributario (6 años)'
         );
 
-        // Scope snapshot exacto (permanente vs temporal)
+        // Scope snapshot legible (permanente vs temporal, sin siglas CH_*)
         const scope1 = screen.getByTestId('turn-scope-1');
-        expect(scope1).toHaveTextContent('CH_CAMP_FOOD');
-        expect(scope1).toHaveTextContent('CH_OPS_FLEET_FUEL');
-        expect(scope1).toHaveTextContent('TEMPORAL');
+        expect(scope1).toHaveTextContent('Alimentación y víveres');
+        expect(scope1).toHaveTextContent('Combustible de maquinaria y flota');
+        expect(scope1).toHaveTextContent('Temporal');
 
         // CAS media: SecureImage + Audio + ORIG -> CAS (-80%)
         const img = screen.getByAltText('guia_despacho.jpg');
         expect(img).toHaveAttribute('draggable', 'false');
-        expect(screen.getByLabelText('Nota de voz CAS')).toBeInTheDocument();
+        expect(screen.getByLabelText('Nota de voz adjunta')).toBeInTheDocument();
         expect(document.body.textContent || '').toContain('-80%');
 
         // Eventos de política DS132/DGMN/Scope

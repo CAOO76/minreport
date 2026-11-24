@@ -5,7 +5,6 @@ import M3Switch from '../../../components/common/M3Switch';
 import CopyButton from '../../../components/common/CopyButton';
 import { cn } from '../../../utils/cn';
 import {
-    PROCUREMENT_BUCKETS,
     formatClp,
     type ConsolidatedShoppingBucketGroup,
     type ProcurementBucket,
@@ -17,6 +16,8 @@ export interface ConsolidatedShoppingListsViewProps {
     canScanReceipt: boolean;
     onOpenScannerForBucket: (bucket: ProcurementBucket) => void;
 }
+
+type BucketFilterGroup = 'ALL' | 'CAMPAMENTO' | 'OPERACION' | 'SEGURIDAD_CONTROL';
 
 const BUCKET_ICON: Record<ProcurementBucket, string> = {
     VERDULERIA: 'nutrition',
@@ -57,6 +58,19 @@ const BUCKET_DOMAIN: Record<
     ACTIVOS_CAPEX: 'PATRIMONIO',
 };
 
+function matchesBucketGroupFilter(
+    bucket: ProcurementBucket,
+    filterGroup: BucketFilterGroup
+): boolean {
+    if (filterGroup === 'ALL') return true;
+    const domain = BUCKET_DOMAIN[bucket];
+    if (filterGroup === 'CAMPAMENTO') return domain === 'CAMPAMENTO';
+    if (filterGroup === 'SEGURIDAD_CONTROL') {
+        return bucket === 'EPP_SEGURIDAD' || domain === 'CONTROLADO';
+    }
+    return domain === 'OPERACION' || domain === 'PATRIMONIO';
+}
+
 export const ConsolidatedShoppingListsView: React.FC<ConsolidatedShoppingListsViewProps> = ({
     groups,
     loading: _loading,
@@ -65,7 +79,7 @@ export const ConsolidatedShoppingListsView: React.FC<ConsolidatedShoppingListsVi
 }) => {
     const { t } = useTranslation();
     const uid = useId();
-    const [selectedBucket, setSelectedBucket] = useState<ProcurementBucket | 'ALL'>('ALL');
+    const [selectedGroupFilter, setSelectedGroupFilter] = useState<BucketFilterGroup>('ALL');
     const [onlyAtypical, setOnlyAtypical] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [expandedKeys, setExpandedKeys] = useState<Record<string, boolean>>({});
@@ -82,17 +96,23 @@ export const ConsolidatedShoppingListsView: React.FC<ConsolidatedShoppingListsVi
     const filteredGroups = useMemo(() => {
         const q = searchQuery.trim().toLowerCase();
         return groups
-            .filter((g) => selectedBucket === 'ALL' || g.procurementBucket === selectedBucket)
+            .filter((g) => matchesBucketGroupFilter(g.procurementBucket, selectedGroupFilter))
             .map((g) => {
                 const items = (g.items || []).filter((it) => {
-                    if (onlyAtypical && it.atypicalCount === 0 && (it.atypicalFlags?.length || 0) === 0) {
+                    if (
+                        onlyAtypical &&
+                        it.atypicalCount === 0 &&
+                        (it.atypicalFlags?.length || 0) === 0
+                    ) {
                         return false;
                     }
                     if (!q) return true;
                     const haystack = [
                         it.name,
                         it.canonicalSkuId,
-                        ...(it.sourceReqRefs || []).map((r) => `${r.reqId} ${r.costCenter} ${r.requesterName || ''}`),
+                        ...(it.sourceReqRefs || []).map(
+                            (r) => `${r.reqId} ${r.costCenter} ${r.requesterName || ''}`
+                        ),
                     ]
                         .join(' ')
                         .toLowerCase();
@@ -110,7 +130,7 @@ export const ConsolidatedShoppingListsView: React.FC<ConsolidatedShoppingListsVi
                 };
             })
             .filter((g) => g.items.length > 0);
-    }, [groups, selectedBucket, onlyAtypical, searchQuery]);
+    }, [groups, selectedGroupFilter, onlyAtypical, searchQuery]);
 
     const routeProgress = useMemo(() => {
         let total = 0;
@@ -129,58 +149,41 @@ export const ConsolidatedShoppingListsView: React.FC<ConsolidatedShoppingListsVi
         };
     }, [filteredGroups, checkedRouteKeys]);
 
+    const FILTER_TABS: Array<{ id: BucketFilterGroup; label: string }> = [
+        { id: 'ALL', label: t('supply.lists.all_buckets') },
+        { id: 'CAMPAMENTO', label: t('supply.lists.filter_camp') },
+        { id: 'OPERACION', label: t('supply.lists.filter_ops') },
+        { id: 'SEGURIDAD_CONTROL', label: t('supply.lists.filter_safety') },
+    ];
+
     return (
         <section className="w-full flex flex-col bg-[#FFFFFF] dark:bg-[#000000] select-none">
-            {/* Flat Filter & Route Progress Strip */}
+            {/* Barra limpia con 4 filtros legibles en español + búsqueda + switch avisos */}
             <div className="px-fib-21 py-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C] flex flex-wrap items-center justify-between gap-fib-13">
-                <div className="flex flex-wrap items-center gap-fib-8">
-                    <button
-                        type="button"
-                        onClick={() => setSelectedBucket('ALL')}
-                        aria-label={t('supply.lists.all_buckets')}
-                        title={t('supply.lists.all_buckets')}
-                        className={cn(
-                            'min-h-[48px] px-fib-13 font-mono text-microcopy uppercase border-b-2 transition-colors cursor-pointer bg-transparent rounded-none shadow-none',
-                            selectedBucket === 'ALL'
-                                ? 'border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6]'
-                                : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
-                        )}
-                    >
-                        {t('supply.lists.all_buckets')}
-                    </button>
-                    {PROCUREMENT_BUCKETS.map((bucket) => {
-                        const active = selectedBucket === bucket;
-                        const count =
-                            groups.find((g) => g.procurementBucket === bucket)?.items.length || 0;
+                <div className="flex flex-wrap items-center gap-fib-13">
+                    {FILTER_TABS.map((tab) => {
+                        const active = selectedGroupFilter === tab.id;
                         return (
                             <button
-                                key={bucket}
+                                key={tab.id}
                                 type="button"
-                                onClick={() => setSelectedBucket(bucket)}
-                                aria-label={t(`supply.buckets.${bucket}`)}
-                                title={t(`supply.buckets.${bucket}`)}
+                                onClick={() => setSelectedGroupFilter(tab.id)}
+                                data-testid={`lists-filter-${tab.id}`}
                                 className={cn(
-                                    'bg-transparent border-0 border-b-2 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center gap-fib-8 transition-colors cursor-pointer rounded-none shadow-none',
+                                    'min-h-[48px] px-fib-8 bg-transparent border-0 border-b-2 text-[15px] font-medium transition-colors cursor-pointer rounded-none shadow-none',
                                     active
-                                        ? 'border-[#C68346] text-[#7C3F0E] dark:text-[#C68346]'
+                                        ? 'border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] font-semibold'
                                         : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
                                 )}
                             >
-                                <span className="material-symbols-outlined text-[20px]">
-                                    {BUCKET_ICON[bucket]}
-                                </span>
-                                {count > 0 && (
-                                    <span className="font-mono text-microcopy tabular-nums">
-                                        {count}
-                                    </span>
-                                )}
+                                {tab.label}
                             </button>
                         );
                     })}
                 </div>
 
-                <div className="flex flex-wrap items-center gap-fib-13">
-                    <div className="relative">
+                <div className="flex flex-wrap items-center gap-fib-21">
+                    <div>
                         <label htmlFor={`${uid}-search`} className="sr-only">
                             {t('supply.common.search_placeholder')}
                         </label>
@@ -193,11 +196,11 @@ export const ConsolidatedShoppingListsView: React.FC<ConsolidatedShoppingListsVi
                             spellCheck={false}
                             aria-label={t('supply.common.search_placeholder')}
                             placeholder={t('supply.common.search_placeholder')}
-                            className="w-56 min-h-[48px] px-fib-13 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
+                            className="w-64 min-h-[48px] px-fib-13 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[16px] text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
                         />
                     </div>
-                    <div className="flex items-center gap-fib-8">
-                        <span className="font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">
+                    <div className="flex items-center gap-fib-13">
+                        <span className="text-[15px] text-[#475569] dark:text-[#8A93A6]">
                             {t('supply.lists.only_atypical')}
                         </span>
                         <M3Switch
@@ -209,16 +212,15 @@ export const ConsolidatedShoppingListsView: React.FC<ConsolidatedShoppingListsVi
                 </div>
             </div>
 
-            {/* Mobile/Field Route Completion Progress */}
             {routeProgress.total > 0 && (
                 <div className="px-fib-21 py-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C] space-y-fib-8">
-                    <div className="flex items-center justify-between font-mono text-microcopy tabular-nums">
-                        <span className="uppercase text-[#475569] dark:text-[#8A93A6]">
+                    <div className="flex items-center justify-between text-[14px] tabular-nums">
+                        <span className="text-[#475569] dark:text-[#8A93A6]">
                             {t('supply.lists.route_progress')}
                         </span>
                         <span
                             className={cn(
-                                'font-bold',
+                                'font-mono font-bold',
                                 routeProgress.pct === 100
                                     ? 'text-[#0369A1] dark:text-[#00AEEF]'
                                     : 'text-[#0F172A] dark:text-[#F3F4F6]'
@@ -234,9 +236,8 @@ export const ConsolidatedShoppingListsView: React.FC<ConsolidatedShoppingListsVi
                 </div>
             )}
 
-            {/* Bucket Groups — Flat Hairline Layout (Zero bordered/filled mobile cards) */}
             {filteredGroups.length === 0 ? (
-                <div className="px-fib-21 py-fib-55 text-center font-mono text-data-dense text-[#475569] dark:text-[#8A93A6]">
+                <div className="px-fib-21 py-fib-55 text-center text-[16px] text-[#475569] dark:text-[#8A93A6]">
                     {t('supply.common.no_records')}
                 </div>
             ) : (
@@ -251,48 +252,40 @@ export const ConsolidatedShoppingListsView: React.FC<ConsolidatedShoppingListsVi
                                 : 0;
 
                         return (
-                            <div key={group.procurementBucket} className="w-full">
-                                {/* Bucket Header Row */}
-                                <div className="px-fib-21 py-fib-13 bg-[#F8FAFC] dark:bg-[#07090D] border-b border-[#E2E8F0] dark:border-[#12151C] flex items-center justify-between gap-fib-13">
-                                    <div className="flex items-center gap-fib-13 min-w-0">
+                            <div key={group.procurementBucket} className="w-full py-fib-13">
+                                {/* Encabezado de grupo plano (sin fondo de tarjeta ni cajas) */}
+                                <div className="px-fib-21 py-fib-13 flex flex-wrap items-center justify-between gap-fib-13">
+                                    <div className="flex flex-wrap items-center gap-fib-13 min-w-0">
                                         <span
                                             className={cn(
-                                                'material-symbols-outlined text-[20px]',
-                                                group.atypicalCount > 0
+                                                'material-symbols-outlined text-[22px]',
+                                                group.atypicalCount > 0 ||
+                                                    group.procurementBucket === 'CONTROLADOS_DGMN'
                                                     ? 'text-[#C68346]'
-                                                    : 'text-[#0F172A] dark:text-[#F3F4F6]'
+                                                    : 'text-[#475569] dark:text-[#8A93A6]'
                                             )}
                                         >
                                             {BUCKET_ICON[group.procurementBucket]}
                                         </span>
-                                        <h3 className="font-mono text-data-dense font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6] truncate">
+                                        <h3 className="text-[18px] font-semibold text-[#0F172A] dark:text-[#F3F4F6] truncate">
                                             {t(`supply.buckets.${group.procurementBucket}`)}
                                         </h3>
-                                        <span
-                                            className={cn(
-                                                'font-mono text-microcopy uppercase font-bold',
-                                                group.procurementBucket === 'CONTROLADOS_DGMN'
-                                                    ? 'text-[#7C3F0E] dark:text-[#C68346]'
-                                                    : 'text-[#475569] dark:text-[#8A93A6]'
-                                            )}
-                                        >
-                                            {t(
-                                                `supply.channels.domains.${BUCKET_DOMAIN[group.procurementBucket]}`
-                                            )}
+                                        <span className="text-[14px] text-[#475569] dark:text-[#8A93A6]">
+                                            · {t(`supply.channels.domains.${BUCKET_DOMAIN[group.procurementBucket]}`)}
                                         </span>
-                                        <span className="font-mono text-microcopy tabular-nums text-[#475569] dark:text-[#8A93A6]">
-                                            {group.totalLines} SKU
+                                        <span className="text-[14px] tabular-nums text-[#475569] dark:text-[#8A93A6]">
+                                            · {group.totalLines}
                                         </span>
                                         {group.atypicalCount > 0 && (
-                                            <span className="font-mono text-microcopy tabular-nums text-[#7C3F0E] dark:text-[#C68346] font-bold">
-                                                {group.atypicalCount} {t('supply.telemetry.atypical_flags')}
+                                            <span className="text-[14px] tabular-nums text-[#7C3F0E] dark:text-[#C68346] font-semibold">
+                                                · {group.atypicalCount} {t('supply.telemetry.atypical_flags')}
                                             </span>
                                         )}
                                     </div>
 
                                     <div className="flex items-center gap-fib-13 shrink-0">
                                         {group.estimatedClp > 0 && (
-                                            <span className="hidden sm:inline-block font-mono text-data-dense tabular-nums text-[#0F172A] dark:text-[#F3F4F6]">
+                                            <span className="hidden sm:inline-block font-mono text-[16px] font-semibold tabular-nums text-[#0F172A] dark:text-[#F3F4F6]">
                                                 {formatClp(group.estimatedClp)}
                                             </span>
                                         )}
@@ -310,17 +303,20 @@ export const ConsolidatedShoppingListsView: React.FC<ConsolidatedShoppingListsVi
                                                 }
                                                 aria-label={t('supply.lists.scan_bucket')}
                                                 title={t('supply.lists.scan_bucket')}
-                                                className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#C68346] hover:opacity-80 cursor-pointer rounded-none shadow-none"
+                                                className="bg-transparent border-0 outline-none px-fib-13 min-h-[48px] inline-flex items-center gap-fib-8 text-[15px] font-semibold text-[#7C3F0E] dark:text-[#C68346] hover:opacity-80 cursor-pointer rounded-none shadow-none"
                                             >
-                                                <span className="material-symbols-outlined text-[22px]">
+                                                <span className="material-symbols-outlined text-[20px]">
                                                     add_a_photo
+                                                </span>
+                                                <span className="hidden sm:inline">
+                                                    {t('supply.nav.scanner')}
                                                 </span>
                                             </button>
                                         )}
                                     </div>
                                 </div>
 
-                                {/* Consolidated SKU Rows */}
+                                {/* Filas de productos */}
                                 <div className="divide-y divide-[#E2E8F0] dark:divide-[#12151C]">
                                     {group.items.map((item) => {
                                         const rowKey = `${group.procurementBucket}::${item.canonicalSkuId}`;
@@ -336,13 +332,17 @@ export const ConsolidatedShoppingListsView: React.FC<ConsolidatedShoppingListsVi
                                               ? 'border-[#C68346]'
                                               : 'border-transparent';
 
+                                        const priorityLabel =
+                                            item.priority === 'CRITICAL'
+                                                ? t('supply.backlog.urgency_critical')
+                                                : item.priority === 'PARTIAL_PENDING'
+                                                  ? t('supply.status.PARTIAL')
+                                                  : t('supply.backlog.urgency_standard');
+
                                         return (
                                             <div
                                                 key={rowKey}
-                                                className={cn(
-                                                    'border-l-[3px] transition-colors',
-                                                    leftBarClass
-                                                )}
+                                                className={cn('border-l-[3px] transition-colors', leftBarClass)}
                                             >
                                                 <div className="px-fib-21 py-fib-13 flex flex-wrap items-center justify-between gap-fib-13">
                                                     <div className="flex items-center gap-fib-13 min-w-0 flex-1">
@@ -363,11 +363,11 @@ export const ConsolidatedShoppingListsView: React.FC<ConsolidatedShoppingListsVi
                                                             </span>
                                                         </button>
 
-                                                        <div className="min-w-0 flex-1 space-y-fib-8">
+                                                        <div className="min-w-0 flex-1 space-y-1">
                                                             <div className="flex flex-wrap items-center gap-fib-8">
                                                                 <span
                                                                     className={cn(
-                                                                        'text-body-main font-semibold',
+                                                                        'text-[17px] font-semibold',
                                                                         isChecked
                                                                             ? 'line-through text-[#475569] dark:text-[#8A93A6]'
                                                                             : 'text-[#0F172A] dark:text-[#F3F4F6]'
@@ -375,15 +375,9 @@ export const ConsolidatedShoppingListsView: React.FC<ConsolidatedShoppingListsVi
                                                                 >
                                                                     {item.name}
                                                                 </span>
-                                                                <span className="font-mono text-microcopy tabular-nums text-[#475569] dark:text-[#8A93A6] select-text">
-                                                                    {item.canonicalSkuId}
-                                                                </span>
-                                                                <CopyButton
-                                                                    value={item.canonicalSkuId}
-                                                                    title={t('supply.common.copy_code')}
-                                                                />
                                                                 {hasAtypical && (
-                                                                    <span className="font-mono text-microcopy uppercase font-bold text-[#7C3F0E] dark:text-[#C68346]">
+                                                                    <span className="text-[14px] font-semibold text-[#7C3F0E] dark:text-[#C68346]">
+                                                                        ·{' '}
                                                                         {item.atypicalFlags?.[0]
                                                                             ? t(
                                                                                   `supply.atypicals.${item.atypicalFlags[0]}`
@@ -394,7 +388,7 @@ export const ConsolidatedShoppingListsView: React.FC<ConsolidatedShoppingListsVi
                                                                     </span>
                                                                 )}
                                                             </div>
-                                                            <div className="flex flex-wrap items-center gap-fib-13 font-mono text-microcopy tabular-nums text-[#475569] dark:text-[#8A93A6]">
+                                                            <div className="flex flex-wrap items-center gap-fib-13 text-[14px] text-[#475569] dark:text-[#8A93A6]">
                                                                 <span>
                                                                     {item.sourceReqRefs.length}{' '}
                                                                     {t('supply.lists.col_sources')}
@@ -403,11 +397,14 @@ export const ConsolidatedShoppingListsView: React.FC<ConsolidatedShoppingListsVi
                                                                 <span
                                                                     className={
                                                                         isCritical
-                                                                            ? 'text-[#7C3F0E] dark:text-[#C68346] font-bold'
+                                                                            ? 'text-[#7C3F0E] dark:text-[#C68346] font-semibold'
                                                                             : ''
                                                                     }
                                                                 >
-                                                                    {item.priority}
+                                                                    {priorityLabel}
+                                                                </span>
+                                                                <span className="font-mono text-[13px] select-text">
+                                                                    · {item.canonicalSkuId}
                                                                 </span>
                                                             </div>
                                                         </div>
@@ -415,12 +412,12 @@ export const ConsolidatedShoppingListsView: React.FC<ConsolidatedShoppingListsVi
 
                                                     <div className="flex items-center gap-fib-21 shrink-0">
                                                         <div className="text-right font-mono tabular-nums">
-                                                            <div className="text-h2-section font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                                                            <div className="text-[18px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
                                                                 {item.totalQtyPending} {item.unitSi}
                                                             </div>
                                                             {typeof item.estimatedClp === 'number' &&
                                                                 item.estimatedClp > 0 && (
-                                                                    <div className="text-microcopy text-[#475569] dark:text-[#8A93A6]">
+                                                                    <div className="text-[14px] text-[#475569] dark:text-[#8A93A6]">
                                                                         {formatClp(item.estimatedClp)}
                                                                     </div>
                                                                 )}
@@ -442,17 +439,16 @@ export const ConsolidatedShoppingListsView: React.FC<ConsolidatedShoppingListsVi
                                                             }
                                                             className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] cursor-pointer rounded-none shadow-none"
                                                         >
-                                                            <span className="material-symbols-outlined text-[20px]">
+                                                            <span className="material-symbols-outlined text-[22px]">
                                                                 {isExpanded ? 'expand_less' : 'expand_more'}
                                                             </span>
                                                         </button>
                                                     </div>
                                                 </div>
 
-                                                {/* Expandable Inverse Traceability Table */}
                                                 {isExpanded && (
-                                                    <div className="px-fib-21 pb-fib-13 pl-fib-55 bg-[#F8FAFC] dark:bg-[#07090D] border-t border-[#E2E8F0] dark:border-[#12151C]">
-                                                        <div className="py-fib-8 font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">
+                                                    <div className="px-fib-21 pb-fib-13 pl-fib-55 border-t border-[#E2E8F0] dark:border-[#12151C]">
+                                                        <div className="py-fib-8 text-[14px] font-medium text-[#475569] dark:text-[#8A93A6]">
                                                             {t('supply.lists.traceability_header')} (
                                                             {item.sourceReqRefs.length})
                                                         </div>
@@ -460,10 +456,10 @@ export const ConsolidatedShoppingListsView: React.FC<ConsolidatedShoppingListsVi
                                                             {item.sourceReqRefs.map((ref) => (
                                                                 <div
                                                                     key={`${ref.reqId}-${ref.lineId}`}
-                                                                    className="py-fib-8 flex flex-wrap items-center justify-between gap-fib-13 font-mono text-data-dense tabular-nums"
+                                                                    className="py-fib-8 flex flex-wrap items-center justify-between gap-fib-13 text-[15px] tabular-nums"
                                                                 >
                                                                     <div className="flex items-center gap-fib-8">
-                                                                        <span className="select-text text-[#0F172A] dark:text-[#F3F4F6]">
+                                                                        <span className="font-mono select-text text-[#0F172A] dark:text-[#F3F4F6]">
                                                                             {ref.reqId}
                                                                         </span>
                                                                         <CopyButton
@@ -474,7 +470,8 @@ export const ConsolidatedShoppingListsView: React.FC<ConsolidatedShoppingListsVi
                                                                             {ref.costCenter}
                                                                         </span>
                                                                         {ref.demandOrigin && (
-                                                                            <span className="text-microcopy text-[#475569] dark:text-[#8A93A6]">
+                                                                            <span className="text-[14px] text-[#475569] dark:text-[#8A93A6]">
+                                                                                ·{' '}
                                                                                 {t(
                                                                                     `supply.origins.${ref.demandOrigin}`
                                                                                 )}
@@ -483,7 +480,7 @@ export const ConsolidatedShoppingListsView: React.FC<ConsolidatedShoppingListsVi
                                                                     </div>
                                                                     <div className="flex items-center gap-fib-13">
                                                                         {ref.atypicalFlags?.length > 0 && (
-                                                                            <span className="text-microcopy text-[#7C3F0E] dark:text-[#C68346] font-bold">
+                                                                            <span className="text-[14px] text-[#7C3F0E] dark:text-[#C68346] font-semibold">
                                                                                 {ref.atypicalFlags
                                                                                     .map((f) =>
                                                                                         t(
@@ -493,7 +490,7 @@ export const ConsolidatedShoppingListsView: React.FC<ConsolidatedShoppingListsVi
                                                                                     .join(' · ')}
                                                                             </span>
                                                                         )}
-                                                                        <span className="font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                                                                        <span className="font-mono font-bold text-[#0F172A] dark:text-[#F3F4F6]">
                                                                             {ref.qtyPending} {item.unitSi}
                                                                         </span>
                                                                     </div>

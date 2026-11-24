@@ -57,6 +57,8 @@ export type SupplyPrimaryTab =
     | 'FINANCE_SII'
     | 'PROFILES_WS';
 
+type TopSectionId = 'CONTROL' | 'ORDERS' | 'WAREHOUSE' | 'WHATSAPP' | 'FINANCE_SII';
+
 function parseTabQueryParam(raw?: string | null): SupplyPrimaryTab | null {
     switch (String(raw || '').trim().toUpperCase()) {
         case 'CONTROL':
@@ -64,10 +66,12 @@ function parseTabQueryParam(raw?: string | null): SupplyPrimaryTab | null {
         case 'DEMAND':
             return 'DEMAND';
         case 'PROCUREMENT':
+        case 'ORDERS':
             return 'PROCUREMENT';
         case 'WAREHOUSE':
             return 'WAREHOUSE';
         case 'CONVERSATIONS':
+        case 'WHATSAPP':
             return 'CONVERSATIONS';
         case 'FINANCE_SII':
         case 'SII_EXPENSES':
@@ -109,6 +113,14 @@ function resolveInitialSupplyTab(embedded: boolean, domainMode?: string): Supply
         if (fromUrl) return fromUrl;
     }
     return resolveTabFromDomainMode(domainMode);
+}
+
+function resolveTopSection(tab: SupplyPrimaryTab): TopSectionId {
+    if (tab === 'PROCUREMENT' || tab === 'DEMAND') return 'ORDERS';
+    if (tab === 'CONVERSATIONS' || tab === 'PROFILES_WS') return 'WHATSAPP';
+    if (tab === 'WAREHOUSE') return 'WAREHOUSE';
+    if (tab === 'FINANCE_SII') return 'FINANCE_SII';
+    return 'CONTROL';
 }
 
 const SUPPLY_SYNC_EVENTS = [
@@ -317,7 +329,6 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
         return syncQueueEngine.subscribe((state) => setOfflinePendingCount(state.pendingCount));
     }, [refreshDeadLetterCount]);
 
-    // Fetch diferido por tab activo (cero ráfaga simultánea de 9 endpoints al montar)
     const loadTabData = useCallback(
         async (targetTab: SupplyPrimaryTab) => {
             setLoading(true);
@@ -349,13 +360,7 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                     setWarehouseBalances(whRes.value.balances);
                 }
                 if (kpiRes.status === 'fulfilled') setBusinessUnitKpis(kpiRes.value);
-            } else if (targetTab === 'DEMAND') {
-                const [, reqRes] = await Promise.allSettled([
-                    safeSites,
-                    supplyApi.listRequisitions({ siteId: siteFilter }, resolvedTenantId),
-                ]);
-                if (reqRes.status === 'fulfilled') setRequisitions(reqRes.value);
-            } else if (targetTab === 'PROCUREMENT') {
+            } else if (targetTab === 'DEMAND' || targetTab === 'PROCUREMENT') {
                 const [, listRes, reqRes] = await Promise.allSettled([
                     safeSites,
                     supplyApi.getConsolidatedShoppingLists({ siteId: siteFilter }, resolvedTenantId),
@@ -394,18 +399,23 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                 ]);
                 if (docRes.status === 'fulfilled') setSiiDocuments(docRes.value);
                 if (repRes.status === 'fulfilled') setExpenseReports(repRes.value);
-            } else if (targetTab === 'PROFILES_WS') {
-                const [, profRes] = await Promise.allSettled([
-                    safeSites,
-                    supplyApi.listSupplyProfiles({}, resolvedTenantId),
-                ]);
-                if (profRes.status === 'fulfilled') setWsProfiles(profRes.value);
             } else if (targetTab === 'CONVERSATIONS') {
                 const [, threadsRes] = await Promise.allSettled([
                     safeSites,
                     supplyApi.listSupplyConversationThreads({}, resolvedTenantId),
                 ]);
                 if (threadsRes.status === 'fulfilled') setConversationThreads(threadsRes.value);
+            } else if (targetTab === 'PROFILES_WS') {
+                const [, profRes, whRes] = await Promise.allSettled([
+                    safeSites,
+                    supplyApi.listSupplyProfiles({}, resolvedTenantId),
+                    supplyApi.listSupplyWarehouses({ siteId: siteFilter }, resolvedTenantId),
+                ]);
+                if (profRes.status === 'fulfilled') setWsProfiles(profRes.value);
+                if (whRes.status === 'fulfilled') {
+                    setWarehouses(whRes.value.warehouses);
+                    setWarehouseBalances(whRes.value.balances);
+                }
             } else {
                 await Promise.allSettled([safeSites]);
             }
@@ -417,6 +427,15 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
     useEffect(() => {
         void loadTabData(activeTab);
     }, [activeTab, loadTabData]);
+
+    useEffect(() => {
+        if (activeTab === 'CONVERSATIONS' && simulatorOpen && wsProfiles.length === 0) {
+            void supplyApi
+                .listSupplyProfiles({}, resolvedTenantId)
+                .then(setWsProfiles)
+                .catch(() => {});
+        }
+    }, [activeTab, simulatorOpen, wsProfiles.length, resolvedTenantId]);
 
     useEffect(() => {
         if (typeof window === 'undefined') return;
@@ -491,7 +510,18 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                     it.categoryCode === 'COMBUSTIBLE_FLOTA_PROD') &&
                 it.qtyInWarehouse <= it.minSafetyQty
         ).length;
-        const wsAlerts = atypicalCount + wsProfiles.filter((p) => p.optInStatus === 'PENDING_DOUBLE_OPT_IN').length;
+        const wsAlerts =
+            atypicalCount +
+            wsProfiles.filter((p) => p.optInStatus === 'PENDING_DOUBLE_OPT_IN').length;
+        const ds594Gap = forecast && !forecast.waterCompliantDs594 ? 1 : 0;
+        const totalAlerts =
+            stockoutRisk +
+            sec160Alerts +
+            rcvUrgent +
+            ds594Gap +
+            (businessUnitKpis && businessUnitKpis.fleetAndWorkshop.tankCycleCountVariancePctMax > 2.5
+                ? 1
+                : 0);
 
         return {
             pendingLines,
@@ -502,17 +532,63 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
             assetsWithoutInvoice,
             sec160Alerts,
             wsAlerts,
+            totalAlerts,
         };
-    }, [openRequisitions, inventory, siiDocuments, assets, inTransitPurchases, wsProfiles]);
+    }, [
+        openRequisitions,
+        inventory,
+        siiDocuments,
+        assets,
+        inTransitPurchases,
+        wsProfiles,
+        forecast,
+        businessUnitKpis,
+    ]);
 
-    const NAV_TABS: Array<{ id: SupplyPrimaryTab; icon: string; label: string }> = [
-        { id: 'CONTROL', icon: 'monitoring', label: t('supply.nav.control') },
-        { id: 'DEMAND', icon: 'assignment', label: t('supply.nav.demand') },
-        { id: 'PROCUREMENT', icon: 'shopping_cart', label: t('supply.nav.procurement') },
-        { id: 'WAREHOUSE', icon: 'warehouse', label: t('supply.nav.warehouse') },
-        { id: 'CONVERSATIONS', icon: 'forum', label: t('supply.nav.conversations') },
-        { id: 'FINANCE_SII', icon: 'receipt_long', label: t('supply.nav.sii') },
-        { id: 'PROFILES_WS', icon: 'manage_accounts', label: t('supply.nav.profiles_ws') },
+    const topSection = resolveTopSection(activeTab);
+
+    const TOP_SECTIONS: Array<{
+        id: TopSectionId;
+        targetTab: SupplyPrimaryTab;
+        testId: string;
+        icon: string;
+        label: string;
+    }> = [
+        {
+            id: 'CONTROL',
+            targetTab: 'CONTROL',
+            testId: 'supply-tab-CONTROL',
+            icon: 'monitoring',
+            label: t('supply.nav.control'),
+        },
+        {
+            id: 'ORDERS',
+            targetTab: 'PROCUREMENT',
+            testId: 'supply-tab-ORDERS',
+            icon: 'shopping_cart',
+            label: t('supply.nav.orders'),
+        },
+        {
+            id: 'WAREHOUSE',
+            targetTab: 'WAREHOUSE',
+            testId: 'supply-tab-WAREHOUSE',
+            icon: 'warehouse',
+            label: t('supply.nav.warehouse'),
+        },
+        {
+            id: 'WHATSAPP',
+            targetTab: 'CONVERSATIONS',
+            testId: 'supply-tab-WHATSAPP',
+            icon: 'forum',
+            label: t('supply.nav.whatsapp'),
+        },
+        {
+            id: 'FINANCE_SII',
+            targetTab: 'FINANCE_SII',
+            testId: 'supply-tab-FINANCE_SII',
+            icon: 'receipt_long',
+            label: t('supply.nav.sii'),
+        },
     ];
 
     const containerClass = embedded
@@ -524,100 +600,62 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
             className={containerClass}
             data-marketplace-opt-in={isMarketplaceBlocked ? 'blocked' : 'allowed'}
         >
-            {/* Single 56px Contextual Header (MBUX Zero-Layer — 7 Tabs Icon-First) */}
-            <header className="min-h-[56px] shrink-0 px-fib-13 sm:px-fib-21 bg-[#F8FAFC] dark:bg-[#07090D] border-b border-[#E2E8F0] dark:border-[#12151C] flex flex-wrap items-center justify-between gap-fib-8">
+            {/* Cabecera Limpia Zero-Layer (5 Secciones Claras + Alerta por Excepción) */}
+            <header className="min-h-[60px] shrink-0 px-fib-21 bg-[#FFFFFF] dark:bg-[#000000] border-b border-[#E2E8F0] dark:border-[#12151C] flex flex-wrap items-center justify-between gap-fib-13">
                 <nav
                     aria-label={t('supply.module_title')}
-                    className="flex items-center gap-fib-8 min-w-0 overflow-x-auto"
+                    className="flex items-center gap-fib-13 sm:gap-fib-21 min-w-0 overflow-x-auto"
                 >
-                    {NAV_TABS.map((item) => {
-                        const isActive = activeTab === item.id;
+                    {TOP_SECTIONS.map((sec) => {
+                        const isActive = topSection === sec.id;
                         return (
                             <button
-                                key={item.id}
+                                key={sec.id}
                                 type="button"
-                                onClick={() => setActiveTab(item.id)}
-                                aria-label={item.label}
-                                title={item.label}
+                                onClick={() => setActiveTab(sec.targetTab)}
                                 aria-current={isActive ? 'page' : undefined}
-                                data-testid={`supply-tab-${item.id}`}
+                                data-testid={sec.testId}
                                 className={cn(
-                                    'bg-transparent border-0 border-b-2 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center transition-colors cursor-pointer rounded-none shadow-none shrink-0',
+                                    'bg-transparent border-0 border-b-2 outline-none px-fib-8 py-fib-8 min-h-[52px] inline-flex items-center gap-fib-8 text-[15px] font-medium transition-colors cursor-pointer rounded-none shadow-none shrink-0',
                                     isActive
-                                        ? 'border-[#C68346] text-[#7C3F0E] dark:text-[#C68346]'
+                                        ? 'border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] font-semibold'
                                         : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
                                 )}
                             >
-                                <span className="material-symbols-outlined text-[22px]">{item.icon}</span>
+                                <span
+                                    className={cn(
+                                        'material-symbols-outlined text-[22px]',
+                                        isActive ? 'text-[#C68346]' : ''
+                                    )}
+                                >
+                                    {sec.icon}
+                                </span>
+                                <span>{sec.label}</span>
                             </button>
                         );
                     })}
-
-                    {sites.length > 0 && (
-                        <select
-                            id="supply-active-site-select"
-                            value={selectedSiteId}
-                            onChange={(e) => setSelectedSiteId(e.target.value)}
-                            aria-label={t('supply.common.site_selector')}
-                            className="ml-fib-8 min-h-[48px] max-w-[160px] sm:max-w-[200px] px-fib-8 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-microcopy text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none shrink-0"
-                        >
-                            <option value="">{t('supply.common.all_sites')}</option>
-                            {sites.map((s) => (
-                                <option key={s.siteId} value={s.siteId}>
-                                    {s.name}
-                                </option>
-                            ))}
-                        </select>
-                    )}
                 </nav>
 
-                {/* Always-Visible NASA OpenMCT Telemetry Strip (PEND | QUIEBRE | DS594 | SEC160 | RCV<=2d | WS!) */}
-                <div
-                    data-testid="supply-telemetry-strip"
-                    className="flex items-center gap-fib-13 sm:gap-fib-21 overflow-x-auto font-mono text-microcopy tabular-nums"
-                >
-                    <div className="flex items-center gap-fib-8 shrink-0">
-                        <span className="text-[#475569] dark:text-[#8A93A6]">{t('supply.telemetry.open_lines')}</span>
-                        <span className="text-data-dense font-bold text-[#0F172A] dark:text-[#F3F4F6]">{telemetry.pendingLines}</span>
-                    </div>
-                    <div className="flex items-center gap-fib-8 shrink-0">
-                        <span className="text-[#475569] dark:text-[#8A93A6]">{t('supply.telemetry.stockout_risk')}</span>
-                        <span className={cn('text-data-dense font-bold', telemetry.stockoutRisk > 0 ? 'text-[#7C3F0E] dark:text-[#C68346]' : 'text-[#0F172A] dark:text-[#F3F4F6]')}>
-                            {telemetry.stockoutRisk}
-                        </span>
-                    </div>
-                    <div className="flex items-center gap-fib-8 shrink-0">
-                        <span className="text-[#475569] dark:text-[#8A93A6]">{t('supply.telemetry.ds594_status')}</span>
-                        <span className={cn('text-data-dense font-bold', forecast && !forecast.waterCompliantDs594 ? 'text-[#7C3F0E] dark:text-[#C68346]' : 'text-[#0369A1] dark:text-[#00AEEF]')}>
-                            {forecast ? `${forecast.waterCoverageDays}${t('supply.common.days_short')}` : '—'}
-                        </span>
-                    </div>
-                    <div className="flex items-center gap-fib-8 shrink-0">
-                        <span className="text-[#475569] dark:text-[#8A93A6]">{t('supply.telemetry.sec160_status')}</span>
-                        <span className={cn('text-data-dense font-bold', telemetry.sec160Alerts > 0 ? 'text-[#7C3F0E] dark:text-[#C68346]' : 'text-[#0F172A] dark:text-[#F3F4F6]')}>
-                            {telemetry.sec160Alerts}
-                        </span>
-                    </div>
-                    <div className="flex items-center gap-fib-8 shrink-0">
-                        <span className="text-[#475569] dark:text-[#8A93A6]">{t('supply.telemetry.rcv_urgent')}</span>
-                        <span className={cn('text-data-dense font-bold', telemetry.rcvUrgent > 0 ? 'text-[#7C3F0E] dark:text-[#C68346]' : 'text-[#0F172A] dark:text-[#F3F4F6]')}>
-                            {telemetry.rcvUrgent}
-                        </span>
-                    </div>
-                    <div className="flex items-center gap-fib-8 shrink-0">
-                        <span className="text-[#475569] dark:text-[#8A93A6]">{t('supply.telemetry.ws_alerts')}</span>
-                        <span className={cn('text-data-dense font-bold', telemetry.wsAlerts > 0 ? 'text-[#7C3F0E] dark:text-[#C68346]' : 'text-[#0F172A] dark:text-[#F3F4F6]')}>
-                            {telemetry.wsAlerts}
-                        </span>
-                    </div>
-                </div>
+                {/* Derecha limpia: Alertas solo si existen (Dark Cockpit), Faena, Acción principal */}
+                <div className="flex flex-wrap items-center gap-fib-13 shrink-0">
+                    {telemetry.totalAlerts > 0 && (
+                        <button
+                            type="button"
+                            onClick={() => setActiveTab('CONTROL')}
+                            data-testid="supply-alerts-badge"
+                            className="bg-transparent border-0 border-l-[3px] border-l-[#C68346] pl-fib-13 min-h-[48px] inline-flex items-center gap-fib-8 text-[14px] font-semibold text-[#7C3F0E] dark:text-[#C68346] cursor-pointer rounded-none shadow-none tabular-nums"
+                        >
+                            <span className="material-symbols-outlined text-[18px]">warning</span>
+                            <span>
+                                {telemetry.totalAlerts} {t('supply.common.alerts_pending')}
+                            </span>
+                        </button>
+                    )}
 
-                {/* Right: Offline/DLQ Indicator + Role Guard + Icon-First Contextual Actions */}
-                <div className="flex items-center gap-fib-8 shrink-0">
                     {(!isOnline || offlinePendingCount > 0 || deadLetterCount > 0) && (
                         <div
                             data-testid="supply-offline-status"
-                            className="flex items-center gap-fib-8 px-fib-8 border-l-[3px] border-l-[#C68346] font-mono text-microcopy tabular-nums font-bold text-[#7C3F0E] dark:text-[#C68346]"
+                            className="flex items-center gap-fib-8 px-fib-8 border-l-[3px] border-l-[#C68346] text-[14px] tabular-nums font-semibold text-[#7C3F0E] dark:text-[#C68346]"
                         >
                             <span className="material-symbols-outlined text-[18px]">
                                 {deadLetterCount > 0 ? 'warning' : 'cloud_off'}
@@ -636,7 +674,7 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                     {!canMutateSupply && (
                         <span
                             data-testid="supply-readonly-indicator"
-                            className="font-mono text-microcopy uppercase font-bold text-[#475569] dark:text-[#8A93A6] border-l border-[#E2E8F0] dark:border-[#12151C] pl-fib-8"
+                            className="text-[14px] font-medium text-[#475569] dark:text-[#8A93A6] border-l border-[#E2E8F0] dark:border-[#12151C] pl-fib-13"
                         >
                             {t('supply.common.read_only_mode')}
                         </span>
@@ -646,10 +684,27 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                         <span
                             data-testid="supply-sandbox-marketplace-guard"
                             title={t('supply.common.sandbox_marketplace_blocked')}
-                            className="hidden md:inline-flex items-center gap-fib-8 font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6] border-l border-[#E2E8F0] dark:border-[#12151C] pl-fib-8"
+                            className="hidden md:inline-flex items-center gap-fib-8 text-[14px] text-[#475569] dark:text-[#8A93A6]"
                         >
-                            <span className="material-symbols-outlined text-[16px]">lock</span>
+                            <span className="material-symbols-outlined text-[18px]">lock</span>
                         </span>
+                    )}
+
+                    {sites.length > 0 && (
+                        <select
+                            id="supply-active-site-select"
+                            value={selectedSiteId}
+                            onChange={(e) => setSelectedSiteId(e.target.value)}
+                            aria-label={t('supply.common.site_selector')}
+                            className="min-h-[48px] max-w-[190px] px-fib-13 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[15px] text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none shrink-0"
+                        >
+                            <option value="">{t('supply.common.all_sites')}</option>
+                            {sites.map((s) => (
+                                <option key={s.siteId} value={s.siteId}>
+                                    {s.name}
+                                </option>
+                            ))}
+                        </select>
                     )}
 
                     {canScanAndBuy && (
@@ -659,11 +714,11 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                                 setScannerBucket(null);
                                 setScannerOpen(true);
                             }}
-                            aria-label={t('supply.nav.scanner')}
-                            title={t('supply.nav.scanner')}
-                            className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#7C3F0E] dark:text-[#C68346] hover:opacity-80 transition-colors cursor-pointer rounded-none shadow-none"
+                            data-testid="supply-open-scanner-btn"
+                            className="min-h-[48px] px-fib-13 bg-[#C68346] border border-[#C68346] text-[#000000] text-[15px] font-semibold inline-flex items-center gap-fib-8 hover:opacity-90 transition-opacity cursor-pointer rounded-none shadow-none"
                         >
-                            <span className="material-symbols-outlined text-[24px]">add_a_photo</span>
+                            <span className="material-symbols-outlined text-[20px]">add_a_photo</span>
+                            <span>{t('supply.nav.scanner')}</span>
                         </button>
                     )}
 
@@ -684,28 +739,6 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                         <span className="material-symbols-outlined text-[22px]">compare_arrows</span>
                     </button>
 
-                    {canAccessSimulator && (
-                        <button
-                            type="button"
-                            onClick={() => {
-                                setActiveTab('CONVERSATIONS');
-                                setSimulatorOpen((prev) =>
-                                    activeTab === 'CONVERSATIONS' ? !prev : true
-                                );
-                            }}
-                            aria-label={t('supply.nav.wa_simulator')}
-                            title={t('supply.nav.wa_simulator')}
-                            className={cn(
-                                'bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center transition-colors cursor-pointer rounded-none shadow-none',
-                                activeTab === 'CONVERSATIONS' && simulatorOpen
-                                    ? 'text-[#0369A1] dark:text-[#00AEEF]'
-                                    : 'text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
-                            )}
-                        >
-                            <span className="material-symbols-outlined text-[22px]">chat</span>
-                        </button>
-                    )}
-
                     <button
                         type="button"
                         onClick={() => void loadTabData(activeTab)}
@@ -719,9 +752,91 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                 </div>
             </header>
 
+            {/* Subbarra contextual limpia solo para Pedidos o WhatsApp */}
+            {topSection === 'ORDERS' && (
+                <div className="px-fib-21 border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] flex items-center gap-fib-21">
+                    <button
+                        type="button"
+                        onClick={() => setActiveTab('PROCUREMENT')}
+                        data-testid="supply-subtab-PROCUREMENT"
+                        className={cn(
+                            'bg-transparent border-0 border-b-2 min-h-[48px] px-fib-8 text-[15px] font-medium cursor-pointer rounded-none shadow-none',
+                            activeTab === 'PROCUREMENT'
+                                ? 'border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] font-semibold'
+                                : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
+                        )}
+                    >
+                        {t('supply.nav.procurement')}
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setActiveTab('DEMAND')}
+                        data-testid="supply-subtab-DEMAND"
+                        className={cn(
+                            'bg-transparent border-0 border-b-2 min-h-[48px] px-fib-8 text-[15px] font-medium cursor-pointer rounded-none shadow-none',
+                            activeTab === 'DEMAND'
+                                ? 'border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] font-semibold'
+                                : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
+                        )}
+                    >
+                        {t('supply.nav.demand')}
+                    </button>
+                </div>
+            )}
+
+            {topSection === 'WHATSAPP' && (
+                <div className="px-fib-21 border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] flex items-center justify-between gap-fib-13">
+                    <div className="flex items-center gap-fib-21">
+                        <button
+                            type="button"
+                            onClick={() => setActiveTab('CONVERSATIONS')}
+                            data-testid="supply-subtab-CONVERSATIONS"
+                            className={cn(
+                                'bg-transparent border-0 border-b-2 min-h-[48px] px-fib-8 text-[15px] font-medium cursor-pointer rounded-none shadow-none',
+                                activeTab === 'CONVERSATIONS'
+                                    ? 'border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] font-semibold'
+                                    : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
+                            )}
+                        >
+                            {t('supply.nav.conversations')}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setActiveTab('PROFILES_WS')}
+                            data-testid="supply-subtab-PROFILES_WS"
+                            className={cn(
+                                'bg-transparent border-0 border-b-2 min-h-[48px] px-fib-8 text-[15px] font-medium cursor-pointer rounded-none shadow-none',
+                                activeTab === 'PROFILES_WS'
+                                    ? 'border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] font-semibold'
+                                    : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
+                            )}
+                        >
+                            {t('supply.nav.profiles_ws')}
+                        </button>
+                    </div>
+
+                    {canAccessSimulator && activeTab === 'CONVERSATIONS' && (
+                        <button
+                            type="button"
+                            onClick={() => setSimulatorOpen((prev) => !prev)}
+                            data-testid="toggle-ws-simulator-btn"
+                            className={cn(
+                                'bg-transparent border-0 min-h-[48px] px-fib-13 inline-flex items-center gap-fib-8 text-[15px] font-medium cursor-pointer rounded-none shadow-none',
+                                simulatorOpen
+                                    ? 'text-[#0369A1] dark:text-[#00AEEF] font-semibold'
+                                    : 'text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
+                            )}
+                        >
+                            <span className="material-symbols-outlined text-[20px]">chat</span>
+                            <span>{t('supply.nav.wa_simulator')}</span>
+                        </button>
+                    )}
+                </div>
+            )}
+
             {loading && <M3LinearProgress indeterminate ariaLabel={t('supply.common.loading')} />}
 
-            {/* Golden Ratio 61.8% / 38.2% Main Stage */}
+            {/* Escenario Principal 61.8% / 38.2% */}
             <div
                 className={cn(
                     'flex-1 min-h-0 w-full overflow-hidden',
@@ -800,6 +915,7 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                     {activeTab === 'CONVERSATIONS' && (
                         <SupplyConversationsAuditView
                             threads={conversationThreads}
+                            profiles={wsProfiles}
                             sites={sites}
                             defaultSiteId={selectedSiteId || sites[0]?.siteId}
                             tenantId={resolvedTenantId}
@@ -841,6 +957,7 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                         <SupplyProfilesChannelsView
                             profiles={wsProfiles}
                             sites={sites}
+                            warehouses={warehouses}
                             tenantId={resolvedTenantId}
                             loading={loading}
                             canAdminister={canAdministerProfiles}

@@ -31,20 +31,19 @@ test.describe('MINREPORT · ABASTECIMIENTO — E2E Contract-Driven Suite', () =>
         expect(bodyText).not.toContain('(38.2%)');
 
         const navButtons = page.locator('header nav button');
-        if ((await navButtons.count()) >= 7) {
-            await expect(page.getByTestId('supply-telemetry-strip')).toBeVisible();
+        if ((await navButtons.count()) >= 5) {
             await page.getByTestId('supply-tab-CONTROL').click();
             await expect(page).toHaveURL(/tab=CONTROL/);
-            await page.getByTestId('supply-tab-DEMAND').click();
+            await page.getByTestId('supply-tab-ORDERS').click();
+            await page.getByTestId('supply-subtab-DEMAND').click();
             await expect(page).toHaveURL(/tab=DEMAND/);
             await page.getByTestId('supply-tab-WAREHOUSE').click();
             await expect(page).toHaveURL(/tab=WAREHOUSE/);
-            await page.getByTestId('supply-tab-CONVERSATIONS').click();
-            await expect(page).toHaveURL(/tab=CONVERSATIONS/);
+            await page.getByTestId('supply-tab-WHATSAPP').click();
+            await page.getByTestId('supply-subtab-PROFILES_WS').click();
+            await expect(page).toHaveURL(/tab=PROFILES_WS/);
             await page.getByTestId('supply-tab-FINANCE_SII').click();
             await expect(page).toHaveURL(/tab=FINANCE_SII/);
-            await page.getByTestId('supply-tab-PROFILES_WS').click();
-            await expect(page).toHaveURL(/tab=PROFILES_WS/);
         }
     });
 
@@ -153,7 +152,7 @@ test.describe('MINREPORT · ABASTECIMIENTO — E2E Contract-Driven Suite', () =>
             return;
         }
 
-        const drawer = page.locator('aside[aria-label*="CONCILIACI"]').first();
+        const drawer = page.locator('aside[aria-label*="Cuadrar compra"]').first();
         if (await drawer.isVisible()) {
             const invalidInputs = await drawer.evaluate((root) =>
                 Array.from(root.querySelectorAll('input:not([type="hidden"])')).filter(

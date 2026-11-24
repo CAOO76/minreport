@@ -3,13 +3,10 @@ import { useTranslation } from 'react-i18next';
 import M3Switch from '../../../components/common/M3Switch';
 import HitlConfirmModal, { type HitlComparisonDiffItem } from '../../../components/common/HitlConfirmModal';
 import { cn } from '../../../utils/cn';
-import type {
-    SupplyProfileViewRecord,
-    SupplyWhatsAppChannelId,
-} from '../types';
+import type { SupplyProfileViewRecord, SupplyWhatsAppChannelId } from '../types';
 
 export interface SupplyChannelDomainGroup {
-    domainKey: 'CAMPAMENTO' | 'OPERACION' | 'CONTROLADO' | 'PATRIMONIO' | 'LOGISTICA' | 'FINANZAS';
+    groupKey: 'group_camp' | 'group_ops' | 'group_special';
     channels: Array<{
         id: SupplyWhatsAppChannelId;
         normativeTag: string;
@@ -19,7 +16,7 @@ export interface SupplyChannelDomainGroup {
 
 export const SUPPLY_CHANNEL_DOMAIN_GROUPS: SupplyChannelDomainGroup[] = [
     {
-        domainKey: 'CAMPAMENTO',
+        groupKey: 'group_camp',
         channels: [
             { id: 'CH_CAMP_FOOD', normativeTag: 'DS 594 / RSA' },
             { id: 'CH_CAMP_POTABLE_WATER', normativeTag: 'DS 594 / DS 28' },
@@ -29,7 +26,7 @@ export const SUPPLY_CHANNEL_DOMAIN_GROUPS: SupplyChannelDomainGroup[] = [
         ],
     },
     {
-        domainKey: 'OPERACION',
+        groupKey: 'group_ops',
         channels: [
             { id: 'CH_OPS_IND_WATER', normativeTag: 'DGA / RCA' },
             { id: 'CH_OPS_FLEET_FUEL', normativeTag: 'SEC 160 / OPERMAQ' },
@@ -40,22 +37,13 @@ export const SUPPLY_CHANNEL_DOMAIN_GROUPS: SupplyChannelDomainGroup[] = [
         ],
     },
     {
-        domainKey: 'CONTROLADO',
+        groupKey: 'group_special',
         channels: [
-            { id: 'CH_CONTROLLED_DGMN', normativeTag: 'LEY 17.798 DGMN', requiresDgmnLicense: true },
+            { id: 'CH_WAREHOUSE_RECEPTION', normativeTag: '4-Way / Kardex' },
+            { id: 'CH_DIRECT_PURCHASE_EXEC', normativeTag: 'SII DL 825 / RCV' },
+            { id: 'CH_CAPEX_ASSETS', normativeTag: 'Art. 31 LIR / DTE 33' },
+            { id: 'CH_CONTROLLED_DGMN', normativeTag: 'Ley 17.798 DGMN', requiresDgmnLicense: true },
         ],
-    },
-    {
-        domainKey: 'PATRIMONIO',
-        channels: [{ id: 'CH_CAPEX_ASSETS', normativeTag: 'ART. 31 LIR / DTE 33' }],
-    },
-    {
-        domainKey: 'LOGISTICA',
-        channels: [{ id: 'CH_WAREHOUSE_RECEPTION', normativeTag: '4-WAY / KARDEX' }],
-    },
-    {
-        domainKey: 'FINANZAS',
-        channels: [{ id: 'CH_DIRECT_PURCHASE_EXEC', normativeTag: 'SII DL 825 / RCV' }],
     },
 ];
 
@@ -73,7 +61,9 @@ export const SupplyChannelMatrixGrid: React.FC<SupplyChannelMatrixGridProps> = (
     onSavePermanentChannels,
 }) => {
     const { t } = useTranslation();
-    const [draftChannels, setDraftChannels] = useState<SupplyWhatsAppChannelId[]>(profile.permanentChannels);
+    const [draftChannels, setDraftChannels] = useState<SupplyWhatsAppChannelId[]>(
+        profile.permanentChannels
+    );
     const [hitlOpen, setHitlOpen] = useState(false);
 
     useEffect(() => {
@@ -108,50 +98,47 @@ export const SupplyChannelMatrixGrid: React.FC<SupplyChannelMatrixGridProps> = (
         () => [
             {
                 field: `${profile.displayName} · ${t('supply.profiles_ws.matrix_title')}`,
-                current: profile.permanentChannels.join(', ') || '—',
-                suggested: draftChannels.join(', ') || '—',
+                current:
+                    profile.permanentChannels.map((c) => t(`supply.channels.${c}`)).join(', ') ||
+                    '—',
+                suggested:
+                    draftChannels.map((c) => t(`supply.channels.${c}`)).join(', ') || '—',
             },
         ],
         [draftChannels, profile.displayName, profile.permanentChannels, t]
     );
 
     return (
-        <section className="space-y-fib-13 border-t border-[#E2E8F0] dark:border-[#12151C] pt-fib-21">
+        <section className="space-y-fib-21 border-t border-[#E2E8F0] dark:border-[#12151C] pt-fib-21">
             <div className="flex flex-wrap items-center justify-between gap-fib-13">
-                <div className="flex items-center gap-fib-8">
-                    <span className="material-symbols-outlined text-[18px] text-[#C68346]">
-                        view_module
-                    </span>
-                    <h4 className="font-mono text-microcopy uppercase font-bold tracking-wider text-[#0F172A] dark:text-[#F3F4F6]">
-                        {t('supply.profiles_ws.matrix_title')}
-                    </h4>
-                </div>
+                <h4 className="text-[18px] font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
+                    {t('supply.profiles_ws.matrix_title')}
+                </h4>
                 {canAdminister && hasUnsavedChanges && (
                     <button
                         type="button"
                         disabled={saving}
                         onClick={() => setHitlOpen(true)}
-                        className="min-h-[48px] px-fib-21 bg-[#C68346] border border-[#C68346] text-[#000000] font-mono text-microcopy font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer hover:opacity-90 disabled:opacity-40"
+                        className="min-h-[48px] px-fib-21 bg-[#C68346] border border-[#C68346] text-[#000000] text-[15px] font-semibold rounded-none shadow-none cursor-pointer hover:opacity-90 disabled:opacity-40"
                     >
                         {t('supply.profiles_ws.matrix_save_btn')}
                     </button>
                 )}
             </div>
 
-            <div className="space-y-fib-13">
+            <div className="space-y-fib-21">
                 {SUPPLY_CHANNEL_DOMAIN_GROUPS.map((group) => (
-                    <div
-                        key={group.domainKey}
-                        className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] rounded-none shadow-none"
-                    >
-                        <div className="px-fib-13 py-fib-8 border-b border-[#E2E8F0] dark:border-[#12151C] font-mono text-microcopy uppercase font-bold tracking-wider text-[#475569] dark:text-[#8A93A6]">
-                            {t(`supply.channels.domains.${group.domainKey}`)}
+                    <div key={group.groupKey} className="space-y-fib-8">
+                        <div className="pb-fib-8 border-b border-[#E2E8F0] dark:border-[#12151C] text-[16px] font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
+                            {t(`supply.channels.${group.groupKey}`)}
                         </div>
                         <div className="divide-y divide-[#E2E8F0] dark:divide-[#12151C]">
                             {group.channels.map((ch) => {
                                 const isPerm = permanentSet.has(ch.id);
                                 const isTemp = tempActiveSet.has(ch.id);
-                                const dgmnLocked = Boolean(ch.requiresDgmnLicense && !profile.hasValidDgmnLicense);
+                                const dgmnLocked = Boolean(
+                                    ch.requiresDgmnLicense && !profile.hasValidDgmnLicense
+                                );
                                 const rowLabel = t(`supply.channels.${ch.id}`);
 
                                 return (
@@ -159,7 +146,7 @@ export const SupplyChannelMatrixGrid: React.FC<SupplyChannelMatrixGridProps> = (
                                         key={ch.id}
                                         data-testid={`channel-row-${ch.id}`}
                                         className={cn(
-                                            'px-fib-13 py-fib-13 flex flex-wrap items-center justify-between gap-fib-13 border-l-[3px] bg-[#FFFFFF] dark:bg-[#000000]',
+                                            'py-fib-13 pl-fib-13 flex items-center justify-between gap-fib-13 border-l-[3px]',
                                             isTemp
                                                 ? 'border-l-[#00AEEF]'
                                                 : isPerm
@@ -168,26 +155,26 @@ export const SupplyChannelMatrixGrid: React.FC<SupplyChannelMatrixGridProps> = (
                                         )}
                                     >
                                         <div className="min-w-0 flex-1 space-y-1">
-                                            <div className="flex flex-wrap items-center gap-fib-8">
-                                                <span className="text-data-dense font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
+                                            <div className="flex items-center gap-fib-8">
+                                                <span className="text-[16px] font-medium text-[#0F172A] dark:text-[#F3F4F6]">
                                                     {rowLabel}
                                                 </span>
-                                                <span className="font-mono text-microcopy text-[#475569] dark:text-[#8A93A6] select-text">
-                                                    {ch.id}
+                                                <span
+                                                    title={`${ch.id} · ${ch.normativeTag}`}
+                                                    className="material-symbols-outlined text-[18px] text-[#475569] dark:text-[#8A93A6] cursor-help"
+                                                >
+                                                    info
                                                 </span>
                                             </div>
-                                            <div className="flex flex-wrap items-center gap-fib-13 font-mono text-microcopy tabular-nums">
-                                                <span className="text-[#475569] dark:text-[#8A93A6]">
-                                                    {ch.normativeTag}
-                                                </span>
+                                            <div className="flex flex-wrap items-center gap-fib-13 text-[14px]">
                                                 <span
                                                     className={cn(
-                                                        'uppercase font-bold',
+                                                        'font-medium',
                                                         isTemp
                                                             ? 'text-[#0369A1] dark:text-[#00AEEF]'
                                                             : isPerm
                                                               ? 'text-[#9A5B21] dark:text-[#C68346]'
-                                                              : 'text-[#5A6072]'
+                                                              : 'text-[#475569] dark:text-[#8A93A6]'
                                                     )}
                                                 >
                                                     {isTemp
@@ -198,7 +185,7 @@ export const SupplyChannelMatrixGrid: React.FC<SupplyChannelMatrixGridProps> = (
                                                 </span>
                                                 {dgmnLocked && (
                                                     <span className="text-[#9A5B21] dark:text-[#C68346] inline-flex items-center gap-1">
-                                                        <span className="material-symbols-outlined text-[14px]">
+                                                        <span className="material-symbols-outlined text-[16px]">
                                                             lock
                                                         </span>
                                                         {t('supply.profiles_ws.dgmn_missing')}

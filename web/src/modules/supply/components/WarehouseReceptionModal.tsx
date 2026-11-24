@@ -146,7 +146,7 @@ export const WarehouseReceptionModal: React.FC<WarehouseReceptionModalProps> = (
     };
 
     const inputClass =
-        'w-full min-h-[48px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-data-dense tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none';
+        'w-full min-h-[48px] px-fib-13 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[15px] tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none';
 
     return (
         <div
@@ -156,15 +156,15 @@ export const WarehouseReceptionModal: React.FC<WarehouseReceptionModalProps> = (
             aria-labelledby={`${uid}-title`}
             className="fixed inset-0 z-50 flex items-center justify-center p-fib-21 bg-black/70 select-none overflow-y-auto"
         >
-            <div className="w-full max-w-3xl bg-[#FFFFFF] dark:bg-[#07090D] border border-[#C68346] rounded-none shadow-none my-auto">
-                <header className="flex items-center justify-between px-fib-21 py-fib-13 bg-[#F8FAFC] dark:bg-[#000000] border-b border-[#E2E8F0] dark:border-[#12151C]">
+            <div className="w-full max-w-3xl bg-[#FFFFFF] dark:bg-[#000000] border border-[#C68346] rounded-none shadow-none my-auto">
+                <header className="flex items-center justify-between px-fib-21 py-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C]">
                     <div className="flex items-center gap-fib-8 min-w-0">
                         <span className="material-symbols-outlined text-[22px] text-[#C68346]">
                             local_shipping
                         </span>
                         <h3
                             id={`${uid}-title`}
-                            className="font-mono text-data-dense font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6] truncate"
+                            className="text-[17px] font-bold text-[#0F172A] dark:text-[#F3F4F6] truncate"
                         >
                             {t('supply.warehouse.reception_4way_title')} · {purchase.purchaseId}
                         </h3>
@@ -176,7 +176,7 @@ export const WarehouseReceptionModal: React.FC<WarehouseReceptionModalProps> = (
                         title={t('supply.common.close')}
                         className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] cursor-pointer rounded-none shadow-none"
                     >
-                        <span className="material-symbols-outlined text-[20px]">close</span>
+                        <span className="material-symbols-outlined text-[22px]">close</span>
                     </button>
                 </header>
 
@@ -188,10 +188,10 @@ export const WarehouseReceptionModal: React.FC<WarehouseReceptionModalProps> = (
                     onSubmit={(e) => void handleSubmit(e)}
                     autoComplete="off"
                     spellCheck={false}
-                    className="p-fib-21 space-y-fib-13 max-h-[80vh] overflow-y-auto"
+                    className="p-fib-21 space-y-fib-21 max-h-[80vh] overflow-y-auto"
                 >
                     {errorMsg && (
-                        <div className="border-l-[3px] border-[#C68346] bg-[#F8FAFC] dark:bg-[#000000] px-fib-13 py-fib-8 font-mono text-data-dense text-[#9A5B21] dark:text-[#C68346]">
+                        <div className="border-l-[3px] border-[#C68346] pl-fib-13 py-fib-8 text-[15px] text-[#9A5B21] dark:text-[#C68346]">
                             {errorMsg}
                         </div>
                     )}
@@ -200,7 +200,7 @@ export const WarehouseReceptionModal: React.FC<WarehouseReceptionModalProps> = (
                         <div className="space-y-fib-8">
                             <label
                                 htmlFor={`${uid}-wh-select`}
-                                className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]"
+                                className="block text-[14px] font-medium text-[#475569] dark:text-[#8A93A6]"
                             >
                                 {t('supply.warehouse.target_warehouse')}
                             </label>
@@ -213,7 +213,7 @@ export const WarehouseReceptionModal: React.FC<WarehouseReceptionModalProps> = (
                                 <option value="">{t('supply.warehouse.default_warehouse')}</option>
                                 {warehouses.map((w) => (
                                     <option key={w.warehouseId} value={w.warehouseId}>
-                                        {w.code} · {w.name} ({w.warehouseClass})
+                                        {w.code} · {w.name}
                                     </option>
                                 ))}
                             </select>
@@ -222,7 +222,7 @@ export const WarehouseReceptionModal: React.FC<WarehouseReceptionModalProps> = (
                         <div className="space-y-fib-8">
                             <label
                                 htmlFor={`${uid}-notes`}
-                                className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]"
+                                className="block text-[14px] font-medium text-[#475569] dark:text-[#8A93A6]"
                             >
                                 {t('supply.warehouse.reception_notes')}
                             </label>
@@ -238,21 +238,21 @@ export const WarehouseReceptionModal: React.FC<WarehouseReceptionModalProps> = (
                         </div>
                     </div>
 
-                    <div className="divide-y divide-[#E2E8F0] dark:divide-[#12151C] border border-[#E2E8F0] dark:border-[#12151C]">
+                    <div className="divide-y divide-[#E2E8F0] dark:divide-[#12151C]">
                         {lineDrafts.map((line, idx) => (
-                            <div key={line.purchaseLineId} className="p-fib-13 space-y-fib-13">
-                                <div className="flex flex-wrap items-center justify-between gap-fib-8 font-mono tabular-nums">
-                                    <span className="text-data-dense font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                            <div key={line.purchaseLineId} className="py-fib-13 space-y-fib-13">
+                                <div className="flex flex-wrap items-center justify-between gap-fib-8 tabular-nums">
+                                    <span className="text-[16px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
                                         {line.name}
                                     </span>
-                                    <span className="text-microcopy text-[#475569] dark:text-[#8A93A6]">
+                                    <span className="font-mono text-[14px] text-[#475569] dark:text-[#8A93A6]">
                                         {line.alreadyReceivedQty}/{line.purchasedQty} {line.unitSi}
                                     </span>
                                 </div>
 
-                                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-fib-8">
+                                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-fib-13">
                                     <div className="space-y-1">
-                                        <label className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">
+                                        <label className="block text-[14px] text-[#475569] dark:text-[#8A93A6]">
                                             {t('supply.warehouse.qty_received_now')}
                                         </label>
                                         <input
@@ -276,12 +276,12 @@ export const WarehouseReceptionModal: React.FC<WarehouseReceptionModalProps> = (
                                             autoComplete="off"
                                             spellCheck={false}
                                             data-testid={`reception-qty-${line.purchaseLineId}`}
-                                            className={`${inputClass} select-text`}
+                                            className={`${inputClass} font-mono select-text`}
                                         />
                                     </div>
 
                                     <div className="space-y-1">
-                                        <label className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">
+                                        <label className="block text-[14px] text-[#475569] dark:text-[#8A93A6]">
                                             {t('supply.warehouse.shrinkage_qty')}
                                         </label>
                                         <input
@@ -305,12 +305,12 @@ export const WarehouseReceptionModal: React.FC<WarehouseReceptionModalProps> = (
                                             autoComplete="off"
                                             spellCheck={false}
                                             data-testid={`reception-shrinkage-${line.purchaseLineId}`}
-                                            className={`${inputClass} select-text`}
+                                            className={`${inputClass} font-mono select-text`}
                                         />
                                     </div>
 
                                     <div className="space-y-1">
-                                        <label className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">
+                                        <label className="block text-[14px] text-[#475569] dark:text-[#8A93A6]">
                                             {t('supply.warehouse.fefo_lot')}
                                         </label>
                                         <input
@@ -327,12 +327,12 @@ export const WarehouseReceptionModal: React.FC<WarehouseReceptionModalProps> = (
                                             }
                                             autoComplete="off"
                                             spellCheck={false}
-                                            className={`${inputClass} select-text`}
+                                            className={`${inputClass} font-mono select-text`}
                                         />
                                     </div>
 
                                     <div className="space-y-1">
-                                        <label className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">
+                                        <label className="block text-[14px] text-[#475569] dark:text-[#8A93A6]">
                                             {t('supply.warehouse.fefo_expiry')}
                                         </label>
                                         <input
@@ -352,7 +352,7 @@ export const WarehouseReceptionModal: React.FC<WarehouseReceptionModalProps> = (
                                             }
                                             autoComplete="off"
                                             spellCheck={false}
-                                            className={`${inputClass} select-text`}
+                                            className={`${inputClass} font-mono select-text`}
                                         />
                                     </div>
                                 </div>
@@ -386,7 +386,7 @@ export const WarehouseReceptionModal: React.FC<WarehouseReceptionModalProps> = (
                     {hasDiscrepancyPreview && (
                         <div
                             data-testid="reception-discrepancy-preview"
-                            className="border-l-[3px] border-[#C68346] bg-[#F8FAFC] dark:bg-[#000000] px-fib-13 py-fib-8 font-mono text-microcopy text-[#7C3F0E] dark:text-[#C68346] font-bold"
+                            className="border-l-[3px] border-[#C68346] pl-fib-13 py-fib-8 text-[15px] text-[#7C3F0E] dark:text-[#C68346] font-bold"
                         >
                             {t('supply.warehouse.discrepancy_rcv_warning')}
                         </div>
@@ -396,7 +396,7 @@ export const WarehouseReceptionModal: React.FC<WarehouseReceptionModalProps> = (
                         <div className="flex-1 min-w-[200px] space-y-1">
                             <label
                                 htmlFor={`${uid}-hitl-kw`}
-                                className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]"
+                                className="block text-[14px] text-[#475569] dark:text-[#8A93A6]"
                             >
                                 {t('supply.reconciler.keyword_label')} ACTUALIZAR
                             </label>
@@ -410,7 +410,7 @@ export const WarehouseReceptionModal: React.FC<WarehouseReceptionModalProps> = (
                                 placeholder="ACTUALIZAR"
                                 data-testid="reception-hitl-keyword"
                                 className={cn(
-                                    `${inputClass} uppercase select-text`,
+                                    `${inputClass} font-mono select-text`,
                                     isKeywordValid ? 'border-[#00AEEF]' : ''
                                 )}
                             />
@@ -420,7 +420,7 @@ export const WarehouseReceptionModal: React.FC<WarehouseReceptionModalProps> = (
                             type="submit"
                             disabled={!isKeywordValid || submitting}
                             data-testid="reception-submit-btn"
-                            className="min-h-[48px] px-fib-21 bg-[#C68346] border border-[#C68346] text-[#000000] font-mono text-microcopy font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer hover:opacity-90 disabled:opacity-40"
+                            className="min-h-[48px] px-fib-21 bg-[#C68346] border border-[#C68346] text-[#000000] text-[15px] font-bold rounded-none shadow-none cursor-pointer hover:opacity-90 disabled:opacity-40"
                         >
                             {t('supply.warehouse.confirm_reception_4way')}
                         </button>

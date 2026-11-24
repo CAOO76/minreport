@@ -292,8 +292,8 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
 
     if (!open) return null;
 
-    const inputBase = 'w-full min-h-[48px] px-fib-13 bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none';
-    const labelBase = 'block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]';
+    const inputBase = 'w-full min-h-[48px] px-fib-13 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[15px] text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none';
+    const labelBase = 'block text-[14px] text-[#475569] dark:text-[#8A93A6]';
 
     return (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/75 p-0 sm:p-fib-21 select-none overflow-y-auto" role="dialog" aria-modal="true" aria-label={t('supply.scanner.title')}>
@@ -314,7 +314,7 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-fib-13">
                         <div className="space-y-fib-8">
                             <label htmlFor={`${uid}-mode`} className={labelBase}>{t('supply.scanner.mode_label')}</label>
-                            <select id={`${uid}-mode`} value={header.purchaseMode} onChange={(e) => patchHeader({ purchaseMode: e.target.value as PurchaseMode })} className={inputBase}>
+                            <select id={`${uid}-mode`} value={header.purchaseMode} onChange={(e) => patchHeader({ purchaseMode: e.target.value as PurchaseMode })} className={`${inputBase} cursor-pointer`}>
                                 <option value="REQUISITION_FULFILLMENT">{t('supply.purchase_modes.REQUISITION_FULFILLMENT')}</option>
                                 <option value="DIRECT_AUTONOMOUS">{t('supply.purchase_modes.DIRECT_AUTONOMOUS')}</option>
                                 <option value="MIXED_FULFILLMENT_AND_DIRECT">{t('supply.purchase_modes.MIXED_FULFILLMENT_AND_DIRECT')}</option>
@@ -322,7 +322,7 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
                         </div>
                         <div className="space-y-fib-8">
                             <label htmlFor={`${uid}-dest`} className={labelBase}>{t('supply.scanner.destination_label')}</label>
-                            <select id={`${uid}-dest`} value={header.defaultDestination} onChange={(e) => { const nextDest = e.target.value as PurchaseLineDestination; patchHeader({ defaultDestination: nextDest }); setLines((prev) => prev.map((l) => ({ ...l, destination: nextDest }))); }} className={inputBase}>
+                            <select id={`${uid}-dest`} value={header.defaultDestination} onChange={(e) => { const nextDest = e.target.value as PurchaseLineDestination; patchHeader({ defaultDestination: nextDest }); setLines((prev) => prev.map((l) => ({ ...l, destination: nextDest }))); }} className={`${inputBase} cursor-pointer`}>
                                 <option value="STOCK_IN_TRANSIT">{t('supply.destinations.STOCK_IN_TRANSIT')}</option>
                                 <option value="STOCK_IN_WAREHOUSE">{t('supply.destinations.STOCK_IN_WAREHOUSE')}</option>
                                 <option value="CAPEX_ASSET">{t('supply.destinations.CAPEX_ASSET')}</option>
@@ -331,13 +331,13 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
                         </div>
                         <div className="space-y-fib-8">
                             <label htmlFor={`${uid}-payment`} className={labelBase}>{t('supply.scanner.payment_label')}</label>
-                            <select id={`${uid}-payment`} value={header.paymentMethod} onChange={(e) => patchHeader({ paymentMethod: e.target.value as PaymentMethod })} className={inputBase}>
+                            <select id={`${uid}-payment`} value={header.paymentMethod} onChange={(e) => patchHeader({ paymentMethod: e.target.value as PaymentMethod })} className={`${inputBase} cursor-pointer`}>
                                 {PAYMENT_METHODS.map((pm) => <option key={pm} value={pm}>{t(`supply.payments.${pm}`)}</option>)}
                             </select>
                         </div>
                         <div className="space-y-fib-8">
                             <label htmlFor={`${uid}-site`} className={labelBase}>{t('supply.common.site_selector')}</label>
-                            <select id={`${uid}-site`} value={header.siteId} onChange={(e) => patchHeader({ siteId: e.target.value })} className={inputBase}>
+                            <select id={`${uid}-site`} value={header.siteId} onChange={(e) => patchHeader({ siteId: e.target.value })} className={`${inputBase} cursor-pointer`}>
                                 {sites.length > 0 ? sites.map((s) => <option key={s.siteId} value={s.siteId}>{s.name}</option>) : <option value="site-main">FAENA-01</option>}
                             </select>
                         </div>
@@ -346,11 +346,11 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-fib-13 border-t border-[#E2E8F0] dark:border-[#12151C] pt-fib-13">
                         <div className="space-y-fib-8">
                             <div className="flex items-center justify-between">
-                                <label htmlFor={`${uid}-rut`} className="font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">{t('supply.scanner.supplier_rut')}</label>
-                                {rutValidationState === 'VALID' && <span className="font-mono text-microcopy text-[#0369A1] dark:text-[#00AEEF]">{t('supply.scanner.rut_valid')}</span>}
-                                {rutValidationState === 'INVALID' && <span className="font-mono text-microcopy text-[#9A5B21] dark:text-[#C68346]">{t('supply.scanner.rut_invalid')}</span>}
+                                <label htmlFor={`${uid}-rut`} className="text-[14px] text-[#475569] dark:text-[#8A93A6]">{t('supply.scanner.supplier_rut')}</label>
+                                {rutValidationState === 'VALID' && <span className="text-[14px] font-semibold text-[#0369A1] dark:text-[#00AEEF]">{t('supply.scanner.rut_valid')}</span>}
+                                {rutValidationState === 'INVALID' && <span className="text-[14px] font-semibold text-[#9A5B21] dark:text-[#C68346]">{t('supply.scanner.rut_invalid')}</span>}
                             </div>
-                            <input id={`${uid}-rut`} type="text" value={header.supplierTaxId} onChange={(e) => patchHeader({ supplierTaxId: e.target.value })} onBlur={() => { if (header.supplierTaxId.trim()) patchHeader({ supplierTaxId: formatRut(header.supplierTaxId) }); }} autoComplete="off" spellCheck={false} placeholder="76.000.000-0" className={cn('w-full min-h-[48px] px-fib-13 bg-[#FFFFFF] dark:bg-[#07090D] border outline-none font-mono text-data-dense tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text', rutValidationState === 'INVALID' ? 'border-[#C68346]' : 'border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346]')} />
+                            <input id={`${uid}-rut`} type="text" value={header.supplierTaxId} onChange={(e) => patchHeader({ supplierTaxId: e.target.value })} onBlur={() => { if (header.supplierTaxId.trim()) patchHeader({ supplierTaxId: formatRut(header.supplierTaxId) }); }} autoComplete="off" spellCheck={false} placeholder="76.000.000-0" className={cn('w-full min-h-[48px] px-fib-13 bg-transparent border-0 border-b outline-none font-mono text-[15px] tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text', rutValidationState === 'INVALID' ? 'border-[#C68346]' : 'border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346]')} />
                         </div>
                         <div className="space-y-fib-8">
                             <label htmlFor={`${uid}-supplier`} className={labelBase}>{t('supply.scanner.supplier_name')}</label>
@@ -358,7 +358,7 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
                         </div>
                         <div className="space-y-fib-8">
                             <label htmlFor={`${uid}-dte`} className={labelBase}>{t('supply.scanner.dte_type')}</label>
-                            <select id={`${uid}-dte`} value={header.documentType} onChange={(e) => patchHeader({ documentType: Number(e.target.value) as SiiDteType })} className={`${inputBase} font-mono tabular-nums`}>
+                            <select id={`${uid}-dte`} value={header.documentType} onChange={(e) => patchHeader({ documentType: Number(e.target.value) as SiiDteType })} className={`${inputBase} font-mono tabular-nums cursor-pointer`}>
                                 {SII_DTE_TYPES.map((dte) => <option key={dte} value={dte}>{t(`supply.dte.${dte}`)}</option>)}
                             </select>
                         </div>
@@ -369,7 +369,7 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
                             </div>
                             <div className="space-y-fib-8">
                                 <label htmlFor={`${uid}-date`} className={labelBase}>{t('supply.scanner.issue_date')}</label>
-                                <input id={`${uid}-date`} type="date" value={header.issueDate} onChange={(e) => patchHeader({ issueDate: e.target.value })} autoComplete="off" spellCheck={false} className="w-full min-h-[48px] px-fib-8 bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-data-dense tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text" />
+                                <input id={`${uid}-date`} type="date" value={header.issueDate} onChange={(e) => patchHeader({ issueDate: e.target.value })} autoComplete="off" spellCheck={false} className="w-full min-h-[48px] px-fib-8 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-[15px] tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text" />
                             </div>
                         </div>
                     </div>
@@ -385,38 +385,38 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
                         </div>
                         <div className="space-y-fib-8">
                             <label htmlFor={`${uid}-total`} className={labelBase}>{t('supply.scanner.total_clp')}</label>
-                            <input id={`${uid}-total`} type="number" min={0} value={header.totalAmountClp} onChange={(e) => { const total = Number(e.target.value) || 0; const isTaxed = header.documentType === 33 || header.documentType === 39; const net = isTaxed ? Math.round(total / 1.19) : total; patchHeader({ totalAmountClp: total, netAmountClp: net, vatAmountClp: isTaxed ? total - net : 0 }); }} autoComplete="off" spellCheck={false} className={cn('w-full min-h-[48px] px-fib-13 bg-[#FFFFFF] dark:bg-[#07090D] border outline-none font-mono text-data-dense tabular-nums font-bold text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text', hasArithmeticMismatch ? 'border-[#C68346] text-[#9A5B21] dark:text-[#C68346]' : 'border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346]')} />
+                            <input id={`${uid}-total`} type="number" min={0} value={header.totalAmountClp} onChange={(e) => { const total = Number(e.target.value) || 0; const isTaxed = header.documentType === 33 || header.documentType === 39; const net = isTaxed ? Math.round(total / 1.19) : total; patchHeader({ totalAmountClp: total, netAmountClp: net, vatAmountClp: isTaxed ? total - net : 0 }); }} autoComplete="off" spellCheck={false} className={cn('w-full min-h-[48px] px-fib-13 bg-transparent border-0 border-b outline-none font-mono text-[16px] tabular-nums font-bold text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text', hasArithmeticMismatch ? 'border-[#C68346] text-[#9A5B21] dark:text-[#C68346]' : 'border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346]')} />
                         </div>
                     </div>
 
                     {hasArithmeticMismatch && (
-                        <div className="border-l-[3px] border-[#C68346] bg-[#F8FAFC] dark:bg-[#07090D] px-fib-13 py-fib-8 flex items-center justify-between gap-fib-13 font-mono text-data-dense tabular-nums text-[#9A5B21] dark:text-[#C68346]">
-                            <div className="flex items-center gap-fib-8"><span className="material-symbols-outlined text-[18px]">warning</span><span>{t('supply.scanner.arithmetic_mismatch')}</span></div>
-                            <span>{formatClp(linesSumClp)} ≠ {formatClp(header.totalAmountClp)} (Δ {formatClp(arithmeticDelta)})</span>
+                        <div className="border-l-[3px] border-[#C68346] pl-fib-13 py-fib-8 flex items-center justify-between gap-fib-13 text-[15px] tabular-nums text-[#9A5B21] dark:text-[#C68346]">
+                            <div className="flex items-center gap-fib-8"><span className="material-symbols-outlined text-[20px]">warning</span><span>{t('supply.scanner.arithmetic_mismatch')}</span></div>
+                            <span className="font-mono">{formatClp(linesSumClp)} ≠ {formatClp(header.totalAmountClp)} (Δ {formatClp(arithmeticDelta)})</span>
                         </div>
                     )}
                     {hasAssetWithoutInvoice && (
-                        <div className="border-l-[3px] border-[#C68346] bg-[#F8FAFC] dark:bg-[#07090D] px-fib-13 py-fib-8 flex items-center gap-fib-8 font-mono text-data-dense tabular-nums text-[#9A5B21] dark:text-[#C68346]">
-                            <span className="material-symbols-outlined text-[18px]">warning</span><span>{t('supply.scanner.asset_no_invoice_warn')}</span>
+                        <div className="border-l-[3px] border-[#C68346] pl-fib-13 py-fib-8 flex items-center gap-fib-8 text-[15px] tabular-nums text-[#9A5B21] dark:text-[#C68346]">
+                            <span className="material-symbols-outlined text-[20px]">warning</span><span>{t('supply.scanner.asset_no_invoice_warn')}</span>
                         </div>
                     )}
 
                     <ReceiptLinesEditor lines={lines} documentType={header.documentType} onAddLine={() => setLines((prev) => [...prev, createEmptyLine(header.defaultDestination, mapBucketToCategory(defaultBucket))])} onUpdateLine={updateLine} onRemoveLine={(lineId) => setLines((prev) => prev.filter((item) => item.lineId !== lineId))} />
 
                     {submitValidationErrors.length > 0 && (
-                        <div data-testid="scanner-validation-errors" className="border-l-[3px] border-[#C68346] bg-[#F8FAFC] dark:bg-[#07090D] px-fib-13 py-fib-8 space-y-fib-8 rounded-none shadow-none">
-                            <div className="font-mono text-microcopy uppercase font-bold text-[#9A5B21] dark:text-[#C68346]">{t('supply.scanner.validation_blocked_title')}</div>
-                            <ul className="space-y-fib-8 font-mono text-data-dense text-[#0F172A] dark:text-[#F3F4F6]">
-                                {submitValidationErrors.map((errMsg, i) => <li key={i} className="flex items-center gap-fib-8"><span className="material-symbols-outlined text-[16px] text-[#C68346]">warning</span><span>{errMsg}</span></li>)}
+                        <div data-testid="scanner-validation-errors" className="border-l-[3px] border-[#C68346] pl-fib-13 py-fib-8 space-y-fib-8 rounded-none shadow-none">
+                            <div className="text-[15px] font-bold text-[#9A5B21] dark:text-[#C68346]">{t('supply.scanner.validation_blocked_title')}</div>
+                            <ul className="space-y-fib-8 text-[15px] text-[#0F172A] dark:text-[#F3F4F6]">
+                                {submitValidationErrors.map((errMsg, i) => <li key={i} className="flex items-center gap-fib-8"><span className="material-symbols-outlined text-[18px] text-[#C68346]">warning</span><span>{errMsg}</span></li>)}
                             </ul>
                         </div>
                     )}
 
                     <div className="flex flex-wrap items-center justify-between gap-fib-13 pt-fib-13 border-t border-[#E2E8F0] dark:border-[#12151C]">
-                        <div className="font-mono text-data-dense tabular-nums text-[#475569] dark:text-[#8A93A6]">Σ {formatClp(linesSumClp)}</div>
+                        <div className="font-mono text-[16px] font-bold tabular-nums text-[#475569] dark:text-[#8A93A6]">Total líneas: {formatClp(linesSumClp)}</div>
                         <div className="flex flex-wrap items-center gap-fib-13">
-                            <button type="button" disabled={!canSubmit} onClick={() => { if (!canSubmit) return; onSendToReconciler(buildCurrentDraft()); handleCloseModal(); }} className="min-h-[48px] px-fib-21 bg-transparent border border-[#00AEEF] text-[#0369A1] dark:text-[#00AEEF] hover:opacity-80 font-mono text-data-dense font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">{t('supply.scanner.send_to_reconciler')}</button>
-                            <button type="submit" disabled={!canSubmit} className="min-h-[48px] px-fib-21 bg-[#C68346] border border-[#C68346] text-[#000000] hover:opacity-90 font-mono text-data-dense font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">{t('supply.scanner.commit_direct')}</button>
+                            <button type="button" disabled={!canSubmit} onClick={() => { if (!canSubmit) return; onSendToReconciler(buildCurrentDraft()); handleCloseModal(); }} className="min-h-[48px] px-fib-21 bg-transparent border border-[#00AEEF] text-[#0369A1] dark:text-[#00AEEF] hover:opacity-80 text-[15px] font-bold rounded-none shadow-none cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">{t('supply.scanner.send_to_reconciler')}</button>
+                            <button type="submit" disabled={!canSubmit} className="min-h-[48px] px-fib-21 bg-[#C68346] border border-[#C68346] text-[#000000] hover:opacity-90 text-[15px] font-bold rounded-none shadow-none cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">{t('supply.scanner.commit_direct')}</button>
                         </div>
                     </div>
                 </form>

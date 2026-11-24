@@ -278,22 +278,23 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
         <section className="w-full flex flex-col bg-[#FFFFFF] dark:bg-[#000000] select-none">
             {/* Sub-view Switcher & Search */}
             <div className="px-fib-21 py-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C] flex flex-wrap items-center justify-between gap-fib-13">
-                <div className="flex items-center gap-fib-8">
+                <div className="flex flex-wrap items-center gap-fib-21">
                     <button
                         type="button"
                         onClick={() => setTab('STOCK')}
                         aria-label={t('supply.warehouse.stock_tab')}
                         title={t('supply.warehouse.stock_tab')}
                         className={cn(
-                            'bg-transparent border-0 border-b-2 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center gap-fib-8 transition-colors cursor-pointer rounded-none shadow-none',
+                            'bg-transparent border-0 border-b-2 outline-none py-fib-8 px-1 min-h-[48px] inline-flex items-center gap-fib-8 transition-colors cursor-pointer rounded-none shadow-none text-[15px]',
                             tab === 'STOCK'
-                                ? 'border-[#C68346] text-[#7C3F0E] dark:text-[#C68346]'
-                                : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
+                                ? 'border-[#C68346] text-[#7C3F0E] dark:text-[#C68346] font-bold'
+                                : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] font-medium'
                         )}
                     >
-                        <span className="material-symbols-outlined text-[22px]">warehouse</span>
-                        <span className="font-mono text-microcopy tabular-nums">
-                            {inventory.length}
+                        <span className="material-symbols-outlined text-[20px]">warehouse</span>
+                        <span>{t('supply.warehouse.stock_tab')}</span>
+                        <span className="font-mono text-[14px] tabular-nums text-[#475569] dark:text-[#8A93A6]">
+                            ({inventory.length})
                         </span>
                     </button>
 
@@ -304,15 +305,16 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
                         title={t('supply.warehouse.kardex_tab')}
                         data-testid="warehouse-subtab-KARDEX"
                         className={cn(
-                            'bg-transparent border-0 border-b-2 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center gap-fib-8 transition-colors cursor-pointer rounded-none shadow-none',
+                            'bg-transparent border-0 border-b-2 outline-none py-fib-8 px-1 min-h-[48px] inline-flex items-center gap-fib-8 transition-colors cursor-pointer rounded-none shadow-none text-[15px]',
                             tab === 'KARDEX'
-                                ? 'border-[#C68346] text-[#7C3F0E] dark:text-[#C68346]'
-                                : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
+                                ? 'border-[#C68346] text-[#7C3F0E] dark:text-[#C68346] font-bold'
+                                : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] font-medium'
                         )}
                     >
-                        <span className="material-symbols-outlined text-[22px]">swap_horiz</span>
-                        <span className="font-mono text-microcopy tabular-nums">
-                            {kardexEntries.length}
+                        <span className="material-symbols-outlined text-[20px]">swap_horiz</span>
+                        <span>{t('supply.warehouse.kardex_tab')}</span>
+                        <span className="font-mono text-[14px] tabular-nums text-[#475569] dark:text-[#8A93A6]">
+                            ({kardexEntries.length})
                         </span>
                     </button>
 
@@ -323,15 +325,16 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
                         title={t('supply.warehouse.warehouses_tab')}
                         data-testid="warehouse-subtab-WAREHOUSES"
                         className={cn(
-                            'bg-transparent border-0 border-b-2 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center gap-fib-8 transition-colors cursor-pointer rounded-none shadow-none',
+                            'bg-transparent border-0 border-b-2 outline-none py-fib-8 px-1 min-h-[48px] inline-flex items-center gap-fib-8 transition-colors cursor-pointer rounded-none shadow-none text-[15px]',
                             tab === 'WAREHOUSES'
-                                ? 'border-[#C68346] text-[#7C3F0E] dark:text-[#C68346]'
-                                : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
+                                ? 'border-[#C68346] text-[#7C3F0E] dark:text-[#C68346] font-bold'
+                                : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] font-medium'
                         )}
                     >
-                        <span className="material-symbols-outlined text-[22px]">inventory_2</span>
-                        <span className="font-mono text-microcopy tabular-nums">
-                            {warehouses.length}
+                        <span className="material-symbols-outlined text-[20px]">inventory_2</span>
+                        <span>{t('supply.warehouse.warehouses_tab')}</span>
+                        <span className="font-mono text-[14px] tabular-nums text-[#475569] dark:text-[#8A93A6]">
+                            ({warehouses.length})
                         </span>
                     </button>
 
@@ -341,34 +344,35 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
                         aria-label={t('supply.warehouse.assets_tab')}
                         title={t('supply.warehouse.assets_tab')}
                         className={cn(
-                            'bg-transparent border-0 border-b-2 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center gap-fib-8 transition-colors cursor-pointer rounded-none shadow-none',
+                            'bg-transparent border-0 border-b-2 outline-none py-fib-8 px-1 min-h-[48px] inline-flex items-center gap-fib-8 transition-colors cursor-pointer rounded-none shadow-none text-[15px]',
                             tab === 'ASSETS'
-                                ? 'border-[#C68346] text-[#7C3F0E] dark:text-[#C68346]'
-                                : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
+                                ? 'border-[#C68346] text-[#7C3F0E] dark:text-[#C68346] font-bold'
+                                : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] font-medium'
                         )}
                     >
-                        <span className="material-symbols-outlined text-[22px]">
+                        <span className="material-symbols-outlined text-[20px]">
                             precision_manufacturing
                         </span>
-                        <span className="font-mono text-microcopy tabular-nums">
-                            {assets.length}
+                        <span>{t('supply.warehouse.assets_tab')}</span>
+                        <span className="font-mono text-[14px] tabular-nums text-[#475569] dark:text-[#8A93A6]">
+                            ({assets.length})
                         </span>
                         {missingInvoiceCount > 0 && (
-                            <span className="font-mono text-microcopy tabular-nums font-bold text-[#7C3F0E] dark:text-[#C68346]">
-                                !{missingInvoiceCount}
+                            <span className="font-mono text-[14px] tabular-nums font-bold text-[#7C3F0E] dark:text-[#C68346]">
+                                · {missingInvoiceCount}
                             </span>
                         )}
                     </button>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-fib-8">
+                <div className="flex flex-wrap items-center gap-fib-13">
                     {tab === 'STOCK' && warehouses.length > 0 && (
                         <select
                             value={selectedWarehouseId}
                             onChange={(e) => setSelectedWarehouseId(e.target.value)}
                             aria-label={t('supply.warehouse.target_warehouse')}
                             data-testid="warehouse-filter-select"
-                            className="min-h-[48px] px-fib-13 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-microcopy text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
+                            className="min-h-[48px] px-fib-13 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[15px] text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none cursor-pointer"
                         >
                             <option value="ALL">{t('supply.warehouse.all_warehouses')}</option>
                             {warehouses.map((w) => (
@@ -386,11 +390,12 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
                             aria-label={t('supply.warehouse.new_warehouse')}
                             title={t('supply.warehouse.new_warehouse')}
                             data-testid="new-warehouse-btn"
-                            className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#C68346] hover:opacity-80 cursor-pointer rounded-none shadow-none"
+                            className="min-h-[48px] px-fib-13 bg-transparent border border-[#C68346] outline-none inline-flex items-center gap-fib-8 text-[15px] font-semibold text-[#7C3F0E] dark:text-[#C68346] hover:opacity-80 cursor-pointer rounded-none shadow-none"
                         >
-                            <span className="material-symbols-outlined text-[22px]">
+                            <span className="material-symbols-outlined text-[20px]">
                                 {showCreateWh ? 'close' : 'add'}
                             </span>
+                            <span>{showCreateWh ? t('supply.common.close') : t('supply.warehouse.new_warehouse')}</span>
                         </button>
                     )}
 
@@ -407,7 +412,7 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
                             spellCheck={false}
                             aria-label={t('supply.common.search_placeholder')}
                             placeholder={t('supply.common.search_placeholder')}
-                            className="w-56 min-h-[48px] px-fib-13 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
+                            className="w-60 min-h-[48px] px-fib-13 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[15px] text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
                         />
                     </div>
                 </div>
@@ -416,7 +421,7 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
             {notice && (
                 <div
                     className={cn(
-                        'mx-fib-21 mt-fib-13 border-l-[3px] pl-fib-13 py-fib-8 font-mono text-data-dense tabular-nums',
+                        'mx-fib-21 mt-fib-13 border-l-[3px] pl-fib-13 py-fib-8 text-[15px] tabular-nums',
                         notice.tone === 'copper'
                             ? 'border-[#C68346] text-[#7C3F0E] dark:text-[#C68346]'
                             : 'border-[#00AEEF] text-[#0369A1] dark:text-[#00AEEF]'
@@ -426,58 +431,57 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
                 </div>
             )}
 
-            {/* DS 594 Art. 14 Water Coverage Guardrail */}
+            {/* Water Coverage Guardrail */}
             {tab === 'STOCK' && (
                 <div
                     className={cn(
-                        'px-fib-21 py-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] border-l-[3px] space-y-fib-8',
+                        'px-fib-21 py-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C] border-l-[3px] space-y-fib-8',
                         waterTelemetry.compliant ? 'border-l-[#00AEEF]' : 'border-l-[#C68346]'
                     )}
                 >
-                    <div className="flex flex-wrap items-center justify-between gap-fib-13 font-mono text-microcopy tabular-nums">
+                    <div className="flex flex-wrap items-center justify-between gap-fib-13 text-[15px] tabular-nums">
                         <div className="flex items-center gap-fib-8">
                             <span
                                 className={cn(
-                                    'material-symbols-outlined text-[18px]',
+                                    'material-symbols-outlined text-[20px]',
                                     waterTelemetry.compliant ? 'text-[#00AEEF]' : 'text-[#C68346]'
                                 )}
                             >
                                 water_drop
                             </span>
-                            <span className="font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6]">
+                            <span className="font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
                                 {t('supply.warehouse.ds594_title')}
                             </span>
                         </div>
-                        <div className="flex flex-wrap items-center gap-fib-21 text-[#475569] dark:text-[#8A93A6]">
+                        <div className="flex flex-wrap items-center gap-fib-21 text-[14px] text-[#475569] dark:text-[#8A93A6]">
                             <span>
                                 {t('supply.warehouse.ds594_pax')}:{' '}
-                                <strong className="text-[#0F172A] dark:text-[#F3F4F6]">
+                                <strong className="font-mono text-[#0F172A] dark:text-[#F3F4F6]">
                                     {waterTelemetry.pax}
                                 </strong>
                             </span>
                             <span>
                                 {t('supply.warehouse.ds594_stored')}:{' '}
-                                <strong className="text-[#0F172A] dark:text-[#F3F4F6]">
+                                <strong className="font-mono text-[#0F172A] dark:text-[#F3F4F6]">
                                     {waterTelemetry.storedL.toLocaleString('es-CL')} L
                                 </strong>
                             </span>
                             <span>
                                 {t('supply.warehouse.ds594_required')}:{' '}
-                                <strong className="text-[#0F172A] dark:text-[#F3F4F6]">
+                                <strong className="font-mono text-[#0F172A] dark:text-[#F3F4F6]">
                                     {waterTelemetry.requiredLeadL.toLocaleString('es-CL')} L (
-                                    {waterTelemetry.leadDays}
-                                    {t('supply.common.days_short')})
+                                    {waterTelemetry.leadDays} {t('supply.common.days_short')})
                                 </strong>
                             </span>
                             <span
                                 className={cn(
-                                    'font-bold',
+                                    'font-mono font-bold',
                                     waterTelemetry.compliant
                                         ? 'text-[#0369A1] dark:text-[#00AEEF]'
                                         : 'text-[#7C3F0E] dark:text-[#C68346]'
                                 )}
                             >
-                                {t('supply.warehouse.ds594_days')}: {waterTelemetry.coverageDays}
+                                {t('supply.warehouse.ds594_days')}: {waterTelemetry.coverageDays}{' '}
                                 {t('supply.common.days_short')}
                             </span>
                         </div>
@@ -493,31 +497,31 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
             {tab === 'STOCK' && (
                 <div className="divide-y divide-[#E2E8F0] dark:divide-[#12151C]">
                     {inTransitPurchases.length > 0 && (
-                        <div className="px-fib-21 py-fib-13 bg-[#F8FAFC] dark:bg-[#07090D] space-y-fib-8">
-                            <div className="font-mono text-microcopy uppercase font-bold text-[#7C3F0E] dark:text-[#C68346]">
+                        <div className="px-fib-21 py-fib-13 space-y-fib-8">
+                            <div className="text-[15px] font-semibold text-[#7C3F0E] dark:text-[#C68346]">
                                 {t('supply.warehouse.col_transit')} ({inTransitPurchases.length})
                             </div>
                             <div className="divide-y divide-[#E2E8F0] dark:divide-[#12151C]">
                                 {inTransitPurchases.map((p) => (
                                     <div
                                         key={p.purchaseId}
-                                        className="py-fib-8 flex flex-wrap items-center justify-between gap-fib-13 font-mono text-data-dense tabular-nums"
+                                        className="py-fib-13 flex flex-wrap items-center justify-between gap-fib-13 text-[15px] tabular-nums"
                                     >
-                                        <div className="flex flex-wrap items-center gap-fib-8">
-                                            <span className="font-bold text-[#0F172A] dark:text-[#F3F4F6] select-text">
+                                        <div className="flex flex-wrap items-center gap-fib-13">
+                                            <span className="font-mono font-semibold text-[#0F172A] dark:text-[#F3F4F6] select-text">
                                                 {p.purchaseId}
                                             </span>
                                             <CopyButton
                                                 value={p.purchaseId}
                                                 title={t('supply.common.copy_code')}
                                             />
-                                            <span className="text-[#475569] dark:text-[#8A93A6]">
+                                            <span className="text-[#0F172A] dark:text-[#F3F4F6]">
                                                 {p.supplierName}
                                             </span>
-                                            <span className="text-[#475569] dark:text-[#8A93A6]">
-                                                DTE {p.documentType} #{p.folio || '—'}
+                                            <span className="font-mono text-[14px] text-[#475569] dark:text-[#8A93A6]">
+                                                Doc. {p.documentType} #{p.folio || '—'}
                                             </span>
-                                            <span className="text-[#0F172A] dark:text-[#F3F4F6]">
+                                            <span className="font-mono font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
                                                 {formatClp(p.totalAmountClp)}
                                             </span>
                                         </div>
@@ -527,11 +531,12 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
                                                 onClick={() => setPendingReceptionPurchase(p)}
                                                 aria-label={t('supply.warehouse.confirm_reception')}
                                                 title={t('supply.warehouse.confirm_reception')}
-                                                className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#7C3F0E] dark:text-[#C68346] hover:opacity-80 cursor-pointer rounded-none shadow-none"
+                                                className="min-h-[48px] px-fib-13 bg-transparent border border-[#C68346] outline-none inline-flex items-center gap-fib-8 text-[15px] font-semibold text-[#7C3F0E] dark:text-[#C68346] hover:opacity-80 cursor-pointer rounded-none shadow-none"
                                             >
-                                                <span className="material-symbols-outlined text-[22px]">
+                                                <span className="material-symbols-outlined text-[20px]">
                                                     local_shipping
                                                 </span>
+                                                <span>{t('supply.warehouse.confirm_reception')}</span>
                                             </button>
                                         )}
                                     </div>
@@ -541,19 +546,19 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
                     )}
 
                     {filteredBalances.length > 0 && (
-                        <div className="divide-y divide-[#E2E8F0] dark:divide-[#12151C] border-b border-[#E2E8F0] dark:border-[#12151C]">
+                        <div className="divide-y divide-[#E2E8F0] dark:divide-[#12151C]">
                             {filteredBalances.map((bal) => (
                                 <div
                                     key={bal.balanceId}
                                     data-testid={`warehouse-balance-${bal.balanceId}`}
-                                    className="px-fib-21 py-fib-13 border-l-[3px] border-l-[#00AEEF] flex flex-wrap items-center justify-between gap-fib-13 font-mono tabular-nums"
+                                    className="px-fib-21 py-fib-13 border-l-[3px] border-l-[#00AEEF] flex flex-wrap items-center justify-between gap-fib-13 tabular-nums"
                                 >
                                     <div className="space-y-1 min-w-0">
                                         <div className="flex flex-wrap items-center gap-fib-8">
-                                            <span className="text-data-dense font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                                            <span className="text-[16px] font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
                                                 {bal.itemName}
                                             </span>
-                                            <span className="text-microcopy text-[#475569] dark:text-[#8A93A6] select-text">
+                                            <span className="font-mono text-[14px] text-[#475569] dark:text-[#8A93A6] select-text">
                                                 {bal.canonicalSkuId}
                                             </span>
                                             <CopyButton
@@ -561,32 +566,34 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
                                                 title={t('supply.common.copy_code')}
                                             />
                                         </div>
-                                        <div className="flex flex-wrap items-center gap-fib-13 text-microcopy text-[#475569] dark:text-[#8A93A6]">
+                                        <div className="flex flex-wrap items-center gap-fib-13 text-[14px] text-[#475569] dark:text-[#8A93A6]">
                                             <span>
                                                 {bal.warehouseId} ·{' '}
                                                 {t(`supply.warehouse.class_${bal.warehouseClass}`)}
                                             </span>
-                                            <span>PMP {formatClp(bal.pmpNetClp)}</span>
+                                            <span className="font-mono">
+                                                {t('supply.warehouse.unit_cost_label')}: {formatClp(bal.pmpNetClp)}
+                                            </span>
                                             {bal.lotNumber && (
-                                                <span className="select-text">
-                                                    FEFO {bal.lotNumber}
+                                                <span className="font-mono select-text">
+                                                    {t('supply.warehouse.fefo_lot')}: {bal.lotNumber}
                                                     {bal.expiryDateIso
                                                         ? ` (${bal.expiryDateIso.slice(0, 10)})`
                                                         : ''}
                                                 </span>
                                             )}
                                             {(bal.fullCount !== null && bal.fullCount !== undefined) && (
-                                                <span>
+                                                <span className="font-mono">
                                                     {bal.fullCount}/{bal.emptyCount ?? 0} un
                                                 </span>
                                             )}
                                         </div>
                                     </div>
                                     <div className="text-right">
-                                        <div className="text-data-dense font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                                        <div className="font-mono text-[16px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
                                             {bal.qtyOnHand} {bal.unitSi}
                                         </div>
-                                        <div className="text-microcopy text-[#475569] dark:text-[#8A93A6]">
+                                        <div className="font-mono text-[14px] text-[#475569] dark:text-[#8A93A6]">
                                             {formatClp(bal.totalValueNetClp)}
                                         </div>
                                     </div>
@@ -596,7 +603,7 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
                     )}
 
                     {/* Column Headers */}
-                    <div className="hidden md:grid grid-cols-12 gap-fib-8 px-fib-21 py-fib-8 bg-[#F8FAFC] dark:bg-[#07090D] font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">
+                    <div className="hidden md:grid grid-cols-12 gap-fib-8 px-fib-21 py-fib-13 text-[14px] font-semibold text-[#475569] dark:text-[#8A93A6]">
                         <div className="col-span-4">{t('supply.warehouse.col_item')}</div>
                         <div className="col-span-2 text-right">
                             {t('supply.warehouse.col_transit')}
@@ -608,7 +615,7 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
                     </div>
 
                     {filteredStock.length === 0 ? (
-                        <div className="px-fib-21 py-fib-55 text-center font-mono text-data-dense text-[#475569] dark:text-[#8A93A6]">
+                        <div className="px-fib-21 py-fib-55 text-center text-[15px] text-[#475569] dark:text-[#8A93A6]">
                             {t('supply.common.no_records')}
                         </div>
                     ) : (
@@ -642,12 +649,14 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
                                               : 'border-l-transparent'
                                     )}
                                 >
-                                    <div className="md:col-span-4 min-w-0 space-y-fib-8">
-                                        <div className="text-data-dense font-semibold text-[#0F172A] dark:text-[#F3F4F6] truncate">
+                                    <div className="md:col-span-4 min-w-0 space-y-1">
+                                        <div className="text-[16px] font-semibold text-[#0F172A] dark:text-[#F3F4F6] truncate">
                                             {item.name}
                                         </div>
-                                        <div className="flex items-center gap-fib-8 font-mono text-microcopy text-[#475569] dark:text-[#8A93A6]">
-                                            <span className="select-text">{item.canonicalSkuId}</span>
+                                        <div className="flex items-center gap-fib-8 text-[14px] text-[#475569] dark:text-[#8A93A6]">
+                                            <span className="font-mono select-text">
+                                                {item.canonicalSkuId}
+                                            </span>
                                             <CopyButton
                                                 value={item.canonicalSkuId}
                                                 title={t('supply.common.copy_code')}
@@ -658,7 +667,7 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
 
                                     <div
                                         className={cn(
-                                            'md:col-span-2 md:text-right font-mono text-data-dense tabular-nums',
+                                            'md:col-span-2 md:text-right font-mono text-[15px] tabular-nums',
                                             item.qtyInTransit > 0
                                                 ? 'text-[#7C3F0E] dark:text-[#C68346] font-bold'
                                                 : 'text-[#475569] dark:text-[#8A93A6]'
@@ -667,26 +676,27 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
                                         {item.qtyInTransit} {item.unitSi}
                                     </div>
 
-                                    <div className="md:col-span-2 md:text-right font-mono text-data-dense tabular-nums font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                                    <div className="md:col-span-2 md:text-right font-mono text-[16px] tabular-nums font-bold text-[#0F172A] dark:text-[#F3F4F6]">
                                         {item.qtyInWarehouse} {item.unitSi}
                                     </div>
 
                                     <div className="md:col-span-4 space-y-fib-8">
-                                        <div className="flex items-center justify-between font-mono text-microcopy tabular-nums">
+                                        <div className="flex items-center justify-between text-[14px] tabular-nums">
                                             <span
                                                 className={cn(
+                                                    'font-mono',
                                                     isAlert
                                                         ? 'text-[#7C3F0E] dark:text-[#C68346] font-bold'
                                                         : 'text-[#475569] dark:text-[#8A93A6]'
                                                 )}
                                             >
-                                                DOI:{' '}
+                                                {t('supply.warehouse.coverage_label')}:{' '}
                                                 {item.doiDays !== null
-                                                    ? `${item.doiDays.toFixed(1)}${t('supply.common.days_short')}`
+                                                    ? `${item.doiDays.toFixed(1)} ${t('supply.common.days_short')}`
                                                     : '—'}
                                             </span>
-                                            <span className="text-[#475569] dark:text-[#8A93A6]">
-                                                MIN {item.minSafetyQty} {item.unitSi}
+                                            <span className="font-mono text-[#475569] dark:text-[#8A93A6]">
+                                                {t('supply.warehouse.min_safety_label')} {item.minSafetyQty} {item.unitSi}
                                             </span>
                                         </div>
                                         <M3LinearProgress value={doiPct} ariaLabel={item.name} />
@@ -721,7 +731,7 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
                             onSubmit={handlePrepareCreateWarehouse}
                             autoComplete="off"
                             spellCheck={false}
-                            className="px-fib-21 py-fib-13 bg-[#F8FAFC] dark:bg-[#07090D] border-b border-[#E2E8F0] dark:border-[#12151C] grid grid-cols-1 md:grid-cols-6 gap-fib-13 items-end"
+                            className="px-fib-21 py-fib-21 border-b border-[#E2E8F0] dark:border-[#12151C] grid grid-cols-1 md:grid-cols-6 gap-fib-13 items-end"
                         >
                             <input
                                 type="text"
@@ -731,7 +741,7 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
                                 autoComplete="off"
                                 spellCheck={false}
                                 placeholder={t('supply.warehouse.wh_code')}
-                                className="min-h-[48px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
+                                className="min-h-[48px] px-fib-13 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-[15px] text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
                             />
                             <input
                                 type="text"
@@ -741,17 +751,17 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
                                 autoComplete="off"
                                 spellCheck={false}
                                 placeholder={t('supply.warehouse.wh_name')}
-                                className="min-h-[48px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
+                                className="min-h-[48px] px-fib-13 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[15px] text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
                             />
                             <select
                                 value={whClass}
                                 onChange={(e) => setWhClass(e.target.value as SupplyWarehouseClass)}
                                 aria-label={t('supply.warehouse.wh_class')}
-                                className="min-h-[48px] px-fib-8 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-microcopy text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
+                                className="min-h-[48px] px-fib-8 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[15px] text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none cursor-pointer"
                             >
                                 {WAREHOUSE_CLASSES.map((wc) => (
                                     <option key={wc} value={wc}>
-                                        {t(`supply.warehouse.class_${wc}`)} ({wc})
+                                        {t(`supply.warehouse.class_${wc}`)}
                                     </option>
                                 ))}
                             </select>
@@ -763,13 +773,13 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
                                 autoComplete="off"
                                 spellCheck={false}
                                 placeholder={t('supply.warehouse.wh_capacity')}
-                                className="min-h-[48px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-data-dense tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
+                                className="min-h-[48px] px-fib-13 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-[15px] tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
                             />
                             <select
                                 value={whCapacityUnit}
                                 onChange={(e) => setWhCapacityUnit(e.target.value as SupplyUnitSi)}
                                 aria-label={t('supply.warehouse.wh_unit')}
-                                className="min-h-[48px] px-fib-8 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
+                                className="min-h-[48px] px-fib-8 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-[15px] text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none cursor-pointer"
                             >
                                 {(['L', 'm3', 'kg', 'un', 'caja'] as SupplyUnitSi[]).map((u) => (
                                     <option key={u} value={u}>
@@ -779,7 +789,7 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
                             </select>
                             <button
                                 type="submit"
-                                className="min-h-[48px] px-fib-21 bg-[#C68346] border border-[#C68346] text-[#000000] font-mono text-microcopy font-bold uppercase rounded-none shadow-none cursor-pointer"
+                                className="min-h-[48px] px-fib-21 bg-[#C68346] border border-[#C68346] text-[#000000] text-[15px] font-bold rounded-none shadow-none cursor-pointer"
                             >
                                 {t('supply.common.save')}
                             </button>
@@ -788,7 +798,7 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
 
                     <div className="divide-y divide-[#E2E8F0] dark:divide-[#12151C]">
                         {warehouses.length === 0 ? (
-                            <div className="px-fib-21 py-fib-55 text-center font-mono text-data-dense text-[#475569] dark:text-[#8A93A6]">
+                            <div className="px-fib-21 py-fib-55 text-center text-[15px] text-[#475569] dark:text-[#8A93A6]">
                                 {t('supply.common.no_records')}
                             </div>
                         ) : (
@@ -796,31 +806,31 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
                                 <div
                                     key={wh.warehouseId}
                                     data-testid={`physical-wh-${wh.warehouseId}`}
-                                    className="px-fib-21 py-fib-13 border-l-[3px] border-l-[#00AEEF] flex flex-wrap items-center justify-between gap-fib-13 font-mono tabular-nums"
+                                    className="px-fib-21 py-fib-13 border-l-[3px] border-l-[#00AEEF] flex flex-wrap items-center justify-between gap-fib-13 tabular-nums"
                                 >
                                     <div className="space-y-1">
                                         <div className="flex flex-wrap items-center gap-fib-8">
-                                            <span className="text-data-dense font-bold text-[#0F172A] dark:text-[#F3F4F6] select-text">
+                                            <span className="font-mono text-[16px] font-bold text-[#0F172A] dark:text-[#F3F4F6] select-text">
                                                 {wh.code}
                                             </span>
                                             <CopyButton
                                                 value={wh.code}
                                                 title={t('supply.common.copy_code')}
                                             />
-                                            <span className="text-data-dense text-[#0F172A] dark:text-[#F3F4F6]">
+                                            <span className="text-[16px] text-[#0F172A] dark:text-[#F3F4F6]">
                                                 {wh.name}
                                             </span>
                                         </div>
-                                        <div className="text-microcopy text-[#475569] dark:text-[#8A93A6]">
+                                        <div className="text-[14px] text-[#475569] dark:text-[#8A93A6]">
                                             {t(`supply.warehouse.class_${wh.warehouseClass}`)} ·{' '}
                                             {wh.defaultCostCenter}
-                                            {wh.secTc4Code ? ` · SEC ${wh.secTc4Code}` : ''}
+                                            {wh.secTc4Code ? ` · Permiso SEC ${wh.secTc4Code}` : ''}
                                             {wh.dgmnResolutionCode
-                                                ? ` · DGMN ${wh.dgmnResolutionCode}`
+                                                ? ` · Permiso DGMN ${wh.dgmnResolutionCode}`
                                                 : ''}
                                         </div>
                                     </div>
-                                    <div className="text-right text-data-dense font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                                    <div className="text-right font-mono text-[16px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
                                         {wh.maxCapacitySi.toLocaleString('es-CL')} {wh.capacityUnitSi}
                                     </div>
                                 </div>
@@ -834,7 +844,7 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
             {tab === 'ASSETS' && (
                 <div className="divide-y divide-[#E2E8F0] dark:divide-[#12151C]">
                     {filteredAssets.length === 0 ? (
-                        <div className="px-fib-21 py-fib-55 text-center font-mono text-data-dense text-[#475569] dark:text-[#8A93A6]">
+                        <div className="px-fib-21 py-fib-55 text-center text-[15px] text-[#475569] dark:text-[#8A93A6]">
                             {t('supply.common.no_records')}
                         </div>
                     ) : (
@@ -848,7 +858,7 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
                                 <article
                                     key={asset.assetId}
                                     className={cn(
-                                        'px-fib-21 py-fib-13 border-l-[3px] space-y-fib-8',
+                                        'px-fib-21 py-fib-21 border-l-[3px] space-y-fib-13',
                                         lacksInvoice
                                             ? 'border-l-[#C68346]'
                                             : asset.opermaqAssetId
@@ -859,10 +869,10 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
                                     <div className="flex flex-wrap items-start justify-between gap-fib-13">
                                         <div className="min-w-0 space-y-fib-8">
                                             <div className="flex flex-wrap items-center gap-fib-8">
-                                                <span className="text-body-main font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
+                                                <span className="text-[17px] font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
                                                     {asset.name}
                                                 </span>
-                                                <span className="font-mono text-microcopy text-[#475569] dark:text-[#8A93A6] select-text">
+                                                <span className="font-mono text-[14px] text-[#475569] dark:text-[#8A93A6] select-text">
                                                     {asset.serialOrTag ||
                                                         t('supply.common.not_declared')}
                                                 </span>
@@ -874,8 +884,8 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
                                                 )}
                                             </div>
                                             {lacksInvoice && (
-                                                <div className="flex items-center gap-fib-8 font-mono text-microcopy font-bold text-[#7C3F0E] dark:text-[#C68346]">
-                                                    <span className="material-symbols-outlined text-[16px]">
+                                                <div className="flex items-center gap-fib-8 text-[14px] font-bold text-[#7C3F0E] dark:text-[#C68346]">
+                                                    <span className="material-symbols-outlined text-[18px]">
                                                         warning
                                                     </span>
                                                     <span>
@@ -889,7 +899,7 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
 
                                         <div className="flex items-center gap-fib-8 shrink-0">
                                             {asset.opermaqAssetId ? (
-                                                <div className="flex items-center gap-fib-8 font-mono text-microcopy text-[#0369A1] dark:text-[#00AEEF] font-bold">
+                                                <div className="flex items-center gap-fib-8 font-mono text-[14px] text-[#0369A1] dark:text-[#00AEEF] font-bold">
                                                     <span className="material-symbols-outlined text-[18px]">
                                                         verified
                                                     </span>
@@ -907,41 +917,42 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
                                                         onClick={() => setPendingLinkAsset(asset)}
                                                         aria-label={t('supply.warehouse.link_opermaq')}
                                                         title={t('supply.warehouse.link_opermaq')}
-                                                        className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#0369A1] dark:text-[#00AEEF] hover:opacity-80 cursor-pointer rounded-none shadow-none"
+                                                        className="min-h-[48px] px-fib-13 bg-transparent border border-[#00AEEF] outline-none inline-flex items-center gap-fib-8 text-[14px] font-semibold text-[#0369A1] dark:text-[#00AEEF] hover:opacity-80 cursor-pointer rounded-none shadow-none"
                                                     >
-                                                        <span className="material-symbols-outlined text-[22px]">
+                                                        <span className="material-symbols-outlined text-[20px]">
                                                             link
                                                         </span>
+                                                        <span>{t('supply.warehouse.link_opermaq')}</span>
                                                     </button>
                                                 )
                                             )}
                                         </div>
                                     </div>
 
-                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-fib-13 font-mono text-microcopy tabular-nums">
+                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-fib-13 tabular-nums">
                                         <div>
-                                            <div className="text-[#475569] dark:text-[#8A93A6]">
+                                            <div className="text-[14px] text-[#475569] dark:text-[#8A93A6]">
                                                 {t('supply.warehouse.asset_net')}
                                             </div>
-                                            <div className="text-data-dense font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                                            <div className="font-mono text-[15px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
                                                 {formatClp(asset.acquisitionNetClp)}
                                             </div>
                                         </div>
                                         <div>
-                                            <div className="text-[#475569] dark:text-[#8A93A6]">
+                                            <div className="text-[14px] text-[#475569] dark:text-[#8A93A6]">
                                                 {t('supply.warehouse.asset_vat')}
                                             </div>
-                                            <div className="text-data-dense text-[#0F172A] dark:text-[#F3F4F6]">
+                                            <div className="font-mono text-[15px] text-[#0F172A] dark:text-[#F3F4F6]">
                                                 {formatClp(asset.vatCreditClp)}
                                             </div>
                                         </div>
                                         <div>
-                                            <div className="text-[#475569] dark:text-[#8A93A6]">
+                                            <div className="text-[14px] text-[#475569] dark:text-[#8A93A6]">
                                                 {t('supply.warehouse.asset_invoice')}
                                             </div>
-                                            <div className="flex items-center gap-fib-8 text-data-dense text-[#0F172A] dark:text-[#F3F4F6]">
+                                            <div className="flex items-center gap-fib-8 font-mono text-[15px] text-[#0F172A] dark:text-[#F3F4F6]">
                                                 <span className="select-text">
-                                                    DTE {asset.invoiceDteType} #{asset.invoiceFolio || '—'}
+                                                    Factura {asset.invoiceDteType} #{asset.invoiceFolio || '—'}
                                                 </span>
                                                 {asset.invoiceFolio && (
                                                     <CopyButton value={asset.invoiceFolio} />
@@ -949,10 +960,10 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
                                             </div>
                                         </div>
                                         <div>
-                                            <div className="text-[#475569] dark:text-[#8A93A6]">
+                                            <div className="text-[14px] text-[#475569] dark:text-[#8A93A6]">
                                                 {t('supply.warehouse.asset_warranty')}
                                             </div>
-                                            <div className="text-data-dense text-[#0F172A] dark:text-[#F3F4F6]">
+                                            <div className="font-mono text-[15px] text-[#0F172A] dark:text-[#F3F4F6]">
                                                 {asset.warrantyUntil ||
                                                     t('supply.common.not_declared')}
                                             </div>
@@ -960,9 +971,14 @@ export const InventoryAndAssetsView: React.FC<InventoryAndAssetsViewProps> = ({
                                     </div>
 
                                     {casLine && (
-                                        <div className="font-mono text-microcopy tabular-nums text-[#0369A1] dark:text-[#00AEEF] select-text">
-                                            {casLine}
-                                        </div>
+                                        <details className="text-[14px] text-[#475569] dark:text-[#8A93A6]">
+                                            <summary className="cursor-pointer font-medium text-[#0369A1] dark:text-[#00AEEF]">
+                                                {t('supply.warehouse.evidence_integrity')}
+                                            </summary>
+                                            <div className="pt-fib-8 font-mono text-[14px] tabular-nums select-text">
+                                                {casLine}
+                                            </div>
+                                        </details>
                                     )}
                                 </article>
                             );

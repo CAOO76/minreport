@@ -14,6 +14,7 @@ import {
     type SupplyConversationThread,
     type SupplyConversationTurn,
     type SupplyOperationalRole,
+    type SupplyProfileViewRecord,
     type SupplySite,
     type SupplyWhatsAppChannelId,
     type WhatsAppSimMessage,
@@ -26,6 +27,7 @@ export type SupplyLinkedEntityTarget = {
 
 export interface SupplyConversationsAuditViewProps {
     threads: SupplyConversationThread[];
+    profiles?: SupplyProfileViewRecord[];
     sites: SupplySite[];
     defaultSiteId?: string;
     tenantId?: string;
@@ -55,8 +57,24 @@ function formatBytesCompact(bytes: number): string {
     return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 }
 
+function formatReadableDateTime(iso: string): string {
+    const ms = Date.parse(iso);
+    if (!Number.isFinite(ms)) return iso;
+    try {
+        return new Date(ms).toLocaleString('es-CL', {
+            day: '2-digit',
+            month: 'short',
+            hour: '2-digit',
+            minute: '2-digit',
+        });
+    } catch {
+        return iso.slice(0, 16).replace('T', ' ');
+    }
+}
+
 export const SupplyConversationsAuditView: React.FC<SupplyConversationsAuditViewProps> = ({
     threads,
+    profiles = [],
     sites,
     defaultSiteId,
     tenantId,
@@ -87,12 +105,34 @@ export const SupplyConversationsAuditView: React.FC<SupplyConversationsAuditView
     const [exportingFormat, setExportingFormat] = useState<'JSON' | 'CSV' | null>(null);
     const [exportReceipt, setExportReceipt] = useState<SupplyConversationExportResult | null>(null);
 
-    // Decoupled DEV / TEST-PILOT WhatsApp Simulator State (zero hardcoded phone numbers)
+    // Simulador Humano (elige persona registrada o cargo estándar; cero E.164 ni S1/FSM en Capa 1)
+    const [selectedSimProfileId, setSelectedSimProfileId] = useState<string>('');
     const [simPhone, setSimPhone] = useState('');
     const [simRole, setSimRole] = useState<SupplyOperationalRole>('CAMP_MANAGER');
     const [simInput, setSimInput] = useState('');
     const [simBusy, setSimBusy] = useState(false);
     const [simMessages, setSimMessages] = useState<WhatsAppSimMessage[]>([]);
+
+    useEffect(() => {
+        if (!selectedSimProfileId && profiles.length > 0) {
+            setSelectedSimProfileId(profiles[0].profileId);
+        } else if (!selectedSimProfileId) {
+            setSelectedSimProfileId('__STANDARD__');
+        }
+    }, [profiles, selectedSimProfileId]);
+
+    const activeSimProfile = useMemo(
+        () => profiles.find((p) => p.profileId === selectedSimProfileId) || null,
+        [profiles, selectedSimProfileId]
+    );
+
+    const effectiveSimRole: SupplyOperationalRole = activeSimProfile
+        ? activeSimProfile.role
+        : simRole;
+
+    const effectiveSimSenderLabel = activeSimProfile
+        ? activeSimProfile.displayName
+        : t(`supply.roles.${effectiveSimRole}`);
 
     const filteredThreads = useMemo(() => {
         const q = searchQuery.trim().toLowerCase();
@@ -227,7 +267,7 @@ export const SupplyConversationsAuditView: React.FC<SupplyConversationsAuditView
                 {
                     siteId: defaultSiteId || sites[0]?.siteId || 'site-main',
                     phoneE164: simPhone.trim(),
-                    simulateSenderRole: simRole,
+                    simulateSenderRole: effectiveSimRole,
                     text: resetSession ? '/reset' : messageText,
                     resetSession,
                 },
@@ -266,79 +306,54 @@ export const SupplyConversationsAuditView: React.FC<SupplyConversationsAuditView
         }
     };
 
-    const threadToRender = activeThreadDetail && activeThreadDetail.threadId === selectedThread?.threadId
-        ? activeThreadDetail
-        : selectedThread;
+    const threadToRender =
+        activeThreadDetail && activeThreadDetail.threadId === selectedThread?.threadId
+            ? activeThreadDetail
+            : selectedThread;
 
-    const inputClass =
-        'w-full min-h-[48px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-data-dense tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none';
+    const underlineInputClass =
+        'w-full min-h-[48px] px-fib-13 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[16px] text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none';
 
     return (
         <div
             data-testid="supply-conversations-audit-view"
             className="w-full h-full min-h-0 grid grid-cols-1 lg:grid-cols-[minmax(0,38.2fr)_minmax(0,61.8fr)] bg-[#FFFFFF] dark:bg-[#000000] select-none"
         >
-            {/* Left 38.2%: Profiles / Threads Directory + Channel Filter */}
+            {/* Izquierda 38.2%: Lista plana de personas y conversaciones */}
             <aside className="border-b lg:border-b-0 lg:border-r border-[#E2E8F0] dark:border-[#12151C] flex flex-col min-h-0">
-                <div className="p-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] space-y-fib-13">
-                    <div className="flex items-center justify-between gap-fib-8">
-                        <div className="flex items-center gap-fib-8 min-w-0">
-                            <span className="material-symbols-outlined text-[18px] text-[#00AEEF]">
-                                forum
-                            </span>
-                            <h3 className="font-mono text-microcopy uppercase font-bold tracking-wider text-[#0F172A] dark:text-[#F3F4F6] truncate">
-                                {t('supply.conversations.title')}
-                            </h3>
-                        </div>
-                        {canAccessSimulator && (
-                            <button
-                                type="button"
-                                onClick={() => onToggleSimulator(!simulatorOpen)}
-                                aria-label={t('supply.conversations.open_simulator')}
-                                title={t('supply.conversations.open_simulator')}
-                                data-testid="toggle-ws-simulator-btn"
-                                className={cn(
-                                    'bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center transition-colors cursor-pointer rounded-none shadow-none shrink-0',
-                                    simulatorOpen
-                                        ? 'text-[#0369A1] dark:text-[#00AEEF]'
-                                        : 'text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
-                                )}
-                            >
-                                <span className="material-symbols-outlined text-[22px]">chat</span>
-                            </button>
-                        )}
-                    </div>
+                <div className="p-fib-21 border-b border-[#E2E8F0] dark:border-[#12151C] space-y-fib-13">
+                    <h3 className="text-[18px] font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
+                        {t('supply.conversations.title')}
+                    </h3>
 
-                    <div className="space-y-fib-8">
-                        <input
-                            type="text"
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                            autoComplete="off"
-                            spellCheck={false}
-                            aria-label={t('supply.conversations.search_placeholder')}
-                            placeholder={t('supply.conversations.search_placeholder')}
-                            data-testid="conv-search-input"
-                            className={`${inputClass} select-text`}
-                        />
+                    <input
+                        type="text"
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        autoComplete="off"
+                        spellCheck={false}
+                        aria-label={t('supply.conversations.search_placeholder')}
+                        placeholder={t('supply.conversations.search_placeholder')}
+                        data-testid="conv-search-input"
+                        className={`${underlineInputClass} select-text`}
+                    />
 
-                        <select
-                            value={channelFilter}
-                            onChange={(e) =>
-                                setChannelFilter(e.target.value as SupplyWhatsAppChannelId | 'ALL')
-                            }
-                            aria-label={t('supply.conversations.filter_channel')}
-                            data-testid="conv-channel-filter"
-                            className={inputClass}
-                        >
-                            <option value="ALL">{t('supply.conversations.all_channels')}</option>
-                            {CANONICAL_WHATSAPP_CHANNEL_IDS.map((ch) => (
-                                <option key={ch} value={ch}>
-                                    {t(`supply.channels.${ch}`)} ({ch})
-                                </option>
-                            ))}
-                        </select>
-                    </div>
+                    <select
+                        value={channelFilter}
+                        onChange={(e) =>
+                            setChannelFilter(e.target.value as SupplyWhatsAppChannelId | 'ALL')
+                        }
+                        aria-label={t('supply.conversations.filter_channel')}
+                        data-testid="conv-channel-filter"
+                        className={underlineInputClass}
+                    >
+                        <option value="ALL">{t('supply.conversations.all_channels')}</option>
+                        {CANONICAL_WHATSAPP_CHANNEL_IDS.map((ch) => (
+                            <option key={ch} value={ch}>
+                                {t(`supply.channels.${ch}`)}
+                            </option>
+                        ))}
+                    </select>
                 </div>
 
                 {loading && (
@@ -347,18 +362,13 @@ export const SupplyConversationsAuditView: React.FC<SupplyConversationsAuditView
 
                 <div className="flex-1 overflow-y-auto divide-y divide-[#E2E8F0] dark:divide-[#12151C]">
                     {filteredThreads.length === 0 ? (
-                        <div className="p-fib-21 font-mono text-data-dense text-[#475569] dark:text-[#8A93A6]">
+                        <div className="p-fib-21 text-[16px] text-[#475569] dark:text-[#8A93A6]">
                             {t('supply.conversations.empty_threads')}
                         </div>
                     ) : (
                         filteredThreads.map((th) => {
                             const isSelected = th.threadId === selectedThread?.threadId;
-                            const borderClass =
-                                th.retentionPolicy === 'LEGAL_HOLD_PSEUDONYMIZED'
-                                    ? 'border-l-[#C68346]'
-                                    : th.retentionPolicy === 'TAX_HOLD_6Y'
-                                      ? 'border-l-[#00AEEF]'
-                                      : 'border-l-transparent';
+                            const isLegalNotice = th.retentionPolicy === 'LEGAL_HOLD_PSEUDONYMIZED';
 
                             return (
                                 <button
@@ -367,37 +377,25 @@ export const SupplyConversationsAuditView: React.FC<SupplyConversationsAuditView
                                     onClick={() => setSelectedThreadId(th.threadId)}
                                     data-testid={`conv-thread-row-${th.threadId}`}
                                     className={cn(
-                                        'w-full text-left p-fib-13 min-h-[48px] border-0 border-l-[3px] transition-colors cursor-pointer rounded-none shadow-none space-y-fib-8',
-                                        borderClass,
+                                        'w-full text-left px-fib-21 py-fib-13 min-h-[60px] border-0 border-l-[3px] transition-colors cursor-pointer rounded-none shadow-none space-y-1',
+                                        isLegalNotice ? 'border-l-[#C68346]' : 'border-l-transparent',
                                         isSelected
                                             ? 'bg-[#F8FAFC] dark:bg-[#07090D]'
                                             : 'bg-[#FFFFFF] dark:bg-[#000000] hover:bg-[#F8FAFC] dark:hover:bg-[#07090D]'
                                     )}
                                 >
-                                    <div className="flex items-center justify-between gap-fib-8">
-                                        <span className="text-body-main font-semibold text-[#0F172A] dark:text-[#F3F4F6] truncate">
+                                    <div className="flex items-baseline justify-between gap-fib-8">
+                                        <span className="text-[17px] font-semibold text-[#0F172A] dark:text-[#F3F4F6] truncate">
                                             {th.displayName}
                                         </span>
-                                        <span className="font-mono text-microcopy tabular-nums text-[#475569] dark:text-[#8A93A6] shrink-0">
-                                            {th.turnCount} {t('supply.conversations.turns_count')} ·{' '}
-                                            {(th.activeEffectiveChannels || []).length}/15
+                                        <span className="text-[14px] tabular-nums text-[#475569] dark:text-[#8A93A6] shrink-0">
+                                            {formatReadableDateTime(th.lastTurnAtIso)}
                                         </span>
                                     </div>
-                                    <div className="flex flex-wrap items-center justify-between gap-fib-8 font-mono text-microcopy tabular-nums">
-                                        <span className="text-[#475569] dark:text-[#8A93A6]">
-                                            {t(`supply.roles.${th.role}`)} · {th.phoneMasked}
-                                        </span>
-                                        <span
-                                            className={cn(
-                                                'uppercase font-bold',
-                                                th.retentionPolicy === 'LEGAL_HOLD_PSEUDONYMIZED'
-                                                    ? 'text-[#9A5B21] dark:text-[#C68346]'
-                                                    : th.retentionPolicy === 'TAX_HOLD_6Y'
-                                                      ? 'text-[#0369A1] dark:text-[#00AEEF]'
-                                                      : 'text-[#475569] dark:text-[#8A93A6]'
-                                            )}
-                                        >
-                                            {t(`supply.conversations.retention_${th.retentionPolicy}`)}
+                                    <div className="flex items-center justify-between gap-fib-8 text-[14px] text-[#475569] dark:text-[#8A93A6]">
+                                        <span className="truncate">{t(`supply.roles.${th.role}`)}</span>
+                                        <span className="tabular-nums shrink-0">
+                                            {th.turnCount} {t('supply.conversations.turns_count')}
                                         </span>
                                     </div>
                                 </button>
@@ -407,593 +405,184 @@ export const SupplyConversationsAuditView: React.FC<SupplyConversationsAuditView
                 </div>
             </aside>
 
-            {/* Right 61.8%: Decoupled DEV Simulator + Immutable SHA-256 Audit Timeline */}
-            <div className="min-h-0 overflow-y-auto p-fib-21 space-y-fib-21">
-                {canAccessSimulator && simulatorOpen && (
-                    <section
-                        data-testid="ws-dev-simulator-panel"
-                        className="border border-[#00AEEF] bg-[#F8FAFC] dark:bg-[#07090D] p-fib-21 space-y-fib-13 rounded-none shadow-none"
-                    >
-                        <div className="flex flex-wrap items-center justify-between gap-fib-8 border-b border-[#E2E8F0] dark:border-[#12151C] pb-fib-13">
-                            <div className="flex items-center gap-fib-8">
-                                <span className="material-symbols-outlined text-[20px] text-[#0369A1] dark:text-[#00AEEF]">
-                                    chat
-                                </span>
-                                <span className="font-mono text-data-dense font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6]">
-                                    {t('supply.backlog.sim_title')}
-                                </span>
-                            </div>
-                            <div className="flex items-center gap-fib-8">
-                                <button
-                                    type="button"
-                                    onClick={() => void sendSimulatedMessage(undefined, true)}
-                                    aria-label={t('supply.backlog.sim_reset')}
-                                    title={t('supply.backlog.sim_reset')}
-                                    className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#475569] dark:text-[#8A93A6] hover:text-[#7C3F0E] dark:hover:text-[#C68346] cursor-pointer rounded-none shadow-none"
-                                >
-                                    <span className="material-symbols-outlined text-[18px]">
-                                        refresh
-                                    </span>
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => onToggleSimulator(false)}
-                                    aria-label={t('supply.common.close')}
-                                    title={t('supply.common.close')}
-                                    className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] cursor-pointer rounded-none shadow-none"
-                                >
-                                    <span className="material-symbols-outlined text-[18px]">
-                                        close
-                                    </span>
-                                </button>
-                            </div>
-                        </div>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-fib-13">
-                            <div className="space-y-fib-8">
-                                <label
-                                    htmlFor={`${uid}-sim-phone`}
-                                    className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]"
-                                >
-                                    {t('supply.backlog.sim_phone')}
-                                </label>
-                                <input
-                                    id={`${uid}-sim-phone`}
-                                    type="text"
-                                    value={simPhone}
-                                    onChange={(e) => setSimPhone(e.target.value)}
-                                    autoComplete="off"
-                                    spellCheck={false}
-                                    aria-label={t('supply.backlog.sim_phone')}
-                                    placeholder={t('supply.profiles_ws.field_phone_placeholder')}
-                                    className={`${inputClass} select-text`}
-                                />
-                            </div>
-                            <div className="space-y-fib-8">
-                                <label
-                                    htmlFor={`${uid}-sim-role`}
-                                    className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]"
-                                >
-                                    {t('supply.backlog.sim_role')}
-                                </label>
-                                <select
-                                    id={`${uid}-sim-role`}
-                                    value={simRole}
-                                    onChange={(e) =>
-                                        setSimRole(e.target.value as SupplyOperationalRole)
-                                    }
-                                    aria-label={t('supply.backlog.sim_role')}
-                                    className={inputClass}
-                                >
-                                    {SIM_ROLES.map((r) => (
-                                        <option key={r} value={r}>
-                                            {t(`supply.roles.${r}`)} ({r})
-                                        </option>
-                                    ))}
-                                </select>
-                            </div>
-                        </div>
-
-                        <div className="flex flex-wrap items-center gap-fib-8">
-                            <button
-                                type="button"
-                                disabled={simBusy}
-                                onClick={() =>
-                                    void sendSimulatedMessage(t('supply.backlog.sim_preset_slots_msg'))
-                                }
-                                className="min-h-[48px] px-fib-13 border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] hover:border-[#00AEEF] font-mono text-microcopy text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none cursor-pointer"
-                            >
-                                {t('supply.backlog.sim_preset_slots')}
-                            </button>
-                            <button
-                                type="button"
-                                disabled={simBusy}
-                                onClick={() =>
-                                    void sendSimulatedMessage(t('supply.backlog.sim_preset_deny_msg'))
-                                }
-                                className="min-h-[48px] px-fib-13 border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] hover:border-[#C68346] font-mono text-microcopy text-[#7C3F0E] dark:text-[#C68346] rounded-none shadow-none cursor-pointer"
-                            >
-                                {t('supply.backlog.sim_preset_deny')}
-                            </button>
-                            <button
-                                type="button"
-                                disabled={simBusy}
-                                onClick={() =>
-                                    void sendSimulatedMessage(
-                                        t('supply.backlog.sim_preset_atypical_msg')
-                                    )
-                                }
-                                className="min-h-[48px] px-fib-13 border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] hover:border-[#C68346] font-mono text-microcopy text-[#7C3F0E] dark:text-[#C68346] rounded-none shadow-none cursor-pointer"
-                            >
-                                {t('supply.backlog.sim_preset_atypical')}
-                            </button>
-                            <button
-                                type="button"
-                                disabled={simBusy}
-                                onClick={() => void sendSimulatedMessage('OK')}
-                                className="min-h-[48px] px-fib-13 border border-[#00AEEF] bg-[#FFFFFF] dark:bg-[#000000] font-mono text-microcopy text-[#0369A1] dark:text-[#00AEEF] rounded-none shadow-none cursor-pointer"
-                            >
-                                {t('supply.backlog.sim_preset_confirm')}
-                            </button>
-                        </div>
-
-                        {simBusy && (
-                            <M3LinearProgress indeterminate ariaLabel={t('supply.common.loading')} />
-                        )}
-
-                        {simMessages.length > 0 && (
-                            <div className="max-h-56 overflow-y-auto divide-y divide-[#E2E8F0] dark:divide-[#12151C] border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000]">
-                                {simMessages.map((msg) => (
-                                    <div
-                                        key={msg.id}
-                                        className={cn(
-                                            'px-fib-13 py-fib-8 space-y-fib-8 border-l-[3px]',
-                                            msg.hardDeniedItems?.length || msg.atypicalFlags?.length
-                                                ? 'border-[#C68346]'
-                                                : msg.direction === 'OUTBOUND'
-                                                  ? 'border-[#00AEEF]'
-                                                  : 'border-transparent'
-                                        )}
-                                    >
-                                        <div className="flex items-center justify-between font-mono text-microcopy tabular-nums text-[#475569] dark:text-[#8A93A6]">
-                                            <span>
-                                                {msg.direction === 'INBOUND'
-                                                    ? simRole
-                                                    : 'MINREPORT BOT'}
-                                            </span>
-                                            {msg.fsmState && (
-                                                <span className="text-[#0369A1] dark:text-[#00AEEF] font-bold">
-                                                    {t('supply.backlog.fsm_state')}: {msg.fsmState}
-                                                </span>
-                                            )}
-                                        </div>
-                                        <div className="text-data-dense text-[#0F172A] dark:text-[#F3F4F6] whitespace-pre-wrap select-text">
-                                            {msg.text}
-                                        </div>
-                                        {msg.committedReqId && (
-                                            <div className="flex items-center gap-fib-8 font-mono text-microcopy text-[#0369A1] dark:text-[#00AEEF] select-text">
-                                                <span>REQ: {msg.committedReqId}</span>
-                                                <CopyButton
-                                                    value={msg.committedReqId}
-                                                    title={t('supply.common.copy_code')}
-                                                />
-                                            </div>
-                                        )}
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-
-                        <form
-                            onSubmit={(e) => {
-                                e.preventDefault();
-                                void sendSimulatedMessage();
-                            }}
-                            autoComplete="off"
-                            spellCheck={false}
-                            className="flex items-center gap-fib-8"
-                        >
-                            <input
-                                type="text"
-                                value={simInput}
-                                onChange={(e) => setSimInput(e.target.value)}
-                                autoComplete="off"
-                                spellCheck={false}
-                                aria-label={t('supply.backlog.sim_input_placeholder')}
-                                placeholder={t('supply.backlog.sim_input_placeholder')}
-                                className="flex-1 min-h-[48px] px-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#00AEEF] outline-none text-data-dense text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
-                            />
-                            <button
-                                type="submit"
-                                disabled={simBusy || !simInput.trim()}
-                                aria-label={t('supply.backlog.sim_send')}
-                                title={t('supply.backlog.sim_send')}
-                                className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#0369A1] dark:text-[#00AEEF] hover:opacity-80 cursor-pointer rounded-none shadow-none disabled:opacity-40"
-                            >
-                                <span className="material-symbols-outlined text-[22px]">send</span>
-                            </button>
-                        </form>
-                    </section>
+            {/* Derecha 61.8%: Conversación limpia en español + (opcional) Simulador humano lado a lado */}
+            <div
+                className={cn(
+                    'min-h-0 overflow-hidden',
+                    canAccessSimulator && simulatorOpen
+                        ? 'grid grid-cols-1 xl:grid-cols-[minmax(0,61.8fr)_minmax(0,38.2fr)]'
+                        : 'flex flex-col'
                 )}
+            >
+                {/* Hilo de Conversación (Capa 1 limpia + Capa 2 acordeón auditoría) */}
+                <div className="min-h-0 flex-1 overflow-y-auto p-fib-21 sm:p-fib-34 space-y-fib-21">
+                    {turnsError && (
+                        <div className="border-l-[3px] border-[#C68346] pl-fib-13 py-fib-8 text-[15px] text-[#9A5B21] dark:text-[#C68346]">
+                            {turnsError}
+                        </div>
+                    )}
 
-                {turnsError && (
-                    <div className="border-l-[3px] border-[#C68346] bg-[#F8FAFC] dark:bg-[#07090D] px-fib-13 py-fib-8 font-mono text-data-dense text-[#9A5B21] dark:text-[#C68346]">
-                        {turnsError}
-                    </div>
-                )}
-
-                {!threadToRender ? (
-                    <div className="p-fib-34 font-mono text-data-dense text-[#475569] dark:text-[#8A93A6]">
-                        {t('supply.conversations.select_thread')}
-                    </div>
-                ) : (
-                    <>
-                        {/* Thread Audit Header */}
-                        <header className="space-y-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C] pb-fib-21">
-                            <div className="flex flex-wrap items-start justify-between gap-fib-13">
-                                <div className="space-y-1 min-w-0">
-                                    <div className="flex flex-wrap items-center gap-fib-13">
-                                        <h3 className="text-h1-header font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
+                    {!threadToRender ? (
+                        <div className="p-fib-34 text-[17px] text-[#475569] dark:text-[#8A93A6]">
+                            {t('supply.conversations.select_thread')}
+                        </div>
+                    ) : (
+                        <>
+                            <header className="space-y-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C] pb-fib-21">
+                                <div className="flex flex-wrap items-start justify-between gap-fib-13">
+                                    <div className="space-y-1 min-w-0">
+                                        <h3 className="text-[22px] font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
                                             {threadToRender.displayName}
                                         </h3>
-                                        <span className="font-mono text-microcopy uppercase text-[#C68346]">
-                                            {t(`supply.roles.${threadToRender.role}`)}
-                                        </span>
-                                    </div>
-
-                                    <div className="flex flex-wrap items-center gap-fib-13 font-mono text-data-dense tabular-nums text-[#475569] dark:text-[#8A93A6]">
-                                        <span className="select-text">{threadToRender.phoneMasked}</span>
-                                        <span className="inline-flex items-center gap-1 select-text">
-                                            {threadToRender.threadId}
-                                            <CopyButton
-                                                value={threadToRender.threadId}
-                                                title={t('supply.common.copy_code')}
-                                            />
-                                        </span>
-                                        <span className="inline-flex items-center gap-1 select-text">
-                                            {t('supply.conversations.head_hash')}:{' '}
-                                            {threadToRender.headHashSha256.slice(0, 12)}
-                                            <CopyButton
-                                                value={threadToRender.headHashSha256}
-                                                title={t('supply.common.copy_code')}
-                                            />
-                                        </span>
-                                    </div>
-                                </div>
-
-                                <div className="flex flex-wrap items-center gap-fib-8">
-                                    <button
-                                        type="button"
-                                        disabled={Boolean(exportingFormat)}
-                                        onClick={() => void handleExport('JSON')}
-                                        data-testid="export-conv-json-btn"
-                                        className="min-h-[48px] px-fib-13 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#00AEEF] text-[#0F172A] dark:text-[#F3F4F6] font-mono text-microcopy font-bold uppercase tracking-wider inline-flex items-center gap-fib-8 rounded-none shadow-none cursor-pointer disabled:opacity-40"
-                                    >
-                                        <span className="material-symbols-outlined text-[18px] text-[#00AEEF]">
-                                            download
-                                        </span>
-                                        <span>{t('supply.conversations.export_json')}</span>
-                                    </button>
-                                    <button
-                                        type="button"
-                                        disabled={Boolean(exportingFormat)}
-                                        onClick={() => void handleExport('CSV')}
-                                        data-testid="export-conv-csv-btn"
-                                        className="min-h-[48px] px-fib-13 bg-[#C68346] border border-[#C68346] text-[#000000] font-mono text-microcopy font-bold uppercase tracking-wider inline-flex items-center gap-fib-8 rounded-none shadow-none cursor-pointer hover:opacity-90 disabled:opacity-40"
-                                    >
-                                        <span className="material-symbols-outlined text-[18px] text-[#000000]">
-                                            download
-                                        </span>
-                                        <span>{t('supply.conversations.export_csv')}</span>
-                                    </button>
-                                </div>
-                            </div>
-
-                            {/* Chain Verification & Ley 21.719 / Art. 17 Retention Strip */}
-                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-fib-13 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] p-fib-13 font-mono tabular-nums">
-                                <div className="space-y-1">
-                                    <div className="text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">
-                                        SHA-256
-                                    </div>
-                                    <div
-                                        data-testid="conv-chain-status"
-                                        className={cn(
-                                            'text-data-dense font-bold inline-flex items-center gap-1',
-                                            chainVerification?.valid === false
-                                                ? 'text-[#9A5B21] dark:text-[#C68346]'
-                                                : 'text-[#0369A1] dark:text-[#00AEEF]'
-                                        )}
-                                    >
-                                        <span className="material-symbols-outlined text-[16px]">
-                                            {chainVerification?.valid === false
-                                                ? 'warning'
-                                                : 'verified_user'}
-                                        </span>
-                                        <span>
-                                            {chainVerification?.valid === false
-                                                ? `${t('supply.conversations.chain_broken')} #${chainVerification.brokenAtSeq ?? '?'}`
-                                                : t('supply.conversations.chain_valid')}
-                                        </span>
-                                    </div>
-                                </div>
-
-                                <div className="space-y-1">
-                                    <div className="text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">
-                                        {t('supply.conversations.legal_hold_years')}
-                                    </div>
-                                    <div
-                                        data-testid="conv-retention-badge"
-                                        className={cn(
-                                            'text-data-dense font-bold',
-                                            threadToRender.retentionPolicy ===
-                                                'LEGAL_HOLD_PSEUDONYMIZED'
-                                                ? 'text-[#9A5B21] dark:text-[#C68346]'
-                                                : threadToRender.retentionPolicy === 'TAX_HOLD_6Y'
-                                                  ? 'text-[#0369A1] dark:text-[#00AEEF]'
-                                                  : 'text-[#0F172A] dark:text-[#F3F4F6]'
-                                        )}
-                                    >
-                                        {t(
-                                            `supply.conversations.retention_${threadToRender.retentionPolicy}`
-                                        )}
-                                    </div>
-                                </div>
-
-                                <div className="space-y-1">
-                                    <div className="text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">
-                                        {t('supply.conversations.retention_until')}
-                                    </div>
-                                    <div className="text-data-dense font-bold text-[#0F172A] dark:text-[#F3F4F6]">
-                                        {threadToRender.retentionExpiresAtIso.slice(0, 10)}
-                                    </div>
-                                </div>
-                            </div>
-
-                            {exportReceipt && (
-                                <div
-                                    data-testid="conv-export-receipt"
-                                    className="border-l-[3px] border-[#00AEEF] bg-[#F8FAFC] dark:bg-[#07090D] px-fib-13 py-fib-8 flex flex-wrap items-center justify-between gap-fib-8 font-mono text-microcopy tabular-nums"
-                                >
-                                    <span className="text-[#0369A1] dark:text-[#00AEEF] font-bold">
-                                        {t('supply.conversations.export_receipt')} ({exportReceipt.format}):{' '}
-                                        {exportReceipt.filename}
-                                    </span>
-                                    <span className="inline-flex items-center gap-1 text-[#0F172A] dark:text-[#F3F4F6] select-text">
-                                        {exportReceipt.sha256 || '—'}
-                                        {exportReceipt.sha256 && (
-                                            <CopyButton
-                                                value={exportReceipt.sha256}
-                                                title={t('supply.common.copy_code')}
-                                            />
-                                        )}
-                                    </span>
-                                </div>
-                            )}
-
-                            {/* Thread-Level Linked Entities (REQ / PUR / DTE) */}
-                            {((threadToRender.linkedRequisitionIds?.length || 0) > 0 ||
-                                (threadToRender.linkedPurchaseIds?.length || 0) > 0 ||
-                                (threadToRender.linkedDteIds?.length || 0) > 0) && (
-                                <div className="flex flex-wrap items-center gap-fib-8 font-mono text-microcopy">
-                                    {(threadToRender.linkedRequisitionIds || []).map((reqId) => (
-                                        <button
-                                            key={`th-req-${reqId}`}
-                                            type="button"
-                                            onClick={() =>
-                                                onNavigateLinked?.({ type: 'REQ', id: reqId })
-                                            }
-                                            data-testid={`thread-link-req-${reqId}`}
-                                            className="min-h-[48px] px-fib-13 border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#00AEEF] bg-transparent text-[#0369A1] dark:text-[#00AEEF] inline-flex items-center gap-fib-8 cursor-pointer rounded-none shadow-none"
-                                        >
-                                            <span className="material-symbols-outlined text-[16px]">
-                                                link
+                                        <div className="text-[15px] text-[#475569] dark:text-[#8A93A6] flex flex-wrap items-center gap-fib-8 tabular-nums">
+                                            <span>{t(`supply.roles.${threadToRender.role}`)}</span>
+                                            <span>·</span>
+                                            <span className="select-text">
+                                                {threadToRender.phoneMasked}
                                             </span>
-                                            <span>
-                                                {t('supply.conversations.linked_req')}: {reqId}
-                                            </span>
-                                        </button>
-                                    ))}
-                                    {(threadToRender.linkedPurchaseIds || []).map((purId) => (
-                                        <button
-                                            key={`th-pur-${purId}`}
-                                            type="button"
-                                            onClick={() =>
-                                                onNavigateLinked?.({ type: 'PUR', id: purId })
-                                            }
-                                            data-testid={`thread-link-pur-${purId}`}
-                                            className="min-h-[48px] px-fib-13 border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#00AEEF] bg-transparent text-[#0369A1] dark:text-[#00AEEF] inline-flex items-center gap-fib-8 cursor-pointer rounded-none shadow-none"
-                                        >
-                                            <span className="material-symbols-outlined text-[16px]">
-                                                link
-                                            </span>
-                                            <span>
-                                                {t('supply.conversations.linked_pur')}: {purId}
-                                            </span>
-                                        </button>
-                                    ))}
-                                    {(threadToRender.linkedDteIds || []).map((dteId) => (
-                                        <button
-                                            key={`th-dte-${dteId}`}
-                                            type="button"
-                                            onClick={() =>
-                                                onNavigateLinked?.({ type: 'DTE', id: dteId })
-                                            }
-                                            data-testid={`thread-link-dte-${dteId}`}
-                                            className="min-h-[48px] px-fib-13 border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] bg-transparent text-[#9A5B21] dark:text-[#C68346] inline-flex items-center gap-fib-8 cursor-pointer rounded-none shadow-none"
-                                        >
-                                            <span className="material-symbols-outlined text-[16px]">
-                                                receipt_long
-                                            </span>
-                                            <span>
-                                                {t('supply.conversations.linked_dte')}: {dteId}
-                                            </span>
-                                        </button>
-                                    ))}
+                                        </div>
+                                    </div>
+
+                                    {chainVerification?.valid === false && (
+                                        <span className="border-l-[3px] border-l-[#C68346] pl-fib-13 text-[14px] font-semibold text-[#9A5B21] dark:text-[#C68346]">
+                                            {t('supply.conversations.chain_broken')} #
+                                            {chainVerification.brokenAtSeq ?? '?'}
+                                        </span>
+                                    )}
                                 </div>
-                            )}
-                        </header>
 
-                        {turnsLoading ? (
-                            <M3LinearProgress
-                                indeterminate
-                                ariaLabel={t('supply.common.loading')}
-                            />
-                        ) : turns.length === 0 ? (
-                            <div className="p-fib-21 font-mono text-data-dense text-[#475569] dark:text-[#8A93A6]">
-                                {t('supply.conversations.empty_turns')}
-                            </div>
-                        ) : (
-                            <div className="divide-y divide-[#E2E8F0] dark:divide-[#12151C] border border-[#E2E8F0] dark:border-[#12151C]">
-                                {turns.map((turn) => {
-                                    const hasPolicyDeny = (turn.policyAuditRefs?.length || 0) > 0;
-                                    const turnBorder = hasPolicyDeny
-                                        ? 'border-l-[#C68346]'
-                                        : turn.direction === 'OUTBOUND'
-                                          ? 'border-l-[#00AEEF]'
-                                          : 'border-l-transparent';
-                                    const tempScopeSet = new Set(
-                                        turn.scopeSnapshot.temporaryChannels || []
-                                    );
+                                {/* Pedidos / Compras / Documentos vinculados en lenguaje claro */}
+                                {((threadToRender.linkedRequisitionIds?.length || 0) > 0 ||
+                                    (threadToRender.linkedPurchaseIds?.length || 0) > 0 ||
+                                    (threadToRender.linkedDteIds?.length || 0) > 0) && (
+                                    <div className="flex flex-wrap items-center gap-fib-13 text-[15px]">
+                                        {(threadToRender.linkedRequisitionIds || []).map((reqId) => (
+                                            <button
+                                                key={`th-req-${reqId}`}
+                                                type="button"
+                                                onClick={() =>
+                                                    onNavigateLinked?.({ type: 'REQ', id: reqId })
+                                                }
+                                                data-testid={`thread-link-req-${reqId}`}
+                                                className="bg-transparent border-0 p-1 min-h-[48px] text-[#0369A1] dark:text-[#00AEEF] hover:underline inline-flex items-center gap-fib-8 cursor-pointer rounded-none shadow-none font-medium"
+                                            >
+                                                <span className="material-symbols-outlined text-[18px]">
+                                                    link
+                                                </span>
+                                                <span>
+                                                    {t('supply.conversations.linked_req')}: {reqId}
+                                                </span>
+                                            </button>
+                                        ))}
+                                        {(threadToRender.linkedPurchaseIds || []).map((purId) => (
+                                            <button
+                                                key={`th-pur-${purId}`}
+                                                type="button"
+                                                onClick={() =>
+                                                    onNavigateLinked?.({ type: 'PUR', id: purId })
+                                                }
+                                                data-testid={`thread-link-pur-${purId}`}
+                                                className="bg-transparent border-0 p-1 min-h-[48px] text-[#0369A1] dark:text-[#00AEEF] hover:underline inline-flex items-center gap-fib-8 cursor-pointer rounded-none shadow-none font-medium"
+                                            >
+                                                <span className="material-symbols-outlined text-[18px]">
+                                                    link
+                                                </span>
+                                                <span>
+                                                    {t('supply.conversations.linked_pur')}: {purId}
+                                                </span>
+                                            </button>
+                                        ))}
+                                        {(threadToRender.linkedDteIds || []).map((dteId) => (
+                                            <button
+                                                key={`th-dte-${dteId}`}
+                                                type="button"
+                                                onClick={() =>
+                                                    onNavigateLinked?.({ type: 'DTE', id: dteId })
+                                                }
+                                                data-testid={`thread-link-dte-${dteId}`}
+                                                className="bg-transparent border-0 p-1 min-h-[48px] text-[#9A5B21] dark:text-[#C68346] hover:underline inline-flex items-center gap-fib-8 cursor-pointer rounded-none shadow-none font-medium"
+                                            >
+                                                <span className="material-symbols-outlined text-[18px]">
+                                                    receipt_long
+                                                </span>
+                                                <span>
+                                                    {t('supply.conversations.linked_dte')}: {dteId}
+                                                </span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                            </header>
 
-                                    return (
-                                        <article
-                                            key={turn.turnId}
-                                            data-testid={`conv-turn-${turn.seq}`}
-                                            className={cn(
-                                                'p-fib-13 border-l-[3px] bg-[#FFFFFF] dark:bg-[#000000] space-y-fib-13',
-                                                turnBorder
-                                            )}
-                                        >
-                                            {/* Turn Header: Seq, Direction, Source, Timestamp, SHA-256 */}
-                                            <div className="flex flex-wrap items-center justify-between gap-fib-8 font-mono text-microcopy tabular-nums">
-                                                <div className="flex flex-wrap items-center gap-fib-8">
-                                                    <span className="font-bold text-[#0F172A] dark:text-[#F3F4F6]">
-                                                        {t('supply.conversations.turn_seq')} #{turn.seq}
-                                                    </span>
+                            {turnsLoading ? (
+                                <M3LinearProgress
+                                    indeterminate
+                                    ariaLabel={t('supply.common.loading')}
+                                />
+                            ) : turns.length === 0 ? (
+                                <div className="py-fib-34 text-[16px] text-[#475569] dark:text-[#8A93A6]">
+                                    {t('supply.conversations.empty_turns')}
+                                </div>
+                            ) : (
+                                <div className="divide-y divide-[#E2E8F0] dark:divide-[#12151C]">
+                                    {turns.map((turn) => {
+                                        const hasPolicyDeny =
+                                            (turn.policyAuditRefs?.length || 0) > 0;
+                                        const turnBorder = hasPolicyDeny
+                                            ? 'border-l-[#C68346]'
+                                            : turn.direction === 'OUTBOUND'
+                                              ? 'border-l-[#00AEEF]'
+                                              : 'border-l-transparent';
+                                        const tempScopeSet = new Set(
+                                            turn.scopeSnapshot.temporaryChannels || []
+                                        );
+                                        const speakerName =
+                                            turn.direction === 'OUTBOUND'
+                                                ? t('supply.backlog.sim_bot_name')
+                                                : turn.direction === 'SYSTEM_POLICY'
+                                                  ? t('supply.conversations.dir_SYSTEM_POLICY')
+                                                  : threadToRender.displayName;
+
+                                        return (
+                                            <article
+                                                key={turn.turnId}
+                                                data-testid={`conv-turn-${turn.seq}`}
+                                                className={cn(
+                                                    'py-fib-21 pl-fib-13 border-l-[3px] space-y-fib-13',
+                                                    turnBorder
+                                                )}
+                                            >
+                                                <div className="flex flex-wrap items-baseline justify-between gap-fib-8">
                                                     <span
                                                         className={cn(
-                                                            'font-bold uppercase',
-                                                            turn.direction === 'SYSTEM_POLICY' ||
-                                                                hasPolicyDeny
-                                                                ? 'text-[#9A5B21] dark:text-[#C68346]'
-                                                                : turn.direction === 'OUTBOUND'
-                                                                  ? 'text-[#0369A1] dark:text-[#00AEEF]'
+                                                            'text-[15px] font-semibold',
+                                                            turn.direction === 'OUTBOUND'
+                                                                ? 'text-[#0369A1] dark:text-[#00AEEF]'
+                                                                : hasPolicyDeny
+                                                                  ? 'text-[#9A5B21] dark:text-[#C68346]'
                                                                   : 'text-[#0F172A] dark:text-[#F3F4F6]'
                                                         )}
                                                     >
-                                                        {t(
-                                                            `supply.conversations.dir_${turn.direction}`
-                                                        )}
+                                                        {speakerName}
                                                     </span>
-                                                    <span className="text-[#475569] dark:text-[#8A93A6]">
-                                                        {t(
-                                                            `supply.conversations.source_${turn.channelSource}`
-                                                        )}
-                                                    </span>
-                                                    {turn.aiModelUsed && (
-                                                        <span className="text-[#0369A1] dark:text-[#00AEEF]">
-                                                            {turn.aiModelUsed}
-                                                        </span>
-                                                    )}
-                                                </div>
-
-                                                <div className="flex flex-wrap items-center gap-fib-8 text-[#475569] dark:text-[#8A93A6]">
-                                                    <span>{turn.createdAtIso}</span>
-                                                    <span className="inline-flex items-center gap-1 select-text">
-                                                        {t('supply.conversations.turn_hash')}:{' '}
-                                                        {turn.turnHash.slice(0, 12)}
-                                                        <CopyButton
-                                                            value={turn.turnHash}
-                                                            title={t('supply.common.copy_code')}
-                                                        />
+                                                    <span className="text-[14px] tabular-nums text-[#475569] dark:text-[#8A93A6]">
+                                                        {formatReadableDateTime(turn.createdAtIso)}
                                                     </span>
                                                 </div>
-                                            </div>
 
-                                            {/* Scrubbed Message Body (Ley 21.719) */}
-                                            <div className="text-body-main text-[#0F172A] dark:text-[#F3F4F6] whitespace-pre-wrap select-text">
-                                                {turn.contentScrubbed}
-                                            </div>
-
-                                            {(turn.redactedCategories?.length || 0) > 0 && (
-                                                <div className="flex items-center gap-1 font-mono text-microcopy text-[#475569] dark:text-[#8A93A6]">
-                                                    <span className="material-symbols-outlined text-[14px]">
-                                                        shield
-                                                    </span>
-                                                    <span>
-                                                        {t('supply.conversations.pii_redacted')}:{' '}
-                                                        {turn.redactedCategories.join(', ')}
-                                                    </span>
-                                                </div>
-                                            )}
-
-                                            {/* Exact Scope Snapshot for this Turn */}
-                                            <div
-                                                data-testid={`turn-scope-${turn.seq}`}
-                                                className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] p-fib-8 space-y-fib-8"
-                                            >
-                                                <div className="flex flex-wrap items-center justify-between gap-fib-8 font-mono text-microcopy tabular-nums text-[#475569] dark:text-[#8A93A6]">
-                                                    <span>
-                                                        {t('supply.conversations.scope_fingerprint')}
-                                                        : {turn.scopeSnapshot.scopeFingerprint.slice(0, 12)}
-                                                    </span>
-                                                    {turn.scopeSnapshot.hasValidDgmnLicense && (
-                                                        <span className="inline-flex items-center gap-1 text-[#0369A1] dark:text-[#00AEEF]">
-                                                            <span className="material-symbols-outlined text-[14px]">
-                                                                lock
-                                                            </span>
-                                                            DGMN
-                                                        </span>
-                                                    )}
+                                                {/* Cuerpo del mensaje limpio para lectura fácil 70+ */}
+                                                <div className="text-[17px] leading-relaxed text-[#0F172A] dark:text-[#F3F4F6] whitespace-pre-wrap select-text">
+                                                    {turn.contentScrubbed}
                                                 </div>
 
-                                                <div className="flex flex-wrap items-center gap-fib-8">
-                                                    {(turn.scopeSnapshot.effectiveChannels || []).map(
-                                                        (ch) => {
-                                                            const isTemp = tempScopeSet.has(ch);
-                                                            return (
-                                                                <span
-                                                                    key={`${turn.turnId}-${ch}`}
-                                                                    className={cn(
-                                                                        'px-fib-8 py-1 border font-mono text-microcopy inline-flex items-center gap-1',
-                                                                        isTemp
-                                                                            ? 'border-[#00AEEF] text-[#0369A1] dark:text-[#00AEEF]'
-                                                                            : 'border-[#E2E8F0] dark:border-[#12151C] text-[#0F172A] dark:text-[#F3F4F6]'
-                                                                    )}
-                                                                >
-                                                                    {isTemp && (
-                                                                        <span className="material-symbols-outlined text-[12px]">
-                                                                            schedule
-                                                                        </span>
-                                                                    )}
-                                                                    <span>{ch}</span>
-                                                                    <span className="text-[#475569] dark:text-[#8A93A6]">
-                                                                        {isTemp
-                                                                            ? t(
-                                                                                  'supply.conversations.scope_temporary'
-                                                                              )
-                                                                            : t(
-                                                                                  'supply.conversations.scope_permanent'
-                                                                              )}
-                                                                    </span>
-                                                                </span>
-                                                            );
-                                                        }
-                                                    )}
-                                                </div>
-                                            </div>
-
-                                            {/* CAS Media Attachments (SecureImage / Audio / ORIG -> CAS) */}
-                                            {(turn.casMedia?.length || 0) > 0 && (
-                                                <div className="space-y-fib-8 border border-[#E2E8F0] dark:border-[#12151C] p-fib-8 bg-[#F8FAFC] dark:bg-[#07090D]">
-                                                    <div className="flex items-center gap-1 font-mono text-microcopy uppercase font-bold text-[#475569] dark:text-[#8A93A6]">
-                                                        <span className="material-symbols-outlined text-[14px]">
-                                                            attach_file
-                                                        </span>
-                                                        <span>
-                                                            {t('supply.conversations.cas_media_title')}
-                                                        </span>
+                                                {hasPolicyDeny && (
+                                                    <div className="text-[14px] font-semibold text-[#9A5B21] dark:text-[#C68346]">
+                                                        {t('supply.backlog.sim_blocked_notice')}
                                                     </div>
+                                                )}
+
+                                                {/* Imágenes o audios adjuntos directos */}
+                                                {(turn.casMedia?.length || 0) > 0 && (
                                                     <div className="space-y-fib-8">
                                                         {turn.casMedia.map((media) => {
                                                             const isImage =
@@ -1012,12 +601,12 @@ export const SupplyConversationsAuditView: React.FC<SupplyConversationsAuditView
                                                                                 media.originalFilename ||
                                                                                 media.sha256
                                                                             }
-                                                                            className="max-h-40 object-contain border border-[#E2E8F0] dark:border-[#12151C]"
+                                                                            className="max-h-52 object-contain"
                                                                         />
                                                                     )}
                                                                     {isAudio && (
                                                                         <div className="flex items-center gap-fib-8">
-                                                                            <span className="material-symbols-outlined text-[18px] text-[#00AEEF]">
+                                                                            <span className="material-symbols-outlined text-[20px] text-[#00AEEF]">
                                                                                 volume_up
                                                                             </span>
                                                                             <audio
@@ -1031,132 +620,603 @@ export const SupplyConversationsAuditView: React.FC<SupplyConversationsAuditView
                                                                             />
                                                                         </div>
                                                                     )}
-                                                                    <div className="flex flex-wrap items-center gap-fib-13 font-mono text-microcopy tabular-nums text-[#475569] dark:text-[#8A93A6]">
-                                                                        <span>
-                                                                            {t(
-                                                                                'supply.conversations.cas_orig_label'
-                                                                            )}
-                                                                            :{' '}
-                                                                            {formatBytesCompact(
-                                                                                media.originalBytes
-                                                                            )}{' '}
-                                                                            ➔{' '}
-                                                                            {formatBytesCompact(
-                                                                                media.optimizedBytes
-                                                                            )}{' '}
-                                                                            (-{media.savingsPct}%)
-                                                                        </span>
-                                                                        <span className="inline-flex items-center gap-1 select-text">
-                                                                            {media.sha256.slice(
-                                                                                0,
-                                                                                12
-                                                                            )}
-                                                                            <CopyButton
-                                                                                value={media.sha256}
-                                                                                title={t(
-                                                                                    'supply.common.copy_code'
-                                                                                )}
-                                                                            />
-                                                                        </span>
-                                                                    </div>
                                                                 </div>
                                                             );
                                                         })}
                                                     </div>
-                                                </div>
-                                            )}
+                                                )}
 
-                                            {/* Policy Audit Events */}
-                                            {hasPolicyDeny && (
-                                                <div
-                                                    data-testid={`turn-policy-audit-${turn.seq}`}
-                                                    className="border-l-[3px] border-[#C68346] bg-[#F8FAFC] dark:bg-[#07090D] px-fib-13 py-fib-8 font-mono text-microcopy text-[#9A5B21] dark:text-[#C68346] space-y-1"
-                                                >
-                                                    <div className="font-bold uppercase">
-                                                        {t('supply.conversations.policy_audit_title')}
+                                                {/* Enlaces de este mensaje en lenguaje claro */}
+                                                {((turn.linkedRequisitionIds?.length || 0) > 0 ||
+                                                    (turn.linkedPurchaseIds?.length || 0) > 0 ||
+                                                    (turn.linkedDteIds?.length || 0) > 0) && (
+                                                    <div className="flex flex-wrap items-center gap-fib-13 text-[14px]">
+                                                        {(turn.linkedRequisitionIds || []).map(
+                                                            (id) => (
+                                                                <button
+                                                                    key={`${turn.turnId}-req-${id}`}
+                                                                    type="button"
+                                                                    onClick={() =>
+                                                                        onNavigateLinked?.({
+                                                                            type: 'REQ',
+                                                                            id,
+                                                                        })
+                                                                    }
+                                                                    className="bg-transparent border-0 p-1 min-h-[48px] text-[#0369A1] dark:text-[#00AEEF] hover:underline inline-flex items-center gap-1 cursor-pointer rounded-none shadow-none"
+                                                                >
+                                                                    <span className="material-symbols-outlined text-[16px]">
+                                                                        link
+                                                                    </span>
+                                                                    <span>
+                                                                        {t(
+                                                                            'supply.conversations.linked_req'
+                                                                        )}
+                                                                        : {id}
+                                                                    </span>
+                                                                </button>
+                                                            )
+                                                        )}
+                                                        {(turn.linkedPurchaseIds || []).map((id) => (
+                                                            <button
+                                                                key={`${turn.turnId}-pur-${id}`}
+                                                                type="button"
+                                                                onClick={() =>
+                                                                    onNavigateLinked?.({
+                                                                        type: 'PUR',
+                                                                        id,
+                                                                    })
+                                                                }
+                                                                className="bg-transparent border-0 p-1 min-h-[48px] text-[#0369A1] dark:text-[#00AEEF] hover:underline inline-flex items-center gap-1 cursor-pointer rounded-none shadow-none"
+                                                            >
+                                                                <span className="material-symbols-outlined text-[16px]">
+                                                                    link
+                                                                </span>
+                                                                <span>
+                                                                    {t(
+                                                                        'supply.conversations.linked_pur'
+                                                                    )}
+                                                                    : {id}
+                                                                </span>
+                                                            </button>
+                                                        ))}
+                                                        {(turn.linkedDteIds || []).map((id) => (
+                                                            <button
+                                                                key={`${turn.turnId}-dte-${id}`}
+                                                                type="button"
+                                                                onClick={() =>
+                                                                    onNavigateLinked?.({
+                                                                        type: 'DTE',
+                                                                        id,
+                                                                    })
+                                                                }
+                                                                className="bg-transparent border-0 p-1 min-h-[48px] text-[#9A5B21] dark:text-[#C68346] hover:underline inline-flex items-center gap-1 cursor-pointer rounded-none shadow-none"
+                                                            >
+                                                                <span className="material-symbols-outlined text-[16px]">
+                                                                    receipt_long
+                                                                </span>
+                                                                <span>
+                                                                    {t(
+                                                                        'supply.conversations.linked_dte'
+                                                                    )}
+                                                                    : {id}
+                                                                </span>
+                                                            </button>
+                                                        ))}
                                                     </div>
-                                                    <div className="select-text">
-                                                        {turn.policyAuditRefs.join(' · ')}
-                                                    </div>
-                                                </div>
-                                            )}
+                                                )}
 
-                                            {/* Turn-level Bidrectional Links */}
-                                            {((turn.linkedRequisitionIds?.length || 0) > 0 ||
-                                                (turn.linkedPurchaseIds?.length || 0) > 0 ||
-                                                (turn.linkedDteIds?.length || 0) > 0) && (
-                                                <div className="flex flex-wrap items-center gap-fib-8 font-mono text-microcopy">
-                                                    {(turn.linkedRequisitionIds || []).map((id) => (
-                                                        <button
-                                                            key={`${turn.turnId}-req-${id}`}
-                                                            type="button"
-                                                            onClick={() =>
-                                                                onNavigateLinked?.({
-                                                                    type: 'REQ',
-                                                                    id,
-                                                                })
-                                                            }
-                                                            className="min-h-[48px] px-fib-13 border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#00AEEF] bg-transparent text-[#0369A1] dark:text-[#00AEEF] inline-flex items-center gap-1 cursor-pointer rounded-none shadow-none"
-                                                        >
-                                                            <span className="material-symbols-outlined text-[14px]">
-                                                                link
-                                                            </span>
+                                                {/* Capa 2 por turno (cerrado por defecto): permisos en ese instante, CAS, SHA-256 */}
+                                                <details className="pt-fib-8">
+                                                    <summary className="min-h-[48px] inline-flex items-center gap-1 cursor-pointer text-[14px] text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]">
+                                                        <span>
+                                                            {t('supply.conversations.audit_toggle')}
+                                                        </span>
+                                                        <span className="material-symbols-outlined text-[16px]">
+                                                            expand_more
+                                                        </span>
+                                                    </summary>
+
+                                                    <div className="mt-fib-8 pl-fib-13 border-l border-[#E2E8F0] dark:border-[#12151C] space-y-fib-8 text-[14px] text-[#475569] dark:text-[#8A93A6]">
+                                                        <div className="flex flex-wrap items-center gap-fib-13 font-mono tabular-nums">
                                                             <span>
-                                                                {t('supply.conversations.linked_req')}
-                                                                : {id}
+                                                                #{turn.seq} ·{' '}
+                                                                {t(
+                                                                    `supply.conversations.source_${turn.channelSource}`
+                                                                )}
                                                             </span>
-                                                        </button>
-                                                    ))}
-                                                    {(turn.linkedPurchaseIds || []).map((id) => (
-                                                        <button
-                                                            key={`${turn.turnId}-pur-${id}`}
-                                                            type="button"
-                                                            onClick={() =>
-                                                                onNavigateLinked?.({
-                                                                    type: 'PUR',
-                                                                    id,
-                                                                })
-                                                            }
-                                                            className="min-h-[48px] px-fib-13 border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#00AEEF] bg-transparent text-[#0369A1] dark:text-[#00AEEF] inline-flex items-center gap-1 cursor-pointer rounded-none shadow-none"
+                                                            <span className="inline-flex items-center gap-1 select-text">
+                                                                {t('supply.conversations.turn_hash')}
+                                                                : {turn.turnHash.slice(0, 12)}
+                                                                <CopyButton
+                                                                    value={turn.turnHash}
+                                                                    title={t(
+                                                                        'supply.common.copy_code'
+                                                                    )}
+                                                                />
+                                                            </span>
+                                                        </div>
+
+                                                        <div
+                                                            data-testid={`turn-scope-${turn.seq}`}
+                                                            className="space-y-1"
                                                         >
-                                                            <span className="material-symbols-outlined text-[14px]">
-                                                                link
-                                                            </span>
-                                                            <span>
-                                                                {t('supply.conversations.linked_pur')}
-                                                                : {id}
-                                                            </span>
-                                                        </button>
-                                                    ))}
-                                                    {(turn.linkedDteIds || []).map((id) => (
-                                                        <button
-                                                            key={`${turn.turnId}-dte-${id}`}
-                                                            type="button"
-                                                            onClick={() =>
-                                                                onNavigateLinked?.({
-                                                                    type: 'DTE',
-                                                                    id,
-                                                                })
-                                                            }
-                                                            className="min-h-[48px] px-fib-13 border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] bg-transparent text-[#9A5B21] dark:text-[#C68346] inline-flex items-center gap-1 cursor-pointer rounded-none shadow-none"
-                                                        >
-                                                            <span className="material-symbols-outlined text-[14px]">
-                                                                receipt_long
-                                                            </span>
-                                                            <span>
-                                                                {t('supply.conversations.linked_dte')}
-                                                                : {id}
-                                                            </span>
-                                                        </button>
-                                                    ))}
-                                                </div>
-                                            )}
-                                        </article>
-                                    );
-                                })}
+                                                            <div>
+                                                                {t(
+                                                                    'supply.conversations.scope_fingerprint'
+                                                                )}
+                                                                :{' '}
+                                                                <span className="font-mono">
+                                                                    {turn.scopeSnapshot.scopeFingerprint.slice(
+                                                                        0,
+                                                                        12
+                                                                    )}
+                                                                </span>
+                                                            </div>
+                                                            <div className="flex flex-wrap gap-fib-8">
+                                                                {(
+                                                                    turn.scopeSnapshot
+                                                                        .effectiveChannels || []
+                                                                ).map((ch) => {
+                                                                    const isTemp =
+                                                                        tempScopeSet.has(ch);
+                                                                    return (
+                                                                        <span
+                                                                            key={`${turn.turnId}-${ch}`}
+                                                                            className={cn(
+                                                                                'text-[14px]',
+                                                                                isTemp
+                                                                                    ? 'text-[#0369A1] dark:text-[#00AEEF] font-semibold'
+                                                                                    : 'text-[#0F172A] dark:text-[#F3F4F6]'
+                                                                            )}
+                                                                        >
+                                                                            {t(
+                                                                                `supply.channels.${ch}`
+                                                                            )}{' '}
+                                                                            (
+                                                                            {isTemp
+                                                                                ? t(
+                                                                                      'supply.conversations.scope_temporary'
+                                                                                  )
+                                                                                : t(
+                                                                                      'supply.conversations.scope_permanent'
+                                                                                  )}
+                                                                            )
+                                                                        </span>
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                        </div>
+
+                                                        {(turn.casMedia?.length || 0) > 0 &&
+                                                            turn.casMedia.map((media) => (
+                                                                <div
+                                                                    key={`${turn.turnId}-meta-${media.sha256}`}
+                                                                    className="font-mono text-[13px] tabular-nums flex flex-wrap items-center gap-fib-8"
+                                                                >
+                                                                    <span>
+                                                                        {t(
+                                                                            'supply.conversations.cas_orig_label'
+                                                                        )}
+                                                                        :{' '}
+                                                                        {formatBytesCompact(
+                                                                            media.originalBytes
+                                                                        )}{' '}
+                                                                        ➔{' '}
+                                                                        {formatBytesCompact(
+                                                                            media.optimizedBytes
+                                                                        )}{' '}
+                                                                        (-{media.savingsPct}%)
+                                                                    </span>
+                                                                    <CopyButton
+                                                                        value={media.sha256}
+                                                                        title={t(
+                                                                            'supply.common.copy_code'
+                                                                        )}
+                                                                    />
+                                                                </div>
+                                                            ))}
+
+                                                        {hasPolicyDeny && (
+                                                            <div
+                                                                data-testid={`turn-policy-audit-${turn.seq}`}
+                                                                className="font-mono text-[13px] text-[#9A5B21] dark:text-[#C68346] select-text"
+                                                            >
+                                                                {t(
+                                                                    'supply.conversations.policy_audit_title'
+                                                                )}
+                                                                : {turn.policyAuditRefs.join(' · ')}
+                                                            </div>
+                                                        )}
+
+                                                        {(turn.redactedCategories?.length || 0) > 0 && (
+                                                            <div>
+                                                                {t(
+                                                                    'supply.conversations.pii_redacted'
+                                                                )}
+                                                                : {turn.redactedCategories.join(', ')}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </details>
+                                            </article>
+                                        );
+                                    })}
+                                </div>
+                            )}
+
+                            {/* Capa 2 Global (cerrado por defecto): Verificación criptográfica, retención y descarga */}
+                            <details
+                                data-testid="conv-audit-accordion"
+                                className="border-t border-[#E2E8F0] dark:border-[#12151C] pt-fib-21"
+                            >
+                                <summary className="min-h-[48px] flex items-center justify-between cursor-pointer text-[15px] font-medium text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]">
+                                    <span>{t('supply.conversations.audit_toggle')}</span>
+                                    <span className="material-symbols-outlined text-[20px]">
+                                        expand_more
+                                    </span>
+                                </summary>
+
+                                <div className="pt-fib-21 space-y-fib-21 text-[15px]">
+                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-fib-13">
+                                        <div className="space-y-1">
+                                            <div className="text-[14px] text-[#475569] dark:text-[#8A93A6]">
+                                                {t('supply.conversations.head_hash')}
+                                            </div>
+                                            <div
+                                                data-testid="conv-chain-status"
+                                                className={cn(
+                                                    'font-semibold inline-flex items-center gap-1',
+                                                    chainVerification?.valid === false
+                                                        ? 'text-[#9A5B21] dark:text-[#C68346]'
+                                                        : 'text-[#0369A1] dark:text-[#00AEEF]'
+                                                )}
+                                            >
+                                                <span className="material-symbols-outlined text-[18px]">
+                                                    {chainVerification?.valid === false
+                                                        ? 'warning'
+                                                        : 'verified_user'}
+                                                </span>
+                                                <span>
+                                                    {chainVerification?.valid === false
+                                                        ? `${t('supply.conversations.chain_broken')} #${chainVerification.brokenAtSeq ?? '?'}`
+                                                        : t('supply.conversations.chain_valid')}
+                                                </span>
+                                            </div>
+                                        </div>
+
+                                        <div className="space-y-1">
+                                            <div className="text-[14px] text-[#475569] dark:text-[#8A93A6]">
+                                                {t('supply.conversations.legal_hold_years')}
+                                            </div>
+                                            <div
+                                                data-testid="conv-retention-badge"
+                                                className="font-semibold text-[#0F172A] dark:text-[#F3F4F6]"
+                                            >
+                                                {t(
+                                                    `supply.conversations.retention_${threadToRender.retentionPolicy}`
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        <div className="space-y-1">
+                                            <div className="text-[14px] text-[#475569] dark:text-[#8A93A6]">
+                                                {t('supply.conversations.retention_until')}
+                                            </div>
+                                            <div className="font-mono font-semibold tabular-nums text-[#0F172A] dark:text-[#F3F4F6]">
+                                                {threadToRender.retentionExpiresAtIso.slice(0, 10)}
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="flex flex-wrap items-center gap-fib-13">
+                                        <button
+                                            type="button"
+                                            disabled={Boolean(exportingFormat)}
+                                            onClick={() => void handleExport('CSV')}
+                                            data-testid="export-conv-csv-btn"
+                                            className="min-h-[48px] px-fib-21 bg-[#C68346] border border-[#C68346] text-[#000000] text-[15px] font-semibold inline-flex items-center gap-fib-8 rounded-none shadow-none cursor-pointer hover:opacity-90 disabled:opacity-40"
+                                        >
+                                            <span className="material-symbols-outlined text-[20px]">
+                                                download
+                                            </span>
+                                            <span>{t('supply.conversations.export_csv')}</span>
+                                        </button>
+
+                                        <button
+                                            type="button"
+                                            disabled={Boolean(exportingFormat)}
+                                            onClick={() => void handleExport('JSON')}
+                                            data-testid="export-conv-json-btn"
+                                            className="min-h-[48px] px-fib-13 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] hover:border-[#00AEEF] text-[#0F172A] dark:text-[#F3F4F6] text-[15px] font-medium inline-flex items-center gap-fib-8 rounded-none shadow-none cursor-pointer disabled:opacity-40"
+                                        >
+                                            <span className="material-symbols-outlined text-[20px] text-[#00AEEF]">
+                                                download
+                                            </span>
+                                            <span>{t('supply.conversations.export_json')}</span>
+                                        </button>
+                                    </div>
+
+                                    {exportReceipt && (
+                                        <div
+                                            data-testid="conv-export-receipt"
+                                            className="border-l-[3px] border-[#00AEEF] pl-fib-13 py-fib-8 text-[14px] space-y-1 tabular-nums"
+                                        >
+                                            <div className="text-[#0369A1] dark:text-[#00AEEF] font-semibold">
+                                                {t('supply.conversations.export_receipt')}:{' '}
+                                                {exportReceipt.filename}
+                                            </div>
+                                            <div className="font-mono inline-flex items-center gap-1 select-text">
+                                                <span>{exportReceipt.sha256 || '—'}</span>
+                                                {exportReceipt.sha256 && (
+                                                    <CopyButton
+                                                        value={exportReceipt.sha256}
+                                                        title={t('supply.common.copy_code')}
+                                                    />
+                                                )}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            </details>
+                        </>
+                    )}
+                </div>
+
+                {/* Simulador Humano "Probar asistente" (panel lateral dedicado, sin jerga E.164/FSM/S1) */}
+                {canAccessSimulator && simulatorOpen && (
+                    <section
+                        data-testid="ws-dev-simulator-panel"
+                        className="min-h-0 flex flex-col border-t xl:border-t-0 xl:border-l border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000]"
+                    >
+                        <div className="px-fib-21 py-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C] flex items-center justify-between gap-fib-8">
+                            <div className="flex items-center gap-fib-8">
+                                <span className="material-symbols-outlined text-[22px] text-[#00AEEF]">
+                                    chat
+                                </span>
+                                <h4 className="text-[17px] font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
+                                    {t('supply.backlog.sim_title')}
+                                </h4>
                             </div>
+                            <div className="flex items-center gap-1">
+                                <button
+                                    type="button"
+                                    onClick={() => void sendSimulatedMessage(undefined, true)}
+                                    aria-label={t('supply.backlog.sim_reset')}
+                                    title={t('supply.backlog.sim_reset')}
+                                    className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#475569] dark:text-[#8A93A6] hover:text-[#7C3F0E] dark:hover:text-[#C68346] cursor-pointer rounded-none shadow-none"
+                                >
+                                    <span className="material-symbols-outlined text-[20px]">
+                                        refresh
+                                    </span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => onToggleSimulator(false)}
+                                    aria-label={t('supply.common.close')}
+                                    title={t('supply.common.close')}
+                                    className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] cursor-pointer rounded-none shadow-none"
+                                >
+                                    <span className="material-symbols-outlined text-[20px]">
+                                        close
+                                    </span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="p-fib-21 space-y-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C]">
+                            <div className="space-y-1">
+                                <label
+                                    htmlFor={`${uid}-sim-person`}
+                                    className="block text-[14px] font-medium text-[#475569] dark:text-[#8A93A6]"
+                                >
+                                    {t('supply.backlog.sim_select_person')}
+                                </label>
+                                <select
+                                    id={`${uid}-sim-person`}
+                                    value={selectedSimProfileId}
+                                    onChange={(e) => setSelectedSimProfileId(e.target.value)}
+                                    className={underlineInputClass}
+                                >
+                                    {profiles.map((p) => (
+                                        <option key={p.profileId} value={p.profileId}>
+                                            {p.displayName} — {t(`supply.roles.${p.role}`)}
+                                        </option>
+                                    ))}
+                                    <option value="__STANDARD__">
+                                        {t('supply.backlog.sim_standard_person')}
+                                    </option>
+                                </select>
+                            </div>
+
+                            {activeSimProfile ? (
+                                <div className="text-[14px] text-[#475569] dark:text-[#8A93A6] leading-relaxed">
+                                    <span className="font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
+                                        {t('supply.backlog.sim_allowed_today')}{' '}
+                                    </span>
+                                    {activeSimProfile.effectiveChannels.length > 0
+                                        ? activeSimProfile.effectiveChannels
+                                              .map((ch) => t(`supply.channels.${ch}`))
+                                              .join(', ')
+                                        : t('supply.profiles_ws.matrix_inactive')}
+                                </div>
+                            ) : (
+                                <div className="space-y-1">
+                                    <label
+                                        htmlFor={`${uid}-sim-role`}
+                                        className="block text-[14px] font-medium text-[#475569] dark:text-[#8A93A6]"
+                                    >
+                                        {t('supply.backlog.sim_role')}
+                                    </label>
+                                    <select
+                                        id={`${uid}-sim-role`}
+                                        value={simRole}
+                                        onChange={(e) =>
+                                            setSimRole(e.target.value as SupplyOperationalRole)
+                                        }
+                                        className={underlineInputClass}
+                                    >
+                                        {SIM_ROLES.map((r) => (
+                                            <option key={r} value={r}>
+                                                {t(`supply.roles.${r}`)}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                            )}
+
+                            <details className="text-[14px] text-[#475569] dark:text-[#8A93A6]">
+                                <summary className="cursor-pointer py-1">
+                                    {t('supply.backlog.sim_phone')}
+                                </summary>
+                                <input
+                                    id={`${uid}-sim-phone`}
+                                    type="text"
+                                    value={simPhone}
+                                    onChange={(e) => setSimPhone(e.target.value)}
+                                    autoComplete="off"
+                                    spellCheck={false}
+                                    aria-label={t('supply.backlog.sim_phone')}
+                                    placeholder={t('supply.profiles_ws.field_phone_placeholder')}
+                                    className={`${underlineInputClass} select-text`}
+                                />
+                            </details>
+
+                            {/* 4 Botones de ejemplo en español natural */}
+                            <div className="flex flex-col gap-1 pt-fib-8">
+                                <button
+                                    type="button"
+                                    disabled={simBusy}
+                                    onClick={() =>
+                                        void sendSimulatedMessage(
+                                            t('supply.backlog.sim_preset_slots_msg')
+                                        )
+                                    }
+                                    className="text-left min-h-[48px] px-fib-13 bg-transparent border-0 border-l-[3px] border-l-transparent hover:border-l-[#00AEEF] hover:bg-[#F8FAFC] dark:hover:bg-[#07090D] text-[15px] text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none cursor-pointer"
+                                >
+                                    {t('supply.backlog.sim_preset_slots')}
+                                </button>
+                                <button
+                                    type="button"
+                                    disabled={simBusy}
+                                    onClick={() =>
+                                        void sendSimulatedMessage(
+                                            t('supply.backlog.sim_preset_deny_msg')
+                                        )
+                                    }
+                                    className="text-left min-h-[48px] px-fib-13 bg-transparent border-0 border-l-[3px] border-l-transparent hover:border-l-[#C68346] hover:bg-[#F8FAFC] dark:hover:bg-[#07090D] text-[15px] text-[#7C3F0E] dark:text-[#C68346] rounded-none shadow-none cursor-pointer"
+                                >
+                                    {t('supply.backlog.sim_preset_deny')}
+                                </button>
+                                <button
+                                    type="button"
+                                    disabled={simBusy}
+                                    onClick={() =>
+                                        void sendSimulatedMessage(
+                                            t('supply.backlog.sim_preset_atypical_msg')
+                                        )
+                                    }
+                                    className="text-left min-h-[48px] px-fib-13 bg-transparent border-0 border-l-[3px] border-l-transparent hover:border-l-[#C68346] hover:bg-[#F8FAFC] dark:hover:bg-[#07090D] text-[15px] text-[#7C3F0E] dark:text-[#C68346] rounded-none shadow-none cursor-pointer"
+                                >
+                                    {t('supply.backlog.sim_preset_atypical')}
+                                </button>
+                                <button
+                                    type="button"
+                                    disabled={simBusy}
+                                    onClick={() => void sendSimulatedMessage('OK')}
+                                    className="text-left min-h-[48px] px-fib-13 bg-transparent border-0 border-l-[3px] border-l-[#00AEEF] hover:bg-[#F8FAFC] dark:hover:bg-[#07090D] text-[15px] font-semibold text-[#0369A1] dark:text-[#00AEEF] rounded-none shadow-none cursor-pointer"
+                                >
+                                    {t('supply.backlog.sim_preset_confirm')}
+                                </button>
+                            </div>
+                        </div>
+
+                        {simBusy && (
+                            <M3LinearProgress indeterminate ariaLabel={t('supply.common.loading')} />
                         )}
-                    </>
+
+                        {/* Hilo del chat de prueba */}
+                        <div className="flex-1 min-h-[200px] overflow-y-auto divide-y divide-[#E2E8F0] dark:divide-[#12151C] px-fib-21">
+                            {simMessages.map((msg) => {
+                                const hasAlert = Boolean(
+                                    msg.hardDeniedItems?.length || msg.atypicalFlags?.length
+                                );
+                                return (
+                                    <div
+                                        key={msg.id}
+                                        className={cn(
+                                            'py-fib-13 pl-fib-13 space-y-1 border-l-[3px]',
+                                            hasAlert
+                                                ? 'border-[#C68346]'
+                                                : msg.direction === 'OUTBOUND'
+                                                  ? 'border-[#00AEEF]'
+                                                  : 'border-transparent'
+                                        )}
+                                    >
+                                        <div className="flex items-baseline justify-between gap-fib-8 text-[14px] text-[#475569] dark:text-[#8A93A6]">
+                                            <span className="font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
+                                                {msg.direction === 'INBOUND'
+                                                    ? effectiveSimSenderLabel
+                                                    : t('supply.backlog.sim_bot_name')}
+                                            </span>
+                                            <span className="tabular-nums">
+                                                {formatReadableDateTime(msg.timestamp)}
+                                            </span>
+                                        </div>
+                                        <div className="text-[17px] leading-relaxed text-[#0F172A] dark:text-[#F3F4F6] whitespace-pre-wrap select-text">
+                                            {msg.text}
+                                        </div>
+                                        {hasAlert && (
+                                            <div className="text-[14px] font-semibold text-[#7C3F0E] dark:text-[#C68346]">
+                                                {t('supply.backlog.sim_blocked_notice')}
+                                            </div>
+                                        )}
+                                        {msg.committedReqId && (
+                                            <div className="flex items-center gap-fib-8 text-[14px] font-semibold text-[#0369A1] dark:text-[#00AEEF] select-text">
+                                                <span>
+                                                    {t('supply.conversations.linked_req')}:{' '}
+                                                    {msg.committedReqId}
+                                                </span>
+                                                <CopyButton
+                                                    value={msg.committedReqId}
+                                                    title={t('supply.common.copy_code')}
+                                                />
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })}
+                        </div>
+
+                        <form
+                            onSubmit={(e) => {
+                                e.preventDefault();
+                                void sendSimulatedMessage();
+                            }}
+                            autoComplete="off"
+                            spellCheck={false}
+                            className="p-fib-13 border-t border-[#E2E8F0] dark:border-[#12151C] flex items-center gap-fib-8"
+                        >
+                            <input
+                                type="text"
+                                value={simInput}
+                                onChange={(e) => setSimInput(e.target.value)}
+                                autoComplete="off"
+                                spellCheck={false}
+                                aria-label={t('supply.backlog.sim_input_placeholder')}
+                                placeholder={t('supply.backlog.sim_input_placeholder')}
+                                className="flex-1 min-h-[48px] px-fib-13 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] focus:border-[#00AEEF] outline-none text-[16px] text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text"
+                            />
+                            <button
+                                type="submit"
+                                disabled={simBusy || !simInput.trim()}
+                                aria-label={t('supply.backlog.sim_send')}
+                                title={t('supply.backlog.sim_send')}
+                                className="bg-transparent border-0 outline-none p-1 min-w-[48px] min-h-[48px] inline-flex items-center justify-center text-[#0369A1] dark:text-[#00AEEF] hover:opacity-80 cursor-pointer rounded-none shadow-none disabled:opacity-40"
+                            >
+                                <span className="material-symbols-outlined text-[24px]">send</span>
+                            </button>
+                        </form>
+                    </section>
                 )}
             </div>
         </div>

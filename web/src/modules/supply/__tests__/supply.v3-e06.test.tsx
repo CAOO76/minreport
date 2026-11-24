@@ -171,13 +171,11 @@ describe('V3-E06 — SupplyWorkspace 7 Tabs Deferred Fetch & Profiles/Channels W
         });
 
         expect(screen.getByTestId('supply-tab-CONTROL')).toHaveAttribute('aria-current', 'page');
-        expect(screen.getByTestId('supply-tab-DEMAND')).toBeInTheDocument();
-        expect(screen.getByTestId('supply-tab-PROCUREMENT')).toBeInTheDocument();
+        expect(screen.getByTestId('supply-tab-ORDERS')).toBeInTheDocument();
         expect(screen.getByTestId('supply-tab-WAREHOUSE')).toBeInTheDocument();
-        expect(screen.getByTestId('supply-tab-CONVERSATIONS')).toBeInTheDocument();
+        expect(screen.getByTestId('supply-tab-WHATSAPP')).toBeInTheDocument();
         expect(screen.getByTestId('supply-tab-FINANCE_SII')).toBeInTheDocument();
-        expect(screen.getByTestId('supply-tab-PROFILES_WS')).toBeInTheDocument();
-        expect(screen.getByTestId('supply-telemetry-strip')).toBeInTheDocument();
+        expect(screen.queryByTestId('supply-telemetry-strip')).not.toBeInTheDocument();
 
         expect(listSitesSpy).toHaveBeenCalledTimes(1);
         expect(listReqSpy).toHaveBeenCalledTimes(1);
@@ -192,8 +190,9 @@ describe('V3-E06 — SupplyWorkspace 7 Tabs Deferred Fetch & Profiles/Channels W
         expect(expSpy).not.toHaveBeenCalled();
         expect(profilesSpy).not.toHaveBeenCalled();
 
-        // Cambiar al tab PROFILES_WS dispara listSupplyProfiles bajo demanda
-        fireEvent.click(screen.getByTestId('supply-tab-PROFILES_WS'));
+        // Cambiar al tab WHATSAPP y sub-vista Personas autorizadas dispara listSupplyProfiles bajo demanda
+        fireEvent.click(screen.getByTestId('supply-tab-WHATSAPP'));
+        fireEvent.click(await screen.findByTestId('supply-subtab-PROFILES_WS'));
         await waitFor(() => {
             expect(profilesSpy).toHaveBeenCalledTimes(1);
             expect(screen.getByTestId('supply-profiles-ws-view')).toBeInTheDocument();
@@ -236,7 +235,7 @@ describe('V3-E06 — SupplyWorkspace 7 Tabs Deferred Fetch & Profiles/Channels W
         await waitFor(() => {
             expect(potableSwitch).toHaveAttribute('aria-checked', 'true');
         });
-        const saveBtn = await screen.findByRole('button', { name: /Guardar matriz de casillas/i });
+        const saveBtn = await screen.findByRole('button', { name: /Guardar cambios de permisos/i });
         fireEvent.click(saveBtn);
 
         const keywordInput = screen.getByPlaceholderText('ACTUALIZAR');
@@ -289,7 +288,7 @@ describe('V3-E06 — SupplyWorkspace 7 Tabs Deferred Fetch & Profiles/Channels W
         });
 
         // Confirmar Double Opt-In con HITL ACTUALIZAR
-        fireEvent.click(screen.getByRole('button', { name: /Confirmar Opt-In/i }));
+        fireEvent.click(screen.getByRole('button', { name: /Confirmar autorización/i }));
         fireEvent.change(screen.getByPlaceholderText('ACTUALIZAR'), { target: { value: 'ACTUALIZAR' } });
         fireEvent.click(screen.getByRole('button', { name: /^CONFIRMAR$/i }));
 
