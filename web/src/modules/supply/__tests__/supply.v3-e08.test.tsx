@@ -346,6 +346,10 @@ describe('V3-E08 — Control Dashboard, Physical Warehouses/Tanks, Kardex, 4-Way
 
         await waitFor(() => {
             expect(screen.getByTestId('control-resource-POTABLE_WATER')).toBeInTheDocument();
+            expect(screen.getByTestId('control-bu-kpis')).toHaveTextContent('24.5 L/hr');
+            expect(screen.getByTestId('control-bu-kpis')).toHaveTextContent('94.5%');
+            expect(screen.getByTestId('control-exc-EXC_TANK_VAR')).toBeInTheDocument();
+            expect(screen.getByTestId('control-exc-EXC_RCV_48H')).toBeInTheDocument();
         });
 
         const summary = screen.getByTestId('supply-control-summary');
@@ -356,11 +360,6 @@ describe('V3-E08 — Control Dashboard, Physical Warehouses/Tanks, Kardex, 4-Way
         expect(screen.getByTestId('control-resource-CAMP_FUEL')).toBeInTheDocument();
         expect(screen.getByTestId('control-resource-FLEET_FUEL')).toBeInTheDocument();
         expect(screen.getByTestId('control-resource-GAS_CYLINDERS')).toBeInTheDocument();
-
-        expect(screen.getByTestId('control-bu-kpis')).toHaveTextContent('24.5 L/hr');
-        expect(screen.getByTestId('control-bu-kpis')).toHaveTextContent('94.5%');
-        expect(screen.getByTestId('control-exc-EXC_TANK_VAR')).toBeInTheDocument();
-        expect(screen.getByTestId('control-exc-EXC_RCV_48H')).toBeInTheDocument();
     });
 
     it('2. WAREHOUSE soporta balances PMP/FEFO, Kardex con horómetro/aforo HITL ACTUALIZAR y recepción parcial 4-Way con discrepancias RCV 8d', async () => {
