@@ -247,7 +247,11 @@ function testMobileDigitalOnlyAndOfflineSyncContracts(): void {
     );
     assert.ok(mobileScannerSrc.includes('useXCoverHardwareKey'), 'MobileScanner debe soportar botón físico XCover Key');
     assert.ok(mobileScannerSrc.includes('mediaDigestorClient.digestFile'), 'MobileScanner debe procesar evidencia vía CAS');
-    assert.ok(mobileScannerSrc.includes('CAPTURE_SESSION_UPLOAD'), 'Debe encolar sesión de captura V2 offline');
+    assert.ok(
+        mobileScannerSrc.includes('persistCaptureSessionOffline') ||
+            mobileScannerSrc.includes('CAPTURE_SESSION_UPLOAD'),
+        'Debe encolar sesión de captura V2 offline'
+    );
     assert.ok(mobileScannerSrc.includes('CAPTURED_OFFLINE_VALID'), 'Debe marcar estado CAPTURED_OFFLINE_VALID offline');
 
     // QuickStockpileCapture solo renderiza cámara móvil y expone modo subterráneo

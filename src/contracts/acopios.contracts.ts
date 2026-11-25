@@ -515,7 +515,7 @@ export const CaptureSessionPackageV2Schema = z
         rawBundleOriginalBytes: z.number().int().nonnegative().optional(),
         rawBundleOptimizedBytes: z.number().int().nonnegative().optional(),
         rawBundleSavingsPct: z.number().finite().min(0).max(100).optional(),
-        rawSpatialBundle: RawSpatialBundleAliasSchema.optional(),
+        rawSpatialBundle: RawSpatialBundleAliasSchema.nullable().optional(),
         capturedAt: z.number().finite().nonnegative(),
         locale: z.enum(['es', 'en', 'pt']).optional().default('es'),
         keyframes: z.array(KeyframeCasEntrySchema).max(64).optional().default([]),
@@ -535,7 +535,7 @@ export const CaptureSessionPackageV2Schema = z
         calibrationScaleFactor: z.number().finite().min(0.85).max(1.15).optional(),
         wallConfinement: WallConfinementModeSchema.optional().default('NONE'),
         inSituMetrology: InSituMetrologySchema,
-        localPreviewMesh: LocalPreviewMeshSchema.optional(),
+        localPreviewMesh: LocalPreviewMeshSchema.nullable().optional(),
         primaryPhotoUrl: NonBase64UrlSchema.optional(),
         primaryPhotoSha256: z.string().regex(SAFE_SHA256_REGEX).optional(),
         primaryImageBase64: z.string().min(8).max(4_000_000).optional(),
@@ -546,17 +546,19 @@ export const CaptureSessionPackageV2Schema = z
             pkg.walkRing && pkg.walkRing.length > 0
                 ? pkg.walkRing
                 : pkg.walkRingPoses ?? [];
-        const rawBundleSha256 = pkg.rawBundleSha256 ?? pkg.rawSpatialBundle?.sha256;
+        const rawSpatialBundle = pkg.rawSpatialBundle ?? undefined;
+        const localPreviewMesh = pkg.localPreviewMesh ?? undefined;
+        const rawBundleSha256 = pkg.rawBundleSha256 ?? rawSpatialBundle?.sha256;
         const rawBundleUrl =
             pkg.rawBundleUrl ??
-            pkg.rawSpatialBundle?.downloadUrl ??
-            pkg.rawSpatialBundle?.remoteCasUrl;
+            rawSpatialBundle?.downloadUrl ??
+            rawSpatialBundle?.remoteCasUrl;
         const rawBundleOriginalBytes =
-            pkg.rawBundleOriginalBytes ?? pkg.rawSpatialBundle?.originalBytes;
+            pkg.rawBundleOriginalBytes ?? rawSpatialBundle?.originalBytes;
         const rawBundleOptimizedBytes =
-            pkg.rawBundleOptimizedBytes ?? pkg.rawSpatialBundle?.optimizedBytes;
+            pkg.rawBundleOptimizedBytes ?? rawSpatialBundle?.optimizedBytes;
         const rawBundleSavingsPct =
-            pkg.rawBundleSavingsPct ?? pkg.rawSpatialBundle?.savingsPct;
+            pkg.rawBundleSavingsPct ?? rawSpatialBundle?.savingsPct;
 
         return {
             schemaVersion: pkg.schemaVersion,
@@ -580,7 +582,7 @@ export const CaptureSessionPackageV2Schema = z
             calibrationScaleFactor: pkg.calibrationScaleFactor,
             wallConfinement: pkg.wallConfinement,
             inSituMetrology: pkg.inSituMetrology,
-            localPreviewMesh: pkg.localPreviewMesh,
+            localPreviewMesh,
             primaryPhotoUrl: pkg.primaryPhotoUrl,
             primaryPhotoSha256: pkg.primaryPhotoSha256,
             primaryImageBase64: pkg.primaryImageBase64,

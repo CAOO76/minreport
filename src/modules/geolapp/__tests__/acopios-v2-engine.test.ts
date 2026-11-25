@@ -830,6 +830,18 @@ test('(e) Interoperabilidad Cross-Contract Android + Frontend verbatim -> Captur
     assert.equal(parsed.localPreviewMesh?.interpolatedMask?.[2 * cols + 2], 1);
     assert.equal(parsed.inSituMetrology.dimensionsM.h, 1.5);
 
+    // Caso borde SyncQueueEngine: localPreviewMesh: null y rawSpatialBundle: null deben normalizarse a undefined
+    const nullableParsed = CaptureSessionPackageV2Schema.safeParse({
+        ...androidFrontendVerbatimPayload,
+        localPreviewMesh: null,
+        rawSpatialBundle: null,
+    });
+    assert.equal(nullableParsed.success, true, 'Debe aceptar localPreviewMesh: null y rawSpatialBundle: null');
+    if (nullableParsed.success) {
+        assert.equal(nullableParsed.data.localPreviewMesh, undefined);
+        assert.equal(nullableParsed.data.rawBundleSha256, undefined);
+    }
+
     const routerStack = (geolappController.default as any).stack as Array<any>;
     const postSessionLayer = routerStack.find(
         (l) => l.route?.path === '/stockpiles/:id/capture-sessions' && l.route.methods.post
