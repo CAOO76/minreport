@@ -1554,6 +1554,7 @@ public class MinreportSpatialScannerActivity
         root.put("scannerEngineVersion", SCANNER_ENGINE_VERSION);
         root.put("orientationMode", "sensorLandscape");
         root.put("hasHardwareDepthSensor", hasHardwareDepthSensor);
+        root.put("captureImuPitchDeg", round1(computeMedianKeyframePitchDeg(kfSnap, liveImuPitchDeg)));
 
         // Optional stored calibration metadata (without pre-scaling coordinates)
         final SharedPreferences calPrefs = getSharedPreferences(PREFS_CALIBRATION_NAME, Context.MODE_PRIVATE);
@@ -1661,17 +1662,32 @@ public class MinreportSpatialScannerActivity
         root.put("keyframes", kfLegacyArr);
         root.put("keyframesV2", kfV2Arr);
 
-        // V2 In-Situ Offline Metrology block
+        // V2 In-Situ Offline Metrology block (aligned with Frontend + Backend CaptureSessionPackageV2)
         final JSONObject metObj = new JSONObject();
         metObj.put("volumeM3", round3(m.volumeM3));
+        metObj.put("footprintAreaM2", round3(m.footprintAreaM2));
+        metObj.put("baseLengthM", round2(m.dimA));
+        metObj.put("baseWidthM", round2(m.dimB));
+        metObj.put("heightMaxM", round2(m.dimH));
         final JSONObject dimsObj = new JSONObject();
         dimsObj.put("a", round2(m.dimA));
         dimsObj.put("b", round2(m.dimB));
         dimsObj.put("h", round2(m.dimH));
         metObj.put("dimensionsM", dimsObj);
         metObj.put("groundSlopeDeg", round2(m.groundSlopeDeg));
+        final JSONObject metGroundPlane = new JSONObject();
+        metGroundPlane.put("a", round5(m.planeA));
+        metGroundPlane.put("b", round5(m.planeB));
+        metGroundPlane.put("d", round4(m.planeD));
+        metGroundPlane.put("slopeDeg", round2(m.groundSlopeDeg));
+        metGroundPlane.put("toeScore", round1(m.toeScore));
+        metObj.put("groundPlane", metGroundPlane);
         metObj.put("slopeAngleAvgDeg", round2(m.slopeAngleAvgDeg));
         metObj.put("toeScore", round1(m.toeScore));
+        metObj.put("coveragePct", coveragePct);
+        metObj.put("sectorsCovered", covered);
+        metObj.put("loopClosed", m.loopClosed);
+        metObj.put("computedAt", System.currentTimeMillis());
         metObj.put("occludedVolumePct", round1(m.occludedVolumePct));
         metObj.put("zeroCellsInside", m.zeroCellsInside);
         metObj.put("loopDriftPct", round2(m.loopDriftPct));
@@ -1698,6 +1714,13 @@ public class MinreportSpatialScannerActivity
             meshObj.put("cellSizeM", round3(pm.cellSizeM));
             meshObj.put("cols", pm.cols);
             meshObj.put("rows", pm.rows);
+            meshObj.put("nx", pm.cols);
+            meshObj.put("nz", pm.rows);
+            final JSONObject meshGroundPlane = new JSONObject();
+            meshGroundPlane.put("a", round5(pm.planeA));
+            meshGroundPlane.put("b", round5(pm.planeB));
+            meshGroundPlane.put("d", round4(pm.planeD));
+            meshObj.put("groundPlane", meshGroundPlane);
             meshObj.put("groundSlopeDeg", round2(pm.groundSlopeDeg));
             meshObj.put("volumeM3", round3(pm.volumeM3));
             meshObj.put("maxHeightM", round3(pm.maxHeightM));
@@ -1709,6 +1732,10 @@ public class MinreportSpatialScannerActivity
             final JSONArray obsArr = new JSONArray();
             for (byte ov : pm.observedMask) obsArr.put(ov != 0 ? 1 : 0);
             meshObj.put("observedMask", obsArr);
+
+            final JSONArray confArr = new JSONArray();
+            for (byte cv : pm.confidenceMask) confArr.put(cv & 0xFF);
+            meshObj.put("confidenceMask", confArr);
 
             root.put("localPreviewMesh", meshObj);
         }
@@ -2246,6 +2273,21 @@ public class MinreportSpatialScannerActivity
         } catch (Exception ignored) {
         }
         return 90;
+    }
+
+    private static float computeMedianKeyframePitchDeg(
+        final List<KeyframeRecord> kfSnap,
+        final float fallbackPitchDeg
+    ) {
+        if (kfSnap == null || kfSnap.isEmpty()) {
+            return fallbackPitchDeg;
+        }
+        final float[] pitches = new float[kfSnap.size()];
+        for (int i = 0; i < kfSnap.size(); i++) {
+            pitches[i] = kfSnap.get(i).imuPitchDeg;
+        }
+        Arrays.sort(pitches);
+        return pitches[pitches.length / 2];
     }
 
     private static float clamp(final float v, final float min, final float max) {

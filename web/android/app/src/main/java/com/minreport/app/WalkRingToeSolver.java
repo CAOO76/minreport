@@ -58,6 +58,10 @@ public final class WalkRingToeSolver {
         public final int rows;
         public final float[] heightsM;
         public final byte[] observedMask;
+        public final byte[] confidenceMask; // 0=empty, 1=interpolated, 2=observed
+        public final double planeA;
+        public final double planeB;
+        public final double planeD;
         public final float groundSlopeDeg;
         public final float volumeM3;
         public final float maxHeightM;
@@ -70,6 +74,10 @@ public final class WalkRingToeSolver {
             final int rows,
             final float[] heightsM,
             final byte[] observedMask,
+            final byte[] confidenceMask,
+            final double planeA,
+            final double planeB,
+            final double planeD,
             final float groundSlopeDeg,
             final float volumeM3,
             final float maxHeightM
@@ -81,6 +89,10 @@ public final class WalkRingToeSolver {
             this.rows = rows;
             this.heightsM = heightsM;
             this.observedMask = observedMask;
+            this.confidenceMask = confidenceMask;
+            this.planeA = planeA;
+            this.planeB = planeB;
+            this.planeD = planeD;
             this.groundSlopeDeg = groundSlopeDeg;
             this.volumeM3 = volumeM3;
             this.maxHeightM = maxHeightM;
@@ -135,6 +147,7 @@ public final class WalkRingToeSolver {
 
     public static final class MetrologyResult {
         public final double volumeM3;
+        public final double footprintAreaM2;
         public final double dimA;
         public final double dimB;
         public final double dimH;
@@ -166,6 +179,7 @@ public final class WalkRingToeSolver {
 
         public MetrologyResult(
             final double volumeM3,
+            final double footprintAreaM2,
             final double dimA,
             final double dimB,
             final double dimH,
@@ -196,6 +210,7 @@ public final class WalkRingToeSolver {
             final LiveOverlaySnapshot liveOverlay
         ) {
             this.volumeM3 = volumeM3;
+            this.footprintAreaM2 = footprintAreaM2;
             this.dimA = dimA;
             this.dimB = dimB;
             this.dimH = dimH;
@@ -594,6 +609,7 @@ public final class WalkRingToeSolver {
 
         final float anchorY = (float) (planeA * cx + planeB * cz + planeD);
         final float effectiveRadiusM = (float) Math.max(0.35, Math.max(dimA, dimB) * 0.5);
+        final double footprintAreaM2 = totalFootprintCells * (double) cellArea;
 
         // 12. Build compact < 60 KB localPreviewMesh (<= 32x32)
         final LocalPreviewMesh previewMesh = buildLocalPreviewMesh(
@@ -604,6 +620,10 @@ public final class WalkRingToeSolver {
             rows,
             heights,
             observedMask,
+            footprintMask,
+            planeA,
+            planeB,
+            planeD,
             (float) groundSlopeDeg,
             (float) totalVol,
             (float) dimH
@@ -649,6 +669,7 @@ public final class WalkRingToeSolver {
 
         return new MetrologyResult(
             totalVol,
+            footprintAreaM2,
             dimA,
             dimB,
             dimH,
@@ -688,10 +709,11 @@ public final class WalkRingToeSolver {
     ) {
         final float[] c = estimateAutoCenterXZ(poses, points);
         final LocalPreviewMesh emptyMesh = new LocalPreviewMesh(
-            c[0], c[1], 0.25f, 1, 1, new float[] { 0.0f }, new byte[] { 0 }, 0.0f, 0.0f, 0.0f
+            c[0], c[1], 0.25f, 1, 1, new float[] { 0.0f }, new byte[] { 0 }, new byte[] { 0 },
+            0.0, 0.0, 0.0, 0.0f, 0.0f, 0.0f
         );
         return new MetrologyResult(
-            0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 100.0,
+            0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 100.0,
             Math.max(0.0, driftPct), 0.0, 45.0, 0, 0, 0, points.size(),
             false, "REJECTED", "NONE",
             c[0], 0.0f, c[1], 1.0f,
@@ -1282,6 +1304,10 @@ public final class WalkRingToeSolver {
         final int rows,
         final float[] heights,
         final byte[] observedMask,
+        final byte[] footprintMask,
+        final double planeA,
+        final double planeB,
+        final double planeD,
         final float groundSlopeDeg,
         final float volumeM3,
         final float maxHeightM
@@ -1291,6 +1317,7 @@ public final class WalkRingToeSolver {
         final int pRows = Math.max(2, (rows + stride - 1) / stride);
         final float[] pHeights = new float[pCols * pRows];
         final byte[] pObs = new byte[pCols * pRows];
+        final byte[] pConf = new byte[pCols * pRows];
 
         for (int pr = 0; pr < pRows; pr++) {
             final int r0 = pr * stride;
@@ -1300,18 +1327,28 @@ public final class WalkRingToeSolver {
                 final int c1 = Math.min(cols, c0 + stride);
                 float sumH = 0.0f;
                 int cnt = 0;
-                byte obs = 0;
+                boolean anyObs = false;
+                boolean anyFootprint = false;
                 for (int r = r0; r < r1; r++) {
                     for (int c = c0; c < c1; c++) {
                         final int idx = r * cols + c;
                         sumH += heights[idx];
                         cnt++;
-                        if (observedMask[idx] != 0) obs = 1;
+                        if (observedMask[idx] != 0) anyObs = true;
+                        if (footprintMask[idx] != 0) anyFootprint = true;
                     }
                 }
                 final int pIdx = pr * pCols + pc;
-                pHeights[pIdx] = cnt > 0 ? Math.round((sumH / cnt) * 1000.0f) / 1000.0f : 0.0f;
-                pObs[pIdx] = obs;
+                final float avgH = cnt > 0 ? Math.round((sumH / cnt) * 1000.0f) / 1000.0f : 0.0f;
+                pHeights[pIdx] = avgH;
+                pObs[pIdx] = anyObs ? (byte) 1 : (byte) 0;
+                if (anyObs) {
+                    pConf[pIdx] = 2; // directly observed
+                } else if (anyFootprint && avgH > 1e-4f) {
+                    pConf[pIdx] = 1; // interpolated inside footprint
+                } else {
+                    pConf[pIdx] = 0; // empty / outside footprint
+                }
             }
         }
         return new LocalPreviewMesh(
@@ -1322,6 +1359,10 @@ public final class WalkRingToeSolver {
             pRows,
             pHeights,
             pObs,
+            pConf,
+            planeA,
+            planeB,
+            planeD,
             groundSlopeDeg,
             volumeM3,
             maxHeightM

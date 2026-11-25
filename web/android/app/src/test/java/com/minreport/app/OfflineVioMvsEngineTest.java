@@ -82,9 +82,31 @@ public class OfflineVioMvsEngineTest {
         assertEquals("VALID_IN_SITU", res.metrologyGrade);
         assertTrue("Toe score should be high on full 360 walk", res.toeScore >= 80.0);
         assertTrue("Uncertainty should be realistic [2.5, 12.0]", res.uncertaintyPct >= 2.5 && res.uncertaintyPct <= 12.0);
+        final double exactAreaM2 = Math.PI * radiusM * radiusM;
+        assertTrue(
+            "Footprint area should match pi*r^2 (~" + exactAreaM2 + "), got " + res.footprintAreaM2,
+            Math.abs(res.footprintAreaM2 - exactAreaM2) / exactAreaM2 < 0.12
+        );
         assertNotNull("Local preview mesh must be emitted", res.previewMesh);
         assertEquals("dem_grid_v1", res.previewMesh.format);
         assertTrue("Preview mesh must stay compact (<= 32x32)", res.previewMesh.cols <= 32 && res.previewMesh.rows <= 32);
+        assertNotNull("confidenceMask must be populated", res.previewMesh.confidenceMask);
+        assertEquals(res.previewMesh.heightsM.length, res.previewMesh.confidenceMask.length);
+        int emptyCells = 0;
+        int interpCells = 0;
+        int obsCells = 0;
+        for (byte cVal : res.previewMesh.confidenceMask) {
+            assertTrue("confidenceMask values must be in {0,1,2}", cVal == 0 || cVal == 1 || cVal == 2);
+            if (cVal == 0) emptyCells++;
+            else if (cVal == 1) interpCells++;
+            else obsCells++;
+        }
+        assertTrue("Preview mesh must contain observed cells (2)", obsCells > 20);
+        assertTrue("Preview mesh must contain empty exterior corners (0)", emptyCells > 0);
+        assertTrue("Preview mesh must preserve interpolated interior hole marker (1) or full obs", interpCells >= 0);
+        assertEquals(res.planeA, res.previewMesh.planeA, 1e-6);
+        assertEquals(res.planeB, res.previewMesh.planeB, 1e-6);
+        assertEquals(res.planeD, res.previewMesh.planeD, 1e-6);
     }
 
     @Test
