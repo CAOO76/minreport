@@ -12,8 +12,10 @@ import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { z } from 'zod';
 import { auth, db, storage as firebaseStorage } from '../../config/firebase';
 import { CreateGeoReportStampBodySchema } from '../../contracts/geo.contracts';
+import { normalizeUnifiedBoundingBox } from '../../contracts/acopios.contracts';
 import { getApiUrl } from '../../utils/network';
 import { coreAuthFetch } from '../network/coreAuthFetch';
+import { localCasFilesystem } from './LocalCasFilesystemService';
 import { offlineStorage, FleetInspectionRecord, StockpileSurveyRecord } from './OfflineStorage';
 
 export type SyncTaskType =
@@ -28,8 +30,8 @@ export type SyncTaskType =
     | 'SUPPLY_API_MUTATION'
     | 'CAS_MEDIA_UPLOAD'
     | 'GEO_REPORT_STAMP'
-    | 'GEOLAPP_DIGITAL_AI_ANALYZE'
-    | 'GEOLAPP_SPATIAL_ANALYZE';
+    | 'GEOLAPP_SPATIAL_ANALYZE'
+    | 'CAPTURE_SESSION_UPLOAD';
 
 export interface CasMediaSyncPayload {
     sha256: string;
@@ -66,18 +68,11 @@ export interface SupplyPurchaseReceiptSyncPayload {
     eventName?: string;
 }
 
-export interface GeolappDigitalAiSyncPayload {
+export interface CaptureSessionSyncPayload {
+    sessionId: string;
     assetId: string;
-    measurementId?: string;
+    measurementId: string;
     tenantId?: string;
-    sha256?: string;
-    extraSha256s?: string[];
-    photoUrl?: string;
-    scaleAnchorType?: string;
-    scaleAnchorMeters?: number;
-    referenceBaseMeters?: number;
-    imuPitchDeg?: number;
-    imuRollDeg?: number;
     locale?: 'es' | 'en' | 'pt';
 }
 
@@ -224,8 +219,8 @@ const TASK_PRIORITY: Record<SyncTaskType, number> = {
     DEVICE_CALIBRATION: 2,
     STOCKPILE_SURVEY: 2,
     STOCKPILE_MEASUREMENT: 3,
-    GEOLAPP_DIGITAL_AI_ANALYZE: 4,
     GEOLAPP_SPATIAL_ANALYZE: 4,
+    CAPTURE_SESSION_UPLOAD: 4,
     SUPPLY_PURCHASE_RECEIPT: 4,
     TENANT_ASSET: 5,
     FLEET_INSPECTION: 5,
@@ -686,8 +681,8 @@ class SyncQueueEngine {
             if (
                 task.type !== 'STOCKPILE_SURVEY' &&
                 task.type !== 'STOCKPILE_MEASUREMENT' &&
-                task.type !== 'GEOLAPP_DIGITAL_AI_ANALYZE' &&
                 task.type !== 'GEOLAPP_SPATIAL_ANALYZE' &&
+                task.type !== 'CAPTURE_SESSION_UPLOAD' &&
                 task.type !== 'SUPPLY_PURCHASE_RECEIPT' &&
                 task.type !== 'SUPPLY_API_MUTATION'
             ) {
@@ -730,10 +725,10 @@ class SyncQueueEngine {
         let imageBase64: string | undefined;
         let imageMimeType: string | undefined;
         if (sha256) {
-            const casBlob = await offlineStorage.getCasBlob(sha256).catch(() => null);
-            if (casBlob?.blob) {
-                imageBase64 = await blobToBase64(casBlob.blob);
-                imageMimeType = casBlob.mimeType;
+            const casRes = await localCasFilesystem.getBlob(sha256).catch(() => null);
+            if (casRes?.blob) {
+                imageBase64 = await blobToBase64(casRes.blob);
+                imageMimeType = casRes.record.mimeType || casRes.blob.type;
             }
         }
 
@@ -745,9 +740,9 @@ class SyncQueueEngine {
         const extraImagesBase64: string[] = [];
         if (Array.isArray(extraSha256s)) {
             for (const extraSha of extraSha256s.slice(0, 3)) {
-                const extraBlob = await offlineStorage.getCasBlob(extraSha).catch(() => null);
-                if (extraBlob?.blob) {
-                    extraImagesBase64.push(await blobToBase64(extraBlob.blob));
+                const extraRes = await localCasFilesystem.getBlob(extraSha).catch(() => null);
+                if (extraRes?.blob) {
+                    extraImagesBase64.push(await blobToBase64(extraRes.blob));
                 }
             }
         }
@@ -803,19 +798,6 @@ class SyncQueueEngine {
             }
 
             await this.probeBackendHealth();
-
-            const allTasks: SyncTask[] = await offlineStorage.getAllSyncTasks();
-            // Purga automática de tareas residuales obsoletas (`asset_1795234411019`)
-            for (const stale of allTasks) {
-                const p = (stale.payload || {}) as Record<string, any>;
-                if (
-                    p.id === 'asset_1795234411019' ||
-                    p.assetId === 'asset_1795234411019' ||
-                    p.stockpileId === 'asset_1795234411019'
-                ) {
-                    await offlineStorage.deleteSyncTask(stale.id);
-                }
-            }
 
             const refreshedTasks: SyncTask[] = await offlineStorage.getAllSyncTasks();
             // Excluye tareas en DEAD_LETTER (errores cliente 400/403/404/409/422) para evitar loops infinitos
@@ -914,10 +896,11 @@ class SyncQueueEngine {
         switch (task.type) {
             case 'CAS_MEDIA_UPLOAD': {
                 const mediaPayload = task.payload as CasMediaSyncPayload;
-                const casRecord = await offlineStorage.getCasBlob(mediaPayload.sha256);
-                if (!casRecord) {
+                const localRes = await localCasFilesystem.getBlob(mediaPayload.sha256);
+                if (!localRes?.blob) {
                     break;
                 }
+                const casRecord = { ...localRes.record, blob: localRes.blob };
                 const resolvedTenantId =
                     resolveActiveTenantId(mediaPayload.tenantId || casRecord.tenantId) ||
                     'offline-local';
@@ -1218,79 +1201,340 @@ class SyncQueueEngine {
                     .catch(() => {});
                 break;
             }
-            case 'GEOLAPP_DIGITAL_AI_ANALYZE': {
-                const payload = task.payload as GeolappDigitalAiSyncPayload;
+            case 'CAPTURE_SESSION_UPLOAD': {
+                const payload = task.payload as CaptureSessionSyncPayload;
                 const activeTenantId = resolveActiveTenantId(payload.tenantId);
-                if (!payload.assetId || !activeTenantId) {
-                    throw new Error('assetId y tenantId obligatorios en GEOLAPP_DIGITAL_AI_ANALYZE');
+                if (!payload.sessionId || !payload.assetId || !activeTenantId) {
+                    throw new NonRetryableSyncError(
+                        400,
+                        'sessionId, assetId y tenantId obligatorios en CAPTURE_SESSION_UPLOAD'
+                    );
                 }
 
-                const { imageBase64, imageMimeType, extraImagesBase64, resolvedPhotoUrl } =
-                    await this.hydrateAnalyzeMediaFromCas(
-                        payload.sha256,
-                        payload.extraSha256s,
-                        payload.photoUrl
+                const session = await offlineStorage.getCaptureSession(payload.sessionId);
+                if (!session) {
+                    throw new NonRetryableSyncError(
+                        404,
+                        `Sesión de captura ${payload.sessionId} no encontrada en almacenamiento local`
+                    );
+                }
+
+                session.lifecycle_status = 'SYNCING_RAW_CAS';
+                await offlineStorage.saveCaptureSession(session).catch(() => {});
+
+                // Etapa 1: Preflight SHA-256 + subida resumible archivo por archivo a CAS TENANT_PRIVATE
+                const uploadCasItemIfNeeded = async (
+                    sha256: string,
+                    profile: string,
+                    filename: string
+                ): Promise<string> => {
+                    const cachedUrl = await offlineStorage
+                        .getOfflineMetadata<string>(`cas_remote_url_${sha256}`)
+                        .catch(() => null);
+                    if (isRemoteMediaUrl(cachedUrl)) {
+                        return cachedUrl;
+                    }
+
+                    try {
+                        const preRes = await coreAuthFetch(
+                            `/api/media/cas-preflight/${encodeURIComponent(sha256)}`,
+                            {
+                                method: 'GET',
+                                headers: { 'X-Active-Account-Id': activeTenantId },
+                            }
+                        );
+                        if (preRes.ok) {
+                            const preJson = (await parseResponseBodySafe(preRes)) as {
+                                exists?: boolean;
+                                descriptor?: { downloadUrl?: string };
+                            } | null;
+                            if (preJson?.exists && isRemoteMediaUrl(preJson.descriptor?.downloadUrl)) {
+                                const hitUrl = preJson.descriptor!.downloadUrl!;
+                                await offlineStorage
+                                    .putOfflineMetadata(`cas_remote_url_${sha256}`, hitUrl)
+                                    .catch(() => {});
+                                return hitUrl;
+                            }
+                        }
+                    } catch {
+                        // Continuar con subida directa si preflight no respondió
+                    }
+
+                    const localRes = await localCasFilesystem.getBlob(sha256);
+                    if (!localRes?.blob) {
+                        throw new NonRetryableSyncError(
+                            404,
+                            `Blob CAS local ${sha256} ausente para sesión ${session.sessionId}`
+                        );
+                    }
+
+                    const form = new FormData();
+                    form.append('file', localRes.blob, filename);
+                    form.append('profile', profile);
+                    form.append('scope', 'TENANT_PRIVATE');
+                    form.append(
+                        'clientOriginalBytes',
+                        String(localRes.record.originalBytes || localRes.blob.size)
                     );
 
+                    const upRes = await coreAuthFetch('/api/media/digest-upload', {
+                        method: 'POST',
+                        headers: { 'X-Active-Account-Id': activeTenantId },
+                        body: form,
+                    });
+                    const upJson = (await parseResponseBodySafe(upRes)) as {
+                        descriptor?: { downloadUrl?: string };
+                        error?: string;
+                    } | null;
+
+                    if (!upRes.ok || !isRemoteMediaUrl(upJson?.descriptor?.downloadUrl)) {
+                        const msg = upJson?.error || `HTTP ${upRes.status} subiendo CAS ${sha256}`;
+                        if (NON_RETRYABLE_HTTP_STATUSES.has(upRes.status)) {
+                            throw new NonRetryableSyncError(upRes.status, msg);
+                        }
+                        throw new Error(msg);
+                    }
+
+                    const remoteUrl = upJson!.descriptor!.downloadUrl!;
+                    await offlineStorage
+                        .putOfflineMetadata(`cas_remote_url_${sha256}`, remoteUrl)
+                        .catch(() => {});
+                    return remoteUrl;
+                };
+
+                for (let i = 0; i < session.keyframes.length; i++) {
+                    const kf = session.keyframes[i];
+                    if (isRemoteMediaUrl(kf.remoteCasUrl)) continue;
+                    const remoteUrl = await uploadCasItemIfNeeded(
+                        kf.sha256,
+                        'IMAGE_FIELD_EVIDENCE',
+                        `${session.sessionId}_kf_${kf.index}.webp`
+                    );
+                    kf.remoteCasUrl = remoteUrl;
+                    await offlineStorage.saveCaptureSession(session).catch(() => {});
+                }
+
+                if (session.rawSpatialBundle && !isRemoteMediaUrl(session.rawSpatialBundle.remoteCasUrl)) {
+                    const bundleUrl = await uploadCasItemIfNeeded(
+                        session.rawSpatialBundle.sha256,
+                        'SPATIAL_SESSION_BUNDLE',
+                        `${session.sessionId}_bundle.bin`
+                    );
+                    session.rawSpatialBundle.remoteCasUrl = bundleUrl;
+                    await offlineStorage.saveCaptureSession(session).catch(() => {});
+                }
+
+                // Etapa 2: Envío idempotente de sesión completa a southamerica-west1
                 const res = await coreAuthFetch(
-                    `/api/geolapp/stockpiles/${encodeURIComponent(payload.assetId)}/digital-analyze`,
+                    `/api/geolapp/stockpiles/${encodeURIComponent(session.assetId)}/capture-sessions`,
                     {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
                             'X-Active-Account-Id': activeTenantId,
+                            'Idempotency-Key': session.sessionId,
                         },
                         body: JSON.stringify({
-                            measurementId: payload.measurementId,
-                            imageBase64,
-                            imageMimeType,
-                            extraImagesBase64,
-                            photoUrl: isRemoteMediaUrl(resolvedPhotoUrl)
-                                ? resolvedPhotoUrl
-                                : undefined,
-                            scaleAnchorType: payload.scaleAnchorType || 'NONE',
-                            scaleAnchorMeters: payload.scaleAnchorMeters,
-                            referenceBaseMeters: payload.referenceBaseMeters,
-                            imuPitchDeg: payload.imuPitchDeg,
-                            imuRollDeg: payload.imuRollDeg,
-                            locale: payload.locale || 'es',
+                            ...session,
+                            locale: payload.locale || session.locale || 'es',
                         }),
                     }
                 );
 
                 if (res.status === 404) {
-                    if (await this.hasPendingStockpileSurvey(payload.assetId)) {
+                    if (await this.hasPendingStockpileSurvey(session.assetId)) {
                         throw new Error('WAIT_STOCKPILE_SURVEY_SYNC');
                     }
-                    break;
-                }
-                if (!res.ok) {
-                    const errJson = await res.json().catch(() => ({}));
-                    throw new Error(
-                        (errJson as any)?.error ||
-                            `HTTP ${res.status} al ejecutar GEOLAPP_DIGITAL_AI_ANALYZE`
+                    throw new NonRetryableSyncError(
+                        404,
+                        `Acopio ${session.assetId} no existe en servidor para sesión ${session.sessionId}`
                     );
                 }
+
+                const resBody = (await parseResponseBodySafe(res)) as Record<string, any> | null;
+
+                if (res.status === 422) {
+                    const rejectionCode = String(
+                        resBody?.rejectionCode || resBody?.error || 'METROLOGY_REJECTED'
+                    );
+                    const rejectionReason = String(
+                        resBody?.message || resBody?.error || 'Rechazado por validación metrológica (HTTP 422)'
+                    );
+                    session.lifecycle_status = 'REJECTED_METROLOGY';
+                    session.metrology_grade = 'REJECTED';
+                    session.reconciliation = {
+                        offlineInSituM3: session.inSituMetrology.volumeM3,
+                        rejectionCode,
+                        rejectionReason,
+                    };
+                    await offlineStorage.saveCaptureSession(session).catch(() => {});
+
+                    const existingMeas = await offlineStorage
+                        .getStockpileMeasurement(session.measurementId)
+                        .catch(() => null);
+                    if (existingMeas) {
+                        await offlineStorage
+                            .saveStockpileMeasurement({
+                                ...existingMeas,
+                                payload: {
+                                    ...existingMeas.payload,
+                                    lifecycle_status: 'REJECTED_METROLOGY',
+                                    metrology_grade: 'REJECTED',
+                                    rejection_code: rejectionCode,
+                                    rejection_reason: rejectionReason,
+                                },
+                                synced: true,
+                            })
+                            .catch(() => {});
+                    }
+                    throw new NonRetryableSyncError(422, `${rejectionCode}: ${rejectionReason}`);
+                }
+
+                if (!res.ok) {
+                    const detail = resBody?.message || resBody?.error || `HTTP ${res.status}`;
+                    const errMsg = `HTTP ${res.status} al sincronizar CAPTURE_SESSION_UPLOAD: ${String(detail)}`;
+                    if (NON_RETRYABLE_HTTP_STATUSES.has(res.status)) {
+                        throw new NonRetryableSyncError(res.status, errMsg);
+                    }
+                    throw new Error(errMsg);
+                }
+
+                // Cachear .glb remoto localmente para disponibilidad offline inmediata
+                const remoteMeshUrl =
+                    typeof resBody?.meshUrl === 'string'
+                        ? resBody.meshUrl
+                        : typeof resBody?.mesh_url === 'string'
+                          ? resBody.mesh_url
+                          : null;
+                const remoteMeshSha =
+                    typeof resBody?.meshSha256 === 'string'
+                        ? resBody.meshSha256
+                        : typeof resBody?.mesh_sha256 === 'string'
+                          ? resBody.mesh_sha256
+                          : null;
+
+                if (remoteMeshUrl && remoteMeshSha) {
+                    try {
+                        const glbRes = await coreAuthFetch(remoteMeshUrl, {
+                            method: 'GET',
+                            headers: { 'X-Active-Account-Id': activeTenantId },
+                        });
+                        if (glbRes.ok) {
+                            const glbBuf = await glbRes.arrayBuffer();
+                            if (glbBuf.byteLength >= 12) {
+                                await localCasFilesystem.cacheRemoteGlb(
+                                    remoteMeshSha,
+                                    glbBuf,
+                                    activeTenantId
+                                );
+                            }
+                        }
+                    } catch {
+                        // El GLB quedará disponible por red si falla el pre-cacheo
+                    }
+                }
+
+                const nextLifecycle =
+                    resBody?.lifecycle_status === 'CLOUD_3D_VERIFIED' ||
+                    resBody?.lifecycle_status === 'REJECTED_METROLOGY'
+                        ? resBody.lifecycle_status
+                        : 'CLOUD_3D_VERIFIED';
+                const nextReconciliationStatus =
+                    resBody?.reconciliation_status === 'REQUIRES_HITL_REVIEW' ||
+                    resBody?.reconciliation_status === 'AUTO_CONCILIATED'
+                        ? resBody.reconciliation_status
+                        : 'AUTO_CONCILIATED';
+                const cloudVolumeM3 =
+                    typeof resBody?.cloud_refined_m3 === 'number'
+                        ? resBody.cloud_refined_m3
+                        : typeof resBody?.volumeM3 === 'number'
+                          ? resBody.volumeM3
+                          : session.inSituMetrology.volumeM3;
+                const deltaPct =
+                    typeof resBody?.reconciliation_delta_pct === 'number'
+                        ? resBody.reconciliation_delta_pct
+                        : session.inSituMetrology.volumeM3 > 0
+                          ? Number(
+                                (
+                                    ((cloudVolumeM3 - session.inSituMetrology.volumeM3) /
+                                        session.inSituMetrology.volumeM3) *
+                                    100
+                                ).toFixed(2)
+                            )
+                          : 0;
+
+                session.lifecycle_status = nextLifecycle;
+                session.reconciliation_status = nextReconciliationStatus;
+                session.reconciliation = {
+                    offlineInSituM3: session.inSituMetrology.volumeM3,
+                    cloudRefinedM3: cloudVolumeM3,
+                    deltaPct,
+                    reconciledAt: Date.now(),
+                };
+                await offlineStorage.saveCaptureSession(session).catch(() => {});
+
+                const existingMeas = await offlineStorage
+                    .getStockpileMeasurement(session.measurementId)
+                    .catch(() => null);
+                if (existingMeas) {
+                    const updatedPayload: Record<string, unknown> = {
+                        ...existingMeas.payload,
+                        lifecycle_status: nextLifecycle,
+                        reconciliation_status: nextReconciliationStatus,
+                        offline_in_situ_m3: session.inSituMetrology.volumeM3,
+                        cloud_refined_m3: cloudVolumeM3,
+                        reconciliation_delta_pct: deltaPct,
+                        ...(nextReconciliationStatus === 'AUTO_CONCILIATED' && cloudVolumeM3 > 0
+                            ? { volumen_m3: cloudVolumeM3 }
+                            : {}),
+                        ...(remoteMeshUrl ? { mesh_url: remoteMeshUrl } : {}),
+                        ...(remoteMeshSha ? { mesh_sha256: remoteMeshSha } : {}),
+                        ...(resBody?.meshSource || resBody?.mesh_source
+                            ? { mesh_source: resBody.meshSource ?? resBody.mesh_source }
+                            : {}),
+                        ...(typeof (resBody?.tinVolumeM3 ?? resBody?.tin_volume_m3) === 'number'
+                            ? { tin_volume_m3: resBody.tinVolumeM3 ?? resBody.tin_volume_m3 }
+                            : {}),
+                        ...(resBody?.boundingBoxM || resBody?.mesh_bounding_box_m
+                            ? {
+                                  mesh_bounding_box_m: normalizeUnifiedBoundingBox(
+                                      resBody.boundingBoxM ?? resBody.mesh_bounding_box_m
+                                  ),
+                              }
+                            : {}),
+                    };
+                    await offlineStorage
+                        .saveStockpileMeasurement({
+                            ...existingMeas,
+                            payload: updatedPayload,
+                            synced: true,
+                        })
+                        .catch(() => {});
+                }
+
+                dispatchSyncSuccessEvent(task, 'minreport:capture-session-synced', resBody);
                 break;
             }
             case 'GEOLAPP_SPATIAL_ANALYZE': {
                 const payload = task.payload as GeolappSpatialSyncPayload;
                 const activeTenantId = resolveActiveTenantId(payload.tenantId);
                 if (!payload.assetId || !activeTenantId || !payload.spatialPayloadSha256) {
-                    throw new Error(
+                    throw new NonRetryableSyncError(
+                        400,
                         'assetId, tenantId y spatialPayloadSha256 obligatorios en GEOLAPP_SPATIAL_ANALYZE'
                     );
                 }
 
-                const spatialRecord = await offlineStorage
-                    .getCasBlob(payload.spatialPayloadSha256)
+                const spatialRes = await localCasFilesystem
+                    .getBlob(payload.spatialPayloadSha256)
                     .catch(() => null);
-                if (!spatialRecord?.blob) {
-                    throw new Error(
+                if (!spatialRes?.blob) {
+                    throw new NonRetryableSyncError(
+                        404,
                         `Payload espacial CAS ${payload.spatialPayloadSha256} no encontrado`
                     );
                 }
-                const spatialJson = JSON.parse(await spatialRecord.blob.text()) as Record<
+                const spatialJson = JSON.parse(await spatialRes.blob.text()) as Record<
                     string,
                     unknown
                 >;
@@ -1330,15 +1574,77 @@ class SyncQueueEngine {
                     if (await this.hasPendingStockpileSurvey(payload.assetId)) {
                         throw new Error('WAIT_STOCKPILE_SURVEY_SYNC');
                     }
-                    break;
-                }
-                if (!res.ok) {
-                    const errJson = await res.json().catch(() => ({}));
-                    throw new Error(
-                        (errJson as any)?.error ||
-                            `HTTP ${res.status} al ejecutar GEOLAPP_SPATIAL_ANALYZE`
+                    throw new NonRetryableSyncError(
+                        404,
+                        `Acopio ${payload.assetId} no encontrado en GEOLAPP_SPATIAL_ANALYZE`
                     );
                 }
+
+                const resBody = (await parseResponseBodySafe(res)) as Record<string, any> | null;
+
+                if (res.status === 422) {
+                    const rejectionCode = String(
+                        resBody?.rejectionCode || resBody?.error || 'INVALID_POINT_CLOUD'
+                    );
+                    const rejectionReason = String(
+                        resBody?.message || resBody?.error || 'Rechazado por validación física (HTTP 422)'
+                    );
+                    if (payload.measurementId) {
+                        const existingMeas = await offlineStorage
+                            .getStockpileMeasurement(payload.measurementId)
+                            .catch(() => null);
+                        if (existingMeas) {
+                            await offlineStorage
+                                .saveStockpileMeasurement({
+                                    ...existingMeas,
+                                    payload: {
+                                        ...existingMeas.payload,
+                                        lifecycle_status: 'REJECTED_METROLOGY',
+                                        metrology_grade: 'REJECTED',
+                                        rejection_code: rejectionCode,
+                                        rejection_reason: rejectionReason,
+                                    },
+                                    synced: true,
+                                })
+                                .catch(() => {});
+                        }
+                    }
+                    throw new NonRetryableSyncError(
+                        422,
+                        `${rejectionCode}: ${rejectionReason}`
+                    );
+                }
+
+                if (!res.ok) {
+                    const detail = resBody?.message || resBody?.error || `HTTP ${res.status}`;
+                    const errMsg = `HTTP ${res.status} al ejecutar GEOLAPP_SPATIAL_ANALYZE: ${String(detail)}`;
+                    if (NON_RETRYABLE_HTTP_STATUSES.has(res.status)) {
+                        throw new NonRetryableSyncError(res.status, errMsg);
+                    }
+                    throw new Error(errMsg);
+                }
+
+                if (typeof resBody?.meshUrl === 'string' && typeof resBody?.meshSha256 === 'string') {
+                    try {
+                        const glbRes = await coreAuthFetch(resBody.meshUrl, {
+                            method: 'GET',
+                            headers: { 'X-Active-Account-Id': activeTenantId },
+                        });
+                        if (glbRes.ok) {
+                            const glbBuf = await glbRes.arrayBuffer();
+                            if (glbBuf.byteLength >= 12) {
+                                await localCasFilesystem.cacheRemoteGlb(
+                                    resBody.meshSha256,
+                                    glbBuf,
+                                    activeTenantId
+                                );
+                            }
+                        }
+                    } catch {
+                        // Pre-cache opcional
+                    }
+                }
+                dispatchSyncSuccessEvent(task, 'minreport:spatial-sync-complete', resBody);
                 break;
             }
             case 'OPERMAQ_API_MUTATION': {

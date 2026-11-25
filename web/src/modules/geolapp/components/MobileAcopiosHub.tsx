@@ -49,11 +49,13 @@ export const MobileAcopiosHub: React.FC<MobileAcopiosHubProps> = ({
     const calValid = useMemo(() => isCalibrationValid(calibration), [calibration]);
     const daysLeft = useMemo(() => calibrationRemainingDays(calibration), [calibration]);
 
-    const calAccentClass = calValid ? 'border-l-[#00AEEF]' : 'border-l-[#C68346]';
-    const calIconColor = calValid ? 'text-[#00AEEF]' : 'text-[#C68346]';
+    const calAccentClass = calValid ? 'border-l-[#00AEEF]' : 'border-l-transparent';
+    const calIconColor = calValid
+        ? 'text-[#00AEEF]'
+        : 'text-[#475569] dark:text-[#8A93A6]';
     const calStatusLabel = calValid && calibration
         ? `${t('hub.cal_factor_prefix', 'CAL')} ×${calibration.scaleFactor.toFixed(3)} · ${daysLeft}d`
-        : t('hub.cal_pending', 'SIN CALIBRAR');
+        : t('hub.cal_optional', 'DIAGNÓSTICO ESCALA');
 
     return (
         <div className="h-full w-full flex-1 bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] flex flex-col overflow-hidden select-none rounded-none shadow-none font-atkinson">
@@ -126,7 +128,7 @@ export const MobileAcopiosHub: React.FC<MobileAcopiosHubProps> = ({
                         </span>
                     </button>
                     <div
-                        className={`mt-fib-8 font-mono tabular-nums text-data-dense ${calValid ? 'text-[#00AEEF]' : 'text-[#C68346]'
+                        className={`mt-fib-8 font-mono tabular-nums text-data-dense ${calValid ? 'text-[#00AEEF]' : 'text-[#475569] dark:text-[#8A93A6]'
                             }`}
                     >
                         {calStatusLabel}

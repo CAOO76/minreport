@@ -8,6 +8,7 @@ import {
     StockpileMeasurement,
 } from '../core/types/GeolappTypes';
 import { calculationEngine } from '../core/services/calculation-engine';
+import { dataService } from '../core/services/DataService';
 import { formatStockpileVolumeM3 } from '../core/services/spatialScannerService';
 import { useResolvedStockpileImage } from '../core/services/StorageService';
 import { downloadGeolappVectorPdf } from '../core/utils/vectorPdfGenerator';
@@ -15,7 +16,12 @@ import { isValidBox2D } from '../core/utils/rosinRammler';
 import { triggerFieldImpact } from '../core/utils/fieldHaptics';
 import { buildCanonicalGeoFix } from '../../../core/geo/wgs84UtmProjection';
 import { StockpileStaticMapCard } from './StockpileStaticMapCard';
+import { StockpileTwin3DLazy } from './StockpileTwin3DLazy';
 import { StockpileVisualStage } from './StockpileVisualStage';
+import {
+    HitlConfirmModal,
+    type HitlComparisonDiffItem,
+} from '../../../components/common/HitlConfirmModal';
 import {
     ReportBlockEditable,
     ReportFieldRow,
@@ -84,6 +90,12 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
     const resolvedPreviousPhoto = useResolvedStockpileImage(measurement.previous_photo_url);
 
     const [showPreviousPhoto, setShowPreviousPhoto] = useState(false);
+    const [mobileVisualMode, setMobileVisualMode] = useState<'PHOTO' | '3D'>('PHOTO');
+    const [pendingReconcileDecision, setPendingReconcileDecision] = useState<
+        'ACCEPT_CLOUD' | 'KEEP_OFFLINE' | null
+    >(null);
+    const [isSavingReconcileHitl, setIsSavingReconcileHitl] = useState(false);
+    const [reconciliationResolved, setReconciliationResolved] = useState(false);
     const [isExportingPdf, setIsExportingPdf] = useState(false);
     const [statusBanner, setStatusBanner] = useState<{
         type: 'success' | 'error' | 'info';
@@ -296,6 +308,55 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
     if (isMobile) {
         const activePhotoSrc =
             showPreviousPhoto && resolvedPreviousPhoto ? resolvedPreviousPhoto : resolvedPhoto;
+        const hasMobile3D = Boolean(measurement.mesh_url || measurement.local_preview_mesh);
+        const requiresHitlReconcile =
+            !reconciliationResolved &&
+            measurement.reconciliation_status === 'REQUIRES_HITL_REVIEW' &&
+            typeof measurement.cloud_refined_m3 === 'number' &&
+            measurement.cloud_refined_m3 > 0;
+        const offlineVolRef = measurement.offline_in_situ_m3 ?? measurement.volumen_m3;
+        const reconcileDiffs: HitlComparisonDiffItem[] =
+            pendingReconcileDecision && typeof measurement.cloud_refined_m3 === 'number'
+                ? [
+                      {
+                          field: 'volumen_m3',
+                          current: `${formatStockpileVolumeM3(offlineVolRef)} m³ (IN-SITU)`,
+                          suggested:
+                              pendingReconcileDecision === 'ACCEPT_CLOUD'
+                                  ? `${formatStockpileVolumeM3(measurement.cloud_refined_m3)} m³ (CLOUD)`
+                                  : `${formatStockpileVolumeM3(offlineVolRef)} m³ (MANTENER IN-SITU)`,
+                      },
+                  ]
+                : [];
+        const executeReconcileHitl = async () => {
+            if (!pendingReconcileDecision || isSavingReconcileHitl) return;
+            setIsSavingReconcileHitl(true);
+            try {
+                await dataService.confirmMeasurementReconciliationHitl(
+                    measurement.assetId,
+                    measurement.id,
+                    pendingReconcileDecision,
+                    'ACTUALIZAR'
+                );
+                setReconciliationResolved(true);
+                setPendingReconcileDecision(null);
+                setStatusBanner({
+                    type: 'success',
+                    text: t('reconciliation.hitl_confirmed', 'Conciliación actualizada.'),
+                });
+            } catch (err) {
+                setStatusBanner({
+                    type: 'error',
+                    text:
+                        err instanceof Error
+                            ? err.message
+                            : t('hitl.save_error', 'Error guardando HITL.'),
+                });
+                setPendingReconcileDecision(null);
+            } finally {
+                setIsSavingReconcileHitl(false);
+            }
+        };
         const closureTypeLabel =
             measurement.closure_reason === 'SHIPPED'
                 ? t('lifecycle.closure_shipped_label', 'DESPACHO')
@@ -325,6 +386,48 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
                     </div>
 
                     <div className="flex items-center gap-1 shrink-0">
+                        {hasMobile3D && (
+                            <>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        void triggerFieldImpact('LIGHT');
+                                        setMobileVisualMode('PHOTO');
+                                    }}
+                                    aria-label={t('visual.mode_photo', 'FOTO')}
+                                    title={t('visual.mode_photo', 'FOTO')}
+                                    aria-pressed={mobileVisualMode === 'PHOTO'}
+                                    className={`min-w-[48px] min-h-[48px] bg-transparent border-0 border-b-2 outline-none cursor-pointer rounded-none flex items-center justify-center ${
+                                        mobileVisualMode === 'PHOTO'
+                                            ? 'border-[#C68346] text-[#C68346]'
+                                            : 'border-transparent text-[#475569] dark:text-[#8A93A6]'
+                                    }`}
+                                >
+                                    <span className="material-symbols-outlined text-[22px]">
+                                        photo_camera
+                                    </span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        void triggerFieldImpact('LIGHT');
+                                        setMobileVisualMode('3D');
+                                    }}
+                                    aria-label={t('visual.mode_3d', '3D')}
+                                    title={t('visual.mode_3d', '3D')}
+                                    aria-pressed={mobileVisualMode === '3D'}
+                                    className={`min-w-[48px] min-h-[48px] bg-transparent border-0 border-b-2 outline-none cursor-pointer rounded-none flex items-center justify-center ${
+                                        mobileVisualMode === '3D'
+                                            ? 'border-[#C68346] text-[#C68346]'
+                                            : 'border-transparent text-[#475569] dark:text-[#8A93A6]'
+                                    }`}
+                                >
+                                    <span className="material-symbols-outlined text-[22px]">
+                                        deployed_code
+                                    </span>
+                                </button>
+                            </>
+                        )}
                         <button
                             type="button"
                             onClick={() => void handleExportPdf()}
@@ -391,80 +494,158 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
                         </div>
                     )}
 
-                    {/* Única fotografía de la medición (+ conmutador de iconos si existe foto previa) */}
-                    <section className="relative w-full h-[260px] bg-[#F8FAFC] dark:bg-[#07090D] border-b border-[#E2E8F0] dark:border-[#12151C] flex items-center justify-center overflow-hidden">
-                        {activePhotoSrc ? (
-                            <SecureImage
-                                src={activePhotoSrc}
-                                alt={
-                                    showPreviousPhoto
-                                        ? t('history.previous_photo_alt', 'Foto anterior')
-                                        : t('history.current_photo_alt', 'Foto actual')
+                    {/* Visor Foto Única o Gemelo 3D Nivel 1/2 (desmontaje GPU al volver a PHOTO) */}
+                    {mobileVisualMode === '3D' && hasMobile3D ? (
+                        <section className="w-full border-b border-[#E2E8F0] dark:border-[#12151C]">
+                            <StockpileTwin3DLazy
+                                compact
+                                heightPx={260}
+                                meshUrl={measurement.mesh_url ?? null}
+                                localPreviewMesh={measurement.local_preview_mesh ?? null}
+                                lifecycleStatus={measurement.lifecycle_status ?? null}
+                                copperDomain={effDomain}
+                                tinVolumeM3={
+                                    measurement.tin_volume_m3 ??
+                                    measurement.offline_in_situ_m3 ??
+                                    null
                                 }
-                                className="w-full h-full object-cover"
+                                meshSource={measurement.mesh_source}
+                                casMetrics={
+                                    measurement.mesh_original_bytes !== undefined ||
+                                    measurement.mesh_optimized_bytes !== undefined ||
+                                    measurement.mesh_sha256
+                                        ? {
+                                              originalBytes: measurement.mesh_original_bytes,
+                                              optimizedBytes: measurement.mesh_optimized_bytes,
+                                              savingsPct: measurement.mesh_savings_pct,
+                                              sha256: measurement.mesh_sha256,
+                                          }
+                                        : undefined
+                                }
                             />
-                        ) : (
-                            <span
-                                className="material-symbols-outlined text-[40px] text-[#94A3B8] dark:text-[#5A6072]"
-                                aria-hidden="true"
-                            >
-                                image_not_supported
-                            </span>
-                        )}
+                        </section>
+                    ) : (
+                        <section className="relative w-full h-[260px] bg-[#F8FAFC] dark:bg-[#07090D] border-b border-[#E2E8F0] dark:border-[#12151C] flex items-center justify-center overflow-hidden">
+                            {activePhotoSrc ? (
+                                <SecureImage
+                                    src={activePhotoSrc}
+                                    alt={
+                                        showPreviousPhoto
+                                            ? t('history.previous_photo_alt', 'Foto anterior')
+                                            : t('history.current_photo_alt', 'Foto actual')
+                                    }
+                                    className="w-full h-full object-cover"
+                                />
+                            ) : (
+                                <span
+                                    className="material-symbols-outlined text-[40px] text-[#94A3B8] dark:text-[#5A6072]"
+                                    aria-hidden="true"
+                                >
+                                    image_not_supported
+                                </span>
+                            )}
 
-                        {resolvedPreviousPhoto && (
-                            <div className="absolute top-2 right-2 flex items-center gap-1 bg-[#FFFFFF]/90 dark:bg-[#000000]/90 border border-[#E2E8F0] dark:border-[#12151C]">
+                            {resolvedPreviousPhoto && (
+                                <div className="absolute top-2 right-2 flex items-center gap-1 bg-[#FFFFFF]/90 dark:bg-[#000000]/90 border border-[#E2E8F0] dark:border-[#12151C]">
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            void triggerFieldImpact('LIGHT');
+                                            setShowPreviousPhoto(false);
+                                        }}
+                                        aria-label={t(
+                                            'measurement_mobile.photo_this_aria',
+                                            'Foto de esta medición'
+                                        )}
+                                        title={t(
+                                            'measurement_mobile.photo_this_aria',
+                                            'Foto de esta medición'
+                                        )}
+                                        aria-pressed={!showPreviousPhoto}
+                                        className={`min-w-[48px] min-h-[48px] bg-transparent border-0 outline-none flex items-center justify-center cursor-pointer rounded-none ${!showPreviousPhoto
+                                            ? 'text-[#C68346]'
+                                            : 'text-[#475569] dark:text-[#8A93A6]'
+                                            }`}
+                                    >
+                                        <span className="material-symbols-outlined text-[22px]">
+                                            photo_camera
+                                        </span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            void triggerFieldImpact('LIGHT');
+                                            setShowPreviousPhoto(true);
+                                        }}
+                                        aria-label={t(
+                                            'measurement_mobile.photo_prev_aria',
+                                            'Foto medición anterior'
+                                        )}
+                                        title={t(
+                                            'measurement_mobile.photo_prev_aria',
+                                            'Foto medición anterior'
+                                        )}
+                                        aria-pressed={showPreviousPhoto}
+                                        className={`min-w-[48px] min-h-[48px] bg-transparent border-0 outline-none flex items-center justify-center cursor-pointer rounded-none ${showPreviousPhoto
+                                            ? 'text-[#C68346]'
+                                            : 'text-[#475569] dark:text-[#8A93A6]'
+                                            }`}
+                                    >
+                                        <span className="material-symbols-outlined text-[22px]">
+                                            history
+                                        </span>
+                                    </button>
+                                </div>
+                            )}
+                        </section>
+                    )}
+
+                    {/* Compuerta HITL móvil exclusiva cuando conciliación Cloud vs In-Situ requiere revisión */}
+                    {requiresHitlReconcile && (
+                        <section className="px-fib-21 py-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C] border-l-[3px] border-l-[#C68346] font-mono tabular-nums space-y-fib-8">
+                            <div className="flex items-center justify-between gap-fib-8">
+                                <span className="text-microcopy font-bold uppercase text-[#C68346]">
+                                    {t('reconciliation.hitl_required', 'REVISIÓN HITL CLOUD')}
+                                </span>
+                                {typeof measurement.reconciliation_delta_pct === 'number' && (
+                                    <span className="text-data-dense font-bold text-[#C68346]">
+                                        {measurement.reconciliation_delta_pct > 0 ? '+' : ''}
+                                        {measurement.reconciliation_delta_pct.toFixed(1)}%
+                                    </span>
+                                )}
+                            </div>
+                            <div className="flex items-center justify-between gap-fib-13 text-data-dense">
+                                <span>IN-SITU {formatStockpileVolumeM3(offlineVolRef)} m³</span>
+                                <span className="text-[#00AEEF] font-bold">
+                                    CLOUD {formatStockpileVolumeM3(measurement.cloud_refined_m3!)} m³
+                                </span>
+                            </div>
+                            <div className="flex items-center justify-end gap-fib-13 pt-1">
                                 <button
                                     type="button"
-                                    onClick={() => {
-                                        void triggerFieldImpact('LIGHT');
-                                        setShowPreviousPhoto(false);
-                                    }}
-                                    aria-label={t(
-                                        'measurement_mobile.photo_this_aria',
-                                        'Foto de esta medición'
-                                    )}
-                                    title={t(
-                                        'measurement_mobile.photo_this_aria',
-                                        'Foto de esta medición'
-                                    )}
-                                    aria-pressed={!showPreviousPhoto}
-                                    className={`min-w-[48px] min-h-[48px] bg-transparent border-0 outline-none flex items-center justify-center cursor-pointer rounded-none ${!showPreviousPhoto
-                                        ? 'text-[#C68346]'
-                                        : 'text-[#475569] dark:text-[#8A93A6]'
-                                        }`}
+                                    onClick={() => setPendingReconcileDecision('KEEP_OFFLINE')}
+                                    aria-label={t('reconciliation.keep_offline', 'MANTENER IN-SITU')}
+                                    title={t('reconciliation.keep_offline', 'MANTENER IN-SITU')}
+                                    className="min-w-[48px] min-h-[48px] bg-transparent border-0 outline-none text-[#475569] dark:text-[#8A93A6] hover:text-[#C68346] flex items-center justify-center cursor-pointer rounded-none"
                                 >
-                                    <span className="material-symbols-outlined text-[22px]">
-                                        photo_camera
+                                    <span className="material-symbols-outlined text-[24px]">
+                                        close
                                     </span>
                                 </button>
                                 <button
                                     type="button"
-                                    onClick={() => {
-                                        void triggerFieldImpact('LIGHT');
-                                        setShowPreviousPhoto(true);
-                                    }}
-                                    aria-label={t(
-                                        'measurement_mobile.photo_prev_aria',
-                                        'Foto medición anterior'
-                                    )}
-                                    title={t(
-                                        'measurement_mobile.photo_prev_aria',
-                                        'Foto medición anterior'
-                                    )}
-                                    aria-pressed={showPreviousPhoto}
-                                    className={`min-w-[48px] min-h-[48px] bg-transparent border-0 outline-none flex items-center justify-center cursor-pointer rounded-none ${showPreviousPhoto
-                                        ? 'text-[#C68346]'
-                                        : 'text-[#475569] dark:text-[#8A93A6]'
-                                        }`}
+                                    onClick={() => setPendingReconcileDecision('ACCEPT_CLOUD')}
+                                    aria-label={t('reconciliation.accept_cloud', 'ACEPTAR CLOUD (HITL)')}
+                                    title={t('reconciliation.accept_cloud', 'ACEPTAR CLOUD (HITL)')}
+                                    className="min-w-[48px] min-h-[48px] bg-transparent border-0 outline-none text-[#00AEEF] flex items-center justify-center cursor-pointer rounded-none"
                                 >
-                                    <span className="material-symbols-outlined text-[22px]">
-                                        history
+                                    <span className="material-symbols-outlined text-[24px]">
+                                        check
                                     </span>
                                 </button>
                             </div>
-                        )}
-                    </section>
+                        </section>
+                    )}
 
                     {/* Ficha Senior 70+ de alto contraste y datos reales únicamente */}
                     <section className="divide-y divide-[#E2E8F0] dark:divide-[#12151C] font-mono tabular-nums">
@@ -564,18 +745,36 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
                         )}
                     </section>
                 </div>
+
+                <HitlConfirmModal
+                    open={Boolean(pendingReconcileDecision)}
+                    title={t('reconciliation.hitl_modal_title', 'CONCILIACIÓN VOLUMÉTRICA HITL')}
+                    description={t(
+                        'hitl.modal_description',
+                        'Escriba ACTUALIZAR para confirmar el registro oficial.'
+                    )}
+                    keyword="ACTUALIZAR"
+                    comparisonDiff={reconcileDiffs}
+                    loading={isSavingReconcileHitl}
+                    onConfirm={() => void executeReconcileHitl()}
+                    onCancel={() => setPendingReconcileDecision(null)}
+                />
             </main>
         );
     }
 
     // Fallback Escritorio 100% Solo Lectura
-    const fallbackChainHasGeom = Boolean(
-        measurement.geometry?.type &&
-        measurement.geometry?.dimensions &&
-        Object.values(measurement.geometry.dimensions).some(
-            (v) => typeof v === 'number' && Number.isFinite(v) && v > 0
-        )
-    );
+    const measMeshCas =
+        measurement.mesh_original_bytes !== undefined ||
+        measurement.mesh_optimized_bytes !== undefined ||
+        measurement.mesh_sha256
+            ? {
+                  originalBytes: measurement.mesh_original_bytes,
+                  optimizedBytes: measurement.mesh_optimized_bytes,
+                  savingsPct: measurement.mesh_savings_pct,
+                  sha256: measurement.mesh_sha256,
+              }
+            : undefined;
 
     return (
         <main className="h-full w-full flex-1 flex flex-col bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] font-atkinson overflow-hidden rounded-none shadow-none">
@@ -635,17 +834,16 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
                                 null
                             }
                             meshUrl={measurement.mesh_url ?? null}
-                            fallbackGeometry={
-                                fallbackChainHasGeom && measurement.geometry
-                                    ? {
-                                        type: measurement.geometry.type,
-                                        dimensions: measurement.geometry
-                                            .dimensions as Record<string, number | undefined>,
-                                    }
-                                    : null
-                            }
+                            localPreviewMesh={measurement.local_preview_mesh ?? null}
+                            lifecycleStatus={measurement.lifecycle_status ?? null}
+                            reconciliationDeltaPct={measurement.reconciliation_delta_pct ?? null}
                             copperDomain={effDomain}
-                            tinVolumeM3={measurement.tin_volume_m3 ?? null}
+                            tinVolumeM3={
+                                measurement.tin_volume_m3 ??
+                                measurement.offline_in_situ_m3 ??
+                                null
+                            }
+                            casMetrics={measMeshCas}
                             meshSource={measurement.mesh_source}
                             uncertaintyPct={effUncertaintyPct}
                             toeScore={effToeScore}

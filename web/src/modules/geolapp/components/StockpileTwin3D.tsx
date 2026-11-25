@@ -5,18 +5,19 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader, type GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { CopyButton } from '../../../components/common/CopyButton';
 import { M3LinearProgress } from '../../../components/common/M3LinearProgress';
+import type {
+    DemGridV1,
+    MeasurementLifecycleStatus,
+    UnifiedBoundingBoxM,
+} from '../../../contracts/acopios.contracts';
 import { resolveStockpileMeshBinary } from '../core/services/StorageService';
-import {
-    buildStockpileGlbMesh,
-    type GlbBoundingBoxM,
-} from '../core/utils/glbMeshBuilder';
+import { buildThreeGeometryFromDemGridV1 } from '../core/utils/demGridGeometry';
 
 export interface StockpileTwin3DProps {
     meshUrl?: string | null;
-    fallbackGeometry?: {
-        type: string;
-        dimensions: Record<string, number | undefined>;
-    } | null;
+    /** Superficie DEM 2.5D real generada in-situ en terreno (Nivel 1 Offline, < 60 KB) */
+    localPreviewMesh?: DemGridV1 | null;
+    lifecycleStatus?: MeasurementLifecycleStatus | null;
     copperDomain?: string;
     tinVolumeM3?: number | null;
     casMetrics?: {
@@ -32,7 +33,7 @@ export interface StockpileTwin3DProps {
 }
 
 interface ParsedMeshTelemetry {
-    boundingBoxM: GlbBoundingBoxM;
+    boundingBoxM: UnifiedBoundingBoxM;
     triangleCount: number;
     vertexCount: number;
     tinVolumeM3: number | null;
@@ -40,6 +41,8 @@ interface ParsedMeshTelemetry {
     optimizedBytes?: number;
     savingsPct?: number;
     sourceLabel: string;
+    tierTag: 'CLOUD' | 'IN-SITU';
+    hasVertexColors: boolean;
 }
 
 const UNDECLARED_VALUE = '[Información técnica no declarada en ficha]';
@@ -102,10 +105,11 @@ function parseGlbArrayBuffer(loader: GLTFLoader, buffer: ArrayBuffer): Promise<G
 }
 
 function computeStatsFromGltfRoot(root: THREE.Object3D): {
-    boundingBoxM: GlbBoundingBoxM;
+    boundingBoxM: UnifiedBoundingBoxM;
     triangleCount: number;
     vertexCount: number;
     tinVolumeM3: number | null;
+    hasVertexColors: boolean;
 } {
     const box = new THREE.Box3().setFromObject(root);
     const size = new THREE.Vector3();
@@ -114,6 +118,7 @@ function computeStatsFromGltfRoot(root: THREE.Object3D): {
     let triangleCount = 0;
     let vertexCount = 0;
     let signedVolSum6 = 0;
+    let hasVertexColors = false;
 
     const v0 = new THREE.Vector3();
     const v1 = new THREE.Vector3();
@@ -125,6 +130,9 @@ function computeStatsFromGltfRoot(root: THREE.Object3D): {
         if (!mesh.isMesh || !mesh.geometry) return;
         const pos = mesh.geometry.getAttribute('position');
         if (!pos) return;
+        if (mesh.geometry.getAttribute('color')) {
+            hasVertexColors = true;
+        }
         vertexCount += pos.count;
         const idx = mesh.geometry.getIndex();
         if (idx) {
@@ -158,13 +166,14 @@ function computeStatsFromGltfRoot(root: THREE.Object3D): {
         triangleCount,
         vertexCount,
         tinVolumeM3: Number.isFinite(tinVol) && tinVol > 0 ? Math.round(tinVol * 100) / 100 : null,
+        hasVertexColors,
     };
 }
 
 function fitCameraToBox(
     camera: THREE.PerspectiveCamera,
     controls: OrbitControls,
-    box: GlbBoundingBoxM
+    box: UnifiedBoundingBoxM
 ): void {
     const maxDim = Math.max(box.widthX, box.heightY, box.depthZ, 0.25);
     const distance = Math.max(maxDim * 2.1, 0.65);
@@ -178,13 +187,15 @@ function fitCameraToBox(
     camera.far = Math.max(500, distance * 25);
     camera.updateProjectionMatrix();
     controls.minDistance = Math.max(0.25, distance * 0.25);
+    controls.maxDistance = Math.max(25, distance * 6);
     controls.target.set(0, targetY, 0);
     controls.update();
 }
 
 export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
     meshUrl,
-    fallbackGeometry,
+    localPreviewMesh,
+    lifecycleStatus,
     copperDomain,
     tinVolumeM3,
     casMetrics,
@@ -195,7 +206,7 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
 }) => {
     const { t } = useTranslation();
     const viewportHostRef = useRef<HTMLDivElement | null>(null);
-    const modelGroupRef = useRef<THREE.Group | null>(null);
+    const modelGroupRef = useRef<THREE.Object3D | null>(null);
     const sceneRef = useRef<THREE.Scene | null>(null);
     const gridRef = useRef<{
         helper: THREE.GridHelper | null;
@@ -203,10 +214,13 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
         divisions: number;
     }>({ helper: null, extent: 12, divisions: 12 });
     const resetCameraFnRef = useRef<(() => void) | null>(null);
+    const requestRenderRef = useRef<(() => void) | null>(null);
 
     const [isWireframe, setIsWireframe] = useState(false);
+    const [showConfidenceLayer, setShowConfidenceLayer] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
     const [loadFailed, setLoadFailed] = useState(false);
+    const [failureReason, setFailureReason] = useState<string | null>(null);
     const [retryCounter, setRetryCounter] = useState(0);
     const [webglUnavailable, setWebglUnavailable] = useState(false);
     const [isDark, setIsDark] = useState<boolean>(() =>
@@ -214,16 +228,28 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
             ? document.documentElement.classList.contains('dark')
             : false
     );
+
+    const isWireframeRef = useRef(isWireframe);
+    const showConfidenceLayerRef = useRef(showConfidenceLayer);
+    const isDarkRef = useRef(isDark);
+    useEffect(() => {
+        isWireframeRef.current = isWireframe;
+    }, [isWireframe]);
+    useEffect(() => {
+        showConfidenceLayerRef.current = showConfidenceLayer;
+    }, [showConfidenceLayer]);
+    useEffect(() => {
+        isDarkRef.current = isDark;
+    }, [isDark]);
+
     const [meshBuffer, setMeshBuffer] = useState<ArrayBuffer | null>(null);
+    const [activeRenderMode, setActiveRenderMode] = useState<'NONE' | 'GLB' | 'DEM_V1'>('NONE');
     const [telemetry, setTelemetry] = useState<ParsedMeshTelemetry | null>(null);
 
-    const fallbackKey = useMemo(() => {
-        if (!fallbackGeometry) return '';
-        return JSON.stringify({
-            type: fallbackGeometry.type,
-            dimensions: fallbackGeometry.dimensions,
-        });
-    }, [fallbackGeometry]);
+    const demKey = useMemo(() => {
+        if (!localPreviewMesh) return '';
+        return `${localPreviewMesh.nx}x${localPreviewMesh.nz}:${localPreviewMesh.cellSizeM}:${localPreviewMesh.sha256 || localPreviewMesh.heightsM.length}`;
+    }, [localPreviewMesh]);
 
     // Sincronizar tema Light/Dark sin reconstruir contexto WebGL
     useEffect(() => {
@@ -236,89 +262,112 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
         return () => observer.disconnect();
     }, []);
 
-    // Cargar binario .glb desde meshUrl o generar deterministamente desde fallbackGeometry
+    // Cargar binario .glb real desde meshUrl o activar Nivel 1 Offline (`dem_grid_v1`).
+    // POLÍTICA CERO 3D SINTÉTICO: jamás se genera cono/pirámide desde {a,b,h}.
     useEffect(() => {
         let cancelled = false;
         const cleanUrl = typeof meshUrl === 'string' ? meshUrl.trim() : '';
-        const hasFallback = Boolean(fallbackGeometry && fallbackGeometry.type);
+        const hasDem = Boolean(
+            localPreviewMesh &&
+                localPreviewMesh.nx >= 2 &&
+                localPreviewMesh.nz >= 2 &&
+                Array.isArray(localPreviewMesh.heightsM) &&
+                localPreviewMesh.heightsM.length === localPreviewMesh.nx * localPreviewMesh.nz
+        );
 
-        if (!cleanUrl && !hasFallback) {
+        if (!cleanUrl && !hasDem) {
             setIsLoading(false);
             setLoadFailed(false);
+            setFailureReason(null);
             setMeshBuffer(null);
+            setActiveRenderMode('NONE');
             setTelemetry(null);
+            return;
+        }
+
+        if (!cleanUrl && hasDem) {
+            setIsLoading(false);
+            setLoadFailed(false);
+            setFailureReason(null);
+            setMeshBuffer(null);
+            setActiveRenderMode('DEM_V1');
+            setTelemetry({
+                boundingBoxM: { widthX: 0, heightY: 0, depthZ: 0 },
+                triangleCount: 0,
+                vertexCount: 0,
+                tinVolumeM3:
+                    typeof tinVolumeM3 === 'number'
+                        ? tinVolumeM3
+                        : localPreviewMesh?.volumeM3 ?? null,
+                sourceLabel: 'IN_SITU_DEM_GRID_V1',
+                tierTag: 'IN-SITU',
+                hasVertexColors: true,
+            });
             return;
         }
 
         setIsLoading(true);
         setLoadFailed(false);
+        setFailureReason(null);
 
         (async () => {
-            let resolvedBuffer: ArrayBuffer | null = null;
-            let resolvedMeta: ParsedMeshTelemetry | null = null;
-            let remoteFailed = false;
-
-            if (cleanUrl) {
-                const fetched = await resolveStockpileMeshBinary(cleanUrl);
-                if (fetched.arrayBuffer && fetched.arrayBuffer.byteLength >= 12) {
-                    const magicView = new DataView(fetched.arrayBuffer);
-                    const isGlbHeader =
-                        magicView.getUint32(0, true) === 0x46546c67 &&
-                        magicView.getUint32(4, true) === 2;
-                    if (isGlbHeader) {
-                        resolvedBuffer = fetched.arrayBuffer;
-                        resolvedMeta = {
-                            boundingBoxM: { widthX: 0, heightY: 0, depthZ: 0 },
-                            triangleCount: 0,
-                            vertexCount: 0,
-                            tinVolumeM3: typeof tinVolumeM3 === 'number' ? tinVolumeM3 : null,
-                            originalBytes: casMetrics?.originalBytes,
-                            optimizedBytes:
-                                casMetrics?.optimizedBytes ?? fetched.arrayBuffer.byteLength,
-                            savingsPct: casMetrics?.savingsPct,
-                            sourceLabel: meshSource || fetched.sourceLabel,
-                        };
-                    } else {
-                        remoteFailed = true;
-                    }
-                } else {
-                    remoteFailed = true;
-                }
-            }
-
-            if (!resolvedBuffer && fallbackGeometry) {
-                const built = buildStockpileGlbMesh({
-                    geometryType: fallbackGeometry.type,
-                    dimensions: fallbackGeometry.dimensions || {},
-                });
-                if (built) {
-                    resolvedBuffer = built.glbBuffer;
-                    const orig = casMetrics?.originalBytes ?? built.rawUnindexedBytes;
-                    const opt = casMetrics?.optimizedBytes ?? built.optimizedGlbBytes;
-                    const pct =
-                        typeof casMetrics?.savingsPct === 'number'
-                            ? casMetrics.savingsPct
-                            : orig > 0
-                              ? Math.max(0, Math.round((1 - opt / orig) * 1000) / 10)
-                              : 0;
-                    resolvedMeta = {
-                        boundingBoxM: built.boundingBoxM,
-                        triangleCount: built.triangleCount,
-                        vertexCount: built.vertexCount,
-                        tinVolumeM3:
-                            typeof tinVolumeM3 === 'number' ? tinVolumeM3 : built.tinVolumeM3,
-                        originalBytes: orig,
-                        optimizedBytes: opt,
-                        savingsPct: pct,
-                        sourceLabel: meshSource || 'LOCAL_DETERMINISTIC_TIN_GLB',
-                    };
-                }
-            }
-
+            const fetched = await resolveStockpileMeshBinary(cleanUrl);
             if (cancelled) return;
-            setLoadFailed(Boolean(!resolvedBuffer && remoteFailed));
-            setMeshBuffer(resolvedBuffer);
-            setTelemetry(resolvedMeta);
+
+            if (fetched.arrayBuffer && fetched.arrayBuffer.byteLength >= 12) {
+                const magicView = new DataView(fetched.arrayBuffer);
+                const isGlbHeader =
+                    magicView.getUint32(0, true) === 0x46546c67 &&
+                    magicView.getUint32(4, true) === 2;
+                if (isGlbHeader) {
+                    setMeshBuffer(fetched.arrayBuffer);
+                    setActiveRenderMode('GLB');
+                    setLoadFailed(false);
+                    setFailureReason(null);
+                    setTelemetry({
+                        boundingBoxM: { widthX: 0, heightY: 0, depthZ: 0 },
+                        triangleCount: 0,
+                        vertexCount: 0,
+                        tinVolumeM3: typeof tinVolumeM3 === 'number' ? tinVolumeM3 : null,
+                        originalBytes: casMetrics?.originalBytes,
+                        optimizedBytes:
+                            casMetrics?.optimizedBytes ?? fetched.arrayBuffer.byteLength,
+                        savingsPct: casMetrics?.savingsPct,
+                        sourceLabel: meshSource || fetched.sourceLabel,
+                        tierTag: 'CLOUD',
+                        hasVertexColors: false,
+                    });
+                    setIsLoading(false);
+                    return;
+                }
+                setFailureReason('INVALID_GLB_HEADER');
+            } else {
+                setFailureReason(fetched.sourceLabel || 'CAS_FETCH_ERROR');
+            }
+
+            // Si falla la descarga remota pero existe DEM real in-situ, mostrar Nivel 1 honestamente etiquetado
+            if (hasDem) {
+                setMeshBuffer(null);
+                setActiveRenderMode('DEM_V1');
+                setLoadFailed(true);
+                setTelemetry({
+                    boundingBoxM: { widthX: 0, heightY: 0, depthZ: 0 },
+                    triangleCount: 0,
+                    vertexCount: 0,
+                    tinVolumeM3:
+                        typeof tinVolumeM3 === 'number'
+                            ? tinVolumeM3
+                            : localPreviewMesh?.volumeM3 ?? null,
+                    sourceLabel: 'IN_SITU_DEM_GRID_V1',
+                    tierTag: 'IN-SITU',
+                    hasVertexColors: true,
+                });
+            } else {
+                setMeshBuffer(null);
+                setActiveRenderMode('NONE');
+                setLoadFailed(true);
+                setTelemetry(null);
+            }
             setIsLoading(false);
         })();
 
@@ -326,38 +375,59 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
             cancelled = true;
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [meshUrl, fallbackKey, meshSource, retryCounter]);
+    }, [meshUrl, demKey, meshSource, retryCounter]);
 
-    // Actualizar material wireframe/sólido sin recrear la escena
-    const applyWireframeState = useCallback((root: THREE.Object3D | null, wireframe: boolean) => {
-        if (!root) return;
-        root.traverse((obj) => {
-            const mesh = obj as THREE.Mesh;
-            if (!mesh.isMesh || !mesh.material) return;
-            const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-            for (const mat of mats) {
-                if (mat instanceof THREE.MeshStandardMaterial) {
-                    mat.wireframe = wireframe;
-                    mat.color.setHex(wireframe ? 0x00aeef : 0xc68346);
-                    mat.emissive.setHex(wireframe ? 0x004966 : 0x000000);
-                    mat.needsUpdate = true;
-                } else if ('wireframe' in mat) {
-                    (mat as THREE.MeshBasicMaterial).wireframe = wireframe;
-                    (mat as THREE.MeshBasicMaterial).color?.setHex(wireframe ? 0x00aeef : 0xc68346);
-                    mat.needsUpdate = true;
+    // Actualizar material wireframe / capa de confianza ANSI/ISA-101 (`COLOR_0`) sin recrear la escena
+    const applyVisualMaterialState = useCallback(
+        (root: THREE.Object3D | null, wireframe: boolean, confidenceLayer: boolean) => {
+            if (!root) return;
+            root.traverse((obj) => {
+                const mesh = obj as THREE.Mesh;
+                if (!mesh.isMesh || !mesh.material) return;
+                const hasColorAttr = Boolean(mesh.geometry?.getAttribute('color'));
+                const useVertexColors = confidenceLayer && hasColorAttr && !wireframe;
+                const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+                for (const mat of mats) {
+                    if (mat instanceof THREE.MeshStandardMaterial) {
+                        mat.wireframe = wireframe;
+                        mat.vertexColors = useVertexColors;
+                        if (useVertexColors) {
+                            mat.color.setHex(0xffffff);
+                            mat.emissive.setHex(0x000000);
+                        } else {
+                            mat.color.setHex(wireframe ? 0x00aeef : 0xc68346);
+                            mat.emissive.setHex(wireframe ? 0x004966 : 0x000000);
+                        }
+                        mat.needsUpdate = true;
+                    } else if ('wireframe' in mat) {
+                        (mat as THREE.MeshBasicMaterial).wireframe = wireframe;
+                        (mat as THREE.MeshBasicMaterial).vertexColors = useVertexColors;
+                        (mat as THREE.MeshBasicMaterial).color?.setHex(
+                            useVertexColors ? 0xffffff : wireframe ? 0x00aeef : 0xc68346
+                        );
+                        mat.needsUpdate = true;
+                    }
                 }
-            }
-        });
-    }, []);
+            });
+            requestRenderRef.current?.();
+        },
+        []
+    );
 
     useEffect(() => {
-        applyWireframeState(modelGroupRef.current, isWireframe);
-    }, [isWireframe, applyWireframeState]);
+        applyVisualMaterialState(modelGroupRef.current, isWireframe, showConfidenceLayer);
+    }, [isWireframe, showConfidenceLayer, applyVisualMaterialState]);
 
-    // Montar visor Three.js con limpieza GPU obligatoria
+    // Montar visor Three.js con renderizado bajo demanda (`0%` GPU en reposo) e higiene WebGL estricta
     useEffect(() => {
         const host = viewportHostRef.current;
-        if (!host || !meshBuffer) {
+        if (!host || activeRenderMode === 'NONE') {
+            return;
+        }
+        if (activeRenderMode === 'GLB' && !meshBuffer) {
+            return;
+        }
+        if (activeRenderMode === 'DEM_V1' && !localPreviewMesh) {
             return;
         }
 
@@ -368,8 +438,9 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
         let resizeObserver: ResizeObserver | null = null;
         let gridHelper: THREE.GridHelper | null = null;
 
+        const darkNow = isDarkRef.current;
         const scene = new THREE.Scene();
-        scene.background = new THREE.Color(isDark ? (compact ? 0x030508 : 0x000000) : 0xf8fafc);
+        scene.background = new THREE.Color(darkNow ? (compact ? 0x030508 : 0x000000) : 0xf8fafc);
         sceneRef.current = scene;
 
         const initWidth = Math.max(1, host.clientWidth || 320);
@@ -393,14 +464,61 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
         } catch {
             sceneRef.current = null;
             setWebglUnavailable(true);
+            if (activeRenderMode === 'DEM_V1' && localPreviewMesh) {
+                const builtDem = buildThreeGeometryFromDemGridV1(localPreviewMesh);
+                if (builtDem) {
+                    setTelemetry((prev) => ({
+                        boundingBoxM: builtDem.boundingBoxM,
+                        triangleCount: builtDem.triangleCount,
+                        vertexCount: builtDem.vertexCount,
+                        tinVolumeM3:
+                            typeof tinVolumeM3 === 'number'
+                                ? tinVolumeM3
+                                : builtDem.tinVolumeM3,
+                        originalBytes: prev?.originalBytes ?? casMetrics?.originalBytes,
+                        optimizedBytes: prev?.optimizedBytes ?? casMetrics?.optimizedBytes,
+                        savingsPct: prev?.savingsPct ?? casMetrics?.savingsPct,
+                        sourceLabel: prev?.sourceLabel || meshSource || 'IN_SITU_DEM_GRID_V1',
+                        tierTag: 'IN-SITU',
+                        hasVertexColors: builtDem.hasConfidenceColors,
+                    }));
+                    builtDem.geometry.dispose();
+                }
+            }
             return;
         }
+
+        const prevCamPos = new THREE.Vector3();
+        const prevTarget = new THREE.Vector3();
+
+        const requestRender = () => {
+            if (disposed || rafId !== 0 || !renderer) return;
+            rafId = window.requestAnimationFrame(() => {
+                rafId = 0;
+                if (disposed || !renderer) return;
+                prevCamPos.copy(camera.position);
+                if (controls) prevTarget.copy(controls.target);
+
+                const stillDamping = controls ? controls.update() : false;
+                renderer.render(scene, camera);
+
+                const moved =
+                    prevCamPos.distanceToSquared(camera.position) > 1e-8 ||
+                    (controls ? prevTarget.distanceToSquared(controls.target) > 1e-8 : false);
+                if (stillDamping || moved) {
+                    requestRender();
+                }
+            });
+        };
+        requestRenderRef.current = requestRender;
 
         controls = new OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true;
         controls.dampingFactor = 0.08;
         controls.maxPolarAngle = Math.PI * 0.495;
         controls.minDistance = 0.25;
+        controls.maxDistance = 80;
+        controls.addEventListener('change', requestRender);
 
         const hemiLight = new THREE.HemisphereLight(0xffffff, 0x334155, 0.85);
         scene.add(hemiLight);
@@ -413,104 +531,147 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
         fillLight.position.set(-16, 12, -14);
         scene.add(fillLight);
 
-        const loader = new GLTFLoader();
-        parseGlbArrayBuffer(loader, meshBuffer)
-            .then((gltf) => {
-                if (disposed) {
-                    disposeObject3DTree(gltf.scene);
-                    return;
-                }
+        const attachMeshRoot = (
+            root: THREE.Object3D,
+            computed: {
+                boundingBoxM: UnifiedBoundingBoxM;
+                triangleCount: number;
+                vertexCount: number;
+                tinVolumeM3: number | null;
+                hasVertexColors: boolean;
+            },
+            tierTag: 'CLOUD' | 'IN-SITU',
+            defaultSource: string
+        ) => {
+            const themeDark = isDarkRef.current;
+            const gridExtent = Math.max(
+                4,
+                Math.ceil(Math.max(computed.boundingBoxM.widthX, computed.boundingBoxM.depthZ) * 1.8)
+            );
+            const divisions = Math.min(40, Math.max(12, Math.round(gridExtent)));
+            gridHelper = new THREE.GridHelper(
+                gridExtent,
+                divisions,
+                themeDark ? 0x334155 : 0x94a3b8,
+                themeDark ? 0x12151c : 0xe2e8f0
+            );
+            gridRef.current = { helper: gridHelper, extent: gridExtent, divisions };
+            scene.add(gridHelper);
+            scene.add(root);
+            modelGroupRef.current = root;
 
-                const root = gltf.scene;
-                const box = new THREE.Box3().setFromObject(root);
-                const center = new THREE.Vector3();
-                box.getCenter(center);
-
-                // Asentar base en y = 0 centrado en XZ
-                root.position.set(-center.x, -box.min.y, -center.z);
-                root.traverse((obj) => {
-                    const mesh = obj as THREE.Mesh;
-                    if (!mesh.isMesh) return;
-                    if (!(mesh.material instanceof THREE.MeshStandardMaterial)) {
-                        const prevMat = mesh.material;
-                        if (Array.isArray(prevMat)) {
-                            prevMat.forEach(disposeMaterialResources);
-                        } else if (prevMat) {
-                            disposeMaterialResources(prevMat);
-                        }
-                        mesh.material = new THREE.MeshStandardMaterial({
-                            color: 0xc68346,
-                            metalness: 0.14,
-                            roughness: 0.78,
-                        });
+            applyVisualMaterialState(
+                root,
+                isWireframeRef.current,
+                showConfidenceLayerRef.current
+            );
+            if (controls) {
+                fitCameraToBox(camera, controls, computed.boundingBoxM);
+                resetCameraFnRef.current = () => {
+                    if (controls) {
+                        fitCameraToBox(camera, controls, computed.boundingBoxM);
+                        requestRender();
                     }
+                };
+            }
+            requestRender();
+
+            setTelemetry((prev) => ({
+                boundingBoxM:
+                    computed.boundingBoxM.widthX > 0
+                        ? computed.boundingBoxM
+                        : prev?.boundingBoxM || computed.boundingBoxM,
+                triangleCount:
+                    computed.triangleCount > 0 ? computed.triangleCount : prev?.triangleCount || 0,
+                vertexCount:
+                    computed.vertexCount > 0 ? computed.vertexCount : prev?.vertexCount || 0,
+                tinVolumeM3:
+                    typeof tinVolumeM3 === 'number'
+                        ? tinVolumeM3
+                        : computed.tinVolumeM3 ?? prev?.tinVolumeM3 ?? null,
+                originalBytes: prev?.originalBytes ?? casMetrics?.originalBytes,
+                optimizedBytes: prev?.optimizedBytes ?? casMetrics?.optimizedBytes,
+                savingsPct: prev?.savingsPct ?? casMetrics?.savingsPct,
+                sourceLabel: prev?.sourceLabel || meshSource || defaultSource,
+                tierTag,
+                hasVertexColors: computed.hasVertexColors,
+            }));
+        };
+
+        if (activeRenderMode === 'DEM_V1' && localPreviewMesh) {
+            const builtDem = buildThreeGeometryFromDemGridV1(localPreviewMesh);
+            if (builtDem) {
+                const mat = new THREE.MeshStandardMaterial({
+                    color: 0xc68346,
+                    metalness: 0.14,
+                    roughness: 0.78,
+                    vertexColors: false,
                 });
-
-                const computed = computeStatsFromGltfRoot(root);
-                const gridExtent = Math.max(
-                    4,
-                    Math.ceil(Math.max(computed.boundingBoxM.widthX, computed.boundingBoxM.depthZ) * 1.8)
+                const mesh = new THREE.Mesh(builtDem.geometry, mat);
+                const group = new THREE.Group();
+                group.add(mesh);
+                attachMeshRoot(
+                    group,
+                    {
+                        boundingBoxM: builtDem.boundingBoxM,
+                        triangleCount: builtDem.triangleCount,
+                        vertexCount: builtDem.vertexCount,
+                        tinVolumeM3: builtDem.tinVolumeM3,
+                        hasVertexColors: builtDem.hasConfidenceColors,
+                    },
+                    'IN-SITU',
+                    'IN_SITU_DEM_GRID_V1'
                 );
-                const divisions = Math.min(40, Math.max(12, Math.round(gridExtent)));
-                gridHelper = new THREE.GridHelper(
-                    gridExtent,
-                    divisions,
-                    isDark ? 0x334155 : 0x94a3b8,
-                    isDark ? 0x12151c : 0xe2e8f0
-                );
-                gridRef.current = { helper: gridHelper, extent: gridExtent, divisions };
-                scene.add(gridHelper);
-                scene.add(root);
-                modelGroupRef.current = root;
-
-                applyWireframeState(root, isWireframe);
-                if (controls) {
-                    fitCameraToBox(camera, controls, computed.boundingBoxM);
-                    resetCameraFnRef.current = () => {
-                        if (controls) {
-                            fitCameraToBox(camera, controls, computed.boundingBoxM);
-                        }
-                    };
-                }
-
-                setTelemetry((prev) => ({
-                    boundingBoxM:
-                        computed.boundingBoxM.widthX > 0
-                            ? computed.boundingBoxM
-                            : prev?.boundingBoxM || computed.boundingBoxM,
-                    triangleCount:
-                        computed.triangleCount > 0
-                            ? computed.triangleCount
-                            : prev?.triangleCount || 0,
-                    vertexCount:
-                        computed.vertexCount > 0
-                            ? computed.vertexCount
-                            : prev?.vertexCount || 0,
-                    tinVolumeM3:
-                        typeof tinVolumeM3 === 'number'
-                            ? tinVolumeM3
-                            : prev?.tinVolumeM3 ?? computed.tinVolumeM3,
-                    originalBytes: prev?.originalBytes ?? casMetrics?.originalBytes,
-                    optimizedBytes: prev?.optimizedBytes ?? casMetrics?.optimizedBytes,
-                    savingsPct: prev?.savingsPct ?? casMetrics?.savingsPct,
-                    sourceLabel: prev?.sourceLabel || meshSource || 'GLB_3D',
-                }));
-            })
-            .catch(() => {
-                if (disposed) return;
-                if (fallbackGeometry) {
-                    const localFallback = buildStockpileGlbMesh({
-                        geometryType: fallbackGeometry.type,
-                        dimensions: fallbackGeometry.dimensions || {},
-                    });
-                    if (localFallback && localFallback.glbBuffer !== meshBuffer) {
-                        setMeshBuffer(localFallback.glbBuffer);
+            } else {
+                setActiveRenderMode('NONE');
+                setLoadFailed(true);
+                setFailureReason('INVALID_DEM_GRID_V1');
+            }
+        } else if (activeRenderMode === 'GLB' && meshBuffer) {
+            const loader = new GLTFLoader();
+            parseGlbArrayBuffer(loader, meshBuffer)
+                .then((gltf) => {
+                    if (disposed) {
+                        disposeObject3DTree(gltf.scene);
                         return;
                     }
-                }
-                setLoadFailed(true);
-                setMeshBuffer(null);
-            });
+
+                    const root = gltf.scene;
+                    const box = new THREE.Box3().setFromObject(root);
+                    const center = new THREE.Vector3();
+                    box.getCenter(center);
+
+                    // Asentar base en y = 0 centrado en XZ
+                    root.position.set(-center.x, -box.min.y, -center.z);
+                    root.traverse((obj) => {
+                        const mesh = obj as THREE.Mesh;
+                        if (!mesh.isMesh) return;
+                        if (!(mesh.material instanceof THREE.MeshStandardMaterial)) {
+                            const prevMat = mesh.material;
+                            if (Array.isArray(prevMat)) {
+                                prevMat.forEach(disposeMaterialResources);
+                            } else if (prevMat) {
+                                disposeMaterialResources(prevMat);
+                            }
+                            mesh.material = new THREE.MeshStandardMaterial({
+                                color: 0xc68346,
+                                metalness: 0.14,
+                                roughness: 0.78,
+                            });
+                        }
+                    });
+
+                    const computed = computeStatsFromGltfRoot(root);
+                    attachMeshRoot(root, computed, 'CLOUD', 'GLB_3D');
+                })
+                .catch(() => {
+                    if (disposed) return;
+                    setLoadFailed(true);
+                    setFailureReason('GLB_PARSE_ERROR');
+                    setMeshBuffer(null);
+                    setActiveRenderMode(localPreviewMesh ? 'DEM_V1' : 'NONE');
+                });
+        }
 
         if (typeof ResizeObserver !== 'undefined') {
             resizeObserver = new ResizeObserver((entries) => {
@@ -522,21 +683,15 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
                 camera.aspect = w / h;
                 camera.updateProjectionMatrix();
                 renderer.setSize(w, h);
+                requestRender();
             });
             resizeObserver.observe(host);
         }
 
-        const renderLoop = () => {
-            if (disposed || !renderer) return;
-            controls?.update();
-            renderer.render(scene, camera);
-            rafId = window.requestAnimationFrame(renderLoop);
-        };
-        rafId = window.requestAnimationFrame(renderLoop);
-
         return () => {
             disposed = true;
             resetCameraFnRef.current = null;
+            requestRenderRef.current = null;
             modelGroupRef.current = null;
             sceneRef.current = null;
             gridRef.current = { helper: null, extent: 12, divisions: 12 };
@@ -547,6 +702,7 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
                 resizeObserver.disconnect();
             }
             if (controls) {
+                controls.removeEventListener('change', requestRender);
                 controls.dispose();
             }
             disposeObject3DTree(scene);
@@ -559,7 +715,7 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
             }
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [meshBuffer, heightPx, compact]);
+    }, [meshBuffer, activeRenderMode, demKey, heightPx, compact]);
 
     // Actualizar fondo y grilla al alternar modo claro/oscuro liberando geometría previa
     useEffect(() => {
@@ -586,6 +742,7 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
             gridRef.current.helper = nextGrid;
             scene.add(nextGrid);
         }
+        requestRenderRef.current?.();
     }, [isDark, compact]);
 
     const effectiveTinVolume =
@@ -615,9 +772,14 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
     const hasDimensions = Boolean(
         bbox && (bbox.widthX > 0 || bbox.depthZ > 0 || bbox.heightY > 0)
     );
-    const dimensionsLabel = hasDimensions && bbox
-        ? `${bbox.widthX.toFixed(2)} x ${bbox.depthZ.toFixed(2)} x ${bbox.heightY.toFixed(2)} m`
-        : UNDECLARED_VALUE;
+    const dimensionsLabel =
+        hasDimensions && bbox
+            ? `${bbox.widthX.toFixed(2)} x ${bbox.depthZ.toFixed(2)} x ${bbox.heightY.toFixed(2)} m`
+            : UNDECLARED_VALUE;
+    const compactDimensionsLabel =
+        hasDimensions && bbox
+            ? `${bbox.widthX.toFixed(1)}×${bbox.depthZ.toFixed(1)}×${bbox.heightY.toFixed(1)}m`
+            : '--';
 
     const trianglesLabel =
         telemetry && telemetry.triangleCount > 0
@@ -629,8 +791,13 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
             ? `${effectiveTinVolume.toFixed(2)} m³`
             : UNDECLARED_VALUE;
 
-    const hasRenderableMesh = Boolean(meshBuffer);
+    const hasRenderableMesh = activeRenderMode !== 'NONE';
     const hasCleanMeshUrl = typeof meshUrl === 'string' && meshUrl.trim().length > 0;
+    const canToggleConfidence = Boolean(telemetry?.hasVertexColors);
+    const tierBadge =
+        activeRenderMode === 'GLB' || lifecycleStatus === 'CLOUD_3D_VERIFIED'
+            ? 'CLOUD'
+            : 'IN-SITU';
 
     if (compact) {
         return (
@@ -649,6 +816,27 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
                     )}
 
                     <div className="absolute top-fib-8 right-fib-8 z-10 flex items-center gap-fib-8">
+                        {canToggleConfidence && (
+                            <button
+                                type="button"
+                                onClick={() => setShowConfidenceLayer((prev) => !prev)}
+                                title={t('twin3d.confidence_layer_toggle', 'CAPA CONFIANZA ISA-101')}
+                                aria-label={t(
+                                    'twin3d.confidence_layer_toggle',
+                                    'CAPA CONFIANZA ISA-101'
+                                )}
+                                aria-pressed={showConfidenceLayer}
+                                disabled={!hasRenderableMesh || webglUnavailable}
+                                className={`${FLAT_ICON_BTN_CLASS} min-w-[44px] min-h-[44px] ${
+                                    showConfidenceLayer ? 'text-[#00AEEF] dark:text-[#00AEEF]' : ''
+                                } disabled:opacity-40 disabled:cursor-not-allowed`}
+                            >
+                                <span className="material-symbols-outlined text-[20px]">
+                                    layers
+                                </span>
+                            </button>
+                        )}
+
                         <button
                             type="button"
                             onClick={() => setIsWireframe((prev) => !prev)}
@@ -675,18 +863,32 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
                                 center_focus_strong
                             </span>
                         </button>
+
+                        {hasRenderableMesh && loadFailed && hasCleanMeshUrl && (
+                            <button
+                                type="button"
+                                onClick={() => setRetryCounter((c) => c + 1)}
+                                title={t('twin3d.retry_load', 'REINTENTAR')}
+                                aria-label={t('twin3d.retry_load', 'REINTENTAR')}
+                                className={`${FLAT_ICON_BTN_CLASS} min-w-[44px] min-h-[44px] text-[#C68346]`}
+                            >
+                                <span className="material-symbols-outlined text-[20px]">
+                                    refresh
+                                </span>
+                            </button>
+                        )}
                     </div>
 
                     {hasRenderableMesh && !webglUnavailable ? (
                         <div
                             ref={viewportHostRef}
-                            style={{ height: `${heightPx}px` }}
+                            style={{ height: `${heightPx}px`, touchAction: 'none' }}
                             className="w-full relative overflow-hidden rounded-none"
                         />
                     ) : (
                         <div
                             style={{ height: `${heightPx}px` }}
-                            className="w-full px-fib-21 flex flex-col items-center justify-center gap-fib-13 text-center"
+                            className="w-full px-fib-21 flex flex-col items-center justify-center gap-fib-8 text-center"
                         >
                             <span className="material-symbols-outlined text-[32px] text-[#94A3B8] dark:text-[#5A6072]">
                                 deployed_code
@@ -696,18 +898,46 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
                                     {t('twin3d.no_model_3d', 'SIN MODELO 3D')}
                                 </span>
                             )}
+                            {!isLoading && failureReason && (
+                                <span className="text-microcopy font-mono uppercase text-[#C68346]">
+                                    {failureReason}
+                                </span>
+                            )}
                             {!isLoading && loadFailed && hasCleanMeshUrl && (
                                 <button
                                     type="button"
                                     onClick={() => setRetryCounter((c) => c + 1)}
-                                    className="min-h-[48px] px-fib-13 border border-[#E2E8F0] dark:border-[#12151C] bg-transparent text-[#00AEEF] font-mono text-microcopy font-bold uppercase cursor-pointer rounded-none shadow-none"
+                                    title={t('twin3d.retry_load', 'REINTENTAR')}
+                                    aria-label={t('twin3d.retry_load', 'REINTENTAR')}
+                                    className={`${FLAT_ICON_BTN_CLASS} min-w-[48px] min-h-[48px] text-[#00AEEF]`}
                                 >
-                                    {t('twin3d.retry_load', 'REINTENTAR')}
+                                    <span className="material-symbols-outlined text-[22px]">
+                                        refresh
+                                    </span>
                                 </button>
                             )}
                         </div>
                     )}
                 </div>
+
+                {hasRenderableMesh && (
+                    <div className="px-fib-13 py-fib-8 border-t border-[#E2E8F0] dark:border-[#12151C] bg-transparent flex items-center justify-between gap-fib-8 font-mono tabular-nums text-microcopy text-[#475569] dark:text-[#8A93A6]">
+                        <span className="truncate">
+                            {compactDimensionsLabel} ·{' '}
+                            {effectiveTinVolume !== null
+                                ? `${effectiveTinVolume.toFixed(2)} m³`
+                                : '--'}{' '}
+                            · {telemetry?.triangleCount ?? 0} TRI
+                        </span>
+                        <span
+                            className={`shrink-0 font-bold uppercase ${
+                                tierBadge === 'CLOUD' ? 'text-[#00AEEF]' : 'text-[#C68346]'
+                            }`}
+                        >
+                            {tierBadge}
+                        </span>
+                    </div>
+                )}
             </section>
         );
     }
@@ -719,8 +949,12 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
         >
             <header className="flex items-center justify-between gap-fib-13 px-fib-21 py-fib-13 bg-[#F8FAFC] dark:bg-[#000000] border-b border-[#E2E8F0] dark:border-[#12151C]">
                 <div className="flex items-center gap-fib-13 min-w-0">
-                    <span className="font-mono tabular-nums text-microcopy uppercase text-[#C68346] shrink-0">
-                        TIN · GLB
+                    <span
+                        className={`font-mono tabular-nums text-microcopy uppercase shrink-0 ${
+                            tierBadge === 'CLOUD' ? 'text-[#00AEEF]' : 'text-[#C68346]'
+                        }`}
+                    >
+                        {tierBadge === 'CLOUD' ? 'TIN · GLB' : 'IN-SITU · DEM'}
                     </span>
                     <h3 className="text-h2-section font-semibold truncate">
                         {t('twin3d.title', 'GEMELO DIGITAL 3D')}
@@ -733,6 +967,25 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
                 </div>
 
                 <div className="flex items-center gap-fib-8 shrink-0">
+                    {canToggleConfidence && (
+                        <button
+                            type="button"
+                            onClick={() => setShowConfidenceLayer((prev) => !prev)}
+                            title={t('twin3d.confidence_layer_toggle', 'CAPA CONFIANZA ISA-101')}
+                            aria-label={t(
+                                'twin3d.confidence_layer_toggle',
+                                'CAPA CONFIANZA ISA-101'
+                            )}
+                            aria-pressed={showConfidenceLayer}
+                            disabled={!hasRenderableMesh || webglUnavailable}
+                            className={`${FLAT_ICON_BTN_CLASS} ${
+                                showConfidenceLayer ? 'text-[#00AEEF] dark:text-[#00AEEF]' : ''
+                            } disabled:opacity-40 disabled:cursor-not-allowed`}
+                        >
+                            <span className="material-symbols-outlined text-[20px]">layers</span>
+                        </button>
+                    )}
+
                     <button
                         type="button"
                         onClick={() => setIsWireframe((prev) => !prev)}
@@ -759,6 +1012,18 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
                             center_focus_strong
                         </span>
                     </button>
+
+                    {hasRenderableMesh && loadFailed && hasCleanMeshUrl && (
+                        <button
+                            type="button"
+                            onClick={() => setRetryCounter((c) => c + 1)}
+                            title={t('twin3d.retry_load', 'REINTENTAR')}
+                            aria-label={t('twin3d.retry_load', 'REINTENTAR')}
+                            className={`${FLAT_ICON_BTN_CLASS} text-[#C68346]`}
+                        >
+                            <span className="material-symbols-outlined text-[20px]">refresh</span>
+                        </button>
+                    )}
                 </div>
             </header>
 
@@ -775,16 +1040,34 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
                 {hasRenderableMesh && !webglUnavailable ? (
                     <div
                         ref={viewportHostRef}
-                        style={{ height: `${heightPx}px` }}
+                        style={{ height: `${heightPx}px`, touchAction: 'none' }}
                         className="w-full relative overflow-hidden rounded-none"
                     />
                 ) : (
-                    <div className="px-fib-21 py-fib-34 flex flex-col gap-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C]">
+                    <div className="px-fib-21 py-fib-34 flex flex-col items-start gap-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C]">
                         <p className="text-data-dense font-mono text-[#94A3B8] dark:text-[#5A6072]">
                             {isLoading
                                 ? t('twin3d.loading_mesh', 'CARGANDO MALLA .glb...')
-                                : t('twin3d.no_mesh_declared', UNDECLARED_VALUE)}
+                                : t('twin3d.no_model_3d', 'SIN MODELO 3D')}
                         </p>
+                        {!isLoading && failureReason && (
+                            <p className="text-microcopy font-mono uppercase text-[#C68346]">
+                                {failureReason}
+                            </p>
+                        )}
+                        {!isLoading && loadFailed && hasCleanMeshUrl && (
+                            <button
+                                type="button"
+                                onClick={() => setRetryCounter((c) => c + 1)}
+                                title={t('twin3d.retry_load', 'REINTENTAR')}
+                                aria-label={t('twin3d.retry_load', 'REINTENTAR')}
+                                className={`${FLAT_ICON_BTN_CLASS} text-[#00AEEF]`}
+                            >
+                                <span className="material-symbols-outlined text-[22px]">
+                                    refresh
+                                </span>
+                            </button>
+                        )}
                         {webglUnavailable && hasRenderableMesh && (
                             <p className="text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6]">
                                 {t(

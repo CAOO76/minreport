@@ -1,10 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Capacitor } from '@capacitor/core';
-import {
-    photogrammetry3dService,
-    type Reconstruct3DResult,
-} from '../core/services/photogrammetry3d.service';
 import { triggerFieldImpact } from '../core/utils/fieldHaptics';
 import {
     HitlConfirmModal,
@@ -306,8 +302,6 @@ export const StockpileDossierView: React.FC<StockpileDossierViewProps> = ({
 }) => {
     const { t } = useTranslation();
     const isMobile = isMobileField ?? Capacitor.isNativePlatform();
-    const [isReconstructing3D, setIsReconstructing3D] = useState(false);
-    const [localMeshResult, setLocalMeshResult] = useState<Reconstruct3DResult | null>(null);
     const [visualMode, setVisualMode] = useState<StockpileVisualMode>('PHOTO');
     const [isExportingPdf, setIsExportingPdf] = useState(false);
     const [isSavingHitl, setIsSavingHitl] = useState(false);
@@ -315,7 +309,6 @@ export const StockpileDossierView: React.FC<StockpileDossierViewProps> = ({
     const [pendingHitl, setPendingHitl] = useState<PendingHitlAction | null>(null);
 
     useEffect(() => {
-        setLocalMeshResult(null);
         setVisualMode('PHOTO');
     }, [asset.id]);
 
@@ -332,79 +325,40 @@ export const StockpileDossierView: React.FC<StockpileDossierViewProps> = ({
         asset.initial_photo_url ||
         asset.thumbnail_url;
 
-    const latestFallbackGeometry = useMemo(() => {
-        const g = latestMeas?.geometry;
-        if (!g?.type || !g?.dimensions) return null;
-        const hasPositive = Object.values(g.dimensions).some(
-            (v) => typeof v === 'number' && Number.isFinite(v) && v > 0
-        );
-        return hasPositive
-            ? {
-                  type: g.type,
-                  dimensions: g.dimensions as Record<string, number | undefined>,
-              }
-            : null;
-    }, [latestMeas]);
-
-    const latestMeshRecord = useMemo(() => {
-        const activeWithMesh = orderedMeasurements
-            .filter((item) => !item.ignored && Boolean(item.mesh_url))
-            .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-        if (activeWithMesh.length > 0) return activeWithMesh[0];
-        const anyWithMesh = orderedMeasurements
-            .filter((item) => Boolean(item.mesh_url))
-            .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-        return anyWithMesh[0] ?? null;
-    }, [orderedMeasurements]);
-
-    const latestMeshUrl =
-        localMeshResult?.meshUrl ??
-        latestMeas?.mesh_url ??
-        latestMeshRecord?.mesh_url ??
-        asset.mesh_url ??
-        null;
-    const latestTinVolumeM3 =
-        localMeshResult?.tinVolumeM3 ??
-        latestMeas?.tin_volume_m3 ??
-        latestMeshRecord?.tin_volume_m3 ??
-        asset.tin_volume_m3 ??
-        null;
-    const latestMeshSource =
-        localMeshResult?.source ??
-        latestMeas?.mesh_source ??
-        latestMeshRecord?.mesh_source ??
-        asset.mesh_source;
-    const latestMeshSha =
-        localMeshResult?.sha256 ??
-        latestMeas?.mesh_sha256 ??
-        latestMeshRecord?.mesh_sha256 ??
-        asset.mesh_sha256;
+    // Acoplamiento estricto Foto <-> Malla: jamás mezclar la foto de latestMeas con un GLB viejo de otra medición.
+    const latestMeshUrl = latestMeas ? (latestMeas.mesh_url ?? null) : (asset.mesh_url ?? null);
+    const latestLocalPreviewMesh = latestMeas
+        ? (latestMeas.local_preview_mesh ?? null)
+        : (asset.local_preview_mesh ?? null);
+    const latestLifecycleStatus =
+        latestMeas?.lifecycle_status ?? asset.lifecycle_status ?? null;
+    const latestReconciliationDeltaPct =
+        latestMeas?.reconciliation_delta_pct ?? asset.reconciliation_delta_pct ?? null;
+    const latestTinVolumeM3 = latestMeas
+        ? (latestMeas.tin_volume_m3 ?? latestMeas.offline_in_situ_m3 ?? null)
+        : (asset.tin_volume_m3 ?? null);
+    const latestMeshSource = latestMeas ? latestMeas.mesh_source : asset.mesh_source;
+    const latestMeshSha = latestMeas ? latestMeas.mesh_sha256 : asset.mesh_sha256;
+    const latestMeshOrigBytes = latestMeas
+        ? latestMeas.mesh_original_bytes
+        : asset.mesh_original_bytes;
+    const latestMeshOptBytes = latestMeas
+        ? latestMeas.mesh_optimized_bytes
+        : asset.mesh_optimized_bytes;
+    const latestMeshSavingsPct = latestMeas
+        ? latestMeas.mesh_savings_pct
+        : asset.mesh_savings_pct;
     const latestCasMetrics =
-        localMeshResult ||
-        latestMeas?.mesh_original_bytes !== undefined ||
-        asset.mesh_original_bytes !== undefined ||
-        asset.cas_original_bytes !== undefined ||
+        latestMeshOrigBytes !== undefined ||
+        latestMeshOptBytes !== undefined ||
         latestMeshSha
             ? {
-                  originalBytes:
-                      localMeshResult?.originalBytes ??
-                      latestMeas?.mesh_original_bytes ??
-                      asset.mesh_original_bytes ??
-                      asset.cas_original_bytes,
-                  optimizedBytes:
-                      localMeshResult?.optimizedBytes ??
-                      latestMeas?.mesh_optimized_bytes ??
-                      asset.mesh_optimized_bytes ??
-                      asset.cas_optimized_bytes,
-                  savingsPct:
-                      localMeshResult?.savingsPct ??
-                      latestMeas?.mesh_savings_pct ??
-                      asset.mesh_savings_pct ??
-                      asset.cas_savings_pct,
+                  originalBytes: latestMeshOrigBytes,
+                  optimizedBytes: latestMeshOptBytes,
+                  savingsPct: latestMeshSavingsPct,
                   sha256: latestMeshSha,
               }
             : undefined;
-    const canReconstruct3D = Boolean(!latestMeshUrl && latestFallbackGeometry);
 
     const latestMeasSpatial = latestMeas as (StockpileMeasurement & SpatialMetrologyFields) | null;
     const assetSpatial = asset as StockpileAsset & SpatialMetrologyFields;
@@ -474,46 +428,6 @@ export const StockpileDossierView: React.FC<StockpileDossierViewProps> = ({
         window.addEventListener('minreport:toggle-closure', listener);
         return () => window.removeEventListener('minreport:toggle-closure', listener);
     }, [handleTriggerClosure, isMobile]);
-
-    const handleReconstruct3D = async () => {
-        if (!latestFallbackGeometry || isReconstructing3D) return;
-        setIsReconstructing3D(true);
-        setStatusText(null);
-        try {
-            const result = await photogrammetry3dService.reconstructStockpile3D({
-                stockpileId: asset.id,
-                measurementId: latestMeas?.id,
-                geometryType: latestFallbackGeometry.type,
-                dimensions: latestFallbackGeometry.dimensions,
-                photoUrls: [
-                    ...(latestHeroPhoto ? [latestHeroPhoto] : []),
-                    ...(latestMeas?.perimeter_photo_urls || asset.perimeter_photo_urls || []),
-                ].filter((u) => Boolean(u) && !u.startsWith('data:')),
-            });
-            setLocalMeshResult(result);
-            await dataService.saveStockpileData(
-                {
-                    mesh_url: result.meshUrl,
-                    mesh_sha256: result.sha256,
-                    mesh_source: result.source,
-                    tin_volume_m3: result.tinVolumeM3,
-                    mesh_original_bytes: result.originalBytes,
-                    mesh_optimized_bytes: result.optimizedBytes,
-                    mesh_savings_pct: result.savingsPct,
-                },
-                asset.id
-            );
-            setVisualMode('3D');
-        } catch (err: unknown) {
-            setStatusText(
-                err instanceof Error && err.message
-                    ? err.message
-                    : t('twin3d.reconstruction_error', 'Error al reconstruir malla 3D .glb.')
-            );
-        } finally {
-            setIsReconstructing3D(false);
-        }
-    };
 
     const executePendingHitl = async () => {
         if (!pendingHitl || isSavingHitl) return;
@@ -630,8 +544,8 @@ export const StockpileDossierView: React.FC<StockpileDossierViewProps> = ({
                 </div>
             </header>
 
-            {(isExportingPdf || isReconstructing3D) && (
-                <M3LinearProgress indeterminate ariaLabel="PDF / 3D" />
+            {isExportingPdf && (
+                <M3LinearProgress indeterminate ariaLabel="PDF" />
             )}
 
             <div className="flex-1 min-h-0 overflow-y-auto pb-fib-21">
@@ -662,7 +576,9 @@ export const StockpileDossierView: React.FC<StockpileDossierViewProps> = ({
                         boulderDetections={latestMeas?.boulder_detections ?? asset.boulder_detections}
                         slopeAngleDeg={slopeAngleDeg}
                         meshUrl={latestMeshUrl}
-                        fallbackGeometry={latestFallbackGeometry}
+                        localPreviewMesh={latestLocalPreviewMesh}
+                        lifecycleStatus={latestLifecycleStatus}
+                        reconciliationDeltaPct={latestReconciliationDeltaPct}
                         copperDomain={asset.copper_domain}
                         tinVolumeM3={latestTinVolumeM3}
                         casMetrics={latestCasMetrics}
@@ -680,9 +596,7 @@ export const StockpileDossierView: React.FC<StockpileDossierViewProps> = ({
                                 flat={true}
                             />
                         }
-                        canReconstruct3D={canReconstruct3D}
-                        isReconstructing3D={isReconstructing3D}
-                        onReconstruct3D={() => void handleReconstruct3D()}
+                        canReconstruct3D={false}
                         heightPx={232}
                     />
                 </div>

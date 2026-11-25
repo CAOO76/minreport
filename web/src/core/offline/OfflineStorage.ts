@@ -1,14 +1,23 @@
 /**
  * OfflineStorage - Motor de Persistencia Local Multi-Tenant para Entorno Minero
  * Estandar: EDGE-OPTIMIZER & Web 3.0 Hybrid Architecture (Capa 1/2/3)
+ * v5: incorpora objectStore `capture_sessions` (CaptureSessionPackageV2) + retención CAS segura.
  */
 
+import type {
+    CaptureSessionPackageV2,
+    MeasurementLifecycleStatus,
+} from '../../contracts/acopios.contracts';
+
 const DB_NAME = 'minreport_edge_db';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 
 export interface OfflineCasBlobRecord {
     sha256: string;
-    blob: Blob;
+    blob?: Blob;
+    /** Ruta relativa en Capacitor Filesystem (`minreport_cas/<tenantId>/<sha256>.<ext>`) cuando se persiste en disco nativo */
+    fsPath?: string;
+    storageBackend?: 'CAPACITOR_FS' | 'INDEXED_DB';
     mimeType: string;
     profile: string;
     scope: string;
@@ -61,6 +70,10 @@ export interface StockpileMeasurementRecord {
     payload: Record<string, unknown>;
     timestamp: number;
     synced?: boolean;
+}
+
+export interface CaptureSessionStoreRecord extends CaptureSessionPackageV2 {
+    updatedAt: number;
 }
 
 export class OfflineStorageEngine {
@@ -129,6 +142,19 @@ export class OfflineStorageEngine {
                         measStore.createIndex('tenantId', 'tenantId', { unique: false });
                         measStore.createIndex('timestamp', 'timestamp', { unique: false });
                     }
+
+                    if (!db.objectStoreNames.contains('capture_sessions')) {
+                        const sessStore = db.createObjectStore('capture_sessions', {
+                            keyPath: 'sessionId',
+                        });
+                        sessStore.createIndex('assetId', 'assetId', { unique: false });
+                        sessStore.createIndex('measurementId', 'measurementId', { unique: false });
+                        sessStore.createIndex('tenantId', 'tenantId', { unique: false });
+                        sessStore.createIndex('lifecycle_status', 'lifecycle_status', {
+                            unique: false,
+                        });
+                        sessStore.createIndex('capturedAt', 'capturedAt', { unique: false });
+                    }
                 };
             });
         }
@@ -137,6 +163,7 @@ export class OfflineStorageEngine {
 
     private registerKeyBackup(storeName: string, key: string) {
         try {
+            if (typeof localStorage === 'undefined') return;
             const raw = localStorage.getItem(this.BACKUP_KEY) || '{}';
             const backup: Record<string, string[]> = JSON.parse(raw);
             if (!backup[storeName]) backup[storeName] = [];
@@ -308,6 +335,119 @@ export class OfflineStorageEngine {
         });
     }
 
+    // ── Capture Sessions V2 (Offline-First) ──────────────────────────────────
+
+    public async saveCaptureSession(session: CaptureSessionPackageV2): Promise<void> {
+        if (!session.sessionId || !session.tenantId) {
+            throw new Error('[OFFLINE-STORAGE] sessionId y tenantId obligatorios en CaptureSession');
+        }
+        const db = await this.getDB();
+        const record: CaptureSessionStoreRecord = {
+            ...session,
+            updatedAt: Date.now(),
+        };
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction('capture_sessions', 'readwrite');
+            const store = tx.objectStore('capture_sessions');
+            const req = store.put(record);
+            req.onsuccess = () => {
+                this.registerKeyBackup('capture_sessions', session.sessionId);
+                resolve();
+            };
+            req.onerror = () => reject(req.error);
+        });
+    }
+
+    public async getCaptureSession(sessionId: string): Promise<CaptureSessionStoreRecord | null> {
+        const db = await this.getDB();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction('capture_sessions', 'readonly');
+            const store = tx.objectStore('capture_sessions');
+            const req = store.get(sessionId);
+            req.onsuccess = () => resolve((req.result as CaptureSessionStoreRecord) || null);
+            req.onerror = () => reject(req.error);
+        });
+    }
+
+    public async getCaptureSessionByMeasurement(
+        measurementId: string
+    ): Promise<CaptureSessionStoreRecord | null> {
+        const db = await this.getDB();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction('capture_sessions', 'readonly');
+            const store = tx.objectStore('capture_sessions');
+            const index = store.index('measurementId');
+            const req = index.getAll(measurementId);
+            req.onsuccess = () => {
+                const list: CaptureSessionStoreRecord[] = req.result || [];
+                if (list.length === 0) {
+                    resolve(null);
+                    return;
+                }
+                list.sort((a, b) => (b.updatedAt || b.capturedAt) - (a.updatedAt || a.capturedAt));
+                resolve(list[0]);
+            };
+            req.onerror = () => reject(req.error);
+        });
+    }
+
+    public async getCaptureSessionsByAsset(
+        assetId: string,
+        tenantId?: string
+    ): Promise<CaptureSessionStoreRecord[]> {
+        const db = await this.getDB();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction('capture_sessions', 'readonly');
+            const store = tx.objectStore('capture_sessions');
+            const index = store.index('assetId');
+            const req = index.getAll(assetId);
+            req.onsuccess = () => {
+                const list: CaptureSessionStoreRecord[] = req.result || [];
+                const filtered = tenantId ? list.filter((s) => s.tenantId === tenantId) : list;
+                resolve(filtered.sort((a, b) => b.capturedAt - a.capturedAt));
+            };
+            req.onerror = () => reject(req.error);
+        });
+    }
+
+    public async getPendingCaptureSessions(
+        tenantId?: string
+    ): Promise<CaptureSessionStoreRecord[]> {
+        const db = await this.getDB();
+        const pendingStatuses = new Set<MeasurementLifecycleStatus>([
+            'CAPTURED_OFFLINE_VALID',
+            'SYNCING_RAW_CAS',
+        ]);
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction('capture_sessions', 'readonly');
+            const store = tx.objectStore('capture_sessions');
+            const req = store.getAll();
+            req.onsuccess = () => {
+                const list: CaptureSessionStoreRecord[] = req.result || [];
+                const filtered = list.filter(
+                    (s) =>
+                        pendingStatuses.has(s.lifecycle_status) &&
+                        (!tenantId || s.tenantId === tenantId)
+                );
+                resolve(filtered.sort((a, b) => a.capturedAt - b.capturedAt));
+            };
+            req.onerror = () => reject(req.error);
+        });
+    }
+
+    public async deleteCaptureSession(sessionId: string): Promise<void> {
+        const db = await this.getDB();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction('capture_sessions', 'readwrite');
+            const store = tx.objectStore('capture_sessions');
+            const req = store.delete(sessionId);
+            req.onsuccess = () => resolve();
+            req.onerror = () => reject(req.error);
+        });
+    }
+
+    // ── Sync Queue, Metadata & CAS Blobs ─────────────────────────────────────
+
     public async putSyncTask(task: any): Promise<void> {
         const db = await this.getDB();
         return new Promise((resolve, reject) => {
@@ -392,6 +532,28 @@ export class OfflineStorageEngine {
             const store = tx.objectStore('offline_cas_blobs');
             const req = store.get(sha256);
             req.onsuccess = () => resolve((req.result as OfflineCasBlobRecord) || null);
+            req.onerror = () => reject(req.error);
+        });
+    }
+
+    public async getAllCasBlobs(): Promise<OfflineCasBlobRecord[]> {
+        const db = await this.getDB();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction('offline_cas_blobs', 'readonly');
+            const store = tx.objectStore('offline_cas_blobs');
+            const req = store.getAll();
+            req.onsuccess = () => resolve((req.result as OfflineCasBlobRecord[]) || []);
+            req.onerror = () => reject(req.error);
+        });
+    }
+
+    public async deleteCasBlob(sha256: string): Promise<void> {
+        const db = await this.getDB();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction('offline_cas_blobs', 'readwrite');
+            const store = tx.objectStore('offline_cas_blobs');
+            const req = store.delete(sha256);
+            req.onsuccess = () => resolve();
             req.onerror = () => reject(req.error);
         });
     }

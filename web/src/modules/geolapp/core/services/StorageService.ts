@@ -15,6 +15,7 @@ import { ref, uploadBytes, getDownloadURL, deleteObject, listAll } from 'firebas
 import { storage as firebaseStorage } from '../../../../config/firebase';
 import { mediaDigestorClient } from '../../../../core/media/MediaDigestorClient';
 import { coreAuthFetch } from '../../../../core/network/coreAuthFetch';
+import { localCasFilesystem } from '../../../../core/offline/LocalCasFilesystemService';
 import { offlineStorage } from '../../../../core/offline/OfflineStorage';
 import { syncQueueEngine } from '../../../../core/offline/SyncQueueEngine';
 
@@ -91,9 +92,9 @@ export async function resolveStockpileImageUrl(
             const refPart = trimmed.replace('offline-cas://', '').split('?')[0];
             const sha256 = refPart.split('.')[0];
             if (!sha256) return { resolvedUrl: '' };
-            const record = await offlineStorage.getCasBlob(sha256);
-            if (!record?.blob) return { resolvedUrl: '' };
-            const objUrl = URL.createObjectURL(record.blob);
+            const localRes = await localCasFilesystem.getBlob(sha256);
+            if (!localRes?.blob) return { resolvedUrl: '' };
+            const objUrl = URL.createObjectURL(localRes.blob);
             return {
                 resolvedUrl: objUrl,
                 revoke: () => URL.revokeObjectURL(objUrl),
@@ -127,9 +128,21 @@ export interface ResolvedStockpileMeshBinary {
     sourceLabel: string;
 }
 
+function extractSha256FromCasUrl(url: string): string | null {
+    const clean = url.split('?')[0];
+    const match = clean.match(/([a-f0-9]{64})(?:\.[a-z0-9]+)?$/i);
+    return match ? match[1].toLowerCase() : null;
+}
+
+function isValidGlbArrayBuffer(buf: ArrayBuffer): boolean {
+    if (!buf || buf.byteLength < 12) return false;
+    const view = new DataView(buf);
+    return view.getUint32(0, true) === 0x46546c67 && view.getUint32(4, true) === 2;
+}
+
 /**
- * Resuelve el binario `.glb` desde `offline-cas://<sha256>.glb` (IndexedDB),
- * endpoints autenticados `/api/media/blob/...` o `/api/media/cas/...` o URL `https://...` remota.
+ * Resuelve el binario `.glb` desde `offline-cas://<sha256>.glb` (`LocalCasFilesystemService`),
+ * caché local CAS para URLs remotas o endpoints autenticados `/api/media/blob/...` / `/api/media/cas/...`.
  */
 export async function resolveStockpileMeshBinary(
     url: string
@@ -144,12 +157,21 @@ export async function resolveStockpileMeshBinary(
             const refPart = trimmed.replace('offline-cas://', '').split('?')[0];
             const sha256 = refPart.split('.')[0];
             if (!sha256) return { arrayBuffer: null, sourceLabel: 'OFFLINE_CAS_INVALID' };
-            const record = await offlineStorage.getCasBlob(sha256);
-            if (!record?.blob) return { arrayBuffer: null, sourceLabel: 'OFFLINE_CAS_MISS' };
-            const arrayBuffer = await record.blob.arrayBuffer();
+            const arrayBuffer = await localCasFilesystem.getArrayBuffer(sha256);
+            if (!arrayBuffer) return { arrayBuffer: null, sourceLabel: 'OFFLINE_CAS_MISS' };
             return { arrayBuffer, sourceLabel: 'OFFLINE_CAS' };
         } catch {
             return { arrayBuffer: null, sourceLabel: 'OFFLINE_CAS_ERROR' };
+        }
+    }
+
+    const urlSha256 = extractSha256FromCasUrl(trimmed);
+    const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+
+    if (urlSha256 && !isOnline) {
+        const cached = await localCasFilesystem.getArrayBuffer(urlSha256).catch(() => null);
+        if (cached && isValidGlbArrayBuffer(cached)) {
+            return { arrayBuffer: cached, sourceLabel: 'OFFLINE_CAS_CACHE' };
         }
     }
 
@@ -157,11 +179,32 @@ export async function resolveStockpileMeshBinary(
         try {
             const response = await coreAuthFetch(trimmed, { method: 'GET' });
             if (!response.ok) {
+                if (urlSha256) {
+                    const cached = await localCasFilesystem.getArrayBuffer(urlSha256).catch(() => null);
+                    if (cached && isValidGlbArrayBuffer(cached)) {
+                        return { arrayBuffer: cached, sourceLabel: 'OFFLINE_CAS_CACHE' };
+                    }
+                }
                 return { arrayBuffer: null, sourceLabel: `CAS_HTTP_${response.status}` };
             }
             const arrayBuffer = await response.arrayBuffer();
+            if (urlSha256 && isValidGlbArrayBuffer(arrayBuffer)) {
+                const activeTenant =
+                    (typeof window !== 'undefined'
+                        ? window.localStorage.getItem('minreport_active_account_id') || ''
+                        : '') || 'offline-local';
+                void localCasFilesystem
+                    .cacheRemoteGlb(urlSha256, arrayBuffer, activeTenant)
+                    .catch(() => {});
+            }
             return { arrayBuffer, sourceLabel: 'CAS_API' };
         } catch {
+            if (urlSha256) {
+                const cached = await localCasFilesystem.getArrayBuffer(urlSha256).catch(() => null);
+                if (cached && isValidGlbArrayBuffer(cached)) {
+                    return { arrayBuffer: cached, sourceLabel: 'OFFLINE_CAS_CACHE' };
+                }
+            }
             return { arrayBuffer: null, sourceLabel: 'CAS_FETCH_ERROR' };
         }
     }
@@ -447,7 +490,7 @@ export class StorageService {
 
         const offlineRef = `offline-cas://${sha256}.${extension}`;
         try {
-            await offlineStorage.putCasBlob({
+            await localCasFilesystem.putBlob({
                 sha256,
                 blob,
                 mimeType,
@@ -455,9 +498,9 @@ export class StorageService {
                 scope: 'TENANT_PRIVATE',
                 tenantId: activeTenant,
                 filename,
+                extension,
                 originalBytes,
                 optimizedBytes,
-                updatedAt: Date.now(),
             });
             await syncQueueEngine.enqueueTask('CAS_MEDIA_UPLOAD', {
                 sha256,
@@ -467,7 +510,7 @@ export class StorageService {
                 filename,
             });
         } catch (idbErr) {
-            console.warn('[StorageService] Error persistiendo blob en OfflineStorage:', idbErr);
+            console.warn('[StorageService] Error persistiendo blob en LocalCasFilesystem:', idbErr);
         }
 
         if (onProgress) onProgress(100);
@@ -521,40 +564,54 @@ export class StorageService {
 
         const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
 
-        if (firebaseStorage && isOnline) {
+        if (isOnline) {
             try {
-                const storageRef = ref(firebaseStorage, path);
-                await uploadBytes(storageRef, blob, {
-                    contentType: 'model/gltf-binary',
-                    customMetadata: {
-                        tenantId: activeTenant,
-                        stockpileId,
-                        measurementId: meshId,
-                        sha256,
-                        originalBytes: String(originalBytes),
-                        optimizedBytes: String(optimizedBytes),
-                        savingsPct: String(savingsPct),
-                    },
+                const form = new FormData();
+                form.append('file', blob, filename);
+                form.append('profile', 'MESH_3D_GLB');
+                form.append('scope', 'TENANT_PRIVATE');
+                form.append('clientOriginalBytes', String(originalBytes));
+                const casRes = await coreAuthFetch('/api/media/digest-upload', {
+                    method: 'POST',
+                    headers: { 'X-Active-Account-Id': activeTenant },
+                    body: form,
                 });
-                const downloadUrl = await getDownloadURL(storageRef);
-                return {
-                    url: downloadUrl,
-                    path,
-                    size: optimizedBytes,
-                    uploadedAt,
-                    sha256,
-                    originalBytes,
-                    optimizedBytes,
-                    savingsPct,
-                };
-            } catch (err) {
-                console.warn('[StorageService] Subida de malla GLB diferida a OfflineStorage CAS:', err);
+                if (casRes.ok) {
+                    const casJson = (await casRes.json().catch(() => null)) as {
+                        descriptor?: {
+                            downloadUrl?: string;
+                            storagePath?: string;
+                            sha256?: string;
+                            originalBytes?: number;
+                            optimizedBytes?: number;
+                            savingsPct?: number;
+                        };
+                    } | null;
+                    if (casJson?.descriptor?.downloadUrl) {
+                        const casSha = casJson.descriptor.sha256 || sha256;
+                        void localCasFilesystem
+                            .cacheRemoteGlb(casSha, rawBytesBuffer, activeTenant)
+                            .catch(() => {});
+                        return {
+                            url: casJson.descriptor.downloadUrl,
+                            path: casJson.descriptor.storagePath || path,
+                            size: casJson.descriptor.optimizedBytes ?? optimizedBytes,
+                            uploadedAt,
+                            sha256: casSha,
+                            originalBytes: casJson.descriptor.originalBytes ?? originalBytes,
+                            optimizedBytes: casJson.descriptor.optimizedBytes ?? optimizedBytes,
+                            savingsPct: casJson.descriptor.savingsPct ?? savingsPct,
+                        };
+                    }
+                }
+            } catch (casErr) {
+                console.warn('[StorageService] Subida CAS MESH_3D_GLB diferida a caché local:', casErr);
             }
         }
 
         const offlineRef = `offline-cas://${sha256}.glb`;
         try {
-            await offlineStorage.putCasBlob({
+            await localCasFilesystem.putBlob({
                 sha256,
                 blob,
                 mimeType: 'model/gltf-binary',
@@ -562,9 +619,9 @@ export class StorageService {
                 scope: 'TENANT_PRIVATE',
                 tenantId: activeTenant,
                 filename,
+                extension: 'glb',
                 originalBytes,
                 optimizedBytes,
-                updatedAt: Date.now(),
             });
             await syncQueueEngine.enqueueTask('CAS_MEDIA_UPLOAD', {
                 sha256,
@@ -574,7 +631,7 @@ export class StorageService {
                 filename,
             });
         } catch (idbErr) {
-            console.warn('[StorageService] Error persistiendo malla GLB en OfflineStorage:', idbErr);
+            console.warn('[StorageService] Error persistiendo malla GLB en LocalCasFilesystem:', idbErr);
         }
 
         return {

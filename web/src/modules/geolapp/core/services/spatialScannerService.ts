@@ -5,14 +5,28 @@
  */
 
 import { Capacitor, registerPlugin } from '@capacitor/core';
+import {
+    CaptureSessionPackageV2Schema,
+    type CaptureKeyframeV2,
+    type CaptureSessionPackageV2,
+    type DemGridV1,
+    type InSituMetrology,
+    type WalkRingPose,
+} from '../../../../contracts/acopios.contracts';
 import { mediaDigestorClient } from '../../../../core/media/MediaDigestorClient';
 import { coreAuthFetch } from '../../../../core/network/coreAuthFetch';
+import { localCasFilesystem } from '../../../../core/offline/LocalCasFilesystemService';
 import { offlineStorage } from '../../../../core/offline/OfflineStorage';
 import { syncQueueEngine } from '../../../../core/offline/SyncQueueEngine';
 import { probeSpatialDeviceCapability } from './spatialDeviceCapability';
 import type { CopperMineralDomain, GeolappGeometryType } from '../types/GeolappTypes';
 
-export type SpatialDepthMode = 'RAW_DEPTH_ONLY' | 'AUTOMATIC' | 'VIO_POINTCLOUD';
+export type SpatialDepthMode =
+    | 'DISABLED'
+    | 'VIO_ORB_MVS'
+    | 'RAW_DEPTH_ONLY'
+    | 'AUTOMATIC'
+    | 'VIO_POINTCLOUD';
 
 const CALIBRATION_STORAGE_KEY = 'minreport_spatial_device_calibration_v1';
 const CALIBRATION_HISTORY_STORAGE_KEY = 'spatial_device_calibration_history_v1';
@@ -67,9 +81,39 @@ export interface SpatialScanKeyframe {
     photoPath?: string;
 }
 
+export interface SpatialScanKeyframeV2Native {
+    index: number;
+    photoPath?: string;
+    mimeType?: string;
+    originalBytes?: number;
+    optimizedBytes?: number;
+    savingsPct?: number;
+    displayRotationDeg?: number;
+    poseSE3?: {
+        r: number[];
+        t: [number, number, number];
+    };
+    intrinsics?: {
+        fx: number;
+        fy: number;
+        cx: number;
+        cy: number;
+        width: number;
+        height: number;
+    };
+    timestampNs?: number;
+    azimuthDeg?: number;
+    pitchDeg?: number;
+    sharpnessScore?: number;
+    angleDeg?: number;
+    blurScore?: number;
+}
+
 export interface SpatialScanNativeResult {
     cancelled?: boolean;
     scanId?: string;
+    scannerEngineVersion?: string;
+    orientationMode?: string;
     deviceModel?: string;
     depthMode?: SpatialDepthMode;
     coveragePct?: number;
@@ -81,7 +125,12 @@ export interface SpatialScanNativeResult {
     anchorCenter?: { x: number; y: number; z: number };
     pointsM?: Array<[number, number, number]>;
     groundSamplesM?: Array<[number, number, number]>;
+    walkRingPoses?: WalkRingPose[];
     keyframes?: SpatialScanKeyframe[];
+    keyframesV2?: SpatialScanKeyframeV2Native[];
+    inSituMetrology?: InSituMetrology | null;
+    localPreviewMesh?: DemGridV1 | null;
+    captureImuPitchDeg?: number;
     rejectedBlurCount?: number;
     calibrationScaleFactor?: number;
     calibrationId?: string;
@@ -735,7 +784,8 @@ export async function startNativeSpatialScan(): Promise<{
         return { scan: { ...(raw || {}), cancelled: true }, photoBlobs: [] };
     }
 
-    const keyframes = Array.isArray(raw.keyframes) ? raw.keyframes : [];
+    const v2Frames = Array.isArray(raw.keyframesV2) && raw.keyframesV2.length > 0 ? raw.keyframesV2 : null;
+    const keyframes = v2Frames ?? (Array.isArray(raw.keyframes) ? raw.keyframes : []);
     const photoBlobs: Blob[] = [];
 
     for (const kf of keyframes) {
@@ -751,7 +801,10 @@ export async function startNativeSpatialScan(): Promise<{
                 photoBlobs.push(rawBlob);
             } else {
                 const ab = await rawBlob.arrayBuffer();
-                photoBlobs.push(new Blob([ab], { type: 'image/jpeg' }));
+                const inferredType = path.toLowerCase().endsWith('.webp')
+                    ? 'image/webp'
+                    : 'image/jpeg';
+                photoBlobs.push(new Blob([ab], { type: inferredType }));
             }
         } catch {
             // Omitir keyframe ilegible sin abortar la nube métrica capturada
@@ -762,8 +815,8 @@ export async function startNativeSpatialScan(): Promise<{
 }
 
 /**
- * Persiste la nube métrica espacial (`application/json`) en IndexedDB CAS (`OfflineStorage`)
- * evitando saturar `localStorage` cuando no hay conectividad en faena.
+ * Persiste la nube métrica espacial (`application/json`) en LocalCasFilesystemService
+ * (`@capacitor/filesystem` en nativo / IndexedDB en web PWA).
  */
 export async function saveOfflineSpatialPayload(
     scan: SpatialScanNativeResult,
@@ -780,34 +833,242 @@ export async function saveOfflineSpatialPayload(
             : undefined) ||
         'offline-local';
 
-    await offlineStorage.putCasBlob({
+    await localCasFilesystem.putBlob({
         sha256,
         blob,
         mimeType: 'application/json',
-        profile: 'SPATIAL_CLOUD_JSON',
+        profile: 'SPATIAL_SESSION_BUNDLE',
         scope: 'TENANT_PRIVATE',
         tenantId: resolvedTenant,
         filename: `spatial_${stored.scanId || Date.now()}.json`,
+        extension: 'json',
         originalBytes: blob.size,
         optimizedBytes: blob.size,
-        updatedAt: Date.now(),
     });
 
     return sha256;
 }
 
 /**
- * Recupera desde IndexedDB CAS una nube métrica espacial almacenada offline por su SHA-256.
+ * Recupera desde LocalCasFilesystemService una nube métrica espacial almacenada offline.
  */
 export async function loadOfflineSpatialPayload(
     sha256: string
 ): Promise<SpatialOfflineStoredPayload | null> {
     if (!sha256) return null;
-    const record = await offlineStorage.getCasBlob(sha256).catch(() => null);
-    if (!record?.blob) return null;
-    const text = await record.blob.text();
+    const localRes = await localCasFilesystem.getBlob(sha256).catch(() => null);
+    if (!localRes?.blob) return null;
+    const text = await localRes.blob.text();
     const parsed = JSON.parse(text) as SpatialOfflineStoredPayload;
     return parsed && Array.isArray(parsed.pointsM) ? parsed : null;
+}
+
+/**
+ * Construye, valida con Zod (`CaptureSessionPackageV2Schema`), persiste en disco/IDB local
+ * y encola para sincronización resumible en 2 etapas (`CAPTURE_SESSION_UPLOAD`).
+ */
+export async function persistCaptureSessionOffline(params: {
+    sessionId: string;
+    tenantId: string;
+    assetId: string;
+    measurementId: string;
+    capturedAt: number;
+    scan: SpatialScanNativeResult;
+    keyframeBlobs: Blob[];
+    inSituMetrology: InSituMetrology;
+    localPreviewMesh?: DemGridV1 | null;
+    locale?: 'es' | 'en' | 'pt';
+}): Promise<CaptureSessionPackageV2> {
+    const {
+        sessionId,
+        tenantId,
+        assetId,
+        measurementId,
+        capturedAt,
+        scan,
+        keyframeBlobs,
+        inSituMetrology,
+        localPreviewMesh = null,
+        locale = 'es',
+    } = params;
+
+    const resolvedTenant = tenantId.trim() || 'offline-local';
+    const v2Meta = Array.isArray(scan.keyframesV2) ? scan.keyframesV2 : [];
+    const keyframes: CaptureKeyframeV2[] = [];
+    let totalOriginalBytes = 0;
+    let totalOptimizedBytes = 0;
+
+    for (let i = 0; i < keyframeBlobs.length; i++) {
+        const rawBlob = keyframeBlobs[i];
+        const meta = v2Meta[i];
+        let digestedBlob = rawBlob;
+        let mimeType = rawBlob.type || meta?.mimeType || 'image/webp';
+        let extension = mimeType.includes('webp') ? 'webp' : 'jpg';
+        let originalBytes = meta?.originalBytes ?? rawBlob.size;
+        let optimizedBytes = rawBlob.size;
+        let sha256 = '';
+
+        try {
+            const digested = await mediaDigestorClient.digestFile(rawBlob, 'IMAGE_FIELD_EVIDENCE');
+            digestedBlob = digested.blob;
+            mimeType = digested.mimeType || 'image/webp';
+            extension = digested.extension || 'webp';
+            originalBytes = Math.max(originalBytes, digested.originalBytes || rawBlob.size);
+            optimizedBytes = digested.optimizedBytes || digested.blob.size;
+            sha256 = digested.sha256;
+        } catch {
+            sha256 = await computeBlobSha256Hex(rawBlob);
+        }
+
+        const savingsPct =
+            originalBytes > 0
+                ? Math.max(0, Math.round((1 - optimizedBytes / originalBytes) * 1000) / 10)
+                : 0;
+
+        await localCasFilesystem.putBlob({
+            sha256,
+            blob: digestedBlob,
+            mimeType,
+            profile: 'IMAGE_FIELD_EVIDENCE',
+            scope: 'TENANT_PRIVATE',
+            tenantId: resolvedTenant,
+            filename: `${sessionId}_kf_${i}.${extension}`,
+            extension,
+            originalBytes,
+            optimizedBytes,
+        });
+
+        totalOriginalBytes += originalBytes;
+        totalOptimizedBytes += optimizedBytes;
+
+        keyframes.push({
+            index: meta?.index ?? i,
+            sha256,
+            offlineCasRef: `offline-cas://${sha256}.${extension}`,
+            mimeType,
+            originalBytes,
+            optimizedBytes,
+            savingsPct,
+            displayRotationDeg: meta?.displayRotationDeg ?? 0,
+            poseSE3: meta?.poseSE3 ?? {
+                r: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+                t: [0, 0, 0],
+            },
+            intrinsics: meta?.intrinsics ?? {
+                fx: 960,
+                fy: 960,
+                cx: 640,
+                cy: 480,
+                width: 1280,
+                height: 960,
+            },
+            timestampNs: meta?.timestampNs ?? capturedAt * 1_000_000 + i * 250_000_000,
+            azimuthDeg: meta?.azimuthDeg ?? meta?.angleDeg,
+            pitchDeg: meta?.pitchDeg,
+            sharpnessScore: meta?.sharpnessScore ?? meta?.blurScore,
+        });
+    }
+
+    let rawSpatialBundle: CaptureSessionPackageV2['rawSpatialBundle'] = null;
+    if (
+        (Array.isArray(scan.pointsM) && scan.pointsM.length > 0) ||
+        (Array.isArray(scan.walkRingPoses) && scan.walkRingPoses.length > 0)
+    ) {
+        const bundlePayload = {
+            pointsM: scan.pointsM || [],
+            groundSamplesM: scan.groundSamplesM || [],
+            walkRingPoses: scan.walkRingPoses || [],
+            anchorCenter: scan.anchorCenter || null,
+            roiRadiusM: scan.roiRadiusM,
+            coveragePct: scan.coveragePct,
+            sectorsCovered: scan.sectorsCovered,
+            sectorsTotal: scan.sectorsTotal,
+            loopClosed: scan.loopClosed,
+        };
+        const bundleJson = JSON.stringify(bundlePayload);
+        const bundleBlob = new Blob([bundleJson], { type: 'application/json' });
+        const bundleSha = await computeBlobSha256Hex(bundleBlob);
+        await localCasFilesystem.putBlob({
+            sha256: bundleSha,
+            blob: bundleBlob,
+            mimeType: 'application/json',
+            profile: 'SPATIAL_SESSION_BUNDLE',
+            scope: 'TENANT_PRIVATE',
+            tenantId: resolvedTenant,
+            filename: `${sessionId}_bundle.json`,
+            extension: 'json',
+            originalBytes: bundleBlob.size,
+            optimizedBytes: bundleBlob.size,
+        });
+        totalOriginalBytes += bundleBlob.size;
+        totalOptimizedBytes += bundleBlob.size;
+        rawSpatialBundle = {
+            sha256: bundleSha,
+            offlineCasRef: `offline-cas://${bundleSha}.json`,
+            originalBytes: bundleBlob.size,
+            optimizedBytes: bundleBlob.size,
+            savingsPct: 0,
+        };
+    }
+
+    const totalSavingsPct =
+        totalOriginalBytes > 0
+            ? Math.max(0, Math.round((1 - totalOptimizedBytes / totalOriginalBytes) * 1000) / 10)
+            : 0;
+
+    const manifestBase = JSON.stringify({
+        sessionId,
+        assetId,
+        measurementId,
+        capturedAt,
+        keyframes: keyframes.map((k) => k.sha256),
+        bundle: rawSpatialBundle?.sha256 || null,
+    });
+    const manifestSha256 = await computeBlobSha256Hex(
+        new Blob([manifestBase], { type: 'application/json' })
+    );
+
+    const validated = CaptureSessionPackageV2Schema.parse({
+        sessionId,
+        schemaVersion: '2.0',
+        tenantId: resolvedTenant,
+        assetId,
+        measurementId,
+        capturedAt,
+        scannerEngineVersion: scan.scannerEngineVersion || '2.0-vio-mvs',
+        orientationMode: scan.orientationMode || 'LANDSCAPE_4_3',
+        depthMode: scan.depthMode || 'DISABLED',
+        deviceModel: scan.deviceModel,
+        lifecycle_status: 'CAPTURED_OFFLINE_VALID',
+        metrology_grade: inSituMetrology.metrologyGrade,
+        reconciliation_status: 'PENDING_CLOUD',
+        keyframes,
+        walkRingPoses: scan.walkRingPoses,
+        rawSpatialBundle,
+        inSituMetrology,
+        localPreviewMesh,
+        casIntegrity: {
+            manifestSha256,
+            totalOriginalBytes,
+            totalOptimizedBytes,
+            totalSavingsPct,
+        },
+        reconciliation: {
+            offlineInSituM3: inSituMetrology.volumeM3,
+        },
+        locale,
+    });
+
+    await offlineStorage.saveCaptureSession(validated);
+    await syncQueueEngine.enqueueTask('CAPTURE_SESSION_UPLOAD', {
+        sessionId: validated.sessionId,
+        assetId: validated.assetId,
+        measurementId: validated.measurementId,
+        tenantId: validated.tenantId,
+        locale,
+    });
+
+    return validated;
 }
 
 /**

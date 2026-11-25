@@ -80,6 +80,7 @@ const formatCampaignDepthMode = (depthMode?: string | null): string | null => {
     if (norm === 'RAW_DEPTH_ONLY') return 'ARCORE RAW DEPTH';
     if (norm === 'AUTOMATIC') return 'ARCORE DEPTH';
     if (norm === 'VIO_POINTCLOUD') return 'ARCORE VIO';
+    if (norm === 'VIO_ORB_MVS' || norm === 'DISABLED') return 'VIO · MVS';
     return depthMode.trim();
 };
 
@@ -379,6 +380,40 @@ const CampaignComparisonPanel: React.FC<{
                                     : ''}
                             </div>
                         )}
+                        {(typeof measurement.offline_in_situ_m3 === 'number' ||
+                            typeof measurement.cloud_refined_m3 === 'number') && (
+                            <div className="md:col-span-2 flex flex-wrap items-center gap-fib-13 text-[#475569] dark:text-[#8A93A6]">
+                                <span>
+                                    IN-SITU:{' '}
+                                    {typeof measurement.offline_in_situ_m3 === 'number'
+                                        ? `${measurement.offline_in_situ_m3.toFixed(2)} m³`
+                                        : '--'}
+                                </span>
+                                <span>
+                                    CLOUD:{' '}
+                                    {typeof measurement.cloud_refined_m3 === 'number'
+                                        ? `${measurement.cloud_refined_m3.toFixed(2)} m³`
+                                        : '--'}
+                                </span>
+                                {typeof measurement.reconciliation_delta_pct === 'number' && (
+                                    <span
+                                        className={
+                                            Math.abs(measurement.reconciliation_delta_pct) > 8
+                                                ? 'text-[#C68346] font-bold'
+                                                : 'text-[#00AEEF] font-bold'
+                                        }
+                                    >
+                                        ΔC {measurement.reconciliation_delta_pct > 0 ? '+' : ''}
+                                        {measurement.reconciliation_delta_pct.toFixed(1)}%
+                                    </span>
+                                )}
+                                {measurement.reconciliation_status && (
+                                    <span className="uppercase">
+                                        {measurement.reconciliation_status}
+                                    </span>
+                                )}
+                            </div>
+                        )}
                     </div>
                 )}
             </div>
@@ -456,31 +491,50 @@ export const DesktopStageWorkspace: React.FC<DesktopStageWorkspaceProps> = ({
         chain.summary.latestActive ||
         null;
 
-    const effMeshUrl = selectedMeas?.mesh_url ?? asset.mesh_url ?? null;
-    const effMeshSha256 = selectedMeas?.mesh_sha256 ?? asset.mesh_sha256;
-    const effMeshSource = selectedMeas?.mesh_source ?? asset.mesh_source;
-    const effTinVolumeM3 = selectedMeas?.tin_volume_m3 ?? asset.tin_volume_m3 ?? null;
+    // Acoplamiento estricto: cuando hay medición seleccionada, nunca contaminar con mesh_url de otra campaña en asset.
+    const effMeshUrl = selectedMeas ? (selectedMeas.mesh_url ?? null) : (asset.mesh_url ?? null);
+    const effLocalPreviewMesh = selectedMeas
+        ? (selectedMeas.local_preview_mesh ?? null)
+        : (asset.local_preview_mesh ?? null);
+    const effLifecycleStatus =
+        selectedMeas?.lifecycle_status ?? asset.lifecycle_status ?? null;
+    const effMeshSha256 = selectedMeas ? selectedMeas.mesh_sha256 : asset.mesh_sha256;
+    const effMeshSource = selectedMeas ? selectedMeas.mesh_source : asset.mesh_source;
+    const effTinVolumeM3 = selectedMeas
+        ? (selectedMeas.tin_volume_m3 ?? selectedMeas.offline_in_situ_m3 ?? null)
+        : (asset.tin_volume_m3 ?? null);
+    const effMeshOrigBytes = selectedMeas
+        ? selectedMeas.mesh_original_bytes
+        : asset.mesh_original_bytes;
+    const effMeshOptBytes = selectedMeas
+        ? selectedMeas.mesh_optimized_bytes
+        : asset.mesh_optimized_bytes;
+    const effMeshSavingsPct = selectedMeas
+        ? selectedMeas.mesh_savings_pct
+        : asset.mesh_savings_pct;
     const effMeshCas =
-        selectedMeas?.mesh_original_bytes !== undefined ||
-        selectedMeas?.mesh_optimized_bytes !== undefined ||
-        asset.mesh_original_bytes !== undefined ||
-        asset.mesh_optimized_bytes !== undefined ||
-        effMeshSha256
+        effMeshOrigBytes !== undefined || effMeshOptBytes !== undefined || effMeshSha256
             ? {
-                  originalBytes: selectedMeas?.mesh_original_bytes ?? asset.mesh_original_bytes,
-                  optimizedBytes: selectedMeas?.mesh_optimized_bytes ?? asset.mesh_optimized_bytes,
-                  savingsPct: selectedMeas?.mesh_savings_pct ?? asset.mesh_savings_pct,
+                  originalBytes: effMeshOrigBytes,
+                  optimizedBytes: effMeshOptBytes,
+                  savingsPct: effMeshSavingsPct,
                   sha256: effMeshSha256,
               }
             : undefined;
 
-    const hasDeclaredGeometry = Boolean(
-        selectedMeas?.geometry?.type &&
-            selectedMeas?.geometry?.dimensions &&
-            Object.values(selectedMeas.geometry.dimensions).some(
-                (v) => typeof v === 'number' && Number.isFinite(v) && v > 0
-            )
-    );
+    const effUncertaintyPct = selectedMeas
+        ? (selectedMeas.uncertainty_pct ?? null)
+        : (asset.uncertainty_pct ?? null);
+    const effToeScore = selectedMeas ? (selectedMeas.toe_score ?? null) : (asset.toe_score ?? null);
+    const effCoveragePct = selectedMeas
+        ? (selectedMeas.coverage_pct ?? null)
+        : (asset.coverage_pct ?? null);
+    const effDepthMode = selectedMeas
+        ? (selectedMeas.depth_mode ?? null)
+        : (asset.depth_mode ?? null);
+    const effReconciliationDeltaPct = selectedMeas
+        ? (selectedMeas.reconciliation_delta_pct ?? null)
+        : (asset.reconciliation_delta_pct ?? null);
 
     const stagePhotoUrl =
         selectedMeas?.photo_url ||
@@ -631,18 +685,17 @@ export const DesktopStageWorkspace: React.FC<DesktopStageWorkspaceProps> = ({
                                     null
                                 }
                                 meshUrl={effMeshUrl}
-                                fallbackGeometry={
-                                    hasDeclaredGeometry && selectedMeas?.geometry
-                                        ? {
-                                              type: selectedMeas.geometry.type,
-                                              dimensions: selectedMeas.geometry.dimensions,
-                                          }
-                                        : null
-                                }
+                                localPreviewMesh={effLocalPreviewMesh}
+                                lifecycleStatus={effLifecycleStatus}
+                                reconciliationDeltaPct={effReconciliationDeltaPct}
                                 copperDomain={asset.copper_domain}
                                 tinVolumeM3={effTinVolumeM3}
                                 casMetrics={effMeshCas}
                                 meshSource={effMeshSource}
+                                uncertaintyPct={effUncertaintyPct}
+                                toeScore={effToeScore}
+                                coveragePct={effCoveragePct}
+                                depthMode={effDepthMode}
                                 altLabel={asset.name}
                                 mapNode={
                                     <StockpileStaticMapCard
@@ -718,14 +771,8 @@ export const DesktopStageWorkspace: React.FC<DesktopStageWorkspaceProps> = ({
                     <div className="space-y-fib-21">
                         <StockpileTwin3DLazy
                             meshUrl={effMeshUrl}
-                            fallbackGeometry={
-                                hasDeclaredGeometry && selectedMeas?.geometry
-                                    ? {
-                                          type: selectedMeas.geometry.type,
-                                          dimensions: selectedMeas.geometry.dimensions,
-                                      }
-                                    : null
-                            }
+                            localPreviewMesh={effLocalPreviewMesh}
+                            lifecycleStatus={effLifecycleStatus}
                             copperDomain={asset.copper_domain}
                             tinVolumeM3={effTinVolumeM3}
                             meshSource={effMeshSource}
@@ -742,8 +789,7 @@ export const DesktopStageWorkspace: React.FC<DesktopStageWorkspaceProps> = ({
                                 measurement={selectedMeas}
                                 asset={asset}
                                 onOpen3D={() => {
-                                    setVisualMode('3D');
-                                    setStageTab('OVERVIEW');
+                                    setStageTab('TWIN_3D');
                                 }}
                                 onClose={() => setLedgerCompareOpen(false)}
                             />

@@ -193,6 +193,9 @@ export * from './geo.contracts';
 // ── 8b. MINREPORT · ABASTECIMIENTO Contracts (Módulo Nativo `supply`) ────────
 export * from './supply.contracts';
 
+// ── 8c. MINREPORT · ACOPIOS V2 Offline-First Capture Contracts ─────────────────
+export * from './acopios.contracts';
+
 // ── 8. B2B Team Seats & Equipment Onboarding Contracts (Bloque 2.2) ─────────
 export const B2BSeatRoleSchema = z.enum(['OWNER', 'ADMIN', 'OPERATOR', 'VIEWER']);
 export type B2BSeatRole = z.infer<typeof B2BSeatRoleSchema>;

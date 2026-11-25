@@ -4,6 +4,14 @@
  * trazabilidad CAS y soporte a geometrías cono, windrow y acopio contra muro.
  */
 
+import type {
+    DemGridV1,
+    MeasurementLifecycleStatus,
+    MetrologyGrade,
+    ReconciliationStatus,
+    UnifiedBoundingBoxM,
+} from '../../../../contracts/acopios.contracts';
+
 export type CopperMineralDomain =
     | 'OXIDO_CU'
     | 'MIXTO_CU'
@@ -246,6 +254,20 @@ export interface StockpileAsset {
 
     // Estado Digital Offline-First & Talud IA
     analysis_status?: GeolappAnalysisStatus;
+    lifecycle_status?: MeasurementLifecycleStatus;
+    metrology_grade?: MetrologyGrade;
+    reconciliation_status?: ReconciliationStatus;
+    capture_session_id?: string;
+    offline_in_situ_m3?: number | null;
+    cloud_refined_m3?: number | null;
+    reconciliation_delta_pct?: number | null;
+    local_preview_mesh?: DemGridV1 | null;
+    rejection_code?: string | null;
+    rejection_reason?: string | null;
+    mesh_vertex_count?: number;
+    mesh_triangle_count?: number;
+    mesh_surface_area_m2?: number;
+    mesh_bounding_box_m?: UnifiedBoundingBoxM;
     scale_anchor_type?: GeolappDigitalScaleAnchorType;
     uncertainty_pct?: number | null;
     toe_score?: number | null;
@@ -367,6 +389,20 @@ export interface StockpileMeasurement {
     // Estado Lógico y Captura Digital Offline-First
     ignored?: boolean;
     analysis_status?: GeolappAnalysisStatus;
+    lifecycle_status?: MeasurementLifecycleStatus;
+    metrology_grade?: MetrologyGrade;
+    reconciliation_status?: ReconciliationStatus;
+    capture_session_id?: string;
+    offline_in_situ_m3?: number | null;
+    cloud_refined_m3?: number | null;
+    reconciliation_delta_pct?: number | null;
+    local_preview_mesh?: DemGridV1 | null;
+    rejection_code?: string | null;
+    rejection_reason?: string | null;
+    mesh_vertex_count?: number;
+    mesh_triangle_count?: number;
+    mesh_surface_area_m2?: number;
+    mesh_bounding_box_m?: UnifiedBoundingBoxM;
     scale_anchor_type?: GeolappDigitalScaleAnchorType;
     scale_anchor_meters?: number;
     reference_base_meters?: number;

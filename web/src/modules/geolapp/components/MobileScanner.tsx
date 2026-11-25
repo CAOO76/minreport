@@ -13,7 +13,6 @@ import M3LinearProgress from '../../../components/common/M3LinearProgress';
 import SecureImage from '../../../components/common/SecureImage';
 import { dataService } from '../core/services/DataService';
 import { storageService, type UploadResult } from '../core/services/StorageService';
-import { geolappDigitalAiService } from '../core/services/GeolappDigitalAiService';
 import {
     getCachedSpatialDeviceCapability,
     useSpatialDeviceCapability,
@@ -22,15 +21,18 @@ import {
     SpatialScanRejectedError,
     analyzeSpatialScan,
     formatStockpileVolumeM3,
-    getNativeCalibrationStatus,
-    isCalibrationValid,
+    persistCaptureSessionOffline,
     saveOfflineSpatialPayload,
     startNativeSpatialScan,
-    type NativeCalibrationResult,
     type SpatialAnalyzeResult,
     type SpatialScanNativeResult,
 } from '../core/services/spatialScannerService';
-import { useImuClinometer } from '../core/hooks/useImuClinometer';
+import type {
+    DemGridV1,
+    InSituMetrology,
+    MeasurementLifecycleStatus,
+    MetrologyGrade,
+} from '../../../contracts/acopios.contracts';
 import {
     useXCoverHardwareKey,
     XCOVER_HARDWARE_KEY_CODES,
@@ -137,7 +139,6 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
 }) => {
     const { t, i18n } = useTranslation();
     const { isOnline } = useNetworkStatus();
-    const imu = useImuClinometer();
     const {
         capability,
         loading: capabilityLoading,
@@ -152,6 +153,11 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
             (effectiveCapability?.tier === 'OPTIMAL_SPATIAL' ||
                 effectiveCapability?.tier === 'COMPATIBLE_VIO')
     );
+
+    const draftAssetRef = useRef(draftAsset);
+    useEffect(() => {
+        draftAssetRef.current = draftAsset;
+    }, [draftAsset]);
 
     const [editableDraftName, setEditableDraftName] = useState<string>(
         () => draftAsset?.name?.trim() || assetName?.trim() || ''
@@ -181,11 +187,13 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
     const [photoBlob, setPhotoBlob] = useState<Blob | null>(null);
     const [photoPreview, setPhotoPreview] = useState<string | null>(null);
     const [extraPhotos, setExtraPhotos] = useState<Array<{ blob: Blob; previewUrl: string }>>([]);
+    const [allKeyframeBlobs, setAllKeyframeBlobs] = useState<Blob[]>([]);
     const [spatialScan, setSpatialScan] = useState<SpatialScanNativeResult | null>(null);
+    const [inSituMetrology, setInSituMetrology] = useState<InSituMetrology | null>(null);
+    const [localPreviewMesh, setLocalPreviewMesh] = useState<DemGridV1 | null>(null);
     const [spatialResult, setSpatialResult] = useState<SpatialAnalyzeResult | null>(null);
     const [offlinePendingSpatial, setOfflinePendingSpatial] = useState<boolean>(false);
 
-    const [calibration, setCalibration] = useState<NativeCalibrationResult | null>(null);
     const [selectedCopperDomain, setSelectedCopperDomain] = useState<CopperMineralDomain | null>(
         initialCopperDomain ?? null
     );
@@ -214,27 +222,6 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
         const raw = (i18n.resolvedLanguage || i18n.language || 'es').slice(0, 2);
         return raw === 'en' || raw === 'pt' ? raw : 'es';
     }, [i18n.language, i18n.resolvedLanguage]);
-
-    useEffect(() => {
-        if (imu.isSupported) {
-            void imu.startListening();
-        }
-        return () => {
-            void imu.stopListening();
-        };
-    }, []);
-
-    useEffect(() => {
-        let active = true;
-        void getNativeCalibrationStatus()
-            .then((cal) => {
-                if (active) setCalibration(cal);
-            })
-            .catch(() => {});
-        return () => {
-            active = false;
-        };
-    }, []);
 
     useEffect(() => {
         latestUrlsRef.current = {
@@ -267,7 +254,10 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
             });
             return [];
         });
+        setAllKeyframeBlobs([]);
         setSpatialScan(null);
+        setInSituMetrology(null);
+        setLocalPreviewMesh(null);
         setSpatialResult(null);
         setOfflinePendingSpatial(false);
         setSelectedCopperDomain(initialCopperDomain ?? null);
@@ -304,15 +294,53 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
             primary: Blob | null,
             extras: Blob[]
         ) => {
-            setStage('ANALYZING');
             setRejectionMessage(null);
             setErrorMessage(null);
             setOfflinePendingSpatial(false);
 
-            if (!isOnline) {
+            // Flujo V2 Offline-First: consumir metrología in-situ nativa inmediatamente (0 ms red)
+            if (scan.inSituMetrology) {
+                if (
+                    scan.inSituMetrology.metrologyGrade === 'REJECTED' ||
+                    !(scan.inSituMetrology.volumeM3 > 0)
+                ) {
+                    setInSituMetrology(null);
+                    setLocalPreviewMesh(null);
+                    setSpatialResult(null);
+                    setRejectionMessage(
+                        t(
+                            'scanner.insitu_rejected',
+                            'COBERTURA O VOLUMEN INSUFICIENTE. RODEAR EL ACOPIO Y REINTENTAR.'
+                        )
+                    );
+                    setStage('REJECTED');
+                    void triggerFieldNotification('ERROR');
+                    return;
+                }
+
+                setInSituMetrology(scan.inSituMetrology);
+                setLocalPreviewMesh(scan.localPreviewMesh ?? null);
                 setSpatialResult(null);
                 setOfflinePendingSpatial(true);
                 setStage('RESULT');
+                void triggerFieldNotification(
+                    scan.inSituMetrology.slopeWarning ? 'WARNING' : 'SUCCESS'
+                );
+                return;
+            }
+
+            setStage('ANALYZING');
+
+            if (!isOnline) {
+                setSpatialResult(null);
+                setRejectionMessage(
+                    t(
+                        'scanner.offline_requires_v2_metrology',
+                        'SIN CONEXIÓN Y SIN CÁLCULO IN-SITU VÁLIDO. REPITA LA CAPTURA.'
+                    )
+                );
+                setStage('REJECTED');
+                void triggerFieldNotification('ERROR');
                 return;
             }
 
@@ -324,13 +352,6 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                     scan,
                     primaryBlob: primary ?? undefined,
                     extraBlobs: extras,
-                    calibrationId: calibration?.calibrationId,
-                    calibrationScaleFactor:
-                        scan.calibrationScaleFactor ??
-                        (isCalibrationValid(calibration) ? calibration?.scaleFactor : undefined),
-                    calibrationPlaneNoiseRmsM:
-                        scan.calibrationPlaneNoiseRmsM ?? calibration?.planeNoiseRmsM,
-                    deviceCalibratedAt: scan.deviceCalibratedAt ?? calibration?.calibratedAt,
                     locale: resolvedLocale,
                 });
                 setSpatialResult(res);
@@ -356,7 +377,7 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                 void triggerFieldNotification('ERROR');
             }
         },
-        [calibration, isOnline, resolvedLocale, t]
+        [isOnline, resolvedLocale, t]
     );
 
     const handleStartSpatialScan = useCallback(async () => {
@@ -376,6 +397,7 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                 return;
             }
             setSpatialScan(scan);
+            setAllKeyframeBlobs(photoBlobs);
 
             const primary = photoBlobs.length > 0 ? photoBlobs[0] : null;
             const extraRawBlobs = photoBlobs.slice(1, MAX_AUTO_THUMBS);
@@ -479,7 +501,10 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
         const file = e.target.files?.[0];
         e.target.value = '';
         if (!file) return;
+        setAllKeyframeBlobs([]);
         setSpatialScan(null);
+        setInSituMetrology(null);
+        setLocalPreviewMesh(null);
         setSpatialResult(null);
         setOfflinePendingSpatial(false);
         await processPrimaryBlob(file);
@@ -498,11 +523,18 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
         }
     };
 
+    const hasInSituVolume = Boolean(
+        inSituMetrology &&
+            inSituMetrology.metrologyGrade !== 'REJECTED' &&
+            Number.isFinite(inSituMetrology.volumeM3) &&
+            inSituMetrology.volumeM3 > 0
+    );
+
     const hasSpatialPoints = Boolean(
         spatialScan &&
             !spatialScan.cancelled &&
-            Array.isArray(spatialScan.pointsM) &&
-            spatialScan.pointsM.length >= 20
+            (hasInSituVolume ||
+                (Array.isArray(spatialScan.pointsM) && spatialScan.pointsM.length >= 20))
     );
 
     const handleSaveCapture = useCallback(async () => {
@@ -514,8 +546,16 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
         }
 
         const isSpatialFlow = Boolean(hasSpatialPoints && spatialScan);
-        if (isSpatialFlow && isOnline && !spatialResult) {
-            setErrorMessage(t('scanner.analyze_required', 'EJECUTA ANÁLISIS ANTES DE GUARDAR'));
+        const hasValidVolume = Boolean(
+            hasInSituVolume || (spatialResult?.verified && spatialResult.volumeM3 > 0)
+        );
+        if (!hasValidVolume) {
+            setErrorMessage(
+                t(
+                    'scanner.valid_volume_required',
+                    'SE REQUIERE VOLUMEN MÉTRICO VÁLIDO (> 0 m³) ANTES DE GUARDAR'
+                )
+            );
             void triggerFieldNotification('ERROR');
             return;
         }
@@ -527,8 +567,11 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
 
         try {
             const now = Date.now();
+            const latestDraft = draftAssetRef.current;
             const targetAssetId = isNewAssetMode ? `asset_${now}` : assetId!;
-            const activeTenantId = getActiveTenantId();
+            const activeTenantId = getActiveTenantId() || 'offline-local';
+            const captureSessionId =
+                spatialScan?.scanId?.trim() || `sess_${now}_${Math.random().toString(36).slice(2, 8)}`;
 
             let primaryUpload: UploadResult | null = null;
             if (photoBlob) {
@@ -550,44 +593,21 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                 extraUploads.push({ url: extraRes.url, sha256: extraRes.sha256 });
             }
 
-            setUploadProgress(55);
+            setUploadProgress(65);
 
-            let resolvedAi = null;
-            if (!isSpatialFlow && isOnline && photoBlob) {
-                resolvedAi = await geolappDigitalAiService
-                    .analyzeCapture({
-                        stockpileId: isNewAssetMode ? undefined : assetId,
-                        tenantId: activeTenantId,
-                        photoBlob,
-                        extraBlobs: [],
-                        scaleAnchorType: 'NONE',
-                        imuPitchDeg: imu.pitchDeg,
-                        imuRollDeg: imu.rollDeg,
-                        locale: resolvedLocale,
-                    })
-                    .catch(() => null);
-            }
-
-            setUploadProgress(80);
-            const hasSpatialVerified = Boolean(
-                isSpatialFlow && spatialResult?.verified && spatialResult.volumeM3 > 0
-            );
-            const hasAiResult = Boolean(resolvedAi);
-            const analysisStatus: GeolappAnalysisStatus = isSpatialFlow
-                ? hasSpatialVerified
-                    ? 'AI_VERIFIED'
-                    : 'PENDING_AI_SYNC'
-                : !hasAiResult
-                  ? 'PENDING_AI_SYNC'
-                  : resolvedAi!.scaleVerified
-                    ? 'AI_VERIFIED'
-                    : 'PENDING_SCALE';
-
-            const finalVolumeM3 = hasSpatialVerified
+            const hasCloudSpatial = Boolean(spatialResult?.verified && spatialResult.volumeM3 > 0);
+            const finalVolumeM3 = hasCloudSpatial
                 ? spatialResult!.volumeM3
-                : resolvedAi && resolvedAi.scaleVerified && resolvedAi.volumeM3 > 0
-                  ? resolvedAi.volumeM3
-                  : 0;
+                : inSituMetrology!.volumeM3;
+
+            const lifecycleStatus: MeasurementLifecycleStatus = hasCloudSpatial
+                ? 'CLOUD_3D_VERIFIED'
+                : 'CAPTURED_OFFLINE_VALID';
+            const metrologyGrade: MetrologyGrade =
+                inSituMetrology?.metrologyGrade ?? 'VALID_IN_SITU';
+            const reconciliationStatus = hasCloudSpatial ? 'AUTO_CONCILIATED' : 'PENDING_CLOUD';
+            const analysisStatus: GeolappAnalysisStatus = 'AI_VERIFIED';
+
             const { density: resolvedDensity } = resolveEffectiveDensityFactor({
                 manualDensityText,
                 aiDensityDismissed,
@@ -601,26 +621,28 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                     : 0;
 
             const safeGeo =
-                draftAsset?.geoPoint &&
-                Number.isFinite(draftAsset.geoPoint.latitude) &&
-                Number.isFinite(draftAsset.geoPoint.longitude) &&
-                (draftAsset.geoPoint.latitude !== 0 || draftAsset.geoPoint.longitude !== 0)
-                    ? draftAsset.geoPoint
+                latestDraft?.geoPoint &&
+                Number.isFinite(latestDraft.geoPoint.latitude) &&
+                Number.isFinite(latestDraft.geoPoint.longitude) &&
+                (latestDraft.geoPoint.latitude !== 0 || latestDraft.geoPoint.longitude !== 0)
+                    ? latestDraft.geoPoint
                     : undefined;
 
-            const scaleAnchorType = isSpatialFlow
-                ? ('ARCORE_VIO_DEPTH' as const)
-                : ('NONE' as const);
+            const scaleAnchorType = 'ARCORE_VIO_DEPTH' as const;
 
             const resolvedGeometry = spatialResult?.dimensionsM
                 ? {
                       type: spatialResult.geometryType,
                       dimensions: spatialResult.dimensionsM,
                   }
-                : resolvedAi?.dimensionsM
+                : inSituMetrology
                   ? {
-                        type: resolvedAi.geometryType,
-                        dimensions: resolvedAi.dimensionsM,
+                        type: 'CONO_ELIPTICO' as const,
+                        dimensions: {
+                            a: Number(inSituMetrology.baseLengthM.toFixed(2)),
+                            b: Number(inSituMetrology.baseWidthM.toFixed(2)),
+                            h: Number(inSituMetrology.heightMaxM.toFixed(2)),
+                        },
                     }
                   : undefined;
 
@@ -633,6 +655,29 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                               spatialResult.aiSuggestedGranulometry !== selectedGranulometry,
                       }
                     : undefined;
+
+            const effUncertaintyPct =
+                spatialResult?.uncertaintyPct ?? inSituMetrology?.uncertaintyPct ?? null;
+            const effToeScore = spatialResult?.toeScore ?? inSituMetrology?.toeScore ?? null;
+            const effCoveragePct =
+                spatialResult?.coveragePct ??
+                inSituMetrology?.coveragePct ??
+                spatialScan?.coveragePct ??
+                null;
+            const effDepthMode =
+                spatialResult?.depthMode ?? spatialScan?.depthMode ?? 'VIO_ORB_MVS';
+            const effGroundSlopeDeg =
+                spatialResult?.groundSlopeDeg ?? inSituMetrology?.groundPlane.slopeDeg ?? null;
+            const effSlopeAvg =
+                spatialResult?.slopeAngleAvgDeg ?? inSituMetrology?.slopeAngleAvgDeg ?? undefined;
+            const effSlopeLeft =
+                spatialResult?.slopeAngleLeftDeg ?? inSituMetrology?.slopeAngleLeftDeg ?? undefined;
+            const effSlopeRight =
+                spatialResult?.slopeAngleRightDeg ??
+                inSituMetrology?.slopeAngleRightDeg ??
+                undefined;
+            const effSlopeWarn =
+                spatialResult?.slopeWarning ?? inSituMetrology?.slopeWarning ?? null;
 
             const measurementBasePayload = {
                 timestamp: now,
@@ -651,43 +696,38 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                 ...(trainingGranulometry ? { training_data: trainingGranulometry } : {}),
                 geometry: resolvedGeometry,
                 analysis_status: analysisStatus,
+                lifecycle_status: lifecycleStatus,
+                metrology_grade: metrologyGrade,
+                reconciliation_status: reconciliationStatus,
+                capture_session_id: captureSessionId,
+                offline_in_situ_m3: inSituMetrology?.volumeM3 ?? finalVolumeM3,
+                cloud_refined_m3: hasCloudSpatial ? spatialResult!.volumeM3 : null,
+                reconciliation_delta_pct: hasCloudSpatial ? 0 : null,
+                local_preview_mesh: localPreviewMesh ?? null,
                 scale_anchor_type: scaleAnchorType,
-                uncertainty_pct: isSpatialFlow
-                    ? (spatialResult?.uncertaintyPct ?? null)
-                    : undefined,
-                toe_score: isSpatialFlow ? (spatialResult?.toeScore ?? null) : undefined,
-                coverage_pct: isSpatialFlow
-                    ? (spatialResult?.coveragePct ?? spatialScan?.coveragePct ?? null)
-                    : undefined,
-                depth_mode: isSpatialFlow
-                    ? (spatialResult?.depthMode ?? spatialScan?.depthMode ?? null)
-                    : undefined,
-                ground_slope_deg: isSpatialFlow
-                    ? (spatialResult?.groundSlopeDeg ?? null)
-                    : undefined,
+                uncertainty_pct: effUncertaintyPct,
+                toe_score: effToeScore,
+                coverage_pct: effCoveragePct,
+                depth_mode: effDepthMode,
+                ground_slope_deg: effGroundSlopeDeg,
                 mesh_url: spatialResult?.meshUrl ?? undefined,
                 mesh_sha256: spatialResult?.meshSha256 ?? undefined,
                 mesh_source: spatialResult?.meshSource ?? undefined,
-                tin_volume_m3: spatialResult?.tinVolumeM3 ?? undefined,
+                tin_volume_m3: spatialResult?.tinVolumeM3 ?? inSituMetrology?.volumeM3 ?? undefined,
                 is_non_stockpile: spatialResult?.isNonStockpile,
-                detected_slope_angle_deg:
-                    spatialResult?.slopeAngleAvgDeg ??
-                    resolvedAi?.slopeAngleAvgDeg ??
-                    undefined,
-                slope_left_deg:
-                    spatialResult?.slopeAngleLeftDeg ??
-                    resolvedAi?.slopeAngleLeftDeg ??
-                    undefined,
-                slope_right_deg:
-                    spatialResult?.slopeAngleRightDeg ??
-                    resolvedAi?.slopeAngleRightDeg ??
-                    undefined,
-                slope_warning: spatialResult?.slopeWarning ?? resolvedAi?.slopeWarning ?? null,
-                wall_confinement:
-                    spatialResult?.wallConfinement ?? resolvedAi?.wallConfinement,
-                imu_pitch_deg: typeof imu.pitchDeg === 'number' ? imu.pitchDeg : undefined,
-                gnss_status: draftAsset?.gnssStatus,
-                underground_sector: draftAsset?.undergroundSector,
+                detected_slope_angle_deg: effSlopeAvg ?? undefined,
+                slope_left_deg: effSlopeLeft ?? undefined,
+                slope_right_deg: effSlopeRight ?? undefined,
+                slope_warning: effSlopeWarn,
+                wall_confinement: spatialResult?.wallConfinement,
+                // Preservar exclusivamente el pitch medido durante el escaneo (nunca sobrescribir con postura al guardar)
+                imu_pitch_deg:
+                    typeof spatialScan?.captureImuPitchDeg === 'number' &&
+                    Number.isFinite(spatialScan.captureImuPitchDeg)
+                        ? spatialScan.captureImuPitchDeg
+                        : undefined,
+                gnss_status: latestDraft?.gnssStatus,
+                underground_sector: latestDraft?.undergroundSector,
                 ...(safeGeo
                     ? {
                           location_metadata: {
@@ -709,48 +749,46 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                         id: targetAssetId,
                         name:
                             editableDraftName.trim() ||
-                            draftAsset?.name?.trim() ||
+                            latestDraft?.name?.trim() ||
                             `AC-${String(now).slice(-4)}`,
-                        ...(draftAsset?.projectId ? { project_id: draftAsset.projectId } : {}),
-                        ...(draftAsset?.projectName ? { project_name: draftAsset.projectName } : {}),
+                        ...(latestDraft?.projectId ? { project_id: latestDraft.projectId } : {}),
+                        ...(latestDraft?.projectName
+                            ? { project_name: latestDraft.projectName }
+                            : {}),
                         clase: mapCopperDomainToClase(selectedCopperDomain),
                         status: 'ACTIVE',
                         ...(safeGeo ? { geo_point: safeGeo } : {}),
-                        location_ref: draftAsset?.undergroundSector || undefined,
-                        gnss_status: draftAsset?.gnssStatus,
-                        underground_sector: draftAsset?.undergroundSector,
+                        location_ref: latestDraft?.undergroundSector || undefined,
+                        gnss_status: latestDraft?.gnssStatus,
+                        underground_sector: latestDraft?.undergroundSector,
                         captured_at: now,
                         copper_domain: selectedCopperDomain ?? undefined,
                         tipo_granulometria: selectedGranulometry ?? undefined,
                         density_factor: resolvedDensity ?? undefined,
                         analysis_status: analysisStatus,
+                        lifecycle_status: lifecycleStatus,
+                        metrology_grade: metrologyGrade,
+                        reconciliation_status: reconciliationStatus,
+                        capture_session_id: captureSessionId,
+                        offline_in_situ_m3: inSituMetrology?.volumeM3 ?? finalVolumeM3,
+                        cloud_refined_m3: hasCloudSpatial ? spatialResult!.volumeM3 : null,
+                        reconciliation_delta_pct: hasCloudSpatial ? 0 : null,
+                        local_preview_mesh: localPreviewMesh ?? null,
                         scale_anchor_type: scaleAnchorType,
-                        uncertainty_pct: isSpatialFlow
-                            ? (spatialResult?.uncertaintyPct ?? null)
-                            : undefined,
-                        toe_score: isSpatialFlow ? (spatialResult?.toeScore ?? null) : undefined,
-                        coverage_pct: isSpatialFlow
-                            ? (spatialResult?.coveragePct ?? spatialScan?.coveragePct ?? null)
-                            : undefined,
-                        depth_mode: isSpatialFlow
-                            ? (spatialResult?.depthMode ?? spatialScan?.depthMode ?? null)
-                            : undefined,
-                        ground_slope_deg: isSpatialFlow
-                            ? (spatialResult?.groundSlopeDeg ?? null)
-                            : undefined,
+                        uncertainty_pct: effUncertaintyPct,
+                        toe_score: effToeScore,
+                        coverage_pct: effCoveragePct,
+                        depth_mode: effDepthMode,
+                        ground_slope_deg: effGroundSlopeDeg,
                         mesh_url: spatialResult?.meshUrl ?? undefined,
                         mesh_sha256: spatialResult?.meshSha256 ?? undefined,
                         mesh_source: spatialResult?.meshSource ?? undefined,
-                        tin_volume_m3: spatialResult?.tinVolumeM3 ?? undefined,
+                        tin_volume_m3:
+                            spatialResult?.tinVolumeM3 ?? inSituMetrology?.volumeM3 ?? undefined,
                         is_non_stockpile: spatialResult?.isNonStockpile,
-                        detected_slope_angle_deg:
-                            spatialResult?.slopeAngleAvgDeg ??
-                            resolvedAi?.slopeAngleAvgDeg ??
-                            undefined,
-                        slope_warning:
-                            spatialResult?.slopeWarning ?? resolvedAi?.slopeWarning ?? null,
-                        wall_confinement:
-                            spatialResult?.wallConfinement ?? resolvedAi?.wallConfinement,
+                        detected_slope_angle_deg: effSlopeAvg ?? undefined,
+                        slope_warning: effSlopeWarn,
+                        wall_confinement: spatialResult?.wallConfinement,
                     },
                     measurement: measurementBasePayload,
                 });
@@ -764,41 +802,49 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                 });
             }
 
-            if (isSpatialFlow && !hasSpatialVerified && offlinePendingSpatial && spatialScan) {
-                const spatialPayloadSha256 = await saveOfflineSpatialPayload(
-                    spatialScan,
-                    activeTenantId
-                );
-                await syncQueueEngine.enqueueTask<GeolappSpatialSyncPayload>(
-                    'GEOLAPP_SPATIAL_ANALYZE',
-                    {
+            // Encolar paquete inmutable V2 (keyframes WebP + poses SE(3) + bundle) para refinamiento GPU diferido
+            if (isSpatialFlow && inSituMetrology && !hasCloudSpatial && spatialScan) {
+                const blobsToPersist =
+                    allKeyframeBlobs.length > 0
+                        ? allKeyframeBlobs
+                        : [
+                              ...(photoBlob ? [photoBlob] : []),
+                              ...extraPhotos.map((p) => p.blob),
+                          ];
+                if (blobsToPersist.length > 0) {
+                    await persistCaptureSessionOffline({
+                        sessionId: captureSessionId,
+                        tenantId: activeTenantId,
                         assetId: finalAssetId,
                         measurementId: finalMeasurementId,
-                        tenantId: activeTenantId,
-                        sha256: primaryUpload?.sha256,
-                        extraSha256s: extraUploads
-                            .map((item) => item.sha256)
-                            .filter((s): s is string => Boolean(s)),
-                        photoUrl: primaryUpload?.url,
-                        spatialPayloadSha256,
+                        capturedAt: now,
+                        scan: spatialScan,
+                        keyframeBlobs: blobsToPersist,
+                        inSituMetrology,
+                        localPreviewMesh,
                         locale: resolvedLocale,
-                    }
-                );
-            } else if (!isSpatialFlow && analysisStatus === 'PENDING_AI_SYNC' && primaryUpload) {
-                await syncQueueEngine.enqueueTask('GEOLAPP_DIGITAL_AI_ANALYZE', {
-                    assetId: finalAssetId,
-                    measurementId: finalMeasurementId,
-                    tenantId: activeTenantId,
-                    sha256: primaryUpload.sha256,
-                    extraSha256s: extraUploads
-                        .map((item) => item.sha256)
-                        .filter((s): s is string => Boolean(s)),
-                    photoUrl: primaryUpload.url,
-                    scaleAnchorType: 'NONE',
-                    imuPitchDeg: typeof imu.pitchDeg === 'number' ? imu.pitchDeg : undefined,
-                    imuRollDeg: typeof imu.rollDeg === 'number' ? imu.rollDeg : undefined,
-                    locale: resolvedLocale,
-                });
+                    });
+                } else {
+                    const spatialPayloadSha256 = await saveOfflineSpatialPayload(
+                        spatialScan,
+                        activeTenantId
+                    );
+                    await syncQueueEngine.enqueueTask<GeolappSpatialSyncPayload>(
+                        'GEOLAPP_SPATIAL_ANALYZE',
+                        {
+                            assetId: finalAssetId,
+                            measurementId: finalMeasurementId,
+                            tenantId: activeTenantId,
+                            sha256: primaryUpload?.sha256,
+                            extraSha256s: extraUploads
+                                .map((item) => item.sha256)
+                                .filter((s): s is string => Boolean(s)),
+                            photoUrl: primaryUpload?.url,
+                            spatialPayloadSha256,
+                            locale: resolvedLocale,
+                        }
+                    );
+                }
             }
 
             setUploadProgress(100);
@@ -819,19 +865,18 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
         }
     }, [
         aiDensityDismissed,
+        allKeyframeBlobs,
         assetId,
-        draftAsset,
         editableDraftName,
         extraPhotos,
+        hasInSituVolume,
         hasSpatialPoints,
-        imu.pitchDeg,
-        imu.rollDeg,
+        inSituMetrology,
         isNewAssetMode,
-        isOnline,
         isSaving,
         isScanningSpatial,
+        localPreviewMesh,
         manualDensityText,
-        offlinePendingSpatial,
         onSuccess,
         photoBlob,
         resolvedLocale,
@@ -1206,44 +1251,90 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                                     )}
                                 </div>
 
-                                {spatialResult ? (
+                                {spatialResult || inSituMetrology ? (
                                     <>
-                                        <div className="font-mono text-[48px] font-bold tabular-nums leading-none text-[#C68346]">
-                                            {formatStockpileVolumeM3(spatialResult.volumeM3)} m³
-                                        </div>
                                         {(() => {
+                                            const activeVol =
+                                                spatialResult?.volumeM3 ??
+                                                inSituMetrology?.volumeM3 ??
+                                                0;
+                                            const activeUncertainty =
+                                                spatialResult?.uncertaintyPct ??
+                                                inSituMetrology?.uncertaintyPct ??
+                                                null;
+                                            const activeGrade = inSituMetrology?.metrologyGrade;
                                             const previewT =
-                                                spatialResult.volumeM3 > 0 && resolvedResultDensity
-                                                    ? spatialResult.volumeM3 * resolvedResultDensity
+                                                activeVol > 0 && resolvedResultDensity
+                                                    ? activeVol * resolvedResultDensity
                                                     : 0;
-                                            return previewT > 0 && resolvedResultDensity ? (
-                                                <div className="flex items-center flex-wrap gap-fib-8 font-mono text-[20px] font-bold tabular-nums text-[#0F172A] dark:text-[#F3F4F6]">
-                                                    <span>{previewT.toFixed(1)} t</span>
-                                                    <span className="text-[14px] text-[#475569] dark:text-[#8A93A6]">
-                                                        {resolvedResultDensity.toFixed(2)} t/m³
-                                                    </span>
-                                                    {resolvedDensitySource === 'AI' && (
-                                                        <span className="text-[13px] font-bold text-[#00AEEF]">
-                                                            {t('scanner.ai_granulometry_optin', 'IA')}
-                                                            {selectedGranulometry
-                                                                ? ` · ${selectedGranulometry}`
-                                                                : ''}
+                                            return (
+                                                <>
+                                                    <div className="flex items-baseline gap-fib-13 flex-wrap">
+                                                        <span className="font-mono text-[48px] font-bold tabular-nums leading-none text-[#C68346]">
+                                                            {formatStockpileVolumeM3(activeVol)} m³
                                                         </span>
+                                                        {typeof activeUncertainty === 'number' &&
+                                                            Number.isFinite(activeUncertainty) && (
+                                                                <span
+                                                                    className={`font-mono text-[18px] font-bold tabular-nums ${
+                                                                        activeUncertainty <= 6
+                                                                            ? 'text-[#00AEEF]'
+                                                                            : 'text-[#475569] dark:text-[#8A93A6]'
+                                                                    }`}
+                                                                >
+                                                                    ± {activeUncertainty.toFixed(1)}%
+                                                                </span>
+                                                            )}
+                                                    </div>
+                                                    {inSituMetrology && !spatialResult && (
+                                                        <div className="flex items-center gap-fib-8 font-mono text-microcopy uppercase tabular-nums">
+                                                            <span
+                                                                className={
+                                                                    activeGrade ===
+                                                                    'LOW_CONFIDENCE_RECAPTURE'
+                                                                        ? 'text-[#C68346] font-bold'
+                                                                        : 'text-[#00AEEF] font-bold'
+                                                                }
+                                                            >
+                                                                {activeGrade ===
+                                                                'LOW_CONFIDENCE_RECAPTURE'
+                                                                    ? 'IN-SITU · BAJA CONFIANZA'
+                                                                    : 'IN-SITU OFFLINE'}
+                                                            </span>
+                                                            <span className="text-[#475569] dark:text-[#8A93A6]">
+                                                                COB {Math.round(inSituMetrology.coveragePct)}% · TOE {Math.round(inSituMetrology.toeScore)}%
+                                                            </span>
+                                                        </div>
                                                     )}
-                                                </div>
-                                            ) : null;
+                                                    {previewT > 0 && resolvedResultDensity ? (
+                                                        <div className="flex items-center flex-wrap gap-fib-8 font-mono text-[20px] font-bold tabular-nums text-[#0F172A] dark:text-[#F3F4F6]">
+                                                            <span>{previewT.toFixed(1)} t</span>
+                                                            <span className="text-[14px] text-[#475569] dark:text-[#8A93A6]">
+                                                                {resolvedResultDensity.toFixed(2)} t/m³
+                                                            </span>
+                                                            {resolvedDensitySource === 'AI' && (
+                                                                <span className="text-[13px] font-bold text-[#00AEEF]">
+                                                                    {t(
+                                                                        'scanner.ai_granulometry_optin',
+                                                                        'IA'
+                                                                    )}
+                                                                    {selectedGranulometry
+                                                                        ? ` · ${selectedGranulometry}`
+                                                                        : ''}
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    ) : null}
+                                                </>
+                                            );
                                         })()}
-                                        {spatialResult.isNonStockpile && (
+                                        {spatialResult?.isNonStockpile && (
                                             <div className="pt-fib-8 font-mono text-[18px] font-bold uppercase text-[#C68346]">
                                                 NO SE DETECTÓ ACOPIO MINERAL
                                             </div>
                                         )}
                                     </>
-                                ) : (
-                                    <div className="font-mono text-[22px] font-bold uppercase text-[#C68346]">
-                                        SIN CONEXIÓN · PENDIENTE CÁLCULO
-                                    </div>
-                                )}
+                                ) : null}
                             </div>
 
                             {showSpecsPanel && !spatialResult?.isNonStockpile && (

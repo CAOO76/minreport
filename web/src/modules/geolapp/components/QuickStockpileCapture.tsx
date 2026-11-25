@@ -74,6 +74,7 @@ export const QuickStockpileCapture: React.FC<QuickStockpileCaptureProps> = ({
     const [gnssStatus, setGnssStatus] = useState<GeolappGnssStatus>(
         existingAsset?.geo_point ? 'FIX_OK' : 'UNDERGROUND_NO_FIX'
     );
+    const [gnssResolved, setGnssResolved] = useState<boolean>(() => Boolean(existingAsset?.geo_point));
     const [isLocating, setIsLocating] = useState<boolean>(false);
 
     useEffect(() => {
@@ -90,7 +91,7 @@ export const QuickStockpileCapture: React.FC<QuickStockpileCaptureProps> = ({
             if (Capacitor.isNativePlatform()) {
                 const pos = await Geolocation.getCurrentPosition({
                     enableHighAccuracy: true,
-                    timeout: 6000,
+                    timeout: 4500,
                     maximumAge: 15000,
                 });
                 const lat = pos.coords.latitude;
@@ -109,7 +110,7 @@ export const QuickStockpileCapture: React.FC<QuickStockpileCaptureProps> = ({
                 const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
                     navigator.geolocation.getCurrentPosition(resolve, reject, {
                         enableHighAccuracy: true,
-                        timeout: 5500,
+                        timeout: 4000,
                         maximumAge: 15000,
                     });
                 });
@@ -131,6 +132,7 @@ export const QuickStockpileCapture: React.FC<QuickStockpileCaptureProps> = ({
             setGnssStatus('UNDERGROUND_NO_FIX');
         } finally {
             setIsLocating(false);
+            setGnssResolved(true);
         }
     }, [isLocating]);
 
@@ -215,7 +217,7 @@ export const QuickStockpileCapture: React.FC<QuickStockpileCaptureProps> = ({
         <MobileScanner
             assetName={stockpileName}
             draftAsset={draftAssetPayload}
-            autoStartScan
+            autoStartScan={gnssResolved}
             onDraftNameChange={setStockpileName}
             onSuccess={handleChildSuccess}
             onBack={onCancel}

@@ -4,6 +4,10 @@ import { M3LinearProgress } from '../../../components/common/M3LinearProgress';
 import { SecureImage } from '../../../components/common/SecureImage';
 import { useResolvedStockpileImageState } from '../core/services/StorageService';
 import type { BoulderDetectionBox2D } from '../core/types/GeolappTypes';
+import type {
+    DemGridV1,
+    MeasurementLifecycleStatus,
+} from '../../../contracts/acopios.contracts';
 import { isValidBox2D } from '../core/utils/rosinRammler';
 import { StockpileTwin3DLazy } from './StockpileTwin3DLazy';
 
@@ -18,10 +22,9 @@ export interface StockpileVisualStageProps {
     boulderDetections?: BoulderDetectionBox2D[];
     slopeAngleDeg?: number | null;
     meshUrl?: string | null;
-    fallbackGeometry?: {
-        type: string;
-        dimensions: Record<string, number | undefined>;
-    } | null;
+    localPreviewMesh?: DemGridV1 | null;
+    lifecycleStatus?: MeasurementLifecycleStatus | null;
+    reconciliationDeltaPct?: number | null;
     copperDomain?: string;
     tinVolumeM3?: number | null;
     casMetrics?: {
@@ -61,6 +64,7 @@ function formatDepthModeLabel(depthMode?: string | null): string | null {
     if (normalized === 'RAW_DEPTH_ONLY') return 'ARCORE RAW DEPTH';
     if (normalized === 'AUTOMATIC') return 'ARCORE DEPTH';
     if (normalized === 'VIO_POINTCLOUD') return 'ARCORE VIO';
+    if (normalized === 'VIO_ORB_MVS' || normalized === 'DISABLED') return 'VIO · MVS';
     return depthMode.trim();
 }
 
@@ -76,7 +80,9 @@ export const StockpileVisualStage: React.FC<StockpileVisualStageProps> = ({
     boulderDetections,
     slopeAngleDeg,
     meshUrl,
-    fallbackGeometry,
+    localPreviewMesh,
+    lifecycleStatus,
+    reconciliationDeltaPct,
     copperDomain,
     tinVolumeM3,
     casMetrics,
@@ -139,14 +145,14 @@ export const StockpileVisualStage: React.FC<StockpileVisualStageProps> = ({
     const showSlopeOverlay = typeof slopeAngleDeg === 'number' && Number.isFinite(slopeAngleDeg);
 
     const cleanMeshUrl = typeof meshUrl === 'string' ? meshUrl.trim() : '';
-    const hasDeclaredGeometry = Boolean(
-        fallbackGeometry?.type &&
-            fallbackGeometry?.dimensions &&
-            Object.values(fallbackGeometry.dimensions).some(
-                (v) => typeof v === 'number' && Number.isFinite(v) && v > 0
-            )
+    const hasLocalDemPreview = Boolean(
+        localPreviewMesh &&
+            localPreviewMesh.nx >= 2 &&
+            localPreviewMesh.nz >= 2 &&
+            Array.isArray(localPreviewMesh.heightsM) &&
+            localPreviewMesh.heightsM.length === localPreviewMesh.nx * localPreviewMesh.nz
     );
-    const canRender3D = Boolean(cleanMeshUrl || hasDeclaredGeometry);
+    const canRender3D = Boolean(cleanMeshUrl || hasLocalDemPreview);
     const stageHeightPx = heightPx ?? (isMobile ? 236 : 340);
 
     const baseModeOptions: Array<{ id: StockpileVisualMode; icon: string; label: string }> = isMobile
@@ -317,7 +323,8 @@ export const StockpileVisualStage: React.FC<StockpileVisualStageProps> = ({
                         compact
                         heightPx={stageHeightPx}
                         meshUrl={cleanMeshUrl || null}
-                        fallbackGeometry={fallbackGeometry}
+                        localPreviewMesh={localPreviewMesh ?? null}
+                        lifecycleStatus={lifecycleStatus ?? null}
                         copperDomain={copperDomain}
                         tinVolumeM3={tinVolumeM3}
                         casMetrics={casMetrics}
@@ -497,6 +504,20 @@ export const StockpileVisualStage: React.FC<StockpileVisualStageProps> = ({
                                 {depthModeLabel}
                             </span>
                         )}
+                        {typeof reconciliationDeltaPct === 'number' &&
+                            Number.isFinite(reconciliationDeltaPct) && (
+                                <span
+                                    title={t('visual3d.reconciliation_delta', 'CONCILIACIÓN CLOUD')}
+                                    className={`font-bold ${
+                                        Math.abs(reconciliationDeltaPct) > 8
+                                            ? 'text-[#C68346]'
+                                            : 'text-[#00AEEF]'
+                                    }`}
+                                >
+                                    ΔC {reconciliationDeltaPct > 0 ? '+' : ''}
+                                    {reconciliationDeltaPct.toFixed(1)}%
+                                </span>
+                            )}
                     </div>
 
                     {(casSummaryLabel || cleanMeshSource) && (

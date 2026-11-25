@@ -835,6 +835,20 @@ export class DataService {
             mesh_original_bytes: rawDoc.mesh_original_bytes,
             mesh_optimized_bytes: rawDoc.mesh_optimized_bytes,
             mesh_savings_pct: rawDoc.mesh_savings_pct,
+            mesh_vertex_count: rawDoc.mesh_vertex_count,
+            mesh_triangle_count: rawDoc.mesh_triangle_count,
+            mesh_surface_area_m2: rawDoc.mesh_surface_area_m2,
+            mesh_bounding_box_m: rawDoc.mesh_bounding_box_m,
+            lifecycle_status: rawDoc.lifecycle_status,
+            metrology_grade: rawDoc.metrology_grade,
+            reconciliation_status: rawDoc.reconciliation_status,
+            capture_session_id: rawDoc.capture_session_id,
+            offline_in_situ_m3: rawDoc.offline_in_situ_m3,
+            cloud_refined_m3: rawDoc.cloud_refined_m3,
+            reconciliation_delta_pct: rawDoc.reconciliation_delta_pct,
+            local_preview_mesh: rawDoc.local_preview_mesh,
+            rejection_code: rawDoc.rejection_code,
+            rejection_reason: rawDoc.rejection_reason,
             p80_mm: rawDoc.p80_mm,
             rosin_rammler: rawDoc.rosin_rammler,
             boulder_detections: Array.isArray(rawDoc.boulder_detections)
@@ -1026,6 +1040,24 @@ export class DataService {
             mesh_sha256: newM.mesh_sha256 ?? params.asset.mesh_sha256,
             mesh_source: newM.mesh_source ?? params.asset.mesh_source,
             tin_volume_m3: newM.tin_volume_m3 ?? params.asset.tin_volume_m3,
+            mesh_original_bytes: newM.mesh_original_bytes ?? params.asset.mesh_original_bytes,
+            mesh_optimized_bytes: newM.mesh_optimized_bytes ?? params.asset.mesh_optimized_bytes,
+            mesh_savings_pct: newM.mesh_savings_pct ?? params.asset.mesh_savings_pct,
+            mesh_vertex_count: newM.mesh_vertex_count ?? params.asset.mesh_vertex_count,
+            mesh_triangle_count: newM.mesh_triangle_count ?? params.asset.mesh_triangle_count,
+            mesh_surface_area_m2: newM.mesh_surface_area_m2 ?? params.asset.mesh_surface_area_m2,
+            mesh_bounding_box_m: newM.mesh_bounding_box_m ?? params.asset.mesh_bounding_box_m,
+            lifecycle_status: newM.lifecycle_status ?? params.asset.lifecycle_status,
+            metrology_grade: newM.metrology_grade ?? params.asset.metrology_grade,
+            reconciliation_status: newM.reconciliation_status ?? params.asset.reconciliation_status,
+            capture_session_id: newM.capture_session_id ?? params.asset.capture_session_id,
+            offline_in_situ_m3: newM.offline_in_situ_m3 ?? params.asset.offline_in_situ_m3,
+            cloud_refined_m3: newM.cloud_refined_m3 ?? params.asset.cloud_refined_m3,
+            reconciliation_delta_pct:
+                newM.reconciliation_delta_pct ?? params.asset.reconciliation_delta_pct,
+            local_preview_mesh: newM.local_preview_mesh ?? params.asset.local_preview_mesh,
+            rejection_code: newM.rejection_code ?? params.asset.rejection_code,
+            rejection_reason: newM.rejection_reason ?? params.asset.rejection_reason,
             is_non_stockpile: newM.is_non_stockpile ?? params.asset.is_non_stockpile,
             analysis_status: newM.analysis_status ?? params.asset.analysis_status,
             detected_slope_angle_deg:
@@ -1367,6 +1399,75 @@ export class DataService {
         return optimisticUpdated;
     }
 
+    /**
+     * Confirmación HITL exclusiva móvil cuando la conciliación Cloud vs In-Situ excede
+     * la banda de tolerancia (`reconciliation_status === 'REQUIRES_HITL_REVIEW'`).
+     * Exige palabra clave exacta `"ACTUALIZAR"` y preserva `offline_in_situ_m3` inmutable.
+     */
+    async confirmMeasurementReconciliationHitl(
+        assetId: string,
+        measurementId: string,
+        decision: 'ACCEPT_CLOUD' | 'KEEP_OFFLINE',
+        confirmationKeyword: string
+    ): Promise<StockpileMeasurement> {
+        if (String(confirmationKeyword || '').trim().toUpperCase() !== 'ACTUALIZAR') {
+            throw new Error('Confirmación HITL requerida: escriba exactamente "ACTUALIZAR".');
+        }
+        const meas = await this.getMeasurement(measurementId);
+        if (!meas || meas.assetId !== assetId) {
+            throw new Error(`Medición ${measurementId} no encontrada para el acopio ${assetId}.`);
+        }
+
+        const targetVolume =
+            decision === 'ACCEPT_CLOUD' &&
+            typeof meas.cloud_refined_m3 === 'number' &&
+            meas.cloud_refined_m3 > 0
+                ? meas.cloud_refined_m3
+                : typeof meas.offline_in_situ_m3 === 'number' && meas.offline_in_situ_m3 > 0
+                  ? meas.offline_in_situ_m3
+                  : meas.volumen_m3;
+        const targetWeight =
+            typeof meas.density_factor === 'number' && meas.density_factor > 0
+                ? Number((targetVolume * meas.density_factor).toFixed(2))
+                : meas.peso_t;
+
+        const updatedMeas: StockpileMeasurement = {
+            ...meas,
+            volumen_m3: targetVolume,
+            peso_t: targetWeight,
+            reconciliation_status: 'AUTO_CONCILIATED',
+        };
+
+        await this.saveMeasurementLocal(updatedMeas, false);
+        await this.persistMeasurementToCloudAndQueue(updatedMeas);
+
+        await this.updateAssetWithHitl(
+            assetId,
+            {
+                last_volume_m3: targetVolume,
+                volumen: targetVolume,
+                volume_m3: targetVolume,
+                last_weight_t: targetWeight,
+                weight_t: targetWeight,
+                peso_final_toneladas: targetWeight,
+                reconciliation_status: 'AUTO_CONCILIATED',
+            },
+            'ACTUALIZAR',
+            [
+                {
+                    field: 'volumen_m3',
+                    current: `${meas.volumen_m3.toFixed(2)} m³`,
+                    suggested: `${targetVolume.toFixed(2)} m³ (${decision})`,
+                },
+            ]
+        );
+
+        const refreshedList = await this.getMeasurementsLocal(assetId);
+        bus.emit(`meas:${assetId}`, refreshedList);
+        bus.emit('meas_any', await this.getAllMeasurements());
+        return updatedMeas;
+    }
+
     // ─── MEDICIONES (SUBCOLECCIÓN + LEGACY HYDRATION) ─────────
 
     private attemptedStaticMapKeys = new Set<string>();
@@ -1517,10 +1618,28 @@ export class DataService {
                     newM.ground_slope_deg !== undefined
                         ? newM.ground_slope_deg
                         : asset.ground_slope_deg,
-                mesh_url: newM.mesh_url ?? asset.mesh_url,
-                mesh_sha256: newM.mesh_sha256 ?? asset.mesh_sha256,
-                mesh_source: newM.mesh_source ?? asset.mesh_source,
-                tin_volume_m3: newM.tin_volume_m3 ?? asset.tin_volume_m3,
+                mesh_url: newM.mesh_url,
+                mesh_sha256: newM.mesh_sha256,
+                mesh_source: newM.mesh_source,
+                tin_volume_m3: newM.tin_volume_m3,
+                mesh_original_bytes: newM.mesh_original_bytes,
+                mesh_optimized_bytes: newM.mesh_optimized_bytes,
+                mesh_savings_pct: newM.mesh_savings_pct,
+                mesh_vertex_count: newM.mesh_vertex_count,
+                mesh_triangle_count: newM.mesh_triangle_count,
+                mesh_surface_area_m2: newM.mesh_surface_area_m2,
+                mesh_bounding_box_m: newM.mesh_bounding_box_m,
+                lifecycle_status: newM.lifecycle_status ?? asset.lifecycle_status,
+                metrology_grade: newM.metrology_grade ?? asset.metrology_grade,
+                reconciliation_status: newM.reconciliation_status ?? asset.reconciliation_status,
+                capture_session_id: newM.capture_session_id ?? asset.capture_session_id,
+                offline_in_situ_m3: newM.offline_in_situ_m3 ?? asset.offline_in_situ_m3,
+                cloud_refined_m3: newM.cloud_refined_m3 ?? asset.cloud_refined_m3,
+                reconciliation_delta_pct:
+                    newM.reconciliation_delta_pct ?? asset.reconciliation_delta_pct,
+                local_preview_mesh: newM.local_preview_mesh ?? null,
+                rejection_code: newM.rejection_code ?? null,
+                rejection_reason: newM.rejection_reason ?? null,
                 is_non_stockpile: newM.is_non_stockpile ?? asset.is_non_stockpile,
                 moisture_pct:
                     newM.moisture_pct !== undefined ? newM.moisture_pct : asset.moisture_pct,
