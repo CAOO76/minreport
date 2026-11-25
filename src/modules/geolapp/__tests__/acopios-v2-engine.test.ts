@@ -723,3 +723,163 @@ test('(d) Contratos Zod V2, perfil SPATIAL_SESSION_BUNDLE, purga endpoints legac
         (AuditLedger as any).record = origAuditRecord;
     }
 });
+
+test('(e) Interoperabilidad Cross-Contract Android + Frontend verbatim -> CaptureSessionPackageV2Schema -> POST /capture-sessions', async () => {
+    dbCollections.clear();
+    storedBlobs.clear();
+
+    getColMap('accounts').set('tenant-cross', {
+        id: 'tenant-cross',
+        ownerId: 'uid-cross',
+        status: 'ACTIVE',
+    });
+    getColMap('stockpiles').set('stk-cross-1', {
+        id: 'stk-cross-1',
+        tenantId: 'tenant-cross',
+        accountId: 'tenant-cross',
+        name: 'ACOPIO CROSS CONTRACT',
+        density_factor: 1.9,
+        status: 'ACTIVE',
+    });
+
+    const kfSha = 'b'.repeat(64);
+    const bundleSha = 'c'.repeat(64);
+    const cols = 6;
+    const rows = 6;
+    const heightsM = new Array<number>(cols * rows).fill(1.5);
+    const observedMask = new Array<number>(cols * rows).fill(1);
+    observedMask[2 * cols + 2] = 0; // 1 celda interpolada
+
+    // Payload exacto estilo Android + Frontend (matriz SE3 3x3, width/height, remoteCasUrl, walkRingPoses, cols/rows/observedMask, rawSpatialBundle, baseLengthM/groundPlane)
+    const androidFrontendVerbatimPayload = {
+        schemaVersion: '2.0',
+        sessionId: 'sess_cross_android_001',
+        measurementId: 'meas_cross_android_001',
+        capturedAt: Date.now(),
+        keyframes: [
+            {
+                index: 0,
+                sha256: kfSha,
+                remoteCasUrl: `/api/media/blob/tenant/tenant-cross/${kfSha}.webp`,
+                mimeType: 'image/webp',
+                originalBytes: 420000,
+                optimizedBytes: 84000,
+                savingsPct: 80.0,
+                imuPitchDeg: -14.5,
+                displayRotationDeg: 90,
+                poseSE3: {
+                    r: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+                    t: [3.2, 1.45, 0.1],
+                },
+                intrinsics: {
+                    fx: 920,
+                    fy: 920,
+                    cx: 640,
+                    cy: 360,
+                    width: 1280,
+                    height: 720,
+                },
+            },
+        ],
+        walkRingPoses: [
+            { x: 3.0, y: 1.45, z: 0.0, fx: -1, fy: 0, fz: 0, ts: 1732150000100 },
+            { x: 0.0, y: 1.45, z: 3.0, fx: 0, fy: 0, fz: -1, ts: 1732150001100 },
+            { x: -3.0, y: 1.45, z: 0.0, fx: 1, fy: 0, fz: 0, ts: 1732150002100 },
+            { x: 0.0, y: 1.45, z: -3.0, fx: 0, fy: 0, fz: 1, ts: 1732150003100 },
+        ],
+        rawSpatialBundle: {
+            sha256: bundleSha,
+            remoteCasUrl: `/api/media/blob/tenant/tenant-cross/${bundleSha}.json`,
+            originalBytes: 180000,
+            optimizedBytes: 64000,
+            savingsPct: 64.4,
+        },
+        inSituMetrology: {
+            volumeM3: 1.5, // exacto para 5*0.2 * 5*0.2 * 1.5 = 1.50 m3
+            uncertaintyPct: 6.2,
+            toeScore: 84,
+            baseLengthM: 1.0,
+            baseWidthM: 1.0,
+            heightMaxM: 1.5,
+            groundPlane: { a: 0, b: 0, d: 0, slopeDeg: 0.3 },
+            metrologyGrade: 'VALID_IN_SITU',
+        },
+        localPreviewMesh: {
+            format: 'dem_grid_v1',
+            originX: -0.5,
+            originZ: -0.5,
+            cellSizeM: 0.2,
+            cols,
+            rows,
+            heightsM,
+            observedMask,
+            groundSlopeDeg: 0.3,
+        },
+    };
+
+    const parsed = CaptureSessionPackageV2Schema.parse(androidFrontendVerbatimPayload);
+    assert.equal(parsed.keyframes[0].downloadUrl, `/api/media/blob/tenant/tenant-cross/${kfSha}.webp`);
+    assert.equal(parsed.keyframes[0].intrinsics.widthPx, 1280);
+    assert.equal(parsed.keyframes[0].intrinsics.heightPx, 720);
+    assert.equal(parsed.keyframes[0].poseSE3.tx, 3.2);
+    assert.equal(parsed.keyframes[0].poseSE3.qw, 1);
+    assert.equal(parsed.walkRing.length, 4);
+    assert.equal(parsed.rawBundleSha256, bundleSha);
+    assert.equal(parsed.localPreviewMesh?.nx, 6);
+    assert.equal(parsed.localPreviewMesh?.nz, 6);
+    assert.equal(parsed.localPreviewMesh?.interpolatedMask?.[2 * cols + 2], 1);
+    assert.equal(parsed.inSituMetrology.dimensionsM.h, 1.5);
+
+    const routerStack = (geolappController.default as any).stack as Array<any>;
+    const postSessionLayer = routerStack.find(
+        (l) => l.route?.path === '/stockpiles/:id/capture-sessions' && l.route.methods.post
+    );
+    const postHandler = postSessionLayer.route.stack[postSessionLayer.route.stack.length - 1].handle;
+
+    const origAuditRecord = AuditLedger.record;
+    (AuditLedger as any).record = async () => 'audit-cross-1';
+    try {
+        const res = createMockResponse();
+        await postHandler(
+            {
+                params: { id: 'stk-cross-1' },
+                user: { uid: 'uid-cross', email: 'op@cross.cl', email_verified: true },
+                headers: {
+                    'x-active-account-id': 'tenant-cross',
+                    'idempotency-key': 'sess_cross_android_001',
+                },
+                body: androidFrontendVerbatimPayload,
+            },
+            res,
+            () => {}
+        );
+        assert.equal(res.statusCode, 200, `Esperado HTTP 200, obtenido ${res.statusCode}: ${JSON.stringify(res.bodyPayload)}`);
+        assert.equal(res.bodyPayload?.reconciliation_status, 'AUTO_CONCILIATED');
+        assert.equal(res.bodyPayload?.cloud_refined_m3, 1.5);
+        assert.equal(res.bodyPayload?.cloud_refined?.volume_m3, 1.5);
+        assert.equal(res.bodyPayload?.reconciliation_delta_pct, 0);
+        assert.equal(res.bodyPayload?.reconciliation?.deltaPct, 0);
+
+        // Validar que el hit idempotente también incluye los alias raíz cloud_refined_m3 y reconciliation_delta_pct
+        const resIdem = createMockResponse();
+        await postHandler(
+            {
+                params: { id: 'stk-cross-1' },
+                user: { uid: 'uid-cross', email: 'op@cross.cl', email_verified: true },
+                headers: {
+                    'x-active-account-id': 'tenant-cross',
+                    'idempotency-key': 'sess_cross_android_001',
+                },
+                body: androidFrontendVerbatimPayload,
+            },
+            resIdem,
+            () => {}
+        );
+        assert.equal(resIdem.statusCode, 200);
+        assert.equal(resIdem.bodyPayload?.idempotentHit, true);
+        assert.equal(resIdem.bodyPayload?.cloud_refined_m3, 1.5);
+        assert.equal(resIdem.bodyPayload?.reconciliation_delta_pct, 0);
+    } finally {
+        (AuditLedger as any).record = origAuditRecord;
+    }
+});

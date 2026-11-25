@@ -2151,6 +2151,18 @@ router.post(
                     (prev.lifecycle_status === 'CLOUD_3D_VERIFIED' ||
                         prev.lifecycle_status === 'REJECTED_METROLOGY')
                 ) {
+                    const prevCloudVol =
+                        prev.cloud_refined_m3 ?? prev.cloud_refined?.volume_m3 ?? null;
+                    const prevOfflineVol =
+                        prev.offline_in_situ_m3 ?? prev.in_situ_offline?.volume_m3 ?? 0;
+                    const prevEffectiveVol =
+                        prev.active_volume_source === 'CLOUD_REFINED' && typeof prevCloudVol === 'number'
+                            ? prevCloudVol
+                            : prevOfflineVol;
+                    const prevDeltaM3 =
+                        prev.reconciliation_delta_m3 ?? prev.reconciliation?.deltaM3 ?? 0;
+                    const prevDeltaPct =
+                        prev.reconciliation_delta_pct ?? prev.reconciliation?.deltaPct ?? 0;
                     return res.status(200).json({
                         success: true,
                         idempotentHit: true,
@@ -2160,6 +2172,13 @@ router.post(
                         lifecycle_status: prev.lifecycle_status,
                         metrology_grade: prev.metrology_grade,
                         reconciliation_status: prev.reconciliation_status,
+                        active_volume_source: prev.active_volume_source || 'IN_SITU_OFFLINE',
+                        effectiveVolumeM3: prevEffectiveVol,
+                        volumeM3: prevEffectiveVol,
+                        offline_in_situ_m3: prevOfflineVol,
+                        cloud_refined_m3: prevCloudVol,
+                        reconciliation_delta_m3: prevDeltaM3,
+                        reconciliation_delta_pct: prevDeltaPct,
                         in_situ_offline: prev.in_situ_offline,
                         cloud_refined: prev.cloud_refined || null,
                         reconciliation: prev.reconciliation || null,
@@ -2649,6 +2668,11 @@ router.post(
                 reconciliation_status: reconciliation.status,
                 active_volume_source: reconciliation.activeSource,
                 effectiveVolumeM3,
+                volumeM3: effectiveVolumeM3,
+                offline_in_situ_m3: reconciliation.offlineInSituM3,
+                cloud_refined_m3: reconciliation.cloudRefinedM3,
+                reconciliation_delta_m3: reconciliation.deltaM3,
+                reconciliation_delta_pct: reconciliation.deltaPct,
                 weightT: resolvedWeightT,
                 in_situ_offline: inSituOffline,
                 cloud_refined: cloudRefined,

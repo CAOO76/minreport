@@ -247,8 +247,8 @@ function testMobileDigitalOnlyAndOfflineSyncContracts(): void {
     );
     assert.ok(mobileScannerSrc.includes('useXCoverHardwareKey'), 'MobileScanner debe soportar botón físico XCover Key');
     assert.ok(mobileScannerSrc.includes('mediaDigestorClient.digestFile'), 'MobileScanner debe procesar evidencia vía CAS');
-    assert.ok(mobileScannerSrc.includes('GEOLAPP_DIGITAL_AI_ANALYZE'), 'Debe encolar análisis IA offline');
-    assert.ok(mobileScannerSrc.includes('PENDING_AI_SYNC'), 'Debe marcar estado PENDING_AI_SYNC offline');
+    assert.ok(mobileScannerSrc.includes('CAPTURE_SESSION_UPLOAD'), 'Debe encolar sesión de captura V2 offline');
+    assert.ok(mobileScannerSrc.includes('CAPTURED_OFFLINE_VALID'), 'Debe marcar estado CAPTURED_OFFLINE_VALID offline');
 
     // QuickStockpileCapture solo renderiza cámara móvil y expone modo subterráneo
     assert.equal(quickCaptureSrc.includes('ManualCapture'), false);
@@ -262,7 +262,7 @@ function testMobileDigitalOnlyAndOfflineSyncContracts(): void {
     assert.ok(syncEngineSrc.includes('CAS_MEDIA_UPLOAD: 1'));
     assert.ok(syncEngineSrc.includes('STOCKPILE_SURVEY: 2'));
     assert.ok(syncEngineSrc.includes('STOCKPILE_MEASUREMENT: 3'));
-    assert.ok(syncEngineSrc.includes('GEOLAPP_DIGITAL_AI_ANALYZE: 4'));
+    assert.ok(syncEngineSrc.includes('CAPTURE_SESSION_UPLOAD'));
     assert.ok(syncEngineSrc.includes('density: z.number().nonnegative().optional()'));
 
     // Persistencia nativa Firebase y sincronización automática al volver primer plano
