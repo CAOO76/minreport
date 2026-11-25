@@ -12,7 +12,11 @@ import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { z } from 'zod';
 import { auth, db, storage as firebaseStorage } from '../../config/firebase';
 import { CreateGeoReportStampBodySchema } from '../../contracts/geo.contracts';
-import { normalizeUnifiedBoundingBox } from '../../contracts/acopios.contracts';
+import {
+    normalizeUnifiedBoundingBox,
+    normalizeWalkRingPoseToXyz,
+    type CaptureSessionPackageV2,
+} from '../../contracts/acopios.contracts';
 import { getApiUrl } from '../../utils/network';
 import { coreAuthFetch } from '../network/coreAuthFetch';
 import { localCasFilesystem } from './LocalCasFilesystemService';
@@ -201,6 +205,152 @@ function dispatchSyncSuccessEvent(task: SyncTask, eventName: string | undefined,
             },
         })
     );
+}
+
+export interface HydratedRawSpatialBundle {
+    pointsM?: Array<[number, number, number]>;
+    groundSamplesM?: Array<[number, number, number]>;
+    walkRingPoses?: CaptureSessionPackageV2['walkRingPoses'];
+    sectorsCovered?: number;
+    sectorsTotal?: number;
+    loopClosed?: boolean;
+    anchorCenter?: { x: number; y: number; z: number } | null;
+    roiRadiusM?: number;
+    coveragePct?: number;
+}
+
+/**
+ * Construye el cuerpo HTTP normalizado para `POST /api/geolapp/stockpiles/:id/capture-sessions`
+ * alineado 1:1 con `src/contracts/acopios.contracts.ts` (backend) y el contrato Android/Web V2.
+ */
+export function buildCaptureSessionHttpPayload(
+    session: CaptureSessionPackageV2,
+    hydratedBundle: HydratedRawSpatialBundle | null,
+    locale: 'es' | 'en' | 'pt' = 'es'
+): Record<string, unknown> {
+    const keyframes = session.keyframes.map((kf) => {
+        const resolvedUrl = kf.remoteCasUrl || kf.downloadUrl;
+        const w = kf.intrinsics.width ?? kf.intrinsics.widthPx ?? 1280;
+        const h = kf.intrinsics.height ?? kf.intrinsics.heightPx ?? 960;
+        return {
+            ...kf,
+            ...(resolvedUrl ? { downloadUrl: resolvedUrl, remoteCasUrl: resolvedUrl } : {}),
+            intrinsics: {
+                fx: kf.intrinsics.fx,
+                fy: kf.intrinsics.fy,
+                cx: kf.intrinsics.cx,
+                cy: kf.intrinsics.cy,
+                width: w,
+                height: h,
+                widthPx: w,
+                heightPx: h,
+            },
+            ...(typeof kf.pitchDeg === 'number'
+                ? { pitchDeg: kf.pitchDeg, imuPitchDeg: kf.pitchDeg }
+                : {}),
+        };
+    });
+
+    const sourceWalkRing =
+        Array.isArray(session.walkRingPoses) && session.walkRingPoses.length > 0
+            ? session.walkRingPoses
+            : Array.isArray(hydratedBundle?.walkRingPoses)
+              ? hydratedBundle.walkRingPoses
+              : [];
+    const walkRing = sourceWalkRing.map((pose) => normalizeWalkRingPoseToXyz(pose));
+
+    const inSitu = session.inSituMetrology;
+    const groundSlopeDeg =
+        typeof inSitu.groundSlopeDeg === 'number' && Number.isFinite(inSitu.groundSlopeDeg)
+            ? inSitu.groundSlopeDeg
+            : inSitu.groundPlane.slopeDeg;
+    const sectorsCovered =
+        typeof inSitu.sectorsCovered === 'number'
+            ? inSitu.sectorsCovered
+            : typeof hydratedBundle?.sectorsCovered === 'number'
+              ? hydratedBundle.sectorsCovered
+              : Math.min(16, Math.max(0, Math.round((inSitu.coveragePct / 100) * 16)));
+    const loopClosed =
+        typeof inSitu.loopClosed === 'boolean'
+            ? inSitu.loopClosed
+            : typeof hydratedBundle?.loopClosed === 'boolean'
+              ? hydratedBundle.loopClosed
+              : inSitu.coveragePct >= 75;
+    const computedAt =
+        typeof inSitu.computedAt === 'number' && inSitu.computedAt > 0
+            ? inSitu.computedAt
+            : session.capturedAt;
+
+    const inSituMetrology = {
+        ...inSitu,
+        dimensionsM: inSitu.dimensionsM ?? {
+            a: Number(inSitu.baseLengthM.toFixed(2)),
+            b: Number(inSitu.baseWidthM.toFixed(2)),
+            h: Number(inSitu.heightMaxM.toFixed(2)),
+        },
+        groundSlopeDeg,
+        sectorsCovered,
+        loopClosed,
+        computedAt,
+    };
+
+    const rawMesh = session.localPreviewMesh;
+    const localPreviewMesh = rawMesh
+        ? {
+              ...rawMesh,
+              nx: rawMesh.nx,
+              nz: rawMesh.nz,
+              cols: rawMesh.nx,
+              rows: rawMesh.nz,
+              groundPlane: {
+                  a: rawMesh.groundPlane?.a ?? inSitu.groundPlane.a,
+                  b: rawMesh.groundPlane?.b ?? inSitu.groundPlane.b,
+                  d: rawMesh.groundPlane?.d ?? inSitu.groundPlane.d,
+                  slopeDeg: rawMesh.groundPlane?.slopeDeg ?? groundSlopeDeg,
+              },
+              interpolatedMask: Array.isArray(rawMesh.confidenceMask)
+                  ? rawMesh.confidenceMask.map((c) => (c === 1 ? 1 : 0))
+                  : rawMesh.heightsM.map(() => 0),
+              observedMask: Array.isArray(rawMesh.confidenceMask)
+                  ? rawMesh.confidenceMask.map((c) => (c === 2 ? 1 : 0))
+                  : rawMesh.heightsM.map((h) => (h > 0.015 ? 1 : 0)),
+          }
+        : null;
+
+    const rawBundle = session.rawSpatialBundle;
+    const pointsM =
+        Array.isArray(hydratedBundle?.pointsM) && hydratedBundle.pointsM.length > 0
+            ? hydratedBundle.pointsM
+            : undefined;
+    const groundSamplesM =
+        Array.isArray(hydratedBundle?.groundSamplesM) && hydratedBundle.groundSamplesM.length > 0
+            ? hydratedBundle.groundSamplesM
+            : undefined;
+
+    return {
+        ...session,
+        keyframes,
+        walkRing,
+        ...(walkRing.length > 0 ? { walkRingPoses: walkRing } : {}),
+        inSituMetrology,
+        localPreviewMesh,
+        ...(rawBundle
+            ? {
+                  rawBundleSha256: rawBundle.sha256,
+                  ...(rawBundle.remoteCasUrl ? { rawBundleUrl: rawBundle.remoteCasUrl } : {}),
+                  rawBundleOriginalBytes: rawBundle.originalBytes,
+                  rawBundleOptimizedBytes: rawBundle.optimizedBytes,
+                  rawBundleSavingsPct: rawBundle.savingsPct,
+              }
+            : {}),
+        ...(pointsM ? { pointsM } : {}),
+        ...(groundSamplesM ? { groundSamplesM } : {}),
+        ...(hydratedBundle?.anchorCenter ? { anchorCenter: hydratedBundle.anchorCenter } : {}),
+        ...(typeof hydratedBundle?.roiRadiusM === 'number'
+            ? { roiRadiusM: hydratedBundle.roiRadiusM }
+            : {}),
+        locale,
+    };
 }
 
 export interface SyncState {
@@ -1324,6 +1474,32 @@ class SyncQueueEngine {
                     await offlineStorage.saveCaptureSession(session).catch(() => {});
                 }
 
+                // Hidratar pointsM/groundSamplesM desde rawSpatialBundle local para reconstrucción cloud determinista
+                let hydratedBundle: HydratedRawSpatialBundle | null = null;
+                if (session.rawSpatialBundle?.sha256) {
+                    try {
+                        const localBundleRes = await localCasFilesystem.getBlob(
+                            session.rawSpatialBundle.sha256
+                        );
+                        if (localBundleRes?.blob) {
+                            const parsedBundle = JSON.parse(
+                                await localBundleRes.blob.text()
+                            ) as HydratedRawSpatialBundle;
+                            if (parsedBundle && typeof parsedBundle === 'object') {
+                                hydratedBundle = parsedBundle;
+                            }
+                        }
+                    } catch {
+                        // Continuar sin hidratación si el bundle es binario o no legible como JSON
+                    }
+                }
+
+                const requestBody = buildCaptureSessionHttpPayload(
+                    session,
+                    hydratedBundle,
+                    (payload.locale || session.locale || 'es') as 'es' | 'en' | 'pt'
+                );
+
                 // Etapa 2: Envío idempotente de sesión completa a southamerica-west1
                 const res = await coreAuthFetch(
                     `/api/geolapp/stockpiles/${encodeURIComponent(session.assetId)}/capture-sessions`,
@@ -1334,10 +1510,7 @@ class SyncQueueEngine {
                             'X-Active-Account-Id': activeTenantId,
                             'Idempotency-Key': session.sessionId,
                         },
-                        body: JSON.stringify({
-                            ...session,
-                            locale: payload.locale || session.locale || 'es',
-                        }),
+                        body: JSON.stringify(requestBody),
                     }
                 );
 
@@ -1405,13 +1578,17 @@ class SyncQueueEngine {
                         ? resBody.meshUrl
                         : typeof resBody?.mesh_url === 'string'
                           ? resBody.mesh_url
-                          : null;
+                          : typeof resBody?.cloud_refined?.mesh_url === 'string'
+                            ? resBody.cloud_refined.mesh_url
+                            : null;
                 const remoteMeshSha =
                     typeof resBody?.meshSha256 === 'string'
                         ? resBody.meshSha256
                         : typeof resBody?.mesh_sha256 === 'string'
                           ? resBody.mesh_sha256
-                          : null;
+                          : typeof resBody?.cloud_refined?.mesh_sha256 === 'string'
+                            ? resBody.cloud_refined.mesh_sha256
+                            : null;
 
                 if (remoteMeshUrl && remoteMeshSha) {
                     try {
@@ -1439,29 +1616,35 @@ class SyncQueueEngine {
                     resBody?.lifecycle_status === 'REJECTED_METROLOGY'
                         ? resBody.lifecycle_status
                         : 'CLOUD_3D_VERIFIED';
+                const rawRecStatus = resBody?.reconciliation?.status ?? resBody?.reconciliation_status;
                 const nextReconciliationStatus =
-                    resBody?.reconciliation_status === 'REQUIRES_HITL_REVIEW' ||
-                    resBody?.reconciliation_status === 'AUTO_CONCILIATED'
-                        ? resBody.reconciliation_status
+                    rawRecStatus === 'REQUIRES_HITL_REVIEW' || rawRecStatus === 'AUTO_CONCILIATED'
+                        ? rawRecStatus
                         : 'AUTO_CONCILIATED';
                 const cloudVolumeM3 =
-                    typeof resBody?.cloud_refined_m3 === 'number'
-                        ? resBody.cloud_refined_m3
-                        : typeof resBody?.volumeM3 === 'number'
-                          ? resBody.volumeM3
-                          : session.inSituMetrology.volumeM3;
+                    typeof resBody?.cloud_refined?.volume_m3 === 'number'
+                        ? resBody.cloud_refined.volume_m3
+                        : typeof resBody?.cloud_refined_m3 === 'number'
+                          ? resBody.cloud_refined_m3
+                          : typeof resBody?.effectiveVolumeM3 === 'number'
+                            ? resBody.effectiveVolumeM3
+                            : typeof resBody?.volumeM3 === 'number'
+                              ? resBody.volumeM3
+                              : session.inSituMetrology.volumeM3;
                 const deltaPct =
-                    typeof resBody?.reconciliation_delta_pct === 'number'
-                        ? resBody.reconciliation_delta_pct
-                        : session.inSituMetrology.volumeM3 > 0
-                          ? Number(
-                                (
-                                    ((cloudVolumeM3 - session.inSituMetrology.volumeM3) /
-                                        session.inSituMetrology.volumeM3) *
-                                    100
-                                ).toFixed(2)
-                            )
-                          : 0;
+                    typeof resBody?.reconciliation?.deltaPct === 'number'
+                        ? resBody.reconciliation.deltaPct
+                        : typeof resBody?.reconciliation_delta_pct === 'number'
+                          ? resBody.reconciliation_delta_pct
+                          : session.inSituMetrology.volumeM3 > 0
+                            ? Number(
+                                  (
+                                      ((cloudVolumeM3 - session.inSituMetrology.volumeM3) /
+                                          session.inSituMetrology.volumeM3) *
+                                      100
+                                  ).toFixed(2)
+                              )
+                            : 0;
 
                 session.lifecycle_status = nextLifecycle;
                 session.reconciliation_status = nextReconciliationStatus;

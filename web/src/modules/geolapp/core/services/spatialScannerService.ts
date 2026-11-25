@@ -7,6 +7,9 @@
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import {
     CaptureSessionPackageV2Schema,
+    DemGridV1Schema,
+    InSituMetrologySchema,
+    WalkRingPoseSchema,
     type CaptureKeyframeV2,
     type CaptureSessionPackageV2,
     type DemGridV1,
@@ -98,12 +101,15 @@ export interface SpatialScanKeyframeV2Native {
         fy: number;
         cx: number;
         cy: number;
-        width: number;
-        height: number;
+        width?: number;
+        height?: number;
+        widthPx?: number;
+        heightPx?: number;
     };
     timestampNs?: number;
     azimuthDeg?: number;
     pitchDeg?: number;
+    imuPitchDeg?: number;
     sharpnessScore?: number;
     angleDeg?: number;
     blurScore?: number;
@@ -758,6 +764,223 @@ export async function startNativeCalibration(tenantId?: string): Promise<NativeC
 }
 
 /**
+ * Normaliza un resultado crudo emitido por `MinreportSpatialScannerActivity.java` (Android V2)
+ * o por un payload canónico de frontend hacia `SpatialScanNativeResult`, evitando cualquier
+ * `TypeError` o desajuste Zod entre Android (`dimensionsM`, `cols`/`rows`/`observedMask`,
+ * `walkRingPoses {x,y,z,fx,fy,fz,ts}`, `imuPitchDeg`, `groundSlopeDeg`) y los contratos Web V2.
+ */
+export function normalizeNativeSpatialScan(rawInput: unknown): SpatialScanNativeResult {
+    if (!rawInput || typeof rawInput !== 'object') {
+        return { cancelled: true };
+    }
+    const raw = rawInput as Record<string, unknown>;
+    if (raw.cancelled === true) {
+        return { ...(raw as SpatialScanNativeResult), cancelled: true };
+    }
+
+    const toFinite = (val: unknown): number | undefined =>
+        typeof val === 'number' && Number.isFinite(val) ? val : undefined;
+
+    // 1. Normalizar keyframesV2 (imuPitchDeg -> pitchDeg, widthPx/heightPx -> width/height)
+    const rawKeyframesV2 = Array.isArray(raw.keyframesV2)
+        ? (raw.keyframesV2 as Array<Record<string, unknown>>)
+        : [];
+    const normalizedKeyframesV2: SpatialScanKeyframeV2Native[] = rawKeyframesV2.map((kf, idx) => {
+        const pitchVal = toFinite(kf.pitchDeg) ?? toFinite(kf.imuPitchDeg);
+        const rawIntr =
+            kf.intrinsics && typeof kf.intrinsics === 'object'
+                ? (kf.intrinsics as Record<string, unknown>)
+                : null;
+        const intrinsics = rawIntr
+            ? {
+                  fx: toFinite(rawIntr.fx) ?? 960,
+                  fy: toFinite(rawIntr.fy) ?? 960,
+                  cx: toFinite(rawIntr.cx) ?? 640,
+                  cy: toFinite(rawIntr.cy) ?? 480,
+                  width: Math.round(toFinite(rawIntr.width) ?? toFinite(rawIntr.widthPx) ?? 1280),
+                  height: Math.round(toFinite(rawIntr.height) ?? toFinite(rawIntr.heightPx) ?? 960),
+              }
+            : undefined;
+        return {
+            ...(kf as unknown as SpatialScanKeyframeV2Native),
+            index: typeof kf.index === 'number' ? kf.index : idx,
+            displayRotationDeg: toFinite(kf.displayRotationDeg) ?? 0,
+            ...(intrinsics ? { intrinsics } : {}),
+            ...(pitchVal !== undefined ? { pitchDeg: pitchVal, imuPitchDeg: pitchVal } : {}),
+            ...(toFinite(kf.azimuthDeg) !== undefined
+                ? { azimuthDeg: toFinite(kf.azimuthDeg) }
+                : toFinite(kf.angleDeg) !== undefined
+                  ? { azimuthDeg: toFinite(kf.angleDeg) }
+                  : {}),
+            ...(toFinite(kf.sharpnessScore) !== undefined
+                ? { sharpnessScore: toFinite(kf.sharpnessScore) }
+                : toFinite(kf.blurScore) !== undefined
+                  ? { sharpnessScore: toFinite(kf.blurScore) }
+                  : {}),
+        };
+    });
+
+    // 2. Calcular captureImuPitchDeg (valor explícito o mediana de imuPitchDeg/pitchDeg en keyframes)
+    let captureImuPitchDeg = toFinite(raw.captureImuPitchDeg);
+    if (captureImuPitchDeg === undefined) {
+        const pitches = normalizedKeyframesV2
+            .map((kf) => toFinite(kf.pitchDeg ?? kf.imuPitchDeg))
+            .filter((v): v is number => v !== undefined)
+            .sort((a, b) => a - b);
+        if (pitches.length > 0) {
+            const mid = Math.floor(pitches.length / 2);
+            captureImuPitchDeg =
+                pitches.length % 2 === 1
+                    ? pitches[mid]
+                    : Number(((pitches[mid - 1] + pitches[mid]) / 2).toFixed(2));
+        }
+    }
+
+    // 3. Normalizar walkRingPoses aceptando { x, y, z, fx, fy, fz, ts }, [x,y,z] y { t: [x,y,z] }
+    const rawWalkRing = Array.isArray(raw.walkRingPoses)
+        ? raw.walkRingPoses
+        : Array.isArray(raw.walkRing)
+          ? raw.walkRing
+          : undefined;
+    const normalizedWalkRingPoses: WalkRingPose[] | undefined = rawWalkRing
+        ? rawWalkRing
+              .map((entry) => WalkRingPoseSchema.safeParse(entry))
+              .filter((r): r is { success: true; data: WalkRingPose } => r.success)
+              .map((r) => r.data)
+        : undefined;
+
+    // 4. Normalizar localPreviewMesh (cols/rows -> nx/nz, observedMask -> confidenceMask, groundSlopeDeg -> groundPlane)
+    let normalizedPreviewMesh: DemGridV1 | null = null;
+    if (raw.localPreviewMesh && typeof raw.localPreviewMesh === 'object') {
+        const parsedDem = DemGridV1Schema.safeParse(raw.localPreviewMesh);
+        if (parsedDem.success) {
+            normalizedPreviewMesh = parsedDem.data;
+        }
+    }
+
+    // 5. Normalizar inSituMetrology (Android dimensionsM/groundSlopeDeg -> baseLengthM/baseWidthM/heightMaxM/groundPlane)
+    let normalizedMetrology: InSituMetrology | null = null;
+    if (raw.inSituMetrology && typeof raw.inSituMetrology === 'object') {
+        const m = raw.inSituMetrology as Record<string, unknown>;
+        const volumeM3 = toFinite(m.volumeM3);
+        if (volumeM3 !== undefined && volumeM3 > 0) {
+            const dims =
+                m.dimensionsM && typeof m.dimensionsM === 'object'
+                    ? (m.dimensionsM as Record<string, unknown>)
+                    : null;
+            const rawGp =
+                m.groundPlane && typeof m.groundPlane === 'object'
+                    ? (m.groundPlane as Record<string, unknown>)
+                    : null;
+
+            const baseLengthM = Math.max(
+                0.05,
+                toFinite(m.baseLengthM) ?? toFinite(dims?.a) ?? toFinite(dims?.lengthM) ?? 0.5
+            );
+            const baseWidthM = Math.max(
+                0.05,
+                toFinite(m.baseWidthM) ?? toFinite(dims?.b) ?? toFinite(dims?.widthM) ?? baseLengthM
+            );
+            const heightMaxM = Math.max(
+                0.02,
+                toFinite(m.heightMaxM) ??
+                    toFinite(dims?.h) ??
+                    toFinite(dims?.heightM) ??
+                    toFinite(m.maxHeightM) ??
+                    normalizedPreviewMesh?.maxHeightM ??
+                    0.1
+            );
+            const footprintAreaM2 = Math.max(
+                0,
+                toFinite(m.footprintAreaM2) ??
+                    Number((Math.PI * (baseLengthM * 0.5) * (baseWidthM * 0.5)).toFixed(2))
+            );
+            const sectorsCovered = toFinite(m.sectorsCovered) ?? toFinite(raw.sectorsCovered);
+            const sectorsTotal = Math.max(1, toFinite(m.sectorsTotal) ?? toFinite(raw.sectorsTotal) ?? 16);
+            const coveragePct = Math.min(
+                100,
+                Math.max(
+                    0,
+                    toFinite(m.coveragePct) ??
+                        toFinite(raw.coveragePct) ??
+                        (sectorsCovered !== undefined
+                            ? Number(((sectorsCovered / sectorsTotal) * 100).toFixed(1))
+                            : 0)
+                )
+            );
+            const toeScore = Math.min(
+                100,
+                Math.max(0, toFinite(m.toeScore) ?? toFinite(rawGp?.toeScore) ?? 0)
+            );
+            const groundSlopeDeg = Math.min(
+                90,
+                Math.max(
+                    0,
+                    toFinite(m.groundSlopeDeg) ??
+                        toFinite(rawGp?.slopeDeg) ??
+                        toFinite(normalizedPreviewMesh?.groundPlane?.slopeDeg) ??
+                        0
+                )
+            );
+            const groundPlane = {
+                a: toFinite(rawGp?.a) ?? toFinite(normalizedPreviewMesh?.groundPlane?.a) ?? 0,
+                b: toFinite(rawGp?.b) ?? toFinite(normalizedPreviewMesh?.groundPlane?.b) ?? 0,
+                d: toFinite(rawGp?.d) ?? toFinite(normalizedPreviewMesh?.groundPlane?.d) ?? 0,
+                slopeDeg: groundSlopeDeg,
+                toeScore,
+                ...(toFinite(rawGp?.residualRmsM) !== undefined
+                    ? { residualRmsM: toFinite(rawGp?.residualRmsM) }
+                    : {}),
+            };
+            const rawGrade = typeof m.metrologyGrade === 'string' ? m.metrologyGrade : 'VALID_IN_SITU';
+            const metrologyGrade =
+                rawGrade === 'VALID_IN_SITU' ||
+                rawGrade === 'LOW_CONFIDENCE_RECAPTURE' ||
+                rawGrade === 'REJECTED'
+                    ? rawGrade
+                    : 'VALID_IN_SITU';
+
+            const parsedMetrology = InSituMetrologySchema.safeParse({
+                ...m,
+                volumeM3,
+                footprintAreaM2,
+                heightMaxM,
+                baseLengthM,
+                baseWidthM,
+                dimensionsM: {
+                    a: Number(baseLengthM.toFixed(2)),
+                    b: Number(baseWidthM.toFixed(2)),
+                    h: Number(heightMaxM.toFixed(2)),
+                },
+                groundPlane,
+                groundSlopeDeg,
+                uncertaintyPct: Math.min(100, Math.max(0, toFinite(m.uncertaintyPct) ?? 15)),
+                coveragePct,
+                ...(sectorsCovered !== undefined ? { sectorsCovered: Math.round(sectorsCovered) } : {}),
+                toeScore,
+                ...(typeof (m.loopClosed ?? raw.loopClosed) === 'boolean'
+                    ? { loopClosed: Boolean(m.loopClosed ?? raw.loopClosed) }
+                    : {}),
+                computedAt: toFinite(m.computedAt) ? Math.round(toFinite(m.computedAt)!) : Date.now(),
+                metrologyGrade,
+            });
+            if (parsedMetrology.success) {
+                normalizedMetrology = parsedMetrology.data;
+            }
+        }
+    }
+
+    return {
+        ...(raw as unknown as SpatialScanNativeResult),
+        ...(normalizedKeyframesV2.length > 0 ? { keyframesV2: normalizedKeyframesV2 } : {}),
+        ...(normalizedWalkRingPoses ? { walkRingPoses: normalizedWalkRingPoses } : {}),
+        inSituMetrology: normalizedMetrology,
+        localPreviewMesh: normalizedPreviewMesh,
+        ...(captureImuPitchDeg !== undefined ? { captureImuPitchDeg } : {}),
+    };
+}
+
+/**
  * Ejecuta el escáner espacial nativo Android ARCore VIO/Depth y convierte las rutas locales
  * `keyframes[].photoPath` a `Blob[]` reales listos para digestión CAS y vista previa.
  */
@@ -784,8 +1007,13 @@ export async function startNativeSpatialScan(): Promise<{
         return { scan: { ...(raw || {}), cancelled: true }, photoBlobs: [] };
     }
 
-    const v2Frames = Array.isArray(raw.keyframesV2) && raw.keyframesV2.length > 0 ? raw.keyframesV2 : null;
-    const keyframes = v2Frames ?? (Array.isArray(raw.keyframes) ? raw.keyframes : []);
+    const normalizedScan = normalizeNativeSpatialScan(raw);
+    const v2Frames =
+        Array.isArray(normalizedScan.keyframesV2) && normalizedScan.keyframesV2.length > 0
+            ? normalizedScan.keyframesV2
+            : null;
+    const keyframes =
+        v2Frames ?? (Array.isArray(normalizedScan.keyframes) ? normalizedScan.keyframes : []);
     const photoBlobs: Blob[] = [];
 
     for (const kf of keyframes) {
@@ -811,7 +1039,7 @@ export async function startNativeSpatialScan(): Promise<{
         }
     }
 
-    return { scan: raw, photoBlobs };
+    return { scan: normalizedScan, photoBlobs };
 }
 
 /**
@@ -954,17 +1182,26 @@ export async function persistCaptureSessionOffline(params: {
                 r: [1, 0, 0, 0, 1, 0, 0, 0, 1],
                 t: [0, 0, 0],
             },
-            intrinsics: meta?.intrinsics ?? {
-                fx: 960,
-                fy: 960,
-                cx: 640,
-                cy: 480,
-                width: 1280,
-                height: 960,
-            },
+            intrinsics: meta?.intrinsics
+                ? {
+                      fx: meta.intrinsics.fx,
+                      fy: meta.intrinsics.fy,
+                      cx: meta.intrinsics.cx,
+                      cy: meta.intrinsics.cy,
+                      width: meta.intrinsics.width ?? meta.intrinsics.widthPx ?? 1280,
+                      height: meta.intrinsics.height ?? meta.intrinsics.heightPx ?? 960,
+                  }
+                : {
+                      fx: 960,
+                      fy: 960,
+                      cx: 640,
+                      cy: 480,
+                      width: 1280,
+                      height: 960,
+                  },
             timestampNs: meta?.timestampNs ?? capturedAt * 1_000_000 + i * 250_000_000,
             azimuthDeg: meta?.azimuthDeg ?? meta?.angleDeg,
-            pitchDeg: meta?.pitchDeg,
+            pitchDeg: meta?.pitchDeg ?? meta?.imuPitchDeg,
             sharpnessScore: meta?.sharpnessScore ?? meta?.blurScore,
         });
     }

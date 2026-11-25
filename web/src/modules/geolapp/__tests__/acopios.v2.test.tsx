@@ -15,9 +15,13 @@ import {
     parseServerReconstructResponse,
     photogrammetry3dService,
 } from '../core/services/photogrammetry3d.service';
-import { LocalCasFilesystemService } from '../../../core/offline/LocalCasFilesystemService';
+import {
+    LocalCasFilesystemService,
+    localCasFilesystem,
+} from '../../../core/offline/LocalCasFilesystemService';
 import { offlineStorage, type OfflineCasBlobRecord } from '../../../core/offline/OfflineStorage';
 import { syncQueueEngine } from '../../../core/offline/SyncQueueEngine';
+import { normalizeNativeSpatialScan } from '../core/services/spatialScannerService';
 import * as StorageServiceMod from '../core/services/StorageService';
 import * as CoreAuthFetchMod from '../../../core/network/coreAuthFetch';
 import { StockpileTwin3D } from '../components/StockpileTwin3D';
@@ -435,5 +439,299 @@ describe('SyncQueueEngine — HTTP 422 -> REJECTED_METROLOGY + CAPTURE_SESSION_U
         expect(savedSession.metrology_grade).toBe('REJECTED');
         expect(savedMeas.payload.lifecycle_status).toBe('REJECTED_METROLOGY');
         expect(savedMeas.payload.rejection_code).toBe('INSUFFICIENT_COVERAGE');
+    });
+
+    it('normaliza payload Android verbatim -> CaptureSessionPackageV2 -> cuerpo HTTP backend y respuesta cloud_refined', async () => {
+        // 1. Payload verbatim estilo MinreportSpatialScannerActivity.java (sin baseLengthM, sin groundPlane, con cols/rows/observedMask, walkRingPoses {x,y,z,fx,fy,fz,ts}, imuPitchDeg)
+        const androidVerbatimPayload = {
+            scanId: 'scan_xcover7_001',
+            scannerEngineVersion: '2.0-vio-mvs',
+            orientationMode: 'LANDSCAPE_4_3',
+            depthMode: 'DISABLED',
+            deviceModel: 'Samsung SM-G556B',
+            coveragePct: 93.8,
+            sectorsCovered: 15,
+            sectorsTotal: 16,
+            loopClosed: true,
+            pointsM: [
+                [0, 1.2, 0],
+                [1.0, 0.6, 0],
+                [0, 0.0, 1.5],
+            ],
+            groundSamplesM: [
+                [2.0, 0.0, 0],
+                [-2.0, 0.0, 0],
+            ],
+            walkRingPoses: [
+                { x: 0, y: 1.45, z: 3.8, fx: 0, fy: -0.2, fz: -0.98, ts: 1700000001000 },
+                { x: 3.8, y: 1.44, z: 0, fx: -0.98, fy: -0.2, fz: 0, ts: 1700000002000 },
+            ],
+            keyframesV2: [
+                {
+                    index: 0,
+                    photoPath: '/data/user/0/com.minreport.app.fieldtest/cache/kf_0.webp',
+                    mimeType: 'image/webp',
+                    originalBytes: 380_000,
+                    optimizedBytes: 62_000,
+                    savingsPct: 83.7,
+                    displayRotationDeg: 0,
+                    poseSE3: { r: [1, 0, 0, 0, 1, 0, 0, 0, 1], t: [0, 1.45, 3.8] },
+                    intrinsics: { fx: 950, fy: 950, cx: 640, cy: 480, width: 1280, height: 960 },
+                    timestampNs: 1_000_000_000,
+                    azimuthDeg: 0,
+                    imuPitchDeg: -14.2,
+                    sharpnessScore: 155.4,
+                },
+                {
+                    index: 1,
+                    photoPath: '/data/user/0/com.minreport.app.fieldtest/cache/kf_1.webp',
+                    mimeType: 'image/webp',
+                    originalBytes: 390_000,
+                    optimizedBytes: 64_000,
+                    savingsPct: 83.6,
+                    displayRotationDeg: 0,
+                    poseSE3: { r: [0, 0, -1, 0, 1, 0, 1, 0, 0], t: [3.8, 1.44, 0] },
+                    intrinsics: { fx: 950, fy: 950, cx: 640, cy: 480, width: 1280, height: 960 },
+                    timestampNs: 2_000_000_000,
+                    azimuthDeg: 90,
+                    imuPitchDeg: -16.8,
+                    sharpnessScore: 148.0,
+                },
+            ],
+            inSituMetrology: {
+                volumeM3: 42.5,
+                dimensionsM: { a: 7.4, b: 6.5, h: 2.8 },
+                groundSlopeDeg: 1.4,
+                uncertaintyPct: 5.8,
+                toeScore: 89,
+                zeroCellsInside: 0,
+                metrologyGrade: 'VALID_IN_SITU',
+            },
+            localPreviewMesh: {
+                format: 'dem_grid_v1',
+                cols: 3,
+                rows: 3,
+                cellSizeM: 1.0,
+                originX: 0,
+                originZ: 0,
+                heightsM: [0, 0, 0, 0, 2.8, 0, 0, 0, 0],
+                observedMask: [0, 0, 0, 0, 1, 0, 0, 0, 0],
+                groundSlopeDeg: 1.4,
+            },
+        };
+
+        // 2. Normalización en frontera Android -> Frontend (cero TypeError)
+        const normalized = normalizeNativeSpatialScan(androidVerbatimPayload);
+        expect(normalized.inSituMetrology).not.toBeNull();
+        expect(normalized.inSituMetrology!.baseLengthM).toBe(7.4);
+        expect(normalized.inSituMetrology!.baseWidthM).toBe(6.5);
+        expect(normalized.inSituMetrology!.heightMaxM).toBe(2.8);
+        expect(normalized.inSituMetrology!.footprintAreaM2).toBeGreaterThan(30);
+        expect(normalized.inSituMetrology!.groundPlane.slopeDeg).toBe(1.4);
+        expect(normalized.inSituMetrology!.coveragePct).toBe(93.8);
+        expect(normalized.captureImuPitchDeg).toBe(-15.5);
+        expect(normalized.localPreviewMesh).not.toBeNull();
+        expect(normalized.localPreviewMesh!.nx).toBe(3);
+        expect(normalized.localPreviewMesh!.nz).toBe(3);
+        expect(normalized.localPreviewMesh!.confidenceMask).toEqual([0, 0, 0, 0, 2, 0, 0, 0, 0]);
+        expect(normalized.walkRingPoses).toHaveLength(2);
+
+        // 3. Validación estricta Zod CaptureSessionPackageV2Schema
+        const session = CaptureSessionPackageV2Schema.parse({
+            sessionId: 'sess_android_e2e_01',
+            schemaVersion: '2.0',
+            tenantId: 'tenant-atacama-01',
+            assetId: 'asset_acopio_01',
+            measurementId: 'meas_acopio_01',
+            capturedAt: 1700000010000,
+            scannerEngineVersion: normalized.scannerEngineVersion,
+            orientationMode: normalized.orientationMode,
+            depthMode: normalized.depthMode,
+            deviceModel: normalized.deviceModel,
+            lifecycle_status: 'CAPTURED_OFFLINE_VALID',
+            metrology_grade: normalized.inSituMetrology!.metrologyGrade,
+            reconciliation_status: 'PENDING_CLOUD',
+            keyframes: normalized.keyframesV2!.map((kf, idx) => ({
+                index: kf.index,
+                sha256: idx === 0 ? VALID_SHA_A : VALID_SHA_B,
+                remoteCasUrl: `/api/media/blob/tenant/tenant-atacama-01/${idx === 0 ? VALID_SHA_A : VALID_SHA_B}.webp`,
+                mimeType: kf.mimeType || 'image/webp',
+                originalBytes: kf.originalBytes || 380_000,
+                optimizedBytes: kf.optimizedBytes || 62_000,
+                savingsPct: kf.savingsPct || 83.7,
+                displayRotationDeg: kf.displayRotationDeg || 0,
+                poseSE3: kf.poseSE3!,
+                intrinsics: kf.intrinsics!,
+                timestampNs: kf.timestampNs || 1_000_000_000,
+                azimuthDeg: kf.azimuthDeg,
+                pitchDeg: kf.pitchDeg,
+                sharpnessScore: kf.sharpnessScore,
+            })),
+            walkRingPoses: normalized.walkRingPoses,
+            rawSpatialBundle: {
+                sha256: VALID_SHA_C,
+                remoteCasUrl: `/api/media/blob/tenant/tenant-atacama-01/${VALID_SHA_C}.json`,
+                originalBytes: 256,
+                optimizedBytes: 256,
+                savingsPct: 0,
+            },
+            inSituMetrology: normalized.inSituMetrology!,
+            localPreviewMesh: normalized.localPreviewMesh!,
+            casIntegrity: {
+                manifestSha256: VALID_SHA_C,
+                totalOriginalBytes: 770_256,
+                totalOptimizedBytes: 126_256,
+                totalSavingsPct: 83.6,
+            },
+            reconciliation: {
+                offlineInSituM3: 42.5,
+            },
+        });
+
+        // 4. Envío CAPTURE_SESSION_UPLOAD y verificación de cuerpo HTTP + parseo respuesta anidada backend
+        let savedSession: any = { ...session, updatedAt: Date.now() };
+        let savedMeas: any = {
+            id: session.measurementId,
+            assetId: session.assetId,
+            tenantId: session.tenantId,
+            payload: { id: session.measurementId, volumen_m3: 42.5 },
+            timestamp: session.capturedAt,
+            synced: false,
+        };
+        const tasks: any[] = [
+            {
+                id: 'task_e2e_ok',
+                type: 'CAPTURE_SESSION_UPLOAD',
+                payload: {
+                    sessionId: session.sessionId,
+                    assetId: session.assetId,
+                    measurementId: session.measurementId,
+                    tenantId: session.tenantId,
+                },
+                timestamp: new Date().toISOString(),
+                attempts: 0,
+                status: 'PENDING',
+            },
+        ];
+
+        const bundleBlob = new Blob(
+            [
+                JSON.stringify({
+                    pointsM: androidVerbatimPayload.pointsM,
+                    groundSamplesM: androidVerbatimPayload.groundSamplesM,
+                    sectorsCovered: 15,
+                    loopClosed: true,
+                }),
+            ],
+            { type: 'application/json' }
+        );
+        vi.spyOn(localCasFilesystem, 'getBlob').mockResolvedValue({
+            blob: bundleBlob,
+            record: {
+                sha256: VALID_SHA_C,
+                mimeType: 'application/json',
+                profile: 'SPATIAL_SESSION_BUNDLE',
+                scope: 'TENANT_PRIVATE',
+                tenantId: session.tenantId,
+                filename: 'bundle.json',
+                extension: 'json',
+                originalBytes: bundleBlob.size,
+                optimizedBytes: bundleBlob.size,
+                createdAt: Date.now(),
+            },
+        });
+        vi.spyOn(offlineStorage, 'getCaptureSession').mockImplementation(async () => savedSession);
+        vi.spyOn(offlineStorage, 'saveCaptureSession').mockImplementation(async (s) => {
+            savedSession = { ...s, updatedAt: Date.now() };
+        });
+        vi.spyOn(offlineStorage, 'getStockpileMeasurement').mockImplementation(async () => savedMeas);
+        vi.spyOn(offlineStorage, 'saveStockpileMeasurement').mockImplementation(async (m) => {
+            savedMeas = m;
+        });
+        vi.spyOn(offlineStorage, 'getAllSyncTasks').mockImplementation(async () => [...tasks]);
+        vi.spyOn(offlineStorage, 'putSyncTask').mockImplementation(async (t) => {
+            const idx = tasks.findIndex((x) => x.id === t.id);
+            if (idx >= 0) tasks[idx] = t;
+            else tasks.push(t);
+        });
+        vi.spyOn(offlineStorage, 'deleteSyncTask').mockImplementation(async (id) => {
+            const idx = tasks.findIndex((x) => x.id === id);
+            if (idx >= 0) tasks.splice(idx, 1);
+        });
+
+        let capturedPostBody: Record<string, any> | null = null;
+        vi.spyOn(CoreAuthFetchMod, 'coreAuthFetch').mockImplementation(async (_url, init) => {
+            if ((init?.method || 'GET').toUpperCase() === 'POST') {
+                capturedPostBody = JSON.parse(String(init?.body || '{}'));
+                return new Response(
+                    JSON.stringify({
+                        lifecycle_status: 'CLOUD_3D_VERIFIED',
+                        effectiveVolumeM3: 45.2,
+                        cloud_refined: {
+                            volume_m3: 45.2,
+                            mesh_url: `/api/media/blob/tenant/tenant-atacama-01/${VALID_SHA_A}.glb`,
+                            mesh_sha256: VALID_SHA_A,
+                        },
+                        reconciliation: {
+                            status: 'AUTO_CONCILIATED',
+                            deltaPct: 6.35,
+                        },
+                    }),
+                    { status: 200, headers: { 'Content-Type': 'application/json' } }
+                );
+            }
+            return new Response(new Uint8Array(24), {
+                status: 200,
+                headers: { 'Content-Type': 'model/gltf-binary' },
+            });
+        });
+        vi.spyOn(localCasFilesystem, 'cacheRemoteGlb').mockResolvedValue();
+
+        const origFetch = globalThis.fetch;
+        globalThis.fetch = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+        try {
+            await syncQueueEngine.drainQueue();
+        } finally {
+            globalThis.fetch = origFetch;
+        }
+
+        expect(capturedPostBody).not.toBeNull();
+        expect(capturedPostBody!.keyframes[0].downloadUrl).toContain(VALID_SHA_A);
+        expect(capturedPostBody!.keyframes[0].intrinsics).toMatchObject({
+            width: 1280,
+            height: 960,
+            widthPx: 1280,
+            heightPx: 960,
+        });
+        expect(capturedPostBody!.walkRing).toHaveLength(2);
+        expect(capturedPostBody!.walkRing[0]).toMatchObject({ x: 0, y: 1.45, z: 3.8 });
+        expect(capturedPostBody!.rawBundleSha256).toBe(VALID_SHA_C);
+        expect(capturedPostBody!.rawBundleUrl).toContain(VALID_SHA_C);
+        expect(capturedPostBody!.pointsM).toHaveLength(3);
+        expect(capturedPostBody!.groundSamplesM).toHaveLength(2);
+        expect(capturedPostBody!.inSituMetrology).toMatchObject({
+            dimensionsM: { a: 7.4, b: 6.5, h: 2.8 },
+            sectorsCovered: 15,
+            loopClosed: true,
+            groundSlopeDeg: 1.4,
+        });
+        expect(capturedPostBody!.inSituMetrology.computedAt).toBeGreaterThan(0);
+        expect(capturedPostBody!.localPreviewMesh).toMatchObject({
+            nx: 3,
+            nz: 3,
+            cols: 3,
+            rows: 3,
+            groundPlane: { a: 0, b: 0, d: 0, slopeDeg: 1.4 },
+            interpolatedMask: [0, 0, 0, 0, 0, 0, 0, 0, 0],
+        });
+
+        // Verificar parseo defensivo de respuesta anidada cloud_refined + reconciliation
+        expect(savedSession.lifecycle_status).toBe('CLOUD_3D_VERIFIED');
+        expect(savedSession.reconciliation_status).toBe('AUTO_CONCILIATED');
+        expect(savedSession.reconciliation.cloudRefinedM3).toBe(45.2);
+        expect(savedSession.reconciliation.deltaPct).toBe(6.35);
+        expect(savedMeas.payload.cloud_refined_m3).toBe(45.2);
+        expect(savedMeas.payload.reconciliation_delta_pct).toBe(6.35);
+        expect(savedMeas.payload.volumen_m3).toBe(45.2);
     });
 });

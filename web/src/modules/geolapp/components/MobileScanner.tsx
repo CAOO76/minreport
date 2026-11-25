@@ -667,7 +667,10 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
             const effDepthMode =
                 spatialResult?.depthMode ?? spatialScan?.depthMode ?? 'VIO_ORB_MVS';
             const effGroundSlopeDeg =
-                spatialResult?.groundSlopeDeg ?? inSituMetrology?.groundPlane.slopeDeg ?? null;
+                spatialResult?.groundSlopeDeg ??
+                inSituMetrology?.groundPlane?.slopeDeg ??
+                inSituMetrology?.groundSlopeDeg ??
+                null;
             const effSlopeAvg =
                 spatialResult?.slopeAngleAvgDeg ?? inSituMetrology?.slopeAngleAvgDeg ?? undefined;
             const effSlopeLeft =
