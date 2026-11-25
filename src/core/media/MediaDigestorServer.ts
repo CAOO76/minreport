@@ -516,6 +516,29 @@ export class MediaDigestorServer {
             };
         }
 
+        if (requestedProfile === 'SPATIAL_SESSION_BUNDLE') {
+            if (!Buffer.isBuffer(inputBuffer) || inputBuffer.length === 0) {
+                throw new Error(
+                    'Binario SPATIAL_SESSION_BUNDLE invalido: payload vacio.'
+                );
+            }
+            const ext = lowerMime.includes('gzip')
+                ? 'gz'
+                : lowerMime.includes('json')
+                ? 'json'
+                : 'bin';
+            return {
+                buffer: inputBuffer,
+                sha256: this.computeSha256Hex(inputBuffer),
+                mimeType: lowerMime || 'application/json',
+                extension: ext,
+                profile: 'SPATIAL_SESSION_BUNDLE',
+                originalBytes: inputBuffer.length,
+                optimizedBytes: inputBuffer.length,
+                savingsRatio: 0,
+            };
+        }
+
         if (lowerMime.includes('svg') || requestedProfile === 'VECTOR_SVG_CLEAN') {
             return this.digestSvg(inputBuffer);
         }

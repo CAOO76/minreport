@@ -16,6 +16,7 @@ export const MediaDigestionProfileSchema = z.enum([
     'XML_DTE_DOCUMENT',
     'VIDEO_FIELD_COMPACT',
     'MESH_3D_GLB',
+    'SPATIAL_SESSION_BUNDLE',
 ]);
 
 export type MediaDigestionProfile = z.infer<typeof MediaDigestionProfileSchema>;

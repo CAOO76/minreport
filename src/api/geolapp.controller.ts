@@ -19,7 +19,6 @@ import {
 } from '../middleware/rateLimiter';
 import type { ScopedRequest } from '../middleware/sessionScope';
 import {
-    buildServerStockpileGlbMesh,
     buildSpatialPointCloudGlbMesh,
     inspectGlbBinaryMetrics,
     type GlbSurfaceBuildResult,
@@ -27,6 +26,7 @@ import {
 import {
     computeSpatialStockpileVolume,
     SpatialVolumeValidationError,
+    type SpatialSurfaceGrid,
 } from '../modules/geolapp/spatial-volume.engine';
 import {
     checkDeviceCompatibilityOnDemand,
@@ -34,10 +34,15 @@ import {
     listRegisteredDeviceCompatibility,
 } from '../modules/geolapp/device-compatibility.service';
 import {
-    computeStockpileVolumeV2,
-    evaluateStockpileSlopePhysics,
-    type SlopeConfinementMode,
-} from '../modules/geolapp/stockpile-geometry.engine';
+    AcopiosLifecycleStatusSchema,
+    AcopiosMetrologyGradeSchema,
+    AcopiosReconciliationStatusSchema,
+    CaptureSessionPackageV2Schema,
+    evaluateStockpileReconciliation,
+    WalkRingPoseSchema,
+    WallConfinementModeSchema,
+    type AcopiosMetrologyGrade,
+} from '../contracts/acopios.contracts';
 import {
     generateAndStoreStaticSatelliteMap,
     isValidStaticMapCoordinatePair,
@@ -194,6 +199,12 @@ const HitlPatchSchema = z.object({
         .nullable()
         .optional(),
     tin_volume_m3: z.number().finite().nonnegative().nullable().optional(),
+    lifecycle_status: AcopiosLifecycleStatusSchema.optional(),
+    metrology_grade: AcopiosMetrologyGradeSchema.optional(),
+    reconciliation_status: AcopiosReconciliationStatusSchema.optional(),
+    active_volume_source: z.enum(['IN_SITU_OFFLINE', 'CLOUD_REFINED']).optional(),
+    offline_in_situ_m3: z.number().finite().nonnegative().nullable().optional(),
+    cloud_refined_m3: z.number().finite().nonnegative().nullable().optional(),
     metadata: z.record(z.unknown()).optional(),
 });
 
@@ -885,8 +896,7 @@ export async function postGeolappReconstruct3d(req: AuthRequest, res: Response) 
         );
 
         let meshResult: GlbSurfaceBuildResult | null = null;
-        let meshSource: 'MAST3R_GPU_SOUTH_AMERICA_WEST1' | 'PARAMETRIC_TIN_SOUTH_AMERICA_WEST1' =
-            'PARAMETRIC_TIN_SOUTH_AMERICA_WEST1';
+        let meshSource: 'MAST3R_GPU_SOUTH_AMERICA_WEST1' = 'MAST3R_GPU_SOUTH_AMERICA_WEST1';
 
         const configuredGpuUrl = String(process.env.GEOLAPP_MAST3R_GPU_URL || '').trim();
         if (configuredGpuUrl) {
@@ -932,27 +942,18 @@ export async function postGeolappReconstruct3d(req: AuthRequest, res: Response) 
                 }
             } catch (gpuError) {
                 console.warn(
-                    '[GEOLAPP-3D] Fallback a TIN parametrico tras respuesta no valida de GPU:',
+                    '[GEOLAPP-3D] Reconstruccion GPU no disponible (prohibido fallback a cono sintetico):',
                     (gpuError as Error)?.message
                 );
             }
         }
 
         if (!meshResult) {
-            try {
-                meshResult = buildServerStockpileGlbMesh({
-                    geometryType,
-                    dimensions,
-                    profileSamples,
-                });
-                meshSource = 'PARAMETRIC_TIN_SOUTH_AMERICA_WEST1';
-            } catch (builderErr: any) {
-                return res.status(400).json({
-                    error:
-                        builderErr?.message ||
-                        'No es posible generar malla 3D sin geometria y cotas reales declaradas.',
-                });
-            }
+            return res.status(422).json({
+                error: 'NO_REAL_3D_RECONSTRUCTION_AVAILABLE',
+                message:
+                    'No existe reconstrucción 3D real disponible en southamerica-west1. Prohibido sustituir con malla paramétrica sintética.',
+            });
         }
 
         const digested = await MediaDigestorServer.digestAny(
@@ -1159,414 +1160,6 @@ router.post(
     }
 );
 
-const AiEnrichBodySchema = z
-    .object({
-        imageBase64: z.string().min(8).max(4_000_000).optional(),
-        imageMimeType: z.enum(['image/webp', 'image/jpeg', 'image/png']).optional(),
-        labDocumentBase64: z.string().min(8).max(6_000_000).optional(),
-        labDocumentMimeType: z
-            .enum(['application/pdf', 'image/webp', 'image/jpeg', 'image/png'])
-            .optional(),
-        voiceNoteText: z.string().trim().max(2000).optional(),
-        locale: z.enum(['es', 'en', 'pt']).optional(),
-    })
-    .superRefine((val, ctx) => {
-        if (!val.imageBase64 && !val.labDocumentBase64 && !val.voiceNoteText) {
-            ctx.addIssue({
-                code: z.ZodIssueCode.custom,
-                message: 'Incluya fotografía, documento de laboratorio o nota de terreno para enriquecer con IA.',
-            });
-        }
-    });
-
-const AiEnrichExtractedSchema = z.object({
-    description: z.string().trim().max(600).nullable().optional(),
-    location_ref: z.string().trim().max(240).nullable().optional(),
-    density_factor: z.number().finite().positive().max(15).nullable().optional(),
-    moisture_pct: z.number().finite().min(0).max(99.9).nullable().optional(),
-    cu_total_pct: z.number().finite().min(0).max(100).nullable().optional(),
-    cu_soluble_pct: z.number().finite().min(0).max(100).nullable().optional(),
-    tml_pct: z.number().finite().min(0).max(99.9).nullable().optional(),
-    residence_days: z.number().finite().min(0).max(3650).nullable().optional(),
-    peso_romana: z.number().finite().min(0).max(10_000_000).nullable().optional(),
-    reasoning: z.string().trim().max(600).nullable().optional(),
-});
-
-function parseJsonObjectFromAiText(rawText: string): Record<string, unknown> | null {
-    const cleaned = String(rawText || '')
-        .replace(/```json/gi, '')
-        .replace(/```/g, '')
-        .trim();
-    if (!cleaned) return null;
-    try {
-        const parsed = JSON.parse(cleaned);
-        return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-            ? (parsed as Record<string, unknown>)
-            : null;
-    } catch {
-        const start = cleaned.indexOf('{');
-        const end = cleaned.lastIndexOf('}');
-        if (start >= 0 && end > start) {
-            try {
-                const sliced = JSON.parse(cleaned.slice(start, end + 1));
-                return sliced && typeof sliced === 'object' && !Array.isArray(sliced)
-                    ? (sliced as Record<string, unknown>)
-                    : null;
-            } catch {
-                return null;
-            }
-        }
-        return null;
-    }
-}
-
-/**
- * POST /api/geolapp/stockpiles/:id/ai-enrich
- * Enriquecimiento progresivo post-registro (Fase 2 MINREPORT · ACOPIOS):
- * Propone metadatos geo-metalúrgicos desde fotografía, nota de voz o certificado de laboratorio,
- * combinando ResilientAIClient.generate + ResilientAIClient.decide (HITL sin escritura automática).
- */
-router.post(
-    '/stockpiles/:id/ai-enrich',
-    requireAuth,
-    aiRateLimiter,
-    async (req: AuthRequest, res: Response) => {
-        const startTime = Date.now();
-        try {
-            const stockpileId = String(req.params.id || '').trim();
-            if (!stockpileId || !STOCKPILE_ID_REGEX.test(stockpileId)) {
-                return res.status(400).json({ error: 'Identificador de acopio invalido.' });
-            }
-
-            const parsedBody = AiEnrichBodySchema.safeParse(req.body);
-            if (!parsedBody.success) {
-                return res.status(400).json({
-                    error: 'Payload de enriquecimiento IA invalido.',
-                    details: parsedBody.error.flatten(),
-                });
-            }
-
-            const docRef = db.collection('stockpiles').doc(stockpileId);
-            const docSnap = await docRef.get();
-            if (!docSnap.exists) {
-                return res.status(404).json({ error: 'Acopio no encontrado.' });
-            }
-
-            const existingData = docSnap.data() || {};
-            const docTenantId = String(existingData.tenantId || existingData.accountId || '').trim();
-            const authz = await authorizeStockpileTenantMutation(req, docTenantId);
-            if (!authz.authorized) {
-                return res.status(authz.status).json({ error: authz.error || 'TENANT_ACCESS_DENIED' });
-            }
-
-            const {
-                imageBase64,
-                imageMimeType,
-                labDocumentBase64,
-                labDocumentMimeType,
-                voiceNoteText,
-                locale = 'es',
-            } = parsedBody.data;
-
-            const mediaParts: Array<{ mimeType: string; dataBase64: string }> = [];
-            if (imageBase64) {
-                mediaParts.push({
-                    mimeType: imageMimeType || 'image/webp',
-                    dataBase64: imageBase64,
-                });
-            }
-            if (labDocumentBase64) {
-                mediaParts.push({
-                    mimeType: labDocumentMimeType || 'application/pdf',
-                    dataBase64: labDocumentBase64,
-                });
-            }
-
-            const contextLines = [
-                `Stockpile ID/Nombre actual: ${String(existingData.name || stockpileId)}`,
-                typeof existingData.last_volume_m3 === 'number'
-                    ? `Volumen cubicado: ${existingData.last_volume_m3} m3`
-                    : '',
-                voiceNoteText ? `Nota de operador en terreno: ${voiceNoteText}` : '',
-            ]
-                .filter(Boolean)
-                .join('\n');
-
-            const extractionPrompt = [
-                `Analiza estrictamente la evidencia adjunta (imagen de acopio, documento de laboratorio y/o nota de terreno) para el acopio minero indicado.`,
-                `Idioma de salida para description/location_ref/reasoning: ${locale}.`,
-                `REGLA CERO ALUCINACIONES: Devuelve null en cualquier campo numérico o de texto que NO esté explícita y verificablemente respaldado por la evidencia adjunta. Jamás inventes leyes CuT, CuS, humedad, TML ni pesos.`,
-                contextLines,
-                `Responde ÚNICAMENTE un objeto JSON válido con estas claves exactas: {"description": string|null, "location_ref": string|null, "density_factor": number|null, "moisture_pct": number|null, "cu_total_pct": number|null, "cu_soluble_pct": number|null, "tml_pct": number|null, "residence_days": number|null, "peso_romana": number|null, "reasoning": string|null}.`,
-            ].join('\n');
-
-            const [genRes, decisionRes] = await Promise.all([
-                ResilientAIClient.generate({
-                    prompt: extractionPrompt,
-                    module: 'stockpile',
-                    tenantId: docTenantId,
-                    thinkingLevel: 'medium',
-                    requireHITL: true,
-                    responseMimeType: 'application/json',
-                    media: mediaParts.length > 0 ? mediaParts : undefined,
-                }),
-                ResilientAIClient.decide({
-                    module: 'stockpile',
-                    tenantId: docTenantId,
-                    dataClassification: 'TENANT_PRIVATE',
-                    inputText: contextLines,
-                    media: mediaParts.length > 0 ? mediaParts : undefined,
-                    questions: {
-                        copper_domain: {
-                            type: 'choice',
-                            instructions:
-                                'Clasifica el dominio mineral de cobre más probable según coloración visual, textura o certificado de laboratorio.',
-                            criteria: {
-                                OXIDO_CU: 'Tonalidades verdosas/azuladas o mineral oxidado de cobre',
-                                MIXTO_CU: 'Transición mixta óxido-sulfuro de cobre',
-                                SULFURO_SECUNDARIO_CU: 'Calcocita/covelina o sulfuro secundario oscuro/azulado',
-                                SULFURO_PRIMARIO_CU: 'Calcopirita/pirita o mena sulfurada primaria grisácea metálica',
-                                CONCENTRADO_CU: 'Concentrado fino de flotación de alto brillo o humedad controlada',
-                                BAJA_LEY_CU: 'Mineral marginal de baja ley enviado a botadero lixiviable',
-                                ESTERIL_RIPIOS: 'Roca estéril o ripio lixiviado sin mineralización de cobre relevante',
-                            },
-                        },
-                        tipo_granulometria: {
-                            type: 'choice',
-                            instructions:
-                                'Clasifica la granulometría visual dominante del acopio.',
-                            criteria: {
-                                COLPAS: 'Bloques y fragmentos gruesos predominantes (> 150 mm)',
-                                GRANSA: 'Material chancado intermedio uniforme',
-                                MIXTO: 'Mezcla heterogénea de colpas, gransa y finos',
-                                FINOS: 'Material fino arenoso o pulpa/concentrado seco (< 12 mm)',
-                            },
-                        },
-                    },
-                }).catch(() => null),
-            ]);
-
-            const parsedRaw = parseJsonObjectFromAiText(genRes.text);
-            const extracted = AiEnrichExtractedSchema.safeParse(parsedRaw || {});
-
-            type AiProposalItem = {
-                field: string;
-                current: string;
-                suggested: string;
-                rawValue: string | number;
-                confidence: number;
-                source: 'GEMINI_VISION' | 'GEMINI_DECISIONS' | 'GEMINI_LAB_DOC';
-            };
-            const proposals: AiProposalItem[] = [];
-
-            const pushProposal = (
-                field: string,
-                rawValue: string | number | null | undefined,
-                formattedSuggested: string,
-                confidence: number,
-                source: AiProposalItem['source']
-            ) => {
-                if (rawValue === null || rawValue === undefined) return;
-                if (typeof rawValue === 'string' && rawValue.trim().length === 0) return;
-                const currentRaw = existingData[field];
-                const currentText =
-                    currentRaw !== undefined && currentRaw !== null && String(currentRaw).trim() !== ''
-                        ? String(currentRaw)
-                        : '[Pendiente de registro]';
-                if (String(currentRaw ?? '') === String(rawValue)) return;
-                proposals.push({
-                    field,
-                    current: currentText,
-                    suggested: formattedSuggested,
-                    rawValue,
-                    confidence: Math.round(confidence * 100) / 100,
-                    source,
-                });
-            };
-
-            const docSource: AiProposalItem['source'] = labDocumentBase64
-                ? 'GEMINI_LAB_DOC'
-                : 'GEMINI_VISION';
-
-            if (decisionRes?.answers?.copper_domain?.type === 'choice') {
-                const cd = decisionRes.answers.copper_domain;
-                if (cd.choice && cd.confidence >= 0.45) {
-                    pushProposal('copper_domain', cd.choice, cd.choice, cd.confidence, 'GEMINI_DECISIONS');
-                }
-            }
-
-            if (decisionRes?.answers?.tipo_granulometria?.type === 'choice') {
-                const tg = decisionRes.answers.tipo_granulometria;
-                if (tg.choice && tg.confidence >= 0.45) {
-                    pushProposal(
-                        'tipo_granulometria',
-                        tg.choice,
-                        tg.choice,
-                        tg.confidence,
-                        'GEMINI_DECISIONS'
-                    );
-                }
-            }
-
-            if (extracted.success) {
-                const e = extracted.data;
-                if (e.location_ref) {
-                    pushProposal('location_ref', e.location_ref, e.location_ref, 0.8, docSource);
-                }
-                if (e.description) {
-                    pushProposal('description', e.description, e.description, 0.8, docSource);
-                }
-                if (typeof e.density_factor === 'number') {
-                    pushProposal(
-                        'density_factor',
-                        e.density_factor,
-                        `${e.density_factor} t/m3`,
-                        0.72,
-                        docSource
-                    );
-                }
-                if (typeof e.moisture_pct === 'number') {
-                    pushProposal(
-                        'moisture_pct',
-                        e.moisture_pct,
-                        `${e.moisture_pct} %`,
-                        0.9,
-                        docSource
-                    );
-                }
-                if (typeof e.cu_total_pct === 'number') {
-                    pushProposal(
-                        'cu_total_pct',
-                        e.cu_total_pct,
-                        `${e.cu_total_pct} %`,
-                        0.9,
-                        docSource
-                    );
-                }
-                if (typeof e.cu_soluble_pct === 'number') {
-                    pushProposal(
-                        'cu_soluble_pct',
-                        e.cu_soluble_pct,
-                        `${e.cu_soluble_pct} %`,
-                        0.9,
-                        docSource
-                    );
-                }
-                if (typeof e.tml_pct === 'number') {
-                    pushProposal('tml_pct', e.tml_pct, `${e.tml_pct} %`, 0.9, docSource);
-                }
-                if (typeof e.residence_days === 'number') {
-                    pushProposal(
-                        'residence_days',
-                        e.residence_days,
-                        `${e.residence_days} d`,
-                        0.85,
-                        docSource
-                    );
-                }
-                if (typeof e.peso_romana === 'number') {
-                    pushProposal('peso_romana', e.peso_romana, `${e.peso_romana} t`, 0.9, docSource);
-                }
-            }
-
-            await AuditLedger.record({
-                tenantId: docTenantId,
-                actorUid: authz.uid,
-                actorEmail: authz.emailLower || authz.uid,
-                action: 'AI_INFERENCE_HITL_REQUEST',
-                module: 'stockpile',
-                targetEntity: stockpileId,
-                details: {
-                    proposalCount: proposals.length,
-                    proposedFields: proposals.map((p) => p.field),
-                    hasImage: Boolean(imageBase64),
-                    hasLabDoc: Boolean(labDocumentBase64),
-                    hasVoiceNote: Boolean(voiceNoteText),
-                    modelUsed: genRes.model,
-                    decisionsEngine: decisionRes?.engineUsed || 'NONE',
-                },
-                ipAddress: extractClientIp(req),
-            });
-
-            return res.status(200).json({
-                verified: true,
-                proposals,
-                reasoning:
-                    (extracted.success ? extracted.data.reasoning : null) ||
-                    'Propuestas generadas bajo supervisión HITL sin modificar ficha oficial.',
-                modelUsed: genRes.model,
-                engineUsed: decisionRes?.engineUsed || 'SWARM_GENERATE',
-                latencyMs: Date.now() - startTime,
-            });
-        } catch (error: any) {
-            if (error instanceof AISwarmUnavailableError) {
-                return res.status(503).json({ error: error.message });
-            }
-            console.error('[GEOLAPP-CONTROLLER] Error en ai-enrich:', error);
-            return res.status(500).json({ error: 'Error interno ejecutando enriquecimiento IA.' });
-        }
-    }
-);
-
-const DigitalScaleAnchorEnum = z.enum([
-    'CONO_070',
-    'MIRA_100',
-    'CASCO_030',
-    'BALDE_280',
-    'MANUAL_BASE_M',
-    'NONE',
-]);
-
-const DEFAULT_ANCHOR_METERS: Record<string, number> = {
-    CONO_070: 0.7,
-    MIRA_100: 1.0,
-    CASCO_030: 0.3,
-    BALDE_280: 2.8,
-};
-
-const DigitalAnalyzeBodySchema = z
-    .object({
-        tenantId: z.string().trim().max(128).optional(),
-        measurementId: z.string().trim().max(128).optional(),
-        imageBase64: z.string().min(8).max(4_000_000).optional(),
-        imageMimeType: z.enum(['image/webp', 'image/jpeg', 'image/png']).optional(),
-        extraImagesBase64: z.array(z.string().min(8).max(4_000_000)).max(3).optional(),
-        photoUrl: z.string().trim().max(2048).optional(),
-        scaleAnchorType: DigitalScaleAnchorEnum.optional().default('NONE'),
-        scaleAnchorMeters: z.number().finite().positive().max(25).optional(),
-        referenceBaseMeters: z.number().finite().positive().max(500).optional(),
-        imuPitchDeg: z.number().finite().min(-90).max(90).optional(),
-        imuRollDeg: z.number().finite().min(-180).max(180).optional(),
-        locale: z.enum(['es', 'en', 'pt']).optional().default('es'),
-    })
-    .superRefine((val, ctx) => {
-        if (!val.imageBase64 && !val.photoUrl) {
-            ctx.addIssue({
-                code: z.ZodIssueCode.custom,
-                message: 'Incluya imageBase64 o photoUrl para análisis fotográfico digital IA.',
-            });
-        }
-    });
-
-const DigitalAiExtractedSchema = z.object({
-    anchor_detected: z.boolean().optional().default(false),
-    slope_angle_left_deg: z.number().finite().min(5).max(89).nullable().optional(),
-    slope_angle_right_deg: z.number().finite().min(5).max(89).nullable().optional(),
-    slope_angle_avg_deg: z.number().finite().min(5).max(89).nullable().optional(),
-    estimated_dimensions_m: z
-        .object({
-            a: z.number().finite().positive().max(1000),
-            b: z.number().finite().positive().max(1000),
-            h: z.number().finite().positive().max(300),
-            ap: z.number().finite().nonnegative().max(1000).optional(),
-            bp: z.number().finite().nonnegative().max(1000).optional(),
-        })
-        .nullable()
-        .optional(),
-    confidence: z.number().finite().min(0).max(1).optional().default(0.75),
-    reasoning: z.string().trim().max(600).nullable().optional(),
-});
-
 const STOCKPILE_CLASSIFICATION_QUESTIONS = {
     is_stockpile_scene: {
         type: 'choice' as const,
@@ -1608,7 +1201,11 @@ const STOCKPILE_CLASSIFICATION_QUESTIONS = {
     },
 };
 
-async function collectVisualMediaParts(params: {
+const TENANT_CAS_PHOTO_URL_REGEX =
+    /^\/api\/media\/blob\/tenant\/([A-Za-z0-9._-]+)\/([a-f0-9]{64})\.(webp|jpg|jpeg|png)$/i;
+
+export async function collectVisualMediaParts(params: {
+    tenantId?: string;
     imageBase64?: string;
     imageMimeType?: string;
     extraImagesBase64?: string[];
@@ -1622,24 +1219,60 @@ async function collectVisualMediaParts(params: {
             mimeType: params.imageMimeType || 'image/webp',
             dataBase64: params.imageBase64,
         });
-    } else if (
-        params.photoUrl &&
-        /^https:\/\/(storage\.googleapis\.com|firebasestorage\.googleapis\.com)\//i.test(params.photoUrl)
-    ) {
-        try {
-            const imgRes = await safeFetchExternal(params.photoUrl, {
-                method: 'GET',
-                maxBytes: 4 * 1024 * 1024,
-            });
-            if (imgRes.ok) {
-                const arr = Buffer.from(await imgRes.arrayBuffer());
-                mediaParts.push({
-                    mimeType: imgRes.headers.get('content-type') || 'image/webp',
-                    dataBase64: arr.toString('base64'),
-                });
+    } else if (params.photoUrl) {
+        const cleanUrl = params.photoUrl.trim();
+        const casMatch = TENANT_CAS_PHOTO_URL_REGEX.exec(cleanUrl);
+        if (casMatch) {
+            const [, urlTenantId, sha256, ext] = casMatch;
+            const requestedTenant = String(params.tenantId || '').trim();
+            // Aislamiento multi-tenant estricto: solo leer blobs CAS del propio tenant autorizado
+            if (requestedTenant && urlTenantId === requestedTenant) {
+                try {
+                    const storagePath = CasStorageService.buildStoragePath(
+                        'TENANT_PRIVATE',
+                        sha256.toLowerCase(),
+                        ext.toLowerCase(),
+                        requestedTenant
+                    );
+                    const blob = await CasStorageService.readCasBlob(storagePath, {
+                        scope: 'TENANT_PRIVATE',
+                        tenantId: requestedTenant,
+                    });
+                    if (blob && blob.buffer.length > 0 && blob.buffer.length <= 4 * 1024 * 1024) {
+                        mediaParts.push({
+                            mimeType:
+                                blob.contentType && blob.contentType.startsWith('image/')
+                                    ? blob.contentType
+                                    : ext.toLowerCase() === 'png'
+                                      ? 'image/png'
+                                      : ext.toLowerCase() === 'webp'
+                                        ? 'image/webp'
+                                        : 'image/jpeg',
+                            dataBase64: blob.buffer.toString('base64'),
+                        });
+                    }
+                } catch {
+                    // Continuar con manejo controlado si el blob CAS no está accesible
+                }
             }
-        } catch {
-            // Continuar con manejo controlado si no fue descargable
+        } else if (
+            /^https:\/\/(storage\.googleapis\.com|firebasestorage\.googleapis\.com)\//i.test(cleanUrl)
+        ) {
+            try {
+                const imgRes = await safeFetchExternal(cleanUrl, {
+                    method: 'GET',
+                    maxBytes: 4 * 1024 * 1024,
+                });
+                if (imgRes.ok) {
+                    const arr = Buffer.from(await imgRes.arrayBuffer());
+                    mediaParts.push({
+                        mimeType: imgRes.headers.get('content-type') || 'image/webp',
+                        dataBase64: arr.toString('base64'),
+                    });
+                }
+            } catch {
+                // Continuar con manejo controlado si no fue descargable
+            }
         }
     }
 
@@ -1739,375 +1372,6 @@ function parseStockpileDecisionChoices(decisionRes: any) {
     };
 }
 
-async function runDigitalStockpileAnalyze(params: {
-    tenantId: string;
-    body: z.infer<typeof DigitalAnalyzeBodySchema>;
-}) {
-    const { body, tenantId } = params;
-    const mediaParts = await collectVisualMediaParts({
-        imageBase64: body.imageBase64,
-        imageMimeType: body.imageMimeType,
-        extraImagesBase64: body.extraImagesBase64,
-        photoUrl: body.photoUrl,
-        maxExtra: 3,
-    });
-
-    if (mediaParts.length === 0) {
-        throw new Error('No se dispuso de imagen decodificable para análisis visual IA.');
-    }
-
-    const anchorMeters =
-        body.scaleAnchorMeters ?? DEFAULT_ANCHOR_METERS[body.scaleAnchorType] ?? undefined;
-    const hasExplicitReferenceBase =
-        typeof body.referenceBaseMeters === 'number' && Number.isFinite(body.referenceBaseMeters) && body.referenceBaseMeters > 0;
-
-    const contextLines = [
-        `Ancla de escala declarada: ${body.scaleAnchorType}${anchorMeters ? ` (${anchorMeters} m)` : ''}`,
-        hasExplicitReferenceBase
-            ? `Cota base de referencia medida por operador: ${body.referenceBaseMeters} m`
-            : 'Sin cota manual ingresada; usar ancla visual solo si es claramente visible.',
-        typeof body.imuPitchDeg === 'number'
-            ? `Inclinacion IMU dispositivo (pitch): ${body.imuPitchDeg} grados (compensar perspectiva)`
-            : '',
-        typeof body.imuRollDeg === 'number'
-            ? `Alabeo IMU dispositivo (roll): ${body.imuRollDeg} grados`
-            : '',
-    ]
-        .filter(Boolean)
-        .join('\n');
-
-    const extractionPrompt = [
-        `Eres ingeniero geotécnico/geomensor de MINREPORT · ACOPIOS. Analiza las fotografías del acopio de material granular/árido.`,
-        `Idioma de reasoning: ${body.locale}.`,
-        `1. Determina los ángulos aparentes de talud izquierdo, derecho y promedio compensando la inclinación IMU si existe.`,
-        `2. Verifica si el objeto ancla declarado (${body.scaleAnchorType}${anchorMeters ? ` = ${anchorMeters} m` : ''}) es claramente visible junto al acopio.`,
-        `3. REGLA CERO ALUCINACIONES: Si anchor_detected es false Y no se proveyó cota base de referencia (${hasExplicitReferenceBase ? body.referenceBaseMeters : 'ninguna'}), DEBES devolver estimated_dimensions_m: null. Jamás inventes metros ni densidad ni dominio mineral.`,
-        contextLines,
-        `Responde ÚNICAMENTE JSON válido exacto: {"anchor_detected": boolean, "slope_angle_left_deg": number|null, "slope_angle_right_deg": number|null, "slope_angle_avg_deg": number|null, "estimated_dimensions_m": {"a": number, "b": number, "h": number, "ap": number, "bp": number}|null, "confidence": number, "reasoning": string|null}.`,
-    ].join('\n');
-
-    const [genRes, decisionRes] = await Promise.all([
-        ResilientAIClient.generate({
-            prompt: extractionPrompt,
-            module: 'stockpile',
-            tenantId,
-            thinkingLevel: 'medium',
-            requireHITL: false,
-            responseMimeType: 'application/json',
-            media: mediaParts,
-        }),
-        ResilientAIClient.decide({
-            module: 'stockpile',
-            tenantId,
-            dataClassification: 'TENANT_PRIVATE',
-            inputText: contextLines,
-            media: mediaParts,
-            questions: STOCKPILE_CLASSIFICATION_QUESTIONS,
-        }).catch(() => null),
-    ]);
-
-    const parsedRaw = parseJsonObjectFromAiText(genRes.text);
-    const extractedRes = DigitalAiExtractedSchema.safeParse(parsedRaw || {});
-    const extracted = extractedRes.success
-        ? extractedRes.data
-        : {
-              anchor_detected: false,
-              slope_angle_left_deg: null,
-              slope_angle_right_deg: null,
-              slope_angle_avg_deg: null,
-              estimated_dimensions_m: null,
-              confidence: 0.5,
-              reasoning: 'Respuesta parcial del analizador visual.',
-          };
-
-    const { geometryType, wallConfinement, aiSuggestedGranulometry, isNonStockpile } =
-        parseStockpileDecisionChoices(decisionRes);
-
-    const anchorDetected = Boolean(extracted.anchor_detected && body.scaleAnchorType !== 'NONE');
-    const scaleVerified = Boolean(
-        (anchorDetected || hasExplicitReferenceBase) &&
-            extracted.estimated_dimensions_m &&
-            extracted.estimated_dimensions_m.a > 0 &&
-            extracted.estimated_dimensions_m.b > 0 &&
-            extracted.estimated_dimensions_m.h > 0
-    );
-
-    const dimensionsM = scaleVerified && extracted.estimated_dimensions_m
-        ? {
-              a: Math.round(extracted.estimated_dimensions_m.a * 100) / 100,
-              b: Math.round(extracted.estimated_dimensions_m.b * 100) / 100,
-              h: Math.round(extracted.estimated_dimensions_m.h * 100) / 100,
-              ...(typeof extracted.estimated_dimensions_m.ap === 'number'
-                  ? { ap: Math.round(extracted.estimated_dimensions_m.ap * 100) / 100 }
-                  : {}),
-              ...(typeof extracted.estimated_dimensions_m.bp === 'number'
-                  ? { bp: Math.round(extracted.estimated_dimensions_m.bp * 100) / 100 }
-                  : {}),
-          }
-        : null;
-
-    const avgSlope =
-        typeof extracted.slope_angle_avg_deg === 'number'
-            ? Math.round(extracted.slope_angle_avg_deg * 10) / 10
-            : typeof extracted.slope_angle_left_deg === 'number' &&
-                typeof extracted.slope_angle_right_deg === 'number'
-              ? Math.round(
-                    ((extracted.slope_angle_left_deg + extracted.slope_angle_right_deg) / 2) * 10
-                ) / 10
-              : null;
-
-    let volumeM3 = 0;
-    let slopeWarning: string | null = null;
-    if (!isNonStockpile && dimensionsM) {
-        const confinementForCalc: SlopeConfinementMode =
-            wallConfinement === 'BUNKER_3_WALLS' ? 'BUNKER_3_WALLS' : 'SINGLE_WALL';
-        volumeM3 = computeStockpileVolumeV2({
-            geometryType,
-            dimensions: dimensionsM,
-            confinement: confinementForCalc,
-            slopeAngleDeg: avgSlope ?? 40,
-        });
-        const physics = evaluateStockpileSlopePhysics({
-            geometryType,
-            dimensions: dimensionsM,
-        });
-        slopeWarning = physics.warning;
-    } else if (typeof avgSlope === 'number' && avgSlope > 48) {
-        slopeWarning = `Ángulo detectado ${avgSlope}° supera talud natural típico (37°–45°).`;
-    }
-
-    return {
-        verified: true,
-        scaleVerified,
-        pendingScaleCalibration: !scaleVerified,
-        geometryType,
-        wallConfinement,
-        copperDomain: null,
-        granulometry: null,
-        aiSuggestedGranulometry,
-        suggestedDensityTm3: estimateReferenceDensityByGranulometry(
-            aiSuggestedGranulometry,
-            isNonStockpile
-        ),
-        slopeAngleLeftDeg: extracted.slope_angle_left_deg ?? null,
-        slopeAngleRightDeg: extracted.slope_angle_right_deg ?? null,
-        slopeAngleAvgDeg: avgSlope,
-        slopeWarning,
-        anchorDetected,
-        dimensionsM,
-        volumeM3,
-        weightT: 0,
-        confidence: extracted.confidence ?? 0.75,
-        reasoning:
-            extracted.reasoning ||
-            (scaleVerified
-                ? 'Cubicación digital verificada con referencia métrica y talud IA.'
-                : 'Geometría y talud detectados. Falta referencia física de escala en encuadre o 1 cota base.'),
-        modelUsed: genRes.model,
-    };
-}
-
-/**
- * POST /api/geolapp/digital-analyze
- * Análisis digital inmediato en captura móvil (Opción B: Material + Geometría + Taludes + Escala -> m³ v2).
- */
-router.post(
-    '/digital-analyze',
-    requireAuth,
-    aiRateLimiter,
-    async (req: AuthRequest, res: Response) => {
-        try {
-            const parsedBody = DigitalAnalyzeBodySchema.safeParse(req.body || {});
-            if (!parsedBody.success) {
-                return res.status(400).json({
-                    error: 'Payload de análisis digital inválido.',
-                    details: parsedBody.error.flatten(),
-                });
-            }
-
-            const isDevCaller = resolveCallerPrivilege(req.user).isDevRoot;
-            const headerTenant = String(
-                parsedBody.data.tenantId ||
-                    req.headers['x-active-account-id'] ||
-                    req.headers['x-tenant-id'] ||
-                    (isDevCaller ? 'dev-master-sandbox' : '')
-            ).trim();
-
-            const authz = await authorizeStockpileTenantMutation(req, headerTenant);
-            if (!authz.authorized) {
-                return res.status(authz.status).json({ error: authz.error || 'TENANT_ACCESS_DENIED' });
-            }
-
-            const result = await runDigitalStockpileAnalyzeWrapper(headerTenant, parsedBody.data);
-
-            await AuditLedger.record({
-                tenantId: headerTenant,
-                actorUid: authz.uid,
-                actorEmail: authz.emailLower || authz.uid,
-                action: 'DIGITAL_STOCKPILE_PREVIEW_ANALYZE',
-                module: 'stockpile',
-                targetEntity: parsedBody.data.scaleAnchorType,
-                details: {
-                    scaleVerified: result.scaleVerified,
-                    geometryType: result.geometryType,
-                    volumeM3: result.volumeM3,
-                    slopeAngleAvgDeg: result.slopeAngleAvgDeg,
-                    modelUsed: result.modelUsed,
-                },
-                ipAddress: extractClientIp(req),
-            }).catch(() => {});
-
-            return res.status(200).json(result);
-        } catch (error: any) {
-            if (error instanceof AISwarmUnavailableError) {
-                return res.status(503).json({ error: error.message });
-            }
-            console.error('[GEOLAPP-CONTROLLER] Error en digital-analyze:', error);
-            return res.status(500).json({ error: 'Error ejecutando análisis digital IA.' });
-        }
-    }
-);
-
-async function runDigitalStockpileAnalyzeWrapper(
-    tenantId: string,
-    body: z.infer<typeof DigitalAnalyzeBodySchema>
-) {
-    return runDigitalStockpileAnalyze({ tenantId, body });
-}
-
-/**
- * POST /api/geolapp/stockpiles/:id/digital-analyze
- * Procesa diferidamente o reanaliza un acopio capturado offline y consolida resultado en Firestore.
- */
-router.post(
-    '/stockpiles/:id/digital-analyze',
-    requireAuth,
-    aiRateLimiter,
-    async (req: AuthRequest, res: Response) => {
-        try {
-            const stockpileId = String(req.params.id || '').trim();
-            if (!stockpileId || !STOCKPILE_ID_REGEX.test(stockpileId)) {
-                return res.status(400).json({ error: 'Identificador de acopio inválido.' });
-            }
-
-            const parsedBody = DigitalAnalyzeBodySchema.safeParse(req.body || {});
-            if (!parsedBody.success) {
-                return res.status(400).json({
-                    error: 'Payload de análisis digital inválido.',
-                    details: parsedBody.error.flatten(),
-                });
-            }
-
-            const docRef = db.collection('stockpiles').doc(stockpileId);
-            const docSnap = await docRef.get();
-            if (!docSnap.exists) {
-                return res.status(404).json({ error: 'Acopio no encontrado.' });
-            }
-
-            const existingData = (docSnap.data() || {}) as Record<string, any>;
-            const docTenantId = String(
-                existingData.tenantId || existingData.accountId || ''
-            ).trim();
-            const authz = await authorizeStockpileTenantMutation(req, docTenantId);
-            if (!authz.authorized) {
-                return res.status(authz.status).json({ error: authz.error || 'TENANT_ACCESS_DENIED' });
-            }
-
-            const effectiveBody = {
-                ...parsedBody.data,
-                photoUrl:
-                    parsedBody.data.photoUrl ||
-                    (typeof existingData.last_photo_url === 'string'
-                        ? existingData.last_photo_url
-                        : existingData.initial_photo_url),
-            };
-
-            const result = await runDigitalStockpileAnalyze({
-                tenantId: docTenantId,
-                body: effectiveBody,
-            });
-
-            const now = Date.now();
-            const assetPatch: Record<string, unknown> = {
-                analysis_status: result.scaleVerified ? 'AI_VERIFIED' : 'PENDING_SCALE',
-                detected_slope_angle_deg: result.slopeAngleAvgDeg,
-                slope_warning: result.slopeWarning,
-                last_geometry_type: result.geometryType,
-                geometria: result.geometryType,
-                wall_confinement: result.wallConfinement,
-                ...(result.scaleVerified && result.volumeM3 > 0
-                    ? {
-                          last_volume_m3: result.volumeM3,
-                          volumen: result.volumeM3,
-                          volume_m3: result.volumeM3,
-                      }
-                    : {}),
-                updatedAt: now,
-            };
-
-            await docRef.set(assetPatch, { merge: true });
-
-            if (effectiveBody.measurementId) {
-                const measRef = docRef.collection('measurements').doc(effectiveBody.measurementId);
-                const measSnap = await measRef.get().catch(() => null);
-                if (measSnap?.exists) {
-                    await measRef.set(
-                        {
-                            analysis_status: result.scaleVerified ? 'AI_VERIFIED' : 'PENDING_SCALE',
-                            detected_slope_angle_deg: result.slopeAngleAvgDeg,
-                            slope_left_deg: result.slopeAngleLeftDeg,
-                            slope_right_deg: result.slopeAngleRightDeg,
-                            slope_warning: result.slopeWarning,
-                            wall_confinement: result.wallConfinement,
-                            ...(result.dimensionsM
-                                ? {
-                                      geometry: {
-                                          type: result.geometryType,
-                                          dimensions: result.dimensionsM,
-                                      },
-                                  }
-                                : {}),
-                            ...(result.scaleVerified && result.volumeM3 > 0
-                                ? {
-                                      volumen_m3: result.volumeM3,
-                                  }
-                                : {}),
-                            updatedAt: now,
-                        },
-                        { merge: true }
-                    );
-                }
-            }
-
-            await AuditLedger.record({
-                tenantId: docTenantId,
-                actorUid: authz.uid,
-                actorEmail: authz.emailLower || authz.uid,
-                action: 'DIGITAL_STOCKPILE_AI_ANALYZE',
-                module: 'stockpile',
-                targetEntity: stockpileId,
-                details: {
-                    measurementId: effectiveBody.measurementId || null,
-                    scaleVerified: result.scaleVerified,
-                    geometryType: result.geometryType,
-                    volumeM3: result.volumeM3,
-                    slopeAngleAvgDeg: result.slopeAngleAvgDeg,
-                    modelUsed: result.modelUsed,
-                },
-                ipAddress: extractClientIp(req),
-            }).catch(() => {});
-
-            return res.status(200).json(result);
-        } catch (error: any) {
-            if (error instanceof AISwarmUnavailableError) {
-                return res.status(503).json({ error: error.message });
-            }
-            console.error('[GEOLAPP-CONTROLLER] Error en stockpiles/:id/digital-analyze:', error);
-            return res.status(500).json({ error: 'Error ejecutando análisis digital en acopio.' });
-        }
-    }
-);
-
 const DeviceCompatibilityCheckBodySchema = z.object({
     query: z.string().trim().min(2).max(120),
     forceRefresh: z.boolean().optional().default(false),
@@ -2133,7 +1397,6 @@ async function handleListDeviceCompatibility(_req: AuthRequest, res: Response) {
 }
 
 router.get('/device-compatibility', requireAuth, handleListDeviceCompatibility);
-router.get('/device-catalog', requireAuth, handleListDeviceCompatibility);
 
 /**
  * POST /api/geolapp/device-compatibility/check
@@ -2196,7 +1459,6 @@ async function handleCheckDeviceCompatibility(req: AuthRequest, res: Response) {
 }
 
 router.post('/device-compatibility/check', requireAuth, aiRateLimiter, handleCheckDeviceCompatibility);
-router.post('/device-catalog/check', requireAuth, aiRateLimiter, handleCheckDeviceCompatibility);
 
 const SpatialPointTupleSchema = z.tuple([
     z.number().finite(),
@@ -2231,8 +1493,13 @@ const SpatialAnalyzeBodySchema = z.object({
         })
         .nullable()
         .optional(),
-    pointsM: z.array(SpatialPointTupleSchema).min(20).max(12000),
+    pointsM: z.array(SpatialPointTupleSchema).min(20).max(20000),
     groundSamplesM: z.array(SpatialPointTupleSchema).max(4000).optional(),
+    walkRingPoses: z.array(WalkRingPoseSchema).max(1024).optional(),
+    wallConfinement: WallConfinementModeSchema.optional(),
+    loopDriftPct: z.number().finite().min(0).max(100).optional(),
+    hasScaleAnchor: z.boolean().optional(),
+    crestClippedRatio: z.number().finite().min(0).max(1).optional(),
     imageBase64: z.string().min(8).max(4_000_000).optional(),
     imageMimeType: z.enum(['image/webp', 'image/jpeg', 'image/png']).optional(),
     extraImagesBase64: z.array(z.string().min(8).max(4_000_000)).max(5).optional(),
@@ -2274,6 +1541,8 @@ async function runSpatialStockpileAnalyze(params: {
     const spatial = computeSpatialStockpileVolume({
         pointsM: body.pointsM,
         groundSamplesM: body.groundSamplesM,
+        walkRingPoses: body.walkRingPoses,
+        wallConfinement: body.wallConfinement,
         anchorCenter: body.anchorCenter,
         coveragePct: body.coveragePct,
         sectorsCovered: body.sectorsCovered,
@@ -2284,6 +1553,9 @@ async function runSpatialStockpileAnalyze(params: {
         calibrationPlaneNoiseRmsM: body.calibrationPlaneNoiseRmsM,
         deviceCalibratedAt: body.deviceCalibratedAt,
         loopClosed: body.loopClosed,
+        loopDriftPct: body.loopDriftPct,
+        hasScaleAnchor: body.hasScaleAnchor,
+        crestClippedRatio: body.crestClippedRatio,
         depthMode: body.depthMode,
     });
 
@@ -2314,6 +1586,7 @@ async function runSpatialStockpileAnalyze(params: {
 
     const visualClassifyPromise = (async () => {
         const mediaParts = await collectVisualMediaParts({
+            tenantId,
             imageBase64: body.imageBase64,
             imageMimeType: body.imageMimeType,
             extraImagesBase64: body.extraImagesBase64,
@@ -2690,6 +1963,21 @@ router.post(
                     ? Math.round(result.volumeM3 * existingData.density_factor * 100) / 100
                     : 0;
 
+            const symmetricMeshMetrics: Record<string, unknown> = {
+                mesh_url: result.meshUrl,
+                mesh_sha256: result.meshSha256,
+                mesh_source: result.meshSource,
+                tin_volume_m3: persistence.meshResult.tinVolumeM3,
+                mesh_original_bytes: persistence.descriptor.originalBytes,
+                mesh_optimized_bytes: persistence.descriptor.optimizedBytes,
+                mesh_savings_pct: persistence.savingsPct,
+                mesh_vertex_count: persistence.meshResult.vertexCount,
+                mesh_triangle_count: persistence.meshResult.triangleCount,
+                mesh_surface_area_m2: persistence.meshResult.surfaceAreaM2,
+                mesh_bounding_box_m: persistence.meshResult.boundingBoxM,
+                mesh_reconstructed_at: now,
+            };
+
             const assetPatch: Record<string, unknown> = {
                 analysis_status: 'AI_VERIFIED',
                 scale_anchor_type: 'ARCORE_VIO_DEPTH',
@@ -2705,18 +1993,7 @@ router.post(
                           peso_final_toneladas: resolvedWeightT,
                       }
                     : {}),
-                mesh_url: result.meshUrl,
-                mesh_sha256: result.meshSha256,
-                mesh_source: result.meshSource,
-                tin_volume_m3: persistence.meshResult.tinVolumeM3,
-                mesh_original_bytes: persistence.descriptor.originalBytes,
-                mesh_optimized_bytes: persistence.descriptor.optimizedBytes,
-                mesh_savings_pct: persistence.savingsPct,
-                mesh_vertex_count: persistence.meshResult.vertexCount,
-                mesh_triangle_count: persistence.meshResult.triangleCount,
-                mesh_surface_area_m2: persistence.meshResult.surfaceAreaM2,
-                mesh_bounding_box_m: persistence.meshResult.boundingBoxM,
-                mesh_reconstructed_at: now,
+                ...symmetricMeshMetrics,
                 uncertainty_pct: result.uncertaintyPct,
                 toe_score: result.toeScore,
                 coverage_pct: result.coveragePct,
@@ -2727,6 +2004,9 @@ router.post(
                 last_geometry_type: result.geometryType,
                 geometria: result.geometryType,
                 wall_confinement: result.wallConfinement,
+                metrology_grade: persistence.spatial.metrologyGrade,
+                occluded_volume_pct: persistence.spatial.occludedVolumePct,
+                zero_cells_inside: persistence.spatial.zeroCellsInside,
                 updatedAt: now,
             };
 
@@ -2740,10 +2020,7 @@ router.post(
                         scale_anchor_type: 'ARCORE_VIO_DEPTH',
                         volumen_m3: result.volumeM3,
                         peso_t: resolvedWeightT,
-                        mesh_url: result.meshUrl,
-                        mesh_sha256: result.meshSha256,
-                        mesh_source: result.meshSource,
-                        tin_volume_m3: persistence.meshResult.tinVolumeM3,
+                        ...symmetricMeshMetrics,
                         uncertainty_pct: result.uncertaintyPct,
                         toe_score: result.toeScore,
                         coverage_pct: result.coveragePct,
@@ -2754,6 +2031,9 @@ router.post(
                         slope_right_deg: result.slopeAngleRightDeg,
                         slope_warning: result.slopeWarning,
                         wall_confinement: result.wallConfinement,
+                        metrology_grade: persistence.spatial.metrologyGrade,
+                        occluded_volume_pct: persistence.spatial.occludedVolumePct,
+                        zero_cells_inside: persistence.spatial.zeroCellsInside,
                         geometry: {
                             type: result.geometryType,
                             dimensions: result.dimensionsM,
@@ -2803,6 +2083,647 @@ router.post(
             }
             console.error('[MINREPORT-ACOPIOS] Error en stockpiles/:id/spatial-analyze:', error);
             return res.status(500).json({ error: 'Error ejecutando análisis espacial 3D en acopio.' });
+        }
+    }
+);
+
+/**
+ * POST /api/geolapp/stockpiles/:id/capture-sessions
+ * Endpoint único idempotente V2 (Fase 2 MINREPORT · ACOPIOS):
+ * - Idempotencia estricta por `sessionId` / `Idempotency-Key`.
+ * - Validación Zod `CaptureSessionPackageV2Schema` con 3 ejes ortogonales.
+ * - Preserva siempre `in_situ_offline` sin sobrescribir evidencia.
+ * - Reconstrucción soberana en `southamerica-west1` (GPU `GEOLAPP_MAST3R_GPU_URL` o CPU determinista).
+ * - Conciliación inmutable: `AUTO_CONCILIATED` si `|delta_pct| <= max(8%, uncertainty_pct)`,
+ *   o `REQUIRES_HITL_REVIEW` sin sobrescribir `offline_in_situ_m3` + registro en `AuditLedger`.
+ */
+router.post(
+    '/stockpiles/:id/capture-sessions',
+    requireAuth,
+    mutationRateLimiter,
+    async (req: AuthRequest, res: Response) => {
+        try {
+            const stockpileId = String(req.params.id || '').trim();
+            if (!stockpileId || !STOCKPILE_ID_REGEX.test(stockpileId)) {
+                return res.status(400).json({ error: 'Identificador de acopio inválido.' });
+            }
+
+            const parsedBody = CaptureSessionPackageV2Schema.safeParse(req.body || {});
+            if (!parsedBody.success) {
+                return res.status(400).json({
+                    error: 'Payload CaptureSessionPackageV2 inválido.',
+                    details: parsedBody.error.flatten(),
+                });
+            }
+
+            const body = parsedBody.data;
+            const idempotencyHeader = String(req.headers['idempotency-key'] || '').trim();
+            if (idempotencyHeader && idempotencyHeader !== body.sessionId) {
+                return res.status(400).json({
+                    error: 'IDEMPOTENCY_KEY_MISMATCH: Idempotency-Key debe coincidir con sessionId.',
+                });
+            }
+
+            const docRef = db.collection('stockpiles').doc(stockpileId);
+            const docSnap = await docRef.get();
+            if (!docSnap.exists) {
+                return res.status(404).json({ error: 'Acopio no encontrado.' });
+            }
+
+            const existingData = (docSnap.data() || {}) as Record<string, any>;
+            const docTenantId = String(
+                existingData.tenantId || existingData.accountId || ''
+            ).trim();
+            const authz = await authorizeStockpileTenantMutation(req, docTenantId);
+            if (!authz.authorized) {
+                return res.status(authz.status).json({ error: authz.error || 'TENANT_ACCESS_DENIED' });
+            }
+
+            const sessionId = body.sessionId;
+            const measurementId = body.measurementId || sessionId;
+            const sessionRef = docRef.collection('capture_sessions').doc(sessionId);
+            const existingSessionSnap = await sessionRef.get();
+
+            if (existingSessionSnap.exists) {
+                const prev = (existingSessionSnap.data() || {}) as Record<string, any>;
+                if (
+                    prev.tenantId === docTenantId &&
+                    (prev.lifecycle_status === 'CLOUD_3D_VERIFIED' ||
+                        prev.lifecycle_status === 'REJECTED_METROLOGY')
+                ) {
+                    return res.status(200).json({
+                        success: true,
+                        idempotentHit: true,
+                        sessionId,
+                        measurementId: prev.measurementId || measurementId,
+                        stockpileId,
+                        lifecycle_status: prev.lifecycle_status,
+                        metrology_grade: prev.metrology_grade,
+                        reconciliation_status: prev.reconciliation_status,
+                        in_situ_offline: prev.in_situ_offline,
+                        cloud_refined: prev.cloud_refined || null,
+                        reconciliation: prev.reconciliation || null,
+                        mesh_url: prev.mesh_url || null,
+                        mesh_sha256: prev.mesh_sha256 || null,
+                    });
+                }
+            }
+
+            const now = Date.now();
+            const inSituOffline = {
+                volume_m3: Number(body.inSituMetrology.volumeM3.toFixed(2)),
+                uncertainty_pct: body.inSituMetrology.uncertaintyPct,
+                toe_score: body.inSituMetrology.toeScore,
+                occluded_volume_pct: body.inSituMetrology.occludedVolumePct,
+                zero_cells_inside: body.inSituMetrology.zeroCellsInside,
+                loop_drift_pct: body.inSituMetrology.loopDriftPct,
+                ground_slope_deg: body.inSituMetrology.groundSlopeDeg,
+                plane_mismatch_deg: body.inSituMetrology.planeMismatchDeg,
+                slope_angle_avg_deg: body.inSituMetrology.slopeAngleAvgDeg ?? null,
+                dimensions_m: body.inSituMetrology.dimensionsM,
+                metrology_grade: body.inSituMetrology.metrologyGrade,
+                metrology_reasons: body.inSituMetrology.metrologyReasons || [],
+                coverage_pct: body.inSituMetrology.coveragePct,
+                sectors_covered: body.inSituMetrology.sectorsCovered,
+                loop_closed: body.inSituMetrology.loopClosed,
+                wall_confinement: body.inSituMetrology.wallConfinement || body.wallConfinement || 'NONE',
+                depth_mode: body.inSituMetrology.depthMode || 'KNOWN_POSE_MVS_OFFLINE',
+                computed_at: body.inSituMetrology.computedAt,
+                engine_version: body.inSituMetrology.engineVersion,
+                raw_bundle_sha256: body.rawBundleSha256 || null,
+                raw_bundle_url: body.rawBundleUrl || null,
+            };
+
+            // Rechazo metrológico explícito: preserva evidencia cruda y no sobrescribe el acopio con 0 m³
+            if (body.inSituMetrology.metrologyGrade === 'REJECTED') {
+                const rejectedRecord: Record<string, unknown> = {
+                    sessionId,
+                    measurementId,
+                    stockpileId,
+                    tenantId: docTenantId,
+                    region: 'southamerica-west1',
+                    lifecycle_status: 'REJECTED_METROLOGY',
+                    metrology_grade: 'REJECTED',
+                    reconciliation_status: 'PENDING_CLOUD',
+                    in_situ_offline: inSituOffline,
+                    cloud_refined: null,
+                    reconciliation: null,
+                    keyframes_count: body.keyframes.length,
+                    walk_ring_count: body.walkRing.length,
+                    capturedAt: body.capturedAt,
+                    updatedAt: now,
+                };
+                await sessionRef.set(rejectedRecord, { merge: true });
+                await docRef
+                    .collection('measurements')
+                    .doc(measurementId)
+                    .set(
+                        {
+                            sessionId,
+                            lifecycle_status: 'REJECTED_METROLOGY',
+                            metrology_grade: 'REJECTED',
+                            reconciliation_status: 'PENDING_CLOUD',
+                            in_situ_offline: inSituOffline,
+                            updatedAt: now,
+                        },
+                        { merge: true }
+                    );
+
+                await AuditLedger.record({
+                    tenantId: docTenantId,
+                    actorUid: authz.uid,
+                    actorEmail: authz.emailLower || authz.uid,
+                    action: 'STOCKPILE_CAPTURE_SESSION_REJECTED',
+                    module: 'stockpile',
+                    targetEntity: `${stockpileId}/capture_sessions/${sessionId}`,
+                    details: {
+                        sessionId,
+                        measurementId,
+                        metrologyGrade: 'REJECTED',
+                        reasons: inSituOffline.metrology_reasons,
+                        rawBundleSha256: body.rawBundleSha256 || null,
+                    },
+                    ipAddress: extractClientIp(req),
+                }).catch(() => {});
+
+                return res.status(422).json({
+                    error: 'REJECTED_METROLOGY',
+                    rejectionCode: 'REJECTED_METROLOGY',
+                    message:
+                        'Sesión rechazada por compuerta metrológica; evidencia preservada sin corromper inventario.',
+                    sessionId,
+                    measurementId,
+                    lifecycle_status: 'REJECTED_METROLOGY',
+                    metrology_grade: 'REJECTED',
+                    reconciliation_status: 'PENDING_CLOUD',
+                });
+            }
+
+            // Reconstrucción 3D soberana en southamerica-west1 (GPU MASt3R o CPU determinista)
+            let meshResult: GlbSurfaceBuildResult | null = null;
+            let meshSource = 'SOVEREIGN_CPU_DELAUNAY_SOUTH_AMERICA_WEST1';
+            let cloudVolumeM3 = 0;
+            let cloudUncertaintyPct = body.inSituMetrology.uncertaintyPct;
+            let cloudToeScore = body.inSituMetrology.toeScore;
+            let cloudOccludedPct = body.inSituMetrology.occludedVolumePct;
+            let cloudZeroCellsInside = 0;
+            let cloudGroundSlopeDeg = body.inSituMetrology.groundSlopeDeg;
+            let cloudSlopeAvgDeg = body.inSituMetrology.slopeAngleAvgDeg ?? null;
+            let cloudSlopeLeftDeg = body.inSituMetrology.slopeAngleLeftDeg ?? null;
+            let cloudSlopeRightDeg = body.inSituMetrology.slopeAngleRightDeg ?? null;
+            let cloudSlopeWarning: string | null = null;
+            let cloudDimensionsM = body.inSituMetrology.dimensionsM;
+            let cloudMetrologyGrade: AcopiosMetrologyGrade = body.inSituMetrology.metrologyGrade;
+
+            const configuredGpuUrl = String(process.env.GEOLAPP_MAST3R_GPU_URL || '').trim();
+            if (configuredGpuUrl && body.keyframes.length >= 2) {
+                let gpuUrl: URL;
+                try {
+                    gpuUrl = validateSovereignMast3rGpuUrl(configuredGpuUrl);
+                } catch (err: any) {
+                    return res.status(403).json({
+                        error: `SOVEREIGN_REGION_VIOLATION: ${err?.message || 'Endpoint GPU no autorizado.'}`,
+                    });
+                }
+
+                try {
+                    const gpuResponse = await safeFetchExternal(gpuUrl.toString(), {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            Accept: 'model/gltf-binary, application/octet-stream',
+                        },
+                        body: JSON.stringify({
+                            stockpileId,
+                            sessionId,
+                            measurementId,
+                            tenantId: docTenantId,
+                            keyframes: body.keyframes,
+                            walkRing: body.walkRing,
+                            wallConfinement: body.wallConfinement,
+                        }),
+                        timeoutMs: 30000,
+                        maxBytes: 30 * 1024 * 1024,
+                    });
+                    if (gpuResponse.ok) {
+                        const gpuBuf = Buffer.from(await gpuResponse.arrayBuffer());
+                        if (
+                            gpuBuf.length >= 28 &&
+                            gpuBuf.readUInt32LE(0) === 0x46546c67 &&
+                            gpuBuf.readUInt32LE(4) === 2
+                        ) {
+                            meshResult = inspectGlbBinaryMetrics(gpuBuf);
+                            meshSource = 'MAST3R_GPU_SOUTH_AMERICA_WEST1';
+                            cloudVolumeM3 = Number(meshResult.tinVolumeM3.toFixed(2));
+                            cloudUncertaintyPct = Number(
+                                Math.max(2.0, Math.min(body.inSituMetrology.uncertaintyPct, 4.5)).toFixed(1)
+                            );
+                        }
+                    }
+                } catch (gpuErr) {
+                    console.warn(
+                        '[MINREPORT-ACOPIOS] GPU soberana no disponible en capture-sessions; usando respaldo CPU determinista:',
+                        (gpuErr as Error)?.message
+                    );
+                }
+            }
+
+            // Respaldo CPU determinista soberano (NUNCA cono paramétrico sintético)
+            if (!meshResult) {
+                if (Array.isArray(body.pointsM) && body.pointsM.length >= 20) {
+                    const spatial = computeSpatialStockpileVolume({
+                        pointsM: body.pointsM,
+                        groundSamplesM: body.groundSamplesM,
+                        walkRingPoses: body.walkRing,
+                        wallConfinement: body.wallConfinement,
+                        anchorCenter: body.anchorCenter,
+                        roiRadiusM: body.roiRadiusM,
+                        calibrationScaleFactor: body.calibrationScaleFactor,
+                        coveragePct: body.inSituMetrology.coveragePct,
+                        sectorsCovered: body.inSituMetrology.sectorsCovered,
+                        sectorsTotal: body.inSituMetrology.sectorsTotal,
+                        loopClosed: body.inSituMetrology.loopClosed,
+                        loopDriftPct: body.inSituMetrology.loopDriftPct,
+                        hasScaleAnchor: body.inSituMetrology.hasScaleAnchor,
+                        depthMode: body.inSituMetrology.depthMode,
+                    });
+                    meshResult = buildSpatialPointCloudGlbMesh(spatial.surfaceGrid);
+                    meshSource = 'SOVEREIGN_CPU_DELAUNAY_SOUTH_AMERICA_WEST1';
+                    cloudVolumeM3 = spatial.volumeM3;
+                    cloudUncertaintyPct = spatial.uncertaintyPct;
+                    cloudToeScore = spatial.toeScore;
+                    cloudOccludedPct = spatial.occludedVolumePct;
+                    cloudZeroCellsInside = spatial.zeroCellsInside;
+                    cloudGroundSlopeDeg = spatial.groundSlopeDeg;
+                    cloudSlopeAvgDeg = spatial.slopeAngleAvgDeg;
+                    cloudSlopeLeftDeg = spatial.slopeAngleLeftDeg;
+                    cloudSlopeRightDeg = spatial.slopeAngleRightDeg;
+                    cloudSlopeWarning = spatial.slopeWarning;
+                    cloudDimensionsM = spatial.dimensionsM;
+                    cloudMetrologyGrade = spatial.metrologyGrade;
+                } else if (body.localPreviewMesh) {
+                    const previewGrid: SpatialSurfaceGrid = {
+                        originX: body.localPreviewMesh.originX,
+                        originZ: body.localPreviewMesh.originZ,
+                        cellSizeM: body.localPreviewMesh.cellSizeM,
+                        nx: body.localPreviewMesh.nx,
+                        nz: body.localPreviewMesh.nz,
+                        heightsM: body.localPreviewMesh.heightsM,
+                        interpolatedMask: body.localPreviewMesh.interpolatedMask,
+                        observationCount: body.localPreviewMesh.observationCount,
+                        slopeDegGrid: body.localPreviewMesh.slopeDegGrid,
+                        groundPlane: body.localPreviewMesh.groundPlane,
+                    };
+                    meshResult = buildSpatialPointCloudGlbMesh(previewGrid);
+                    meshSource = 'SOVEREIGN_DEM_GRID_SOUTH_AMERICA_WEST1';
+                    cloudVolumeM3 = Number(meshResult.tinVolumeM3.toFixed(2));
+                } else {
+                    return res.status(422).json({
+                        error: 'INSUFFICIENT_SPATIAL_DATA',
+                        rejectionCode: 'INSUFFICIENT_SPATIAL_DATA',
+                        message:
+                            'No se recibieron puntos 3D, grilla local ni reconstrucción GPU soberana; prohibido generar malla sintética.',
+                    });
+                }
+            }
+
+            const digestedMesh = await MediaDigestorServer.digestAny(
+                meshResult.glbBuffer,
+                'model/gltf-binary',
+                'MESH_3D_GLB'
+            );
+            const descriptor = await CasStorageService.persistDigestedBinary(digestedMesh, {
+                scope: 'TENANT_PRIVATE',
+                tenantId: docTenantId,
+                actorUid: authz.uid,
+                originalFilename: `${stockpileId}_${sessionId}.glb`,
+                clientOriginalBytes: meshResult.rawUnindexedBytes,
+            });
+            const savingsPct =
+                typeof descriptor.savingsPct === 'number'
+                    ? descriptor.savingsPct
+                    : Number((descriptor.savingsRatio * 100).toFixed(1));
+
+            // Clasificación visual opcional sin sobrescribir la metrología 3D
+            const primaryPhotoUrl =
+                body.primaryPhotoUrl ||
+                body.keyframes[0]?.downloadUrl ||
+                (typeof existingData.last_photo_url === 'string'
+                    ? existingData.last_photo_url
+                    : existingData.initial_photo_url);
+
+            const mediaParts = await collectVisualMediaParts({
+                tenantId: docTenantId,
+                imageBase64: body.primaryImageBase64,
+                imageMimeType: body.primaryImageMimeType,
+                photoUrl: primaryPhotoUrl,
+            });
+
+            let visualChoices = parseStockpileDecisionChoices(null);
+            if (mediaParts.length > 0) {
+                const visualContext = [
+                    `Dimensiones métricas reales de nube 3D: a=${cloudDimensionsM.a}m, b=${cloudDimensionsM.b}m, h=${cloudDimensionsM.h}m`,
+                    `Volumen 3D ya calculado (NO modificar): ${cloudVolumeM3} m3`,
+                    `Talud medio medido: ${cloudSlopeAvgDeg ?? 'N/A'}°`,
+                ].join('\n');
+                const decisionRes = await ResilientAIClient.decide({
+                    module: 'stockpile',
+                    tenantId: docTenantId,
+                    dataClassification: 'TENANT_PRIVATE',
+                    inputText: visualContext,
+                    media: mediaParts,
+                    questions: STOCKPILE_CLASSIFICATION_QUESTIONS,
+                }).catch(() => null);
+                visualChoices = parseStockpileDecisionChoices(decisionRes);
+            }
+
+            const reconciliation = evaluateStockpileReconciliation({
+                offlineInSituM3: inSituOffline.volume_m3,
+                inSituUncertaintyPct: inSituOffline.uncertainty_pct,
+                cloudRefinedM3: cloudVolumeM3,
+                evaluatedAt: now,
+            });
+
+            const effectiveVolumeM3 =
+                reconciliation.activeSource === 'CLOUD_REFINED'
+                    ? reconciliation.cloudRefinedM3
+                    : reconciliation.offlineInSituM3;
+
+            const resolvedWeightT =
+                typeof existingData.density_factor === 'number' && existingData.density_factor > 0
+                    ? Math.round(effectiveVolumeM3 * existingData.density_factor * 100) / 100
+                    : 0;
+
+            const symmetricMeshMetrics: Record<string, unknown> = {
+                mesh_url: descriptor.downloadUrl,
+                mesh_sha256: descriptor.sha256,
+                mesh_source: meshSource,
+                tin_volume_m3: meshResult.tinVolumeM3,
+                mesh_original_bytes: descriptor.originalBytes,
+                mesh_optimized_bytes: descriptor.optimizedBytes,
+                mesh_savings_pct: savingsPct,
+                mesh_vertex_count: meshResult.vertexCount,
+                mesh_triangle_count: meshResult.triangleCount,
+                mesh_surface_area_m2: meshResult.surfaceAreaM2,
+                mesh_bounding_box_m: meshResult.boundingBoxM,
+                mesh_reconstructed_at: now,
+            };
+
+            const cloudRefined = {
+                volume_m3: cloudVolumeM3,
+                tin_volume_m3: meshResult.tinVolumeM3,
+                uncertainty_pct: cloudUncertaintyPct,
+                toe_score: cloudToeScore,
+                occluded_volume_pct: cloudOccludedPct,
+                zero_cells_inside: cloudZeroCellsInside,
+                ground_slope_deg: cloudGroundSlopeDeg,
+                slope_angle_avg_deg: cloudSlopeAvgDeg,
+                dimensions_m: cloudDimensionsM,
+                mesh_url: descriptor.downloadUrl,
+                mesh_sha256: descriptor.sha256,
+                mesh_source: meshSource,
+                computed_at: now,
+                engine_version: 'acopios-cloud-v2',
+            };
+
+            const lifecycleStatus = 'CLOUD_3D_VERIFIED' as const;
+            const sessionDoc: Record<string, unknown> = {
+                sessionId,
+                measurementId,
+                stockpileId,
+                tenantId: docTenantId,
+                region: 'southamerica-west1',
+                lifecycle_status: lifecycleStatus,
+                metrology_grade: cloudMetrologyGrade,
+                reconciliation_status: reconciliation.status,
+                active_volume_source: reconciliation.activeSource,
+                offline_in_situ_m3: reconciliation.offlineInSituM3,
+                cloud_refined_m3: reconciliation.cloudRefinedM3,
+                reconciliation_delta_m3: reconciliation.deltaM3,
+                reconciliation_delta_pct: reconciliation.deltaPct,
+                in_situ_offline: inSituOffline,
+                cloud_refined: cloudRefined,
+                reconciliation,
+                ...symmetricMeshMetrics,
+                keyframes_count: body.keyframes.length,
+                walk_ring_count: body.walkRing.length,
+                raw_bundle_sha256: body.rawBundleSha256 || null,
+                raw_bundle_url: body.rawBundleUrl || null,
+                raw_bundle_original_bytes: body.rawBundleOriginalBytes ?? null,
+                raw_bundle_optimized_bytes: body.rawBundleOptimizedBytes ?? null,
+                raw_bundle_savings_pct: body.rawBundleSavingsPct ?? null,
+                capturedAt: body.capturedAt,
+                updatedAt: now,
+            };
+
+            await sessionRef.set(sessionDoc, { merge: true });
+
+            // Persistencia simétrica completa en measurements/{measurementId}
+            const measRef = docRef.collection('measurements').doc(measurementId);
+            await measRef.set(
+                {
+                    sessionId,
+                    lifecycle_status: lifecycleStatus,
+                    metrology_grade: cloudMetrologyGrade,
+                    reconciliation_status: reconciliation.status,
+                    active_volume_source: reconciliation.activeSource,
+                    analysis_status:
+                        reconciliation.status === 'AUTO_CONCILIATED'
+                            ? 'AI_VERIFIED'
+                            : 'REQUIRES_HITL_REVIEW',
+                    volumen_m3: effectiveVolumeM3,
+                    offline_in_situ_m3: reconciliation.offlineInSituM3,
+                    cloud_refined_m3: reconciliation.cloudRefinedM3,
+                    reconciliation_delta_m3: reconciliation.deltaM3,
+                    reconciliation_delta_pct: reconciliation.deltaPct,
+                    peso_t: resolvedWeightT,
+                    in_situ_offline: inSituOffline,
+                    cloud_refined: cloudRefined,
+                    reconciliation,
+                    ...symmetricMeshMetrics,
+                    uncertainty_pct:
+                        reconciliation.activeSource === 'CLOUD_REFINED'
+                            ? cloudUncertaintyPct
+                            : inSituOffline.uncertainty_pct,
+                    toe_score: cloudToeScore,
+                    occluded_volume_pct: cloudOccludedPct,
+                    zero_cells_inside: cloudZeroCellsInside,
+                    coverage_pct: body.inSituMetrology.coveragePct,
+                    depth_mode: body.inSituMetrology.depthMode,
+                    ground_slope_deg: cloudGroundSlopeDeg,
+                    detected_slope_angle_deg: cloudSlopeAvgDeg,
+                    slope_left_deg: cloudSlopeLeftDeg,
+                    slope_right_deg: cloudSlopeRightDeg,
+                    slope_warning: cloudSlopeWarning,
+                    wall_confinement: body.wallConfinement,
+                    geometry: {
+                        type: visualChoices.geometryType,
+                        dimensions: cloudDimensionsM,
+                    },
+                    updatedAt: now,
+                },
+                { merge: true }
+            );
+
+            // Persistencia simétrica en stockpiles/{id}: si REQUIRES_HITL_REVIEW, NO sobrescribe offline_in_situ_m3
+            const assetPatch: Record<string, unknown> = {
+                lifecycle_status: lifecycleStatus,
+                metrology_grade: cloudMetrologyGrade,
+                reconciliation_status: reconciliation.status,
+                active_volume_source: reconciliation.activeSource,
+                analysis_status:
+                    reconciliation.status === 'AUTO_CONCILIATED'
+                        ? 'AI_VERIFIED'
+                        : 'REQUIRES_HITL_REVIEW',
+                offline_in_situ_m3: reconciliation.offlineInSituM3,
+                cloud_refined_m3: reconciliation.cloudRefinedM3,
+                reconciliation_delta_m3: reconciliation.deltaM3,
+                reconciliation_delta_pct: reconciliation.deltaPct,
+                volumen_m3: effectiveVolumeM3,
+                last_volume_m3: effectiveVolumeM3,
+                volumen: effectiveVolumeM3,
+                volume_m3: effectiveVolumeM3,
+                peso_t: resolvedWeightT,
+                ...(resolvedWeightT > 0
+                    ? {
+                          last_weight_t: resolvedWeightT,
+                          weight_t: resolvedWeightT,
+                          peso_final_toneladas: resolvedWeightT,
+                      }
+                    : {}),
+                ...symmetricMeshMetrics,
+                uncertainty_pct:
+                    reconciliation.activeSource === 'CLOUD_REFINED'
+                        ? cloudUncertaintyPct
+                        : inSituOffline.uncertainty_pct,
+                toe_score: cloudToeScore,
+                occluded_volume_pct: cloudOccludedPct,
+                zero_cells_inside: cloudZeroCellsInside,
+                coverage_pct: body.inSituMetrology.coveragePct,
+                depth_mode: body.inSituMetrology.depthMode,
+                ground_slope_deg: cloudGroundSlopeDeg,
+                detected_slope_angle_deg: cloudSlopeAvgDeg,
+                slope_warning: cloudSlopeWarning,
+                last_geometry_type: visualChoices.geometryType,
+                geometria: visualChoices.geometryType,
+                wall_confinement: body.wallConfinement,
+                last_session_id: sessionId,
+                updatedAt: now,
+            };
+            await docRef.set(assetPatch, { merge: true });
+
+            await AuditLedger.record({
+                tenantId: docTenantId,
+                actorUid: authz.uid,
+                actorEmail: authz.emailLower || authz.uid,
+                action: 'STOCKPILE_CLOUD_RECONCILIATION',
+                module: 'stockpile',
+                targetEntity: `${stockpileId}/capture_sessions/${sessionId}`,
+                details: {
+                    sessionId,
+                    measurementId,
+                    lifecycleStatus,
+                    metrologyGrade: cloudMetrologyGrade,
+                    reconciliationStatus: reconciliation.status,
+                    activeSource: reconciliation.activeSource,
+                    offlineInSituM3: reconciliation.offlineInSituM3,
+                    cloudRefinedM3: reconciliation.cloudRefinedM3,
+                    deltaM3: reconciliation.deltaM3,
+                    deltaPct: reconciliation.deltaPct,
+                    tolerancePct: reconciliation.tolerancePct,
+                    meshSha256: descriptor.sha256,
+                    meshSource,
+                    rawBundleSha256: body.rawBundleSha256 || null,
+                },
+                ipAddress: extractClientIp(req),
+            }).catch(() => {});
+
+            return res.status(200).json({
+                success: true,
+                idempotentHit: false,
+                sessionId,
+                measurementId,
+                stockpileId,
+                lifecycle_status: lifecycleStatus,
+                metrology_grade: cloudMetrologyGrade,
+                reconciliation_status: reconciliation.status,
+                active_volume_source: reconciliation.activeSource,
+                effectiveVolumeM3,
+                weightT: resolvedWeightT,
+                in_situ_offline: inSituOffline,
+                cloud_refined: cloudRefined,
+                reconciliation,
+                ...symmetricMeshMetrics,
+            });
+        } catch (error: any) {
+            if (error instanceof SpatialVolumeValidationError) {
+                const rejectionCode = error.code || 'INVALID_POINT_CLOUD';
+                return res.status(422).json({
+                    error: rejectionCode,
+                    rejectionCode,
+                    lifecycle_status: 'REJECTED_METROLOGY',
+                    metrology_grade: 'REJECTED',
+                    message: error.message,
+                });
+            }
+            console.error('[MINREPORT-ACOPIOS] Error en POST capture-sessions:', error);
+            return res.status(500).json({ error: 'Error interno procesando sesión de captura V2.' });
+        }
+    }
+);
+
+/**
+ * GET /api/geolapp/stockpiles/:id/capture-sessions/:sessionId
+ * Consulta auditable de estado, evidencia in-situ y conciliación cloud de una sesión V2.
+ */
+router.get(
+    '/stockpiles/:id/capture-sessions/:sessionId',
+    requireAuth,
+    async (req: AuthRequest, res: Response) => {
+        try {
+            const stockpileId = String(req.params.id || '').trim();
+            const sessionId = String(req.params.sessionId || '').trim();
+            if (
+                !stockpileId ||
+                !STOCKPILE_ID_REGEX.test(stockpileId) ||
+                !sessionId ||
+                !STOCKPILE_ID_REGEX.test(sessionId)
+            ) {
+                return res.status(400).json({ error: 'Identificador de acopio o sesión inválido.' });
+            }
+
+            const docRef = db.collection('stockpiles').doc(stockpileId);
+            const docSnap = await docRef.get();
+            if (!docSnap.exists) {
+                return res.status(404).json({ error: 'Acopio no encontrado.' });
+            }
+
+            const existingData = (docSnap.data() || {}) as Record<string, any>;
+            const docTenantId = String(
+                existingData.tenantId || existingData.accountId || ''
+            ).trim();
+            const authz = await authorizeStockpileTenantMutation(req, docTenantId);
+            if (!authz.authorized) {
+                return res.status(authz.status).json({ error: authz.error || 'TENANT_ACCESS_DENIED' });
+            }
+
+            const sessionSnap = await docRef.collection('capture_sessions').doc(sessionId).get();
+            if (!sessionSnap.exists) {
+                return res.status(404).json({ error: 'Sesión de captura no encontrada.' });
+            }
+
+            const sessionData = (sessionSnap.data() || {}) as Record<string, any>;
+            if (sessionData.tenantId && sessionData.tenantId !== docTenantId) {
+                return res.status(403).json({ error: 'TENANT_ACCESS_DENIED' });
+            }
+
+            return res.status(200).json({
+                success: true,
+                session: sessionData,
+            });
+        } catch (error) {
+            console.error('[MINREPORT-ACOPIOS] Error en GET capture-sessions/:sessionId:', error);
+            return res.status(500).json({ error: 'Error consultando sesión de captura V2.' });
         }
     }
 );

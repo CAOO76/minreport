@@ -23,6 +23,11 @@ export interface GlbBoundingBoxM {
     maxY: number;
     minZ: number;
     maxZ: number;
+    /** Esquema canónico unificado V2 */
+    widthX: number;
+    depthZ: number;
+    heightY: number;
+    /** Alias legacy de lectura compatible */
     lengthM: number;
     heightM: number;
     widthM: number;
@@ -578,6 +583,9 @@ function computeMeshPhysicsAndNormals(mesh: IndexedMeshData): {
     }
 
     const round3 = (n: number) => Number(n.toFixed(3));
+    const widthX = round3(maxX - minX);
+    const heightY = round3(maxY - minY);
+    const depthZ = round3(maxZ - minZ);
     return {
         normals: metrics.normals,
         tinVolumeM3: round3(Math.abs(metrics.signedVol6) / 6),
@@ -590,36 +598,111 @@ function computeMeshPhysicsAndNormals(mesh: IndexedMeshData): {
             maxY: round3(maxY),
             minZ: round3(minZ),
             maxZ: round3(maxZ),
-            lengthM: round3(maxX - minX),
-            heightM: round3(maxY - minY),
-            widthM: round3(maxZ - minZ),
+            widthX,
+            depthZ,
+            heightY,
+            lengthM: widthX,
+            heightM: heightY,
+            widthM: depthZ,
         },
     };
 }
+
+// Paleta lineal RGB (glTF 2.0 COLOR_0) bajo ANSI/ISA-101 MINREPORT
+const ISA101_COLOR_NEUTRAL: [number, number, number] = [0.2542, 0.2918, 0.3813]; // Neutro técnico (#8A93A6)
+const ISA101_COLOR_CYAN_VERIFIED: [number, number, number] = [0.0, 0.4233, 0.8632]; // Cian (#00AEEF) >= 2 obs
+const ISA101_COLOR_COPPER_ALERT: [number, number, number] = [0.5647, 0.227, 0.0612]; // Cobre (#C68346) interpolado / talud > 38°
 
 function packGlbBuffer(
     positions: number[],
     normals: number[],
     indices: number[],
-    bbox: GlbBoundingBoxM
+    bbox: GlbBoundingBoxM,
+    colors?: number[]
 ): Buffer {
     const vertexCount = positions.length / 3;
     const indexCount = indices.length;
-    if (vertexCount > 65535) {
-        throw new Error(`Malla excede limite Uint16 glTF (${vertexCount} > 65535).`);
-    }
+    const useUint32 = vertexCount > 65535;
+    const hasColors = Array.isArray(colors) && colors.length === positions.length;
 
     const posFloat = new Float32Array(positions);
     const normFloat = new Float32Array(normals);
-    const idxUint16 = new Uint16Array(indices);
+    const colorFloat = hasColors ? new Float32Array(colors!) : null;
+    const idxArray = useUint32 ? new Uint32Array(indices) : new Uint16Array(indices);
+    const idxComponentType = useUint32 ? 5125 : 5123;
 
     const posBytes = Buffer.from(posFloat.buffer, posFloat.byteOffset, posFloat.byteLength);
     const normBytes = Buffer.from(normFloat.buffer, normFloat.byteOffset, normFloat.byteLength);
-    const idxBytes = Buffer.from(idxUint16.buffer, idxUint16.byteOffset, idxUint16.byteLength);
+    const colorBytes = colorFloat
+        ? Buffer.from(colorFloat.buffer, colorFloat.byteOffset, colorFloat.byteLength)
+        : null;
+    const idxBytes = Buffer.from(idxArray.buffer, idxArray.byteOffset, idxArray.byteLength);
 
-    const rawBinLength = posBytes.length + normBytes.length + idxBytes.length;
+    const rawBinLength =
+        posBytes.length + normBytes.length + (colorBytes ? colorBytes.length : 0) + idxBytes.length;
     const binPad = (4 - (rawBinLength % 4)) % 4;
     const binPaddedLength = rawBinLength + binPad;
+
+    const bufferViews: Array<{ buffer: number; byteOffset: number; byteLength: number; target: number }> = [
+        { buffer: 0, byteOffset: 0, byteLength: posBytes.length, target: 34962 },
+        { buffer: 0, byteOffset: posBytes.length, byteLength: normBytes.length, target: 34962 },
+    ];
+    const accessors: Array<Record<string, unknown>> = [
+        {
+            bufferView: 0,
+            componentType: 5126,
+            count: vertexCount,
+            type: 'VEC3',
+            min: [bbox.minX, bbox.minY, bbox.minZ],
+            max: [bbox.maxX, bbox.maxY, bbox.maxZ],
+        },
+        {
+            bufferView: 1,
+            componentType: 5126,
+            count: vertexCount,
+            type: 'VEC3',
+        },
+    ];
+
+    const attributes: Record<string, number> = {
+        POSITION: 0,
+        NORMAL: 1,
+    };
+
+    let runningOffset = posBytes.length + normBytes.length;
+    if (colorBytes) {
+        const colorViewIdx = bufferViews.length;
+        bufferViews.push({
+            buffer: 0,
+            byteOffset: runningOffset,
+            byteLength: colorBytes.length,
+            target: 34962,
+        });
+        const colorAccIdx = accessors.length;
+        accessors.push({
+            bufferView: colorViewIdx,
+            componentType: 5126,
+            count: vertexCount,
+            type: 'VEC3',
+        });
+        attributes.COLOR_0 = colorAccIdx;
+        runningOffset += colorBytes.length;
+    }
+
+    const idxViewIdx = bufferViews.length;
+    bufferViews.push({
+        buffer: 0,
+        byteOffset: runningOffset,
+        byteLength: idxBytes.length,
+        target: 34963,
+    });
+    const idxAccIdx = accessors.length;
+    accessors.push({
+        bufferView: idxViewIdx,
+        componentType: idxComponentType,
+        count: indexCount,
+        type: 'SCALAR',
+    });
 
     const gltfJson = {
         asset: {
@@ -634,11 +717,8 @@ function packGlbBuffer(
                 name: 'StockpileSurface',
                 primitives: [
                     {
-                        attributes: {
-                            POSITION: 0,
-                            NORMAL: 1,
-                        },
-                        indices: 2,
+                        attributes,
+                        indices: idxAccIdx,
                         material: 0,
                     },
                 ],
@@ -646,48 +726,20 @@ function packGlbBuffer(
         ],
         materials: [
             {
-                name: 'MinreportCopperOreMat',
+                name: hasColors ? 'MinreportIsa101SurfaceMat' : 'MinreportCopperOreMat',
                 doubleSided: false,
                 pbrMetallicRoughness: {
-                    baseColorFactor: [0.7765, 0.5137, 0.2745, 1.0],
-                    metallicFactor: 0.15,
+                    baseColorFactor: hasColors
+                        ? [1.0, 1.0, 1.0, 1.0]
+                        : [0.7765, 0.5137, 0.2745, 1.0],
+                    metallicFactor: 0.12,
                     roughnessFactor: 0.85,
                 },
             },
         ],
         buffers: [{ byteLength: binPaddedLength }],
-        bufferViews: [
-            { buffer: 0, byteOffset: 0, byteLength: posBytes.length, target: 34962 },
-            { buffer: 0, byteOffset: posBytes.length, byteLength: normBytes.length, target: 34962 },
-            {
-                buffer: 0,
-                byteOffset: posBytes.length + normBytes.length,
-                byteLength: idxBytes.length,
-                target: 34963,
-            },
-        ],
-        accessors: [
-            {
-                bufferView: 0,
-                componentType: 5126,
-                count: vertexCount,
-                type: 'VEC3',
-                min: [bbox.minX, bbox.minY, bbox.minZ],
-                max: [bbox.maxX, bbox.maxY, bbox.maxZ],
-            },
-            {
-                bufferView: 1,
-                componentType: 5126,
-                count: vertexCount,
-                type: 'VEC3',
-            },
-            {
-                bufferView: 2,
-                componentType: 5123,
-                count: indexCount,
-                type: 'SCALAR',
-            },
-        ],
+        bufferViews,
+        accessors,
     };
 
     const jsonRaw = Buffer.from(JSON.stringify(gltfJson), 'utf8');
@@ -723,6 +775,10 @@ function packGlbBuffer(
     offset += posBytes.length;
     normBytes.copy(glb, offset);
     offset += normBytes.length;
+    if (colorBytes) {
+        colorBytes.copy(glb, offset);
+        offset += colorBytes.length;
+    }
     idxBytes.copy(glb, offset);
     offset += idxBytes.length;
     for (let i = 0; i < binPad; i++) {
@@ -1001,13 +1057,25 @@ export function inspectGlbBinaryMetrics(glbBuffer: Buffer): GlbSurfaceBuildResul
 /**
  * Construye de manera determinista un binario glTF 2.0 `.glb` watertight
  * desde la grilla espacial real (`SpatialSurfaceGrid`) calculada por `spatial-volume.engine.ts`:
- * superficie superior observada/interpolada, tapa inferior siguiendo el plano inclinado real
- * `y_ground = a*x + b*z + d` y faldón perimetral cerrado con normales CCW consistentes.
+ * - Base nivelada en `y = 0` (eliminando cuña flotante y discrepancia `bbox.heightY` vs `h`).
+ * - Vértices de faldón separados con winding CCW exterior real (cero sangrado de normales).
+ * - Atributo por vértice `COLOR_0` ANSI/ISA-101 (neutro, Cian `#00AEEF` verificado, Cobre `#C68346` ocluido/talud > 38°).
+ * - Soporte automático `Uint32` (`5125`) cuando `vertexCount > 65535`.
  */
 export function buildSpatialPointCloudGlbMesh(
     surfaceGrid: SpatialSurfaceGrid
 ): GlbSurfaceBuildResult {
-    const { originX, originZ, cellSizeM, nx, nz, heightsM, groundPlane } = surfaceGrid;
+    const {
+        originX,
+        originZ,
+        cellSizeM,
+        nx,
+        nz,
+        heightsM,
+        observationCount,
+        interpolatedMask,
+        slopeDegGrid,
+    } = surfaceGrid;
     if (
         !Number.isFinite(cellSizeM) ||
         cellSizeM <= 0 ||
@@ -1045,47 +1113,36 @@ export function buildSpatialPointCloudGlbMesh(
 
     const centerX = originX + ((nx - 1) * cellSizeM) * 0.5;
     const centerZ = originZ + ((nz - 1) * cellSizeM) * 0.5;
-    const { a, b, d } = groundPlane;
-
-    const vertexUsed = new Uint8Array(nx * nz);
-    let minGroundY = Infinity;
-
-    for (let iz = 0; iz < quadRows; iz++) {
-        for (let ix = 0; ix < quadCols; ix++) {
-            if (!activeQuad[iz * quadCols + ix]) continue;
-            const corners = [
-                [ix, iz],
-                [ix + 1, iz],
-                [ix, iz + 1],
-                [ix + 1, iz + 1],
-            ];
-            for (const [vx, vz] of corners) {
-                const vIdx = vz * nx + vx;
-                if (vertexUsed[vIdx]) continue;
-                vertexUsed[vIdx] = 1;
-                const wx = originX + vx * cellSizeM;
-                const wz = originZ + vz * cellSizeM;
-                const yg = a * wx + b * wz + d;
-                if (yg < minGroundY) minGroundY = yg;
-            }
-        }
-    }
-    if (!Number.isFinite(minGroundY)) minGroundY = d;
 
     const positions: number[] = [];
+    const colors: number[] = [];
     const indices: number[] = [];
     const topIndex = new Int32Array(nx * nz).fill(-1);
     const botIndex = new Int32Array(nx * nz).fill(-1);
+
+    const resolveTopVertexColor = (vIdx: number): [number, number, number] => {
+        const isInterpolated = interpolatedMask?.[vIdx] === 1;
+        const localSlope = slopeDegGrid?.[vIdx] ?? 0;
+        if (isInterpolated || localSlope > 38) {
+            return ISA101_COLOR_COPPER_ALERT;
+        }
+        const obs = observationCount?.[vIdx] ?? 0;
+        if (obs >= 2) {
+            return ISA101_COLOR_CYAN_VERIFIED;
+        }
+        return ISA101_COLOR_NEUTRAL;
+    };
 
     const ensureTopVertex = (vx: number, vz: number): number => {
         const vIdx = vz * nx + vx;
         if (topIndex[vIdx] >= 0) return topIndex[vIdx];
         const wx = originX + vx * cellSizeM;
         const wz = originZ + vz * cellSizeM;
-        const yg = a * wx + b * wz + d - minGroundY;
         const h = Math.max(0, heightsM[vIdx] || 0);
         const idx = positions.length / 3;
-        positions.push(wx - centerX, yg + h, wz - centerZ);
+        positions.push(wx - centerX, h, wz - centerZ);
+        const c = resolveTopVertexColor(vIdx);
+        colors.push(c[0], c[1], c[2]);
         topIndex[vIdx] = idx;
         return idx;
     };
@@ -1095,9 +1152,10 @@ export function buildSpatialPointCloudGlbMesh(
         if (botIndex[vIdx] >= 0) return botIndex[vIdx];
         const wx = originX + vx * cellSizeM;
         const wz = originZ + vz * cellSizeM;
-        const yg = a * wx + b * wz + d - minGroundY;
         const idx = positions.length / 3;
-        positions.push(wx - centerX, yg, wz - centerZ);
+        // Base estrictamente nivelada en y = 0 (cero cuña flotante)
+        positions.push(wx - centerX, 0, wz - centerZ);
+        colors.push(ISA101_COLOR_NEUTRAL[0], ISA101_COLOR_NEUTRAL[1], ISA101_COLOR_NEUTRAL[2]);
         botIndex[vIdx] = idx;
         return idx;
     };
@@ -1107,14 +1165,31 @@ export function buildSpatialPointCloudGlbMesh(
         return activeQuad[iz * quadCols + ix] === 1;
     };
 
+    // Faldón perimetral con vértices dedicados (cero sangrado de normales con techo/base)
+    // y winding CCW exterior verificado: (pBot -> qBot -> qTop) y (pBot -> qTop -> pTop).
     const emitSkirtEdge = (px: number, pz: number, qx: number, qz: number) => {
-        const pBot = ensureBotVertex(px, pz);
-        const qBot = ensureBotVertex(qx, qz);
-        const pTop = ensureTopVertex(px, pz);
-        const qTop = ensureTopVertex(qx, qz);
-        // Arista CCW vista desde +Y: P -> Q => cara exterior (qBot, pBot, pTop, qTop)
-        pushTriangle(indices, qBot, pBot, pTop);
-        pushTriangle(indices, qBot, pTop, qTop);
+        const hP = Math.max(0, heightsM[pz * nx + px] || 0);
+        const hQ = Math.max(0, heightsM[qz * nx + qx] || 0);
+        if (hP <= 1e-6 && hQ <= 1e-6) return;
+
+        const xP = originX + px * cellSizeM - centerX;
+        const zP = originZ + pz * cellSizeM - centerZ;
+        const xQ = originX + qx * cellSizeM - centerX;
+        const zQ = originZ + qz * cellSizeM - centerZ;
+
+        const base = positions.length / 3;
+        // 0: pBot, 1: qBot, 2: qTop, 3: pTop
+        positions.push(xP, 0, zP, xQ, 0, zQ, xQ, hQ, zQ, xP, hP, zP);
+        for (let k = 0; k < 4; k++) {
+            colors.push(ISA101_COLOR_NEUTRAL[0], ISA101_COLOR_NEUTRAL[1], ISA101_COLOR_NEUTRAL[2]);
+        }
+
+        if (hQ > 1e-6) {
+            pushTriangle(indices, base, base + 1, base + 2);
+        }
+        if (hP > 1e-6) {
+            pushTriangle(indices, base, base + 2, base + 3);
+        }
     };
 
     for (let iz = 0; iz < quadRows; iz++) {
@@ -1129,7 +1204,7 @@ export function buildSpatialPointCloudGlbMesh(
             pushTriangle(indices, tTL, tBL, tBR);
             pushTriangle(indices, tTL, tBR, tTR);
 
-            // Tapa inferior siguiendo plano inclinado real (-Y normal)
+            // Tapa inferior nivelada en y = 0 (-Y normal)
             const bTL = ensureBotVertex(ix, iz);
             const bBL = ensureBotVertex(ix, iz + 1);
             const bBR = ensureBotVertex(ix + 1, iz + 1);
@@ -1137,7 +1212,7 @@ export function buildSpatialPointCloudGlbMesh(
             pushTriangle(indices, bTL, bBR, bBL);
             pushTriangle(indices, bTL, bTR, bBR);
 
-            // Faldón perimetral cerrado en bordes sin vecino activo
+            // Faldón perimetral cerrado CCW visto desde fuera en bordes sin vecino activo
             if (!isQuadActive(ix - 1, iz)) emitSkirtEdge(ix, iz, ix, iz + 1);
             if (!isQuadActive(ix, iz + 1)) emitSkirtEdge(ix, iz + 1, ix + 1, iz + 1);
             if (!isQuadActive(ix + 1, iz)) emitSkirtEdge(ix + 1, iz + 1, ix + 1, iz);
@@ -1150,7 +1225,8 @@ export function buildSpatialPointCloudGlbMesh(
         positions,
         physics.normals,
         physics.indices,
-        physics.boundingBoxM
+        physics.boundingBoxM,
+        colors
     );
 
     const vertexCount = positions.length / 3;

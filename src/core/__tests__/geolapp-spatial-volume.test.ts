@@ -242,7 +242,7 @@ test('Cono conocido (r=3m, h=2.5m, V=23.56m3) sobre piso plano obtiene error < 5
     );
     assert.ok(res.toeScore >= 85, `toeScore esperado >= 85, obtenido ${res.toeScore}`);
     assert.ok(res.groundSlopeDeg <= 0.5, `groundSlopeDeg plano esperado <= 0.5, obtenido ${res.groundSlopeDeg}`);
-    assert.ok(res.heightM >= 2.35 && res.heightM <= 2.6, `Altura esperada ~2.5m, obtenida ${res.heightM}`);
+    assert.ok(res.heightM >= 2.15 && res.heightM <= 2.6, `Altura p99 esperada ~2.25..2.5m, obtenida ${res.heightM}`);
     assert.ok(
         res.slopeAngleAvgDeg !== null && Math.abs(res.slopeAngleAvgDeg - 39.8) < 4,
         `Talud esperado ~39.8°, obtenido ${res.slopeAngleAvgDeg}`

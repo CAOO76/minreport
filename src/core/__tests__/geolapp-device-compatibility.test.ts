@@ -409,18 +409,16 @@ test('Endpoints HTTP on-demand, Fail-Closed Ungrounded (422), validateSovereignM
     const originalGenerate = ResilientAIClient.generate;
     try {
         const listHandlers = findRouteHandlers('/device-compatibility', 'get');
-        const listAliasHandlers = findRouteHandlers('/device-catalog', 'get');
         const checkHandlers = findRouteHandlers('/device-compatibility/check', 'post');
-        const checkAliasHandlers = findRouteHandlers('/device-catalog/check', 'post');
 
         assert.ok(listHandlers.length >= 2);
-        assert.ok(listAliasHandlers.length >= 2);
         assert.ok(checkHandlers.length >= 2);
-        assert.ok(checkAliasHandlers.length >= 2);
 
-        // Rutas obsoletas de listado curado / CSV / cron deben estar eliminadas
+        // Rutas obsoletas / alias legacy eliminados
         const routerAny = geolappController.default as any;
         for (const removedPath of [
+            '/device-catalog',
+            '/device-catalog/check',
             '/device-catalog/sync',
             '/device-catalog/import-csv',
             '/internal/device-catalog/scheduled-sync',
