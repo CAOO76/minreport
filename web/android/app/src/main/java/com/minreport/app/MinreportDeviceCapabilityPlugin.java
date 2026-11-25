@@ -136,6 +136,7 @@ public class MinreportDeviceCapabilityPlugin extends Plugin {
             final boolean hasAccelerometer =
                 pm != null && pm.hasSystemFeature(PackageManager.FEATURE_SENSOR_ACCELEROMETER);
             final String camera2Level = detectRearCamera2Level(appContext);
+            final boolean hasHardwareDepthSensor = detectRearHardwareDepthSensor(appContext);
 
             final boolean arCoreSupported = availability.isSupported();
             final Set<String> reasons = new LinkedHashSet<>();
@@ -221,6 +222,7 @@ public class MinreportDeviceCapabilityPlugin extends Plugin {
             payload.put("arCoreSupported", arCoreSupported);
             payload.put("depthApiSupported", depthApiSupported);
             payload.put("rawDepthSupported", rawDepthSupported);
+            payload.put("hasHardwareDepthSensor", hasHardwareDepthSensor);
             payload.put("hasGyroscope", hasGyroscope);
             payload.put("hasAccelerometer", hasAccelerometer);
             payload.put("camera2Level", camera2Level);
@@ -267,6 +269,43 @@ public class MinreportDeviceCapabilityPlugin extends Plugin {
         } catch (Exception e) {
             return "UNKNOWN";
         }
+    }
+
+    /**
+     * Checks Camera2 hardware capabilities on rear-facing cameras for dedicated ToF / LiDAR depth output.
+     */
+    public static boolean detectRearHardwareDepthSensor(final Context context) {
+        if (context == null) {
+            return false;
+        }
+        try {
+            final CameraManager cameraManager = (CameraManager) context.getSystemService(Context.CAMERA_SERVICE);
+            if (cameraManager == null) {
+                return false;
+            }
+            final String[] cameraIds = cameraManager.getCameraIdList();
+            if (cameraIds == null) {
+                return false;
+            }
+            for (String cameraId : cameraIds) {
+                final CameraCharacteristics chars = cameraManager.getCameraCharacteristics(cameraId);
+                final Integer facing = chars.get(CameraCharacteristics.LENS_FACING);
+                if (facing == null || facing != CameraCharacteristics.LENS_FACING_BACK) {
+                    continue;
+                }
+                final int[] capabilities = chars.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES);
+                if (capabilities == null) {
+                    continue;
+                }
+                for (int cap : capabilities) {
+                    if (cap == CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_DEPTH_OUTPUT) {
+                        return true;
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return false;
     }
 
     private int rankCamera2Level(final Integer level) {

@@ -5,11 +5,17 @@ import android.hardware.display.DisplayManager;
 import android.opengl.GLES11Ext;
 import android.opengl.GLES20;
 import android.opengl.GLSurfaceView;
+import android.util.Log;
 import android.view.Display;
 import android.view.Surface;
+import com.google.ar.core.Camera;
 import com.google.ar.core.Coordinates2d;
 import com.google.ar.core.Frame;
 import com.google.ar.core.Session;
+import com.google.ar.core.TrackingState;
+import com.google.ar.core.exceptions.CameraNotAvailableException;
+import com.google.ar.core.exceptions.DeadlineExceededException;
+import com.google.ar.core.exceptions.SessionPausedException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.FloatBuffer;
@@ -20,6 +26,8 @@ import javax.microedition.khronos.opengles.GL10;
  * Minimal GLES 2.0 renderer for the live ARCore camera feed with integrated DisplayRotationHelper.
  */
 public class ArCoreCameraRenderer implements GLSurfaceView.Renderer {
+
+    private static final String TAG = "ArCoreCameraRenderer";
 
     /**
      * Callback invoked on the GL thread immediately after each successful ARCore frame update.
@@ -62,8 +70,14 @@ public class ArCoreCameraRenderer implements GLSurfaceView.Renderer {
 
     private final DisplayRotationHelper displayRotationHelper;
     private final FrameListener frameListener;
+    private final Live3DOverlayRenderer overlayRenderer = new Live3DOverlayRenderer();
     private final FloatBuffer quadCoords;
     private final FloatBuffer quadTexCoords;
+    private final float[] viewMatrix = new float[16];
+    private final float[] projectionMatrix = new float[16];
+
+    private volatile Live3DOverlayRenderer.FramingStatus lastFramingStatus =
+        new Live3DOverlayRenderer.FramingStatus(false, false);
 
     private Session session;
     private int cameraTextureId = -1;
@@ -116,6 +130,30 @@ public class ArCoreCameraRenderer implements GLSurfaceView.Renderer {
 
     public int getDisplayRotationDegrees() {
         return displayRotationHelper.getDisplayRotationDegrees();
+    }
+
+    public void updateLiveOverlay(final WalkRingToeSolver.LiveOverlaySnapshot snapshot) {
+        overlayRenderer.updateSnapshot(snapshot);
+    }
+
+    public void clearLiveOverlay() {
+        overlayRenderer.clearSnapshot();
+    }
+
+    public Live3DOverlayRenderer.FramingStatus getLastFramingStatus() {
+        return lastFramingStatus;
+    }
+
+    public void releaseGlResources() {
+        overlayRenderer.release();
+        if (programId != 0) {
+            GLES20.glDeleteProgram(programId);
+            programId = 0;
+        }
+        if (cameraTextureId != -1) {
+            GLES20.glDeleteTextures(1, new int[] { cameraTextureId }, 0);
+            cameraTextureId = -1;
+        }
     }
 
     @Override
@@ -176,6 +214,7 @@ public class ArCoreCameraRenderer implements GLSurfaceView.Renderer {
             textureBoundToSession = false;
             texCoordsInitialized = false;
         }
+        overlayRenderer.onSurfaceCreated();
     }
 
     @Override
@@ -218,11 +257,22 @@ public class ArCoreCameraRenderer implements GLSurfaceView.Renderer {
 
             drawCameraQuad();
 
+            final Camera camera = frame.getCamera();
+            if (camera.getTrackingState() == TrackingState.TRACKING) {
+                camera.getViewMatrix(viewMatrix, 0);
+                camera.getProjectionMatrix(projectionMatrix, 0, 0.1f, 60.0f);
+                lastFramingStatus = overlayRenderer.draw(viewMatrix, projectionMatrix);
+            } else {
+                lastFramingStatus = new Live3DOverlayRenderer.FramingStatus(false, false);
+            }
+
             if (frameListener != null) {
                 frameListener.onArFrame(activeSession, frame);
             }
-        } catch (Throwable ignored) {
-            // Ignore transient session pause/update race conditions.
+        } catch (CameraNotAvailableException | SessionPausedException | DeadlineExceededException transientEx) {
+            // Expected transient ARCore lifecycle states during pause/resume transitions.
+        } catch (RuntimeException unexpectedEx) {
+            Log.w(TAG, "Unexpected ARCore render frame error", unexpectedEx);
         }
     }
 
@@ -271,9 +321,9 @@ public class ArCoreCameraRenderer implements GLSurfaceView.Renderer {
 
     private static final class DisplayRotationHelper implements DisplayManager.DisplayListener {
         private final DisplayManager displayManager;
-        private boolean viewportChanged = false;
-        private int viewportWidth = 0;
-        private int viewportHeight = 0;
+        private volatile boolean viewportChanged = false;
+        private volatile int viewportWidth = 0;
+        private volatile int viewportHeight = 0;
 
         DisplayRotationHelper(final Context context) {
             this.displayManager = (DisplayManager) context.getSystemService(Context.DISPLAY_SERVICE);

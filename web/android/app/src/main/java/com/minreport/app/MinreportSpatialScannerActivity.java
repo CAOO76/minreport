@@ -10,11 +10,15 @@ import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.ImageFormat;
-import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.Rect;
+import android.graphics.RectF;
 import android.graphics.Typeface;
 import android.graphics.YuvImage;
+import android.hardware.Sensor;
+import android.hardware.SensorEvent;
+import android.hardware.SensorEventListener;
+import android.hardware.SensorManager;
 import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraManager;
 import android.media.Image;
@@ -23,6 +27,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.HapticFeedbackConstants;
@@ -31,12 +36,15 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager;
-import android.widget.Button;
 import android.widget.FrameLayout;
+import android.widget.ImageButton;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.TextView;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.ContextCompat;
+import androidx.core.content.res.ResourcesCompat;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 import com.google.ar.core.ArCoreApk;
@@ -59,9 +67,9 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.nio.FloatBuffer;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -71,17 +79,21 @@ import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
 /**
- * Full-screen senior-ergonomic ARCore VIO + Depth activity supporting:
- * - SCAN mode: 3-step ROI flow (Center -> Edge -> 8-sector walkaround + 4 auto keyframes)
- * - CALIBRATE mode: 3-step 2.00 m flat-floor tape calibration with [0.85, 1.15] gate
+ * Full-screen Landscape Golden-Ratio (61.8% 4:3 camera + 38.2% #000000 rail) ARCore VIO + MVS
+ * scanner activity for MINREPORT · ACOPIOS:
+ * - SCAN mode: 1-button continuous walkaround (READY_TRACKING -> CAPTURING_WALK), 16-32 unrotated
+ *   WebP keyframes with SE(3) poses & intrinsics, live GLES 2.0 3D recognition overlay, and
+ *   pure-Java offline in-situ metrology (WalkRingToeSolver + OfflineVioMvsEngine).
+ * - CALIBRATE mode: optional 2.00 m flat-floor diagnostic scale verification.
  */
 public class MinreportSpatialScannerActivity
     extends AppCompatActivity
-    implements ArCoreCameraRenderer.FrameListener {
+    implements ArCoreCameraRenderer.FrameListener, SensorEventListener {
 
     public static final String EXTRA_RESULT_FILE_PATH = "minreport_spatial_scan_result_file";
     public static final String EXTRA_SCAN_MODE = "minreport_spatial_scan_mode";
@@ -89,24 +101,26 @@ public class MinreportSpatialScannerActivity
     public static final String MODE_CALIBRATE = "CALIBRATE";
     public static final String PREFS_CALIBRATION_NAME = "minreport_spatial_calibration";
 
+    private static final String SCANNER_ENGINE_VERSION = "2.0.0-vio-mvs-java";
     private static final int KEYCODE_XCOVER_KEY = 1015;
     private static final int KEYCODE_XCOVER_TOP_KEY = 1079;
 
-    private static final int SECTOR_COUNT = 8;
-    private static final float MIN_ROI_RADIUS_M = 0.35f;
-    private static final float MAX_ROI_RADIUS_M = 35.0f;
-    private static final float ROI_MARGIN_FACTOR = 1.15f;
-    private static final int MAX_VOXEL_POINTS = 6000;
-    private static final int MAX_GROUND_SAMPLES = 400;
-    private static final int MAX_KEYFRAME_PHOTOS = 4;
+    private static final int SECTOR_COUNT = WalkRingToeSolver.SECTOR_COUNT; // 16 x 22.5 deg
+    private static final int MAX_KEYFRAME_PHOTOS = 32;
     private static final int MAX_PHOTO_DIMENSION_PX = 1280;
-    private static final int JPEG_QUALITY = 85;
-    private static final int MIN_DEPTH_CONFIDENCE = 96;
+    private static final int WEBP_QUALITY = 76;
+    private static final int MVS_LUMA_W = 320;
+    private static final int MVS_LUMA_H = 240;
+    private static final int MAX_GROUND_SAMPLES = 600;
+    private static final float MIN_WALK_POSE_STEP_M = 0.25f;
+    private static final float MIN_KF_STEP_M = 0.40f;
+    private static final float MAX_KF_STEP_M = 1.30f;
+    private static final float MIN_KF_YAW_DEG = 12.0f;
+    private static final float MAX_GYRO_NORM_RAD_S = 0.45f;
+    private static final double BLUR_VARIANCE_THRESHOLD = 22.0;
+
     private static final float MIN_DEPTH_M = 0.25f;
     private static final float MAX_DEPTH_M = 35.0f;
-    private static final double BLUR_VARIANCE_THRESHOLD = 28.0;
-    private static final double MIN_KEYFRAME_ANGULAR_SEPARATION_DEG = 60.0;
-
     private static final long CAL_FLOOR_DURATION_MS = 3000L;
     private static final float MAX_CAL_FLOOR_NOISE_RMS_M = 0.035f;
     private static final float CAL_REFERENCE_DISTANCE_M = 2.0f;
@@ -114,17 +128,20 @@ public class MinreportSpatialScannerActivity
     private static final float MIN_SCALE_FACTOR = 0.85f;
     private static final float MAX_SCALE_FACTOR = 1.15f;
 
-    private static final int COLOR_HUD_BG = 0xFF000000;
+    // MINREPORT ANSI/ISA-101 Palette (>= 85% neutral monochrome)
+    private static final int COLOR_BG = 0xFF000000;
+    private static final int COLOR_BORDER = 0xFF12151C;
     private static final int COLOR_GRAY_IDLE = 0xFF2A2F3A;
     private static final int COLOR_CYAN = 0xFF00AEEF;
     private static final int COLOR_COPPER = 0xFFC68346;
-    private static final int COLOR_WHITE = 0xFFFFFFFF;
-    private static final int COLOR_MUTED = 0xFF8A93A6;
+    private static final int COLOR_PRIMARY = 0xFFF3F4F6;
+    private static final int COLOR_SECONDARY = 0xFF8A93A6;
+    private static final int COLOR_DISABLED = 0xFF5A6072;
 
     private enum FlowStep {
-        STEP_CENTER,
-        STEP_EDGE,
-        STEP_WALK,
+        READY_TRACKING,
+        CAPTURING_WALK,
+        FINALIZING,
         CAL_FLOOR,
         CAL_FLOOR_ERROR,
         CAL_START,
@@ -132,24 +149,206 @@ public class MinreportSpatialScannerActivity
         CAL_RANGE_ERROR
     }
 
-    private static final class KeyframeMeta {
+    private static final class KeyframeRecord {
         final int index;
         final double angleDeg;
         final double blurScore;
         final String photoPath;
+        final int displayRotationDeg;
+        final long timestampNs;
+        final float imuPitchDeg;
+        final float imuRollDeg;
+        final float[] rWc; // 9 row-major
+        final float[] tWc; // 3
+        final float fx;
+        final float fy;
+        final float cx;
+        final float cy;
+        final int imgWidth;
+        final int imgHeight;
+        final int originalBytes;
+        volatile int optimizedBytes;
+        volatile double savingsPct;
+        volatile String sha256;
 
-        KeyframeMeta(final int index, final double angleDeg, final double blurScore, final String photoPath) {
+        KeyframeRecord(
+            final int index,
+            final double angleDeg,
+            final double blurScore,
+            final String photoPath,
+            final int displayRotationDeg,
+            final long timestampNs,
+            final float imuPitchDeg,
+            final float imuRollDeg,
+            final float[] rWc,
+            final float[] tWc,
+            final float fx,
+            final float fy,
+            final float cx,
+            final float cy,
+            final int imgWidth,
+            final int imgHeight,
+            final int originalBytes
+        ) {
             this.index = index;
             this.angleDeg = angleDeg;
             this.blurScore = blurScore;
             this.photoPath = photoPath;
+            this.displayRotationDeg = displayRotationDeg;
+            this.timestampNs = timestampNs;
+            this.imuPitchDeg = imuPitchDeg;
+            this.imuRollDeg = imuRollDeg;
+            this.rWc = Arrays.copyOf(rWc, 9);
+            this.tWc = Arrays.copyOf(tWc, 3);
+            this.fx = fx;
+            this.fy = fy;
+            this.cx = cx;
+            this.cy = cy;
+            this.imgWidth = imgWidth;
+            this.imgHeight = imgHeight;
+            this.originalBytes = originalBytes;
         }
     }
 
+    /**
+     * 16-segment minimal 360-degree perimeter ring (strokeCap=BUTT, 0px corners, ANSI/ISA-101).
+     */
+    private static final class PerimeterRing360View extends View {
+        private final Paint arcPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint dotPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final RectF arcBounds = new RectF();
+        private final int[] sectorStates = new int[SECTOR_COUNT]; // 0=idle, 1=gap/copper, 2=verified/cyan
+        private float headingAngleDeg = 0.0f;
+        private boolean showHeading = false;
+        private int coveragePctInt = 0;
+        private boolean readyHighlight = false;
+
+        PerimeterRing360View(final Context context, final Typeface monoBold) {
+            super(context);
+            arcPaint.setStyle(Paint.Style.STROKE);
+            arcPaint.setStrokeCap(Paint.Cap.BUTT);
+            arcPaint.setStrokeWidth(dpStatic(context, 6));
+
+            dotPaint.setStyle(Paint.Style.FILL);
+            dotPaint.setColor(COLOR_PRIMARY);
+
+            textPaint.setTypeface(monoBold);
+            textPaint.setTextAlign(Paint.Align.CENTER);
+            textPaint.setTextSize(TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_SP, 26, context.getResources().getDisplayMetrics()
+            ));
+            textPaint.setColor(COLOR_PRIMARY);
+        }
+
+        void updateState(
+            final int[] states,
+            final float headingDeg,
+            final boolean showHead,
+            final int pctInt,
+            final boolean isReady
+        ) {
+            System.arraycopy(states, 0, this.sectorStates, 0, SECTOR_COUNT);
+            this.headingAngleDeg = headingDeg;
+            this.showHeading = showHead;
+            this.coveragePctInt = pctInt;
+            this.readyHighlight = isReady;
+            invalidate();
+        }
+
+        @Override
+        protected void onDraw(final Canvas canvas) {
+            super.onDraw(canvas);
+            final float size = Math.min(getWidth(), getHeight());
+            final float pad = arcPaint.getStrokeWidth() + 10.0f;
+            final float cx = getWidth() * 0.5f;
+            final float cy = getHeight() * 0.5f;
+            final float r = Math.max(20.0f, size * 0.5f - pad);
+            arcBounds.set(cx - r, cy - r, cx + r, cy + r);
+
+            final float sweepTotal = 360.0f / SECTOR_COUNT;
+            final float gap = 2.5f;
+            for (int i = 0; i < SECTOR_COUNT; i++) {
+                final int st = sectorStates[i];
+                if (st == 2) {
+                    arcPaint.setColor(COLOR_CYAN);
+                } else if (st == 1) {
+                    arcPaint.setColor(COLOR_COPPER);
+                } else {
+                    arcPaint.setColor(COLOR_GRAY_IDLE);
+                }
+                final float startAngle = -90.0f + i * sweepTotal + gap * 0.5f;
+                canvas.drawArc(arcBounds, startAngle, sweepTotal - gap, false, arcPaint);
+            }
+
+            if (showHeading) {
+                final double rad = Math.toRadians(headingAngleDeg - 90.0);
+                final float dx = cx + (float) (Math.cos(rad) * r);
+                final float dy = cy + (float) (Math.sin(rad) * r);
+                canvas.drawRect(dx - 5.0f, dy - 5.0f, dx + 5.0f, dy + 5.0f, dotPaint);
+            }
+
+            textPaint.setColor(readyHighlight ? COLOR_CYAN : COLOR_PRIMARY);
+            final Paint.FontMetrics fm = textPaint.getFontMetrics();
+            final float textY = cy - (fm.ascent + fm.descent) * 0.5f;
+            canvas.drawText(coveragePctInt + "%", cx, textY, textPaint);
+        }
+
+        private static float dpStatic(final Context ctx, final int dpVal) {
+            return TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_DIP, dpVal, ctx.getResources().getDisplayMetrics()
+            );
+        }
+    }
+
+    /**
+     * Minimal Leica Captivate Micro-Horizon ticks on left/right edges of the 4:3 camera viewport.
+     */
+    private static final class ImuHorizonView extends View {
+        private final Paint tickPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private int tickColor = 0x668A93A6;
+        private float rollDeg = 0.0f;
+
+        ImuHorizonView(final Context context) {
+            super(context);
+            tickPaint.setStyle(Paint.Style.STROKE);
+            tickPaint.setStrokeWidth(3.0f);
+            tickPaint.setColor(tickColor);
+        }
+
+        void updateImu(final float pitchDeg, final float rollDeg) {
+            this.rollDeg = rollDeg;
+            if (Math.abs(rollDeg) > 15.0f || pitchDeg > 0.0f) {
+                tickColor = COLOR_COPPER;
+            } else if (Math.abs(rollDeg) <= 8.0f && pitchDeg >= -30.0f && pitchDeg <= -10.0f) {
+                tickColor = COLOR_CYAN;
+            } else {
+                tickColor = 0x668A93A6;
+            }
+            tickPaint.setColor(tickColor);
+            invalidate();
+        }
+
+        @Override
+        protected void onDraw(final Canvas canvas) {
+            super.onDraw(canvas);
+            final float w = getWidth();
+            final float h = getHeight();
+            final float cy = h * 0.5f;
+            final float tickLen = 32.0f;
+            final float offset = Math.max(-40.0f, Math.min(40.0f, rollDeg * 1.5f));
+            canvas.drawLine(12.0f, cy - offset, 12.0f + tickLen, cy - offset, tickPaint);
+            canvas.drawLine(w - 12.0f - tickLen, cy + offset, w - 12.0f, cy + offset, tickPaint);
+        }
+    }
+
+    /**
+     * Calibration-only crosshair overlay.
+     */
     private static final class CrosshairOverlayView extends View {
         private final Paint shadowPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint linePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private int accentColor = COLOR_WHITE;
+        private int accentColor = COLOR_PRIMARY;
 
         CrosshairOverlayView(final Context context) {
             super(context);
@@ -177,33 +376,24 @@ public class MinreportSpatialScannerActivity
             super.onDraw(canvas);
             final float cx = getWidth() * 0.5f;
             final float cy = getHeight() * 0.5f;
-            final float arm = Math.min(getWidth(), getHeight()) * 0.38f;
+            final float arm = Math.min(getWidth(), getHeight()) * 0.36f;
             final float gap = Math.min(getWidth(), getHeight()) * 0.12f;
-
             drawArms(canvas, cx, cy, arm, gap, shadowPaint);
             drawArms(canvas, cx, cy, arm, gap, linePaint);
-
-            shadowPaint.setStyle(Paint.Style.FILL);
-            canvas.drawRect(cx - 4.0f, cy - 4.0f, cx + 4.0f, cy + 4.0f, shadowPaint);
-            shadowPaint.setStyle(Paint.Style.STROKE);
-
-            linePaint.setStyle(Paint.Style.FILL);
-            canvas.drawRect(cx - 2.5f, cy - 2.5f, cx + 2.5f, cy + 2.5f, linePaint);
-            linePaint.setStyle(Paint.Style.STROKE);
         }
 
         private static void drawArms(
-            final Canvas canvas,
+            final Canvas c,
             final float cx,
             final float cy,
             final float arm,
             final float gap,
-            final Paint paint
+            final Paint p
         ) {
-            canvas.drawLine(cx - arm, cy, cx - gap, cy, paint);
-            canvas.drawLine(cx + gap, cy, cx + arm, cy, paint);
-            canvas.drawLine(cx, cy - arm, cx, cy - gap, paint);
-            canvas.drawLine(cx, cy + gap, cx, cy + arm, paint);
+            c.drawLine(cx - arm, cy, cx - gap, cy, p);
+            c.drawLine(cx + gap, cy, cx + arm, cy, p);
+            c.drawLine(cx, cy - arm, cx, cy - gap, p);
+            c.drawLine(cx, cy + gap, cx, cy + arm, p);
         }
     }
 
@@ -211,54 +401,96 @@ public class MinreportSpatialScannerActivity
     private ArCoreCameraRenderer renderer;
     private Session session;
     private boolean installRequested = false;
+    private boolean hasHardwareDepthSensor = false;
+
+    private SensorManager sensorManager;
+    private Sensor gyroSensor;
+    private Sensor gravitySensor;
+    private volatile float liveGyroNormRadS = 0.0f;
+    private volatile float liveImuPitchDeg = -18.0f;
+    private volatile float liveImuRollDeg = 0.0f;
+
+    private Typeface fontMonoBold;
+    private Typeface fontMonoRegular;
+    private Typeface fontNextBold;
 
     private View rootView;
-    private TextView stepTitleText;
-    private TextView liveMetricText;
-    private LinearLayout sectorBlocksRow;
-    private final View[] sectorBlocks = new View[SECTOR_COUNT];
-    private TextView exceptionBannerText;
-    private CrosshairOverlayView crosshairView;
-    private Button primaryActionButton;
+    private FrameLayout cameraContainer;
+    private ImuHorizonView imuHorizonView;
+    private CrosshairOverlayView calCrosshairView;
+    private View crownBorderLine;
+    private ImageView crownGuardIcon;
+    private View toeBorderLine;
+    private ImageView toeGuardIcon;
+
+    // Right rail HUD widgets (zero prose)
+    private ImageButton closeButton;
+    private ImageView trackingIcon;
+    private ImageView speedAlertIcon;
+    private ImageView anchorDetectedIcon;
+    private PerimeterRing360View perimeterRingView;
+    private TextView liveVolumeText;
+    private TextView liveDimsText;
+    private TextView liveKfCountText;
+    private ProgressBar finalizingBar;
+    private ImageButton primaryActionButton;
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private ExecutorService ioExecutor;
+    private ExecutorService visionExecutor;
     private int rearSensorOrientation = 90;
 
     private final Object stateLock = new Object();
     private String mode = MODE_SCAN;
-    private FlowStep currentStep = FlowStep.STEP_CENTER;
+    private FlowStep currentStep = FlowStep.READY_TRACKING;
     private String scanId;
-    private String configuredDepthMode = "VIO_POINTCLOUD";
+    private String configuredDepthMode = "VIO_MVS_OFFLINE";
     private boolean finishing = false;
 
     private TrackingState lastTrackingState = TrackingState.PAUSED;
-    private float[] latestTargetHit = null;
-    private float[] anchorCenter = null;
-    private float roiRadiusM = 1.5f;
-    private float liveMeasuredRadiusM = -1.0f;
-
-    private final boolean[] visitedSectors = new boolean[SECTOR_COUNT];
-    private int sectorsCovered = 0;
-    private int startSector = -1;
-    private boolean visitedOppositeSector = false;
-    private boolean returnedNearStartSector = false;
-    private boolean readyHapticFired = false;
-    private int fusedKeyframeCount = 0;
-    private int rejectedBlurCount = 0;
-    private long lastBlurWarningAtMs = 0L;
-    private long lastBlurCountAtMs = 0L;
-    private long lastDensitySampleAtMs = 0L;
-    private long lastGroundSampleAtMs = 0L;
-    private long lastTargetPromptAtMs = 0L;
-    private long lastUiUpdateAtMs = 0L;
-    private boolean manualSampleRequested = false;
-
-    private final Map<Long, float[]> voxelGrid = new HashMap<>();
+    private final OfflineVioMvsEngine offlineEngine = new OfflineVioMvsEngine();
+    private final List<WalkRingToeSolver.WalkPose> walkRingPoses = new ArrayList<>(256);
+    private final List<KeyframeRecord> savedKeyframes = new ArrayList<>(MAX_KEYFRAME_PHOTOS);
     private final Map<Long, float[]> groundSampleGrid = new HashMap<>();
-    private final List<KeyframeMeta> savedKeyframes = new ArrayList<>();
+    private final List<float[]> extraVioCloud = new ArrayList<>(1024);
 
-    // Calibration state
+    private final int[] sectorStates = new int[SECTOR_COUNT];
+    private final int[] sectorKfCounts = new int[SECTOR_COUNT];
+    private int sectorsCovered = 0;
+    private float liveHeadingDeg = 0.0f;
+    private float liveEstDiameterM = 0.0f;
+    private float liveEstHeightM = 0.0f;
+    private float liveEstVolumeM3 = 0.0f;
+    private boolean hasScaleAnchor = false;
+    private boolean readyHapticFired = false;
+    private int rejectedBlurCount = 0;
+
+    private float[] lastWalkPosePos = null;
+    private float[] lastKfPos = null;
+    private float[] lastKfFwdXZ = null;
+    private long lastSpeedAlertAtMs = 0L;
+    private long lastGroundSampleAtMs = 0L;
+    private long lastUiUpdateAtMs = 0L;
+    private long lastLiveOverlaySolveAtMs = 0L;
+    private final AtomicBoolean liveOverlayBusy = new AtomicBoolean(false);
+
+    // Best-of-Burst buffer
+    private boolean burstActive = false;
+    private long burstStartMs = 0L;
+    private double burstBestBlur = -1.0;
+    private byte[] burstBestNv21 = null;
+    private byte[] burstBestLumaSmall = null;
+    private int burstBestW = 0;
+    private int burstBestH = 0;
+    private float[] burstBestRwc = null;
+    private float[] burstBestTwc = null;
+    private float[] burstBestIntr = null; // fx, fy, cx, cy
+    private long burstBestTsNs = 0L;
+    private float burstBestPitch = 0.0f;
+    private float burstBestRoll = 0.0f;
+
+    // Optional calibration state
+    private float[] latestCalHit = null;
     private long calFloorStartedAtMs = 0L;
     private long lastCalSampleAtMs = 0L;
     private final List<float[]> calFloorSamples = new ArrayList<>();
@@ -273,21 +505,45 @@ public class MinreportSpatialScannerActivity
         super.onCreate(savedInstanceState);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         configureSystemBars();
+        loadMinreportTypefaces();
 
         final String requestedMode = getIntent() != null ? getIntent().getStringExtra(EXTRA_SCAN_MODE) : null;
         this.mode = MODE_CALIBRATE.equals(requestedMode) ? MODE_CALIBRATE : MODE_SCAN;
-        this.currentStep = MODE_CALIBRATE.equals(this.mode) ? FlowStep.CAL_FLOOR : FlowStep.STEP_CENTER;
+        this.currentStep = MODE_CALIBRATE.equals(this.mode) ? FlowStep.CAL_FLOOR : FlowStep.READY_TRACKING;
         this.scanId = "scan-" + System.currentTimeMillis();
         this.ioExecutor = Executors.newSingleThreadExecutor();
+        this.visionExecutor = Executors.newSingleThreadExecutor();
         this.rearSensorOrientation = resolveRearCameraSensorOrientation();
+        this.hasHardwareDepthSensor = MinreportDeviceCapabilityPlugin.detectRearHardwareDepthSensor(this);
 
-        buildSeniorHudLayout();
+        this.sensorManager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
+        if (this.sensorManager != null) {
+            this.gyroSensor = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE);
+            this.gravitySensor = sensorManager.getDefaultSensor(Sensor.TYPE_GRAVITY);
+            if (this.gravitySensor == null) {
+                this.gravitySensor = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
+            }
+        }
+
+        buildLandscapeGoldenHudLayout();
 
         this.renderer = new ArCoreCameraRenderer(this, this);
         this.glSurfaceView.setEGLContextClientVersion(2);
         this.glSurfaceView.setPreserveEGLContextOnPause(true);
         this.glSurfaceView.setRenderer(this.renderer);
         this.glSurfaceView.setRenderMode(GLSurfaceView.RENDERMODE_CONTINUOUSLY);
+    }
+
+    private void loadMinreportTypefaces() {
+        try {
+            fontMonoBold = ResourcesCompat.getFont(this, R.font.atkinson_hyperlegible_mono_bold);
+            fontMonoRegular = ResourcesCompat.getFont(this, R.font.atkinson_hyperlegible_mono_regular);
+            fontNextBold = ResourcesCompat.getFont(this, R.font.atkinson_hyperlegible_next_bold);
+        } catch (Exception ignored) {
+        }
+        if (fontMonoBold == null) fontMonoBold = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD);
+        if (fontMonoRegular == null) fontMonoRegular = Typeface.MONOSPACE;
+        if (fontNextBold == null) fontNextBold = Typeface.DEFAULT_BOLD;
     }
 
     @Override
@@ -303,6 +559,15 @@ public class MinreportSpatialScannerActivity
             return;
         }
 
+        if (sensorManager != null) {
+            if (gyroSensor != null) {
+                sensorManager.registerListener(this, gyroSensor, SensorManager.SENSOR_DELAY_GAME);
+            }
+            if (gravitySensor != null) {
+                sensorManager.registerListener(this, gravitySensor, SensorManager.SENSOR_DELAY_UI);
+            }
+        }
+
         if (session == null) {
             try {
                 final ArCoreApk.InstallStatus installStatus =
@@ -311,7 +576,6 @@ public class MinreportSpatialScannerActivity
                     installRequested = true;
                     return;
                 }
-
                 session = new Session(this);
                 configureArSession(session);
                 renderer.setSession(session);
@@ -338,6 +602,9 @@ public class MinreportSpatialScannerActivity
     @Override
     protected void onPause() {
         super.onPause();
+        if (sensorManager != null) {
+            sensorManager.unregisterListener(this);
+        }
         if (renderer != null) {
             renderer.onPause();
         }
@@ -353,6 +620,9 @@ public class MinreportSpatialScannerActivity
     protected void onDestroy() {
         super.onDestroy();
         mainHandler.removeCallbacksAndMessages(null);
+        if (glSurfaceView != null && renderer != null) {
+            glSurfaceView.queueEvent(() -> renderer.releaseGlResources());
+        }
         if (session != null) {
             try {
                 session.close();
@@ -361,10 +631,43 @@ public class MinreportSpatialScannerActivity
             session = null;
         }
         if (ioExecutor != null) {
-            ioExecutor.shutdown();
+            ioExecutor.shutdownNow();
             ioExecutor = null;
         }
+        if (visionExecutor != null) {
+            visionExecutor.shutdownNow();
+            visionExecutor = null;
+        }
     }
+
+    @Override
+    public void onSensorChanged(final SensorEvent event) {
+        if (event == null || event.values == null || event.values.length < 3) {
+            return;
+        }
+        final int type = event.sensor.getType();
+        if (type == Sensor.TYPE_GYROSCOPE) {
+            final float gx = event.values[0];
+            final float gy = event.values[1];
+            final float gz = event.values[2];
+            liveGyroNormRadS = (float) Math.sqrt(gx * gx + gy * gy + gz * gz);
+        } else if (type == Sensor.TYPE_GRAVITY || type == Sensor.TYPE_ACCELEROMETER) {
+            // In landscape orientation, device local Y/X aligns with horizon; compute pitch/roll vs gravity
+            final float ax = event.values[0];
+            final float ay = event.values[1];
+            final float az = event.values[2];
+            final float norm = (float) Math.sqrt(ax * ax + ay * ay + az * az);
+            if (norm > 1.0f) {
+                final float pitchRad = (float) Math.asin(clamp(-az / norm, -1.0f, 1.0f));
+                final float rollRad = (float) Math.atan2(ay, Math.abs(ax) + 0.001f);
+                liveImuPitchDeg = (float) Math.toDegrees(pitchRad);
+                liveImuRollDeg = (float) Math.toDegrees(rollRad);
+            }
+        }
+    }
+
+    @Override
+    public void onAccuracyChanged(final Sensor sensor, final int accuracy) {}
 
     @Override
     public boolean dispatchKeyEvent(final KeyEvent event) {
@@ -377,7 +680,6 @@ public class MinreportSpatialScannerActivity
             keyCode == KEYCODE_XCOVER_TOP_KEY ||
             keyCode == KeyEvent.KEYCODE_CAMERA ||
             keyCode == KeyEvent.KEYCODE_F1;
-
         if (!isXCoverTrigger) {
             return super.dispatchKeyEvent(event);
         }
@@ -385,121 +687,6 @@ public class MinreportSpatialScannerActivity
             onPrimaryActionClick();
         }
         return true;
-    }
-
-    @Override
-    public void onArFrame(final Session activeSession, final Frame frame) {
-        final Camera camera = frame.getCamera();
-        final TrackingState trackingState = camera.getTrackingState();
-
-        boolean fireSectorPulse = false;
-        boolean fireDoubleReadyPulse = false;
-        boolean advanceToCalStart = false;
-        boolean failCalFloor = false;
-
-        synchronized (stateLock) {
-            lastTrackingState = trackingState;
-            if (finishing) {
-                return;
-            }
-
-            if (trackingState != TrackingState.TRACKING) {
-                latestTargetHit = null;
-                liveMeasuredRadiusM = -1.0f;
-                liveCalDistanceM = -1.0f;
-                updateHudThrottled(false);
-                return;
-            }
-
-            final long nowMs = System.currentTimeMillis();
-
-            if (
-                currentStep == FlowStep.STEP_CENTER ||
-                currentStep == FlowStep.STEP_EDGE ||
-                currentStep == FlowStep.CAL_START ||
-                currentStep == FlowStep.CAL_END
-            ) {
-                final boolean preferFloorPlane =
-                    currentStep == FlowStep.CAL_START || currentStep == FlowStep.CAL_END;
-                latestTargetHit = resolveCrosshairWorldPoint(frame, camera, preferFloorPlane);
-
-                if (currentStep == FlowStep.STEP_EDGE && anchorCenter != null && latestTargetHit != null) {
-                    liveMeasuredRadiusM = (float) Math.hypot(
-                        latestTargetHit[0] - anchorCenter[0],
-                        latestTargetHit[2] - anchorCenter[2]
-                    );
-                } else if (currentStep != FlowStep.STEP_EDGE) {
-                    liveMeasuredRadiusM = -1.0f;
-                }
-
-                if (currentStep == FlowStep.CAL_END && calPointA != null && latestTargetHit != null) {
-                    liveCalDistanceM = dist3D(calPointA, latestTargetHit);
-                } else if (currentStep != FlowStep.CAL_END) {
-                    liveCalDistanceM = -1.0f;
-                }
-            } else if (currentStep == FlowStep.CAL_FLOOR) {
-                if (calFloorStartedAtMs == 0L) {
-                    calFloorStartedAtMs = nowMs;
-                }
-                if (nowMs - lastCalSampleAtMs >= 120L) {
-                    collectCalibrationFloorSamples(frame, camera);
-                    lastCalSampleAtMs = nowMs;
-                }
-                if (nowMs - calFloorStartedAtMs >= CAL_FLOOR_DURATION_MS) {
-                    if (evaluateCalibrationFloorNoise()) {
-                        advanceToCalStart = true;
-                        currentStep = FlowStep.CAL_START;
-                    } else {
-                        failCalFloor = true;
-                        currentStep = FlowStep.CAL_FLOOR_ERROR;
-                    }
-                }
-            } else if (currentStep == FlowStep.STEP_WALK && anchorCenter != null) {
-                if (nowMs - lastGroundSampleAtMs >= 350L) {
-                    collectHorizontalGroundSamples(activeSession);
-                    lastGroundSampleAtMs = nowMs;
-                }
-
-                final float[] camPos = camera.getPose().getTranslation();
-                final double angleDeg = computeSectorAngleDeg(camPos, anchorCenter);
-                final int sector = Math.min(SECTOR_COUNT - 1, Math.max(0, (int) Math.floor(angleDeg / 45.0)));
-
-                final boolean isNewSector = !visitedSectors[sector];
-                final boolean densityRefreshDue =
-                    voxelGrid.size() < 2500 && (nowMs - lastDensitySampleAtMs >= 800L);
-                if (isNewSector || manualSampleRequested || densityRefreshDue) {
-                    final boolean capturedNewSector = processWalkFrame(
-                        frame,
-                        camera,
-                        sector,
-                        angleDeg,
-                        nowMs,
-                        isNewSector
-                    );
-                    if (capturedNewSector) {
-                        fireSectorPulse = true;
-                    }
-                    lastDensitySampleAtMs = nowMs;
-                }
-
-                if (sectorsCovered >= 6 && !readyHapticFired) {
-                    readyHapticFired = true;
-                    fireDoubleReadyPulse = true;
-                }
-            }
-        }
-
-        if (advanceToCalStart || fireSectorPulse) {
-            mainHandler.post(this::triggerShortHaptic);
-        }
-        if (fireDoubleReadyPulse) {
-            mainHandler.post(this::triggerDoubleHaptic);
-        }
-        if (advanceToCalStart || failCalFloor) {
-            mainHandler.post(() -> updateHudFromState(true));
-        } else {
-            updateHudThrottled(false);
-        }
     }
 
     private void configureSystemBars() {
@@ -517,13 +704,40 @@ public class MinreportSpatialScannerActivity
         }
     }
 
-    private void buildSeniorHudLayout() {
-        final FrameLayout root = new FrameLayout(this);
-        root.setBackgroundColor(Color.BLACK);
+    private void configureArSession(final Session targetSession) {
+        final Config config = new Config(targetSession);
+        config.setFocusMode(Config.FocusMode.AUTO);
+        // BLOCKING 30 Hz camera-synced rendering (eliminates redundant 60 fps thermal spin)
+        config.setUpdateMode(Config.UpdateMode.BLOCKING);
+        config.setPlaneFindingMode(Config.PlaneFindingMode.HORIZONTAL);
+
+        // Per Red-Team verdict: DepthMode.DISABLED on non-ToF/LiDAR hardware (XCover 7)
+        if (hasHardwareDepthSensor && targetSession.isDepthModeSupported(Config.DepthMode.AUTOMATIC)) {
+            config.setDepthMode(Config.DepthMode.AUTOMATIC);
+            configuredDepthMode = "HARDWARE_TOF_DEPTH";
+        } else {
+            config.setDepthMode(Config.DepthMode.DISABLED);
+            configuredDepthMode = "VIO_MVS_OFFLINE";
+        }
+        targetSession.configure(config);
+    }
+
+    /**
+     * Golden-Ratio Landscape Split (Phi = 61.8% 4:3 camera viewport left + 38.2% #000000 rail right).
+     * Zero prose, Atkinson Hyperlegible Mono, Material Symbols Outlined VectorDrawables, 0dp corners.
+     */
+    private void buildLandscapeGoldenHudLayout() {
+        final LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.HORIZONTAL);
+        root.setBackgroundColor(COLOR_BG);
         this.rootView = root;
 
+        // Left 61.8% (Golden Ratio major): 4:3 uncropped camera viewport + Dark Cockpit exception overlays
+        this.cameraContainer = new FrameLayout(this);
+        this.cameraContainer.setBackgroundColor(COLOR_BG);
+
         this.glSurfaceView = new GLSurfaceView(this);
-        root.addView(
+        this.cameraContainer.addView(
             this.glSurfaceView,
             new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -531,138 +745,195 @@ public class MinreportSpatialScannerActivity
             )
         );
 
-        // Large central crosshair for clear aiming in sunlight
-        this.crosshairView = new CrosshairOverlayView(this);
-        final FrameLayout.LayoutParams crosshairParams = new FrameLayout.LayoutParams(dp(72), dp(72));
-        crosshairParams.gravity = Gravity.CENTER;
-        root.addView(this.crosshairView, crosshairParams);
-
-        // Top HUD container (#000000, 0dp corners)
-        final LinearLayout topContainer = new LinearLayout(this);
-        topContainer.setOrientation(LinearLayout.VERTICAL);
-        topContainer.setBackgroundColor(COLOR_HUD_BG);
-        final FrameLayout.LayoutParams topParams = new FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        );
-        topParams.gravity = Gravity.TOP;
-
-        final LinearLayout headerRow = new LinearLayout(this);
-        headerRow.setOrientation(LinearLayout.HORIZONTAL);
-        headerRow.setGravity(Gravity.CENTER_VERTICAL);
-        headerRow.setPadding(dp(4), dp(8), dp(14), dp(8));
-
-        final Button closeButton = new Button(this);
-        closeButton.setText("×");
-        closeButton.setContentDescription("CERRAR");
-        closeButton.setTextColor(COLOR_WHITE);
-        closeButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 28);
-        closeButton.setTypeface(Typeface.DEFAULT_BOLD);
-        closeButton.setBackgroundColor(Color.TRANSPARENT);
-        closeButton.setStateListAnimator(null);
-        closeButton.setElevation(0.0f);
-        closeButton.setPadding(0, 0, 0, 0);
-        closeButton.setMinimumWidth(dp(56));
-        closeButton.setMinimumHeight(dp(56));
-        closeButton.setOnClickListener(v -> cancelAndExit());
-        headerRow.addView(closeButton, new LinearLayout.LayoutParams(dp(56), dp(56)));
-
-        this.stepTitleText = new TextView(this);
-        this.stepTitleText.setTypeface(Typeface.DEFAULT_BOLD);
-        this.stepTitleText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 21);
-        this.stepTitleText.setTextColor(COLOR_WHITE);
-        this.stepTitleText.setMaxLines(2);
-        this.stepTitleText.setPadding(dp(6), 0, 0, 0);
-        headerRow.addView(
-            this.stepTitleText,
-            new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f)
-        );
-        topContainer.addView(headerRow);
-
-        // Live metric row (used only for Radio / Distancia in Step 2 & Cal 3)
-        this.liveMetricText = new TextView(this);
-        this.liveMetricText.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
-        this.liveMetricText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 24);
-        this.liveMetricText.setTextColor(COLOR_CYAN);
-        this.liveMetricText.setGravity(Gravity.CENTER_HORIZONTAL);
-        this.liveMetricText.setPadding(dp(14), dp(4), dp(14), dp(10));
-        this.liveMetricText.setVisibility(View.GONE);
-        topContainer.addView(
-            this.liveMetricText,
-            new LinearLayout.LayoutParams(
+        this.imuHorizonView = new ImuHorizonView(this);
+        this.cameraContainer.addView(
+            this.imuHorizonView,
+            new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
+                ViewGroup.LayoutParams.MATCH_PARENT
             )
         );
 
-        // 8 visual sector blocks row (visible only in STEP_WALK)
-        this.sectorBlocksRow = new LinearLayout(this);
-        this.sectorBlocksRow.setOrientation(LinearLayout.HORIZONTAL);
-        this.sectorBlocksRow.setPadding(dp(12), dp(4), dp(12), dp(12));
-        this.sectorBlocksRow.setVisibility(View.GONE);
-        for (int i = 0; i < SECTOR_COUNT; i++) {
-            final View block = new View(this);
-            block.setBackgroundColor(COLOR_GRAY_IDLE);
-            final LinearLayout.LayoutParams blockParams = new LinearLayout.LayoutParams(0, dp(22), 1.0f);
-            if (i < SECTOR_COUNT - 1) {
-                blockParams.setMargins(0, 0, dp(4), 0);
-            }
-            this.sectorBlocks[i] = block;
-            this.sectorBlocksRow.addView(block, blockParams);
-        }
-        topContainer.addView(
-            this.sectorBlocksRow,
-            new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
+        this.calCrosshairView = new CrosshairOverlayView(this);
+        final FrameLayout.LayoutParams crossParams = new FrameLayout.LayoutParams(dp(72), dp(72));
+        crossParams.gravity = Gravity.CENTER;
+        this.calCrosshairView.setVisibility(MODE_CALIBRATE.equals(mode) ? View.VISIBLE : View.GONE);
+        this.cameraContainer.addView(this.calCrosshairView, crossParams);
+
+        // Crown Guard (top 3px copper line + upward arrow icon, invisible in nominal)
+        this.crownBorderLine = new View(this);
+        this.crownBorderLine.setBackgroundColor(COLOR_COPPER);
+        this.crownBorderLine.setVisibility(View.GONE);
+        final FrameLayout.LayoutParams crownLineParams = new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(3)
+        );
+        crownLineParams.gravity = Gravity.TOP;
+        this.cameraContainer.addView(this.crownBorderLine, crownLineParams);
+
+        this.crownGuardIcon = createIconView(R.drawable.ic_ms_arrow_upward, COLOR_COPPER, dp(28));
+        this.crownGuardIcon.setVisibility(View.GONE);
+        final FrameLayout.LayoutParams crownIconParams = new FrameLayout.LayoutParams(dp(36), dp(36));
+        crownIconParams.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
+        crownIconParams.topMargin = dp(8);
+        this.cameraContainer.addView(this.crownGuardIcon, crownIconParams);
+
+        // Toe Guard (bottom 3px copper line + downward arrow icon, invisible in nominal)
+        this.toeBorderLine = new View(this);
+        this.toeBorderLine.setBackgroundColor(COLOR_COPPER);
+        this.toeBorderLine.setVisibility(View.GONE);
+        final FrameLayout.LayoutParams toeLineParams = new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(3)
+        );
+        toeLineParams.gravity = Gravity.BOTTOM;
+        this.cameraContainer.addView(this.toeBorderLine, toeLineParams);
+
+        this.toeGuardIcon = createIconView(R.drawable.ic_ms_arrow_downward, COLOR_COPPER, dp(28));
+        this.toeGuardIcon.setVisibility(View.GONE);
+        final FrameLayout.LayoutParams toeIconParams = new FrameLayout.LayoutParams(dp(36), dp(36));
+        toeIconParams.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
+        toeIconParams.bottomMargin = dp(8);
+        this.cameraContainer.addView(this.toeGuardIcon, toeIconParams);
+
+        root.addView(
+            this.cameraContainer,
+            new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 61.8f)
         );
 
-        // Exception-only banner (ANSI/ISA-101)
-        this.exceptionBannerText = new TextView(this);
-        this.exceptionBannerText.setTypeface(Typeface.DEFAULT_BOLD);
-        this.exceptionBannerText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
-        this.exceptionBannerText.setTextColor(Color.BLACK);
-        this.exceptionBannerText.setBackgroundColor(COLOR_COPPER);
-        this.exceptionBannerText.setGravity(Gravity.CENTER);
-        this.exceptionBannerText.setPadding(dp(12), dp(10), dp(12), dp(10));
-        this.exceptionBannerText.setVisibility(View.GONE);
-        topContainer.addView(
-            this.exceptionBannerText,
-            new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
+        // 1px hairline border separating camera and right rail
+        final View divider = new View(this);
+        divider.setBackgroundColor(COLOR_BORDER);
+        root.addView(divider, new LinearLayout.LayoutParams(dp(1), ViewGroup.LayoutParams.MATCH_PARENT));
+
+        // Right 38.2% (Golden Ratio minor): #000000 zero-prose control rail
+        final LinearLayout rightRail = new LinearLayout(this);
+        rightRail.setOrientation(LinearLayout.VERTICAL);
+        rightRail.setBackgroundColor(COLOR_BG);
+        rightRail.setPadding(dp(13), dp(8), dp(13), dp(13));
+
+        // 1. Top strip (56dp): close + exception-only status icons
+        final LinearLayout topStrip = new LinearLayout(this);
+        topStrip.setOrientation(LinearLayout.HORIZONTAL);
+        topStrip.setGravity(Gravity.CENTER_VERTICAL);
+
+        this.closeButton = new ImageButton(this);
+        this.closeButton.setImageResource(R.drawable.ic_ms_close);
+        this.closeButton.setColorFilter(COLOR_PRIMARY);
+        this.closeButton.setBackgroundColor(Color.TRANSPARENT);
+        this.closeButton.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        this.closeButton.setContentDescription("CLOSE");
+        this.closeButton.setOnClickListener(v -> cancelAndExit());
+        topStrip.addView(this.closeButton, new LinearLayout.LayoutParams(dp(48), dp(48)));
+
+        final View spacer = new View(this);
+        topStrip.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1.0f));
+
+        this.anchorDetectedIcon = createIconView(R.drawable.ic_ms_qr_code_scanner, COLOR_CYAN, dp(22));
+        this.anchorDetectedIcon.setVisibility(View.GONE);
+        topStrip.addView(this.anchorDetectedIcon, new LinearLayout.LayoutParams(dp(34), dp(34)));
+
+        this.speedAlertIcon = createIconView(R.drawable.ic_ms_speed, COLOR_COPPER, dp(22));
+        this.speedAlertIcon.setVisibility(View.GONE);
+        topStrip.addView(this.speedAlertIcon, new LinearLayout.LayoutParams(dp(34), dp(34)));
+
+        this.trackingIcon = createIconView(R.drawable.ic_ms_view_in_ar, COLOR_COPPER, dp(24));
+        topStrip.addView(this.trackingIcon, new LinearLayout.LayoutParams(dp(36), dp(36)));
+
+        rightRail.addView(
+            topStrip,
+            new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56))
         );
 
-        root.addView(topContainer, topParams);
+        // 2. Center telemetry block (360° 16-segment ring + tabular metrics)
+        final LinearLayout centerBlock = new LinearLayout(this);
+        centerBlock.setOrientation(LinearLayout.VERTICAL);
+        centerBlock.setGravity(Gravity.CENTER);
 
-        // Bottom HUD: single full-width button >= 68dp (#000000 backdrop, 0dp corners)
-        final FrameLayout bottomBar = new FrameLayout(this);
-        bottomBar.setBackgroundColor(COLOR_HUD_BG);
-        bottomBar.setPadding(dp(12), dp(12), dp(12), dp(14));
-        final FrameLayout.LayoutParams bottomParams = new FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
+        this.perimeterRingView = new PerimeterRing360View(this, fontMonoBold);
+        this.perimeterRingView.setVisibility(MODE_CALIBRATE.equals(mode) ? View.GONE : View.VISIBLE);
+        centerBlock.addView(this.perimeterRingView, new LinearLayout.LayoutParams(dp(140), dp(140)));
+
+        this.liveVolumeText = new TextView(this);
+        this.liveVolumeText.setTypeface(fontMonoBold);
+        this.liveVolumeText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 26);
+        this.liveVolumeText.setTextColor(COLOR_DISABLED);
+        this.liveVolumeText.setGravity(Gravity.CENTER);
+        this.liveVolumeText.setPadding(0, dp(8), 0, dp(2));
+        this.liveVolumeText.setText("--.- m³");
+        centerBlock.addView(
+            this.liveVolumeText,
+            new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         );
-        bottomParams.gravity = Gravity.BOTTOM;
 
-        this.primaryActionButton = new Button(this);
-        this.primaryActionButton.setTypeface(Typeface.DEFAULT_BOLD);
-        this.primaryActionButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
-        this.primaryActionButton.setAllCaps(true);
+        this.liveDimsText = new TextView(this);
+        this.liveDimsText.setTypeface(fontMonoRegular);
+        this.liveDimsText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        this.liveDimsText.setTextColor(COLOR_SECONDARY);
+        this.liveDimsText.setGravity(Gravity.CENTER);
+        this.liveDimsText.setText("Ø --.- m · H --.- m");
+        centerBlock.addView(
+            this.liveDimsText,
+            new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        );
+
+        this.liveKfCountText = new TextView(this);
+        this.liveKfCountText.setTypeface(fontMonoRegular);
+        this.liveKfCountText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        this.liveKfCountText.setTextColor(COLOR_DISABLED);
+        this.liveKfCountText.setGravity(Gravity.CENTER);
+        this.liveKfCountText.setPadding(0, dp(4), 0, 0);
+        this.liveKfCountText.setText("0 KF");
+        centerBlock.addView(
+            this.liveKfCountText,
+            new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        );
+
+        this.finalizingBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        this.finalizingBar.setIndeterminate(true);
+        this.finalizingBar.setVisibility(View.GONE);
+        final LinearLayout.LayoutParams barParams = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(4)
+        );
+        barParams.topMargin = dp(13);
+        centerBlock.addView(this.finalizingBar, barParams);
+
+        rightRail.addView(
+            centerBlock,
+            new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.0f)
+        );
+
+        // 3. Bottom single primary button (>= 72dp height, rounded-none, #000000 icon on #C68346/#00AEEF)
+        this.primaryActionButton = new ImageButton(this);
+        this.primaryActionButton.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
         this.primaryActionButton.setStateListAnimator(null);
         this.primaryActionButton.setElevation(0.0f);
-        this.primaryActionButton.setMinimumHeight(dp(68));
+        this.primaryActionButton.setMinimumHeight(dp(72));
+        this.primaryActionButton.setImageResource(R.drawable.ic_ms_play_arrow);
+        this.primaryActionButton.setColorFilter(Color.BLACK);
+        this.primaryActionButton.setBackgroundColor(COLOR_COPPER);
+        this.primaryActionButton.setContentDescription("PRIMARY_ACTION");
         this.primaryActionButton.setOnClickListener(v -> onPrimaryActionClick());
-        bottomBar.addView(
+
+        rightRail.addView(
             this.primaryActionButton,
-            new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(68))
+            new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(72))
         );
 
-        root.addView(bottomBar, bottomParams);
+        root.addView(
+            rightRail,
+            new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 38.2f)
+        );
+
         setContentView(root);
         updateHudFromState(true);
+    }
+
+    private ImageView createIconView(final int resId, final int tintColor, final int padPx) {
+        final ImageView iv = new ImageView(this);
+        iv.setImageResource(resId);
+        iv.setColorFilter(tintColor);
+        iv.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        iv.setPadding(dp(4), dp(4), dp(4), dp(4));
+        return iv;
     }
 
     private void onPrimaryActionClick() {
@@ -671,8 +942,6 @@ public class MinreportSpatialScannerActivity
         boolean hapticSuccess = false;
         boolean hapticDouble = false;
 
-        float[] finishCalPointA = null;
-        float[] finishCalPointB = null;
         float measuredDist = 0.0f;
         float computedScale = 1.0f;
 
@@ -682,46 +951,21 @@ public class MinreportSpatialScannerActivity
             }
             final long nowMs = System.currentTimeMillis();
 
-            if (currentStep == FlowStep.STEP_CENTER) {
-                if (lastTrackingState != TrackingState.TRACKING || latestTargetHit == null) {
-                    lastTargetPromptAtMs = nowMs;
-                } else {
-                    anchorCenter = new float[] {
-                        latestTargetHit[0],
-                        latestTargetHit[1],
-                        latestTargetHit[2]
-                    };
-                    latestTargetHit = null;
-                    liveMeasuredRadiusM = -1.0f;
-                    currentStep = FlowStep.STEP_EDGE;
+            if (currentStep == FlowStep.READY_TRACKING) {
+                if (lastTrackingState == TrackingState.TRACKING) {
+                    currentStep = FlowStep.CAPTURING_WALK;
+                    resetWalkCaptureStateLocked();
                     hapticSuccess = true;
                 }
-            } else if (currentStep == FlowStep.STEP_EDGE) {
-                if (
-                    lastTrackingState != TrackingState.TRACKING ||
-                    latestTargetHit == null ||
-                    anchorCenter == null
-                ) {
-                    lastTargetPromptAtMs = nowMs;
-                } else {
-                    final float distXZ = (float) Math.hypot(
-                        latestTargetHit[0] - anchorCenter[0],
-                        latestTargetHit[2] - anchorCenter[2]
-                    );
-                    roiRadiusM = clamp(distXZ, MIN_ROI_RADIUS_M, MAX_ROI_RADIUS_M);
-                    currentStep = FlowStep.STEP_WALK;
-                    manualSampleRequested = true;
-                    hapticSuccess = true;
-                }
-            } else if (currentStep == FlowStep.STEP_WALK) {
-                final boolean ready =
-                    (sectorsCovered >= 5) ||
-                    (sectorsCovered >= 3 && voxelGrid.size() >= 120);
-                if (ready) {
+            } else if (currentStep == FlowStep.CAPTURING_WALK) {
+                final boolean canFinish =
+                    (savedKeyframes.size() >= 6 && sectorsCovered >= 4) ||
+                    (savedKeyframes.size() >= 4 && sectorsCovered >= 3);
+                if (canFinish) {
                     finishing = true;
+                    currentStep = FlowStep.FINALIZING;
                     shouldFinishScan = true;
-                } else {
-                    manualSampleRequested = true;
+                    hapticDouble = true;
                 }
             } else if (currentStep == FlowStep.CAL_FLOOR_ERROR) {
                 calFloorSamples.clear();
@@ -729,34 +973,16 @@ public class MinreportSpatialScannerActivity
                 lastCalSampleAtMs = 0L;
                 currentStep = FlowStep.CAL_FLOOR;
             } else if (currentStep == FlowStep.CAL_START) {
-                if (lastTrackingState != TrackingState.TRACKING || latestTargetHit == null) {
-                    lastTargetPromptAtMs = nowMs;
-                } else {
-                    calPointA = new float[] {
-                        latestTargetHit[0],
-                        latestTargetHit[1],
-                        latestTargetHit[2]
-                    };
-                    latestTargetHit = null;
+                if (lastTrackingState == TrackingState.TRACKING && latestCalHit != null) {
+                    calPointA = Arrays.copyOf(latestCalHit, 3);
+                    latestCalHit = null;
                     liveCalDistanceM = -1.0f;
                     currentStep = FlowStep.CAL_END;
                     hapticSuccess = true;
                 }
             } else if (currentStep == FlowStep.CAL_END) {
-                if (
-                    lastTrackingState != TrackingState.TRACKING ||
-                    latestTargetHit == null ||
-                    calPointA == null
-                ) {
-                    lastTargetPromptAtMs = nowMs;
-                } else {
-                    finishCalPointA = calPointA;
-                    finishCalPointB = new float[] {
-                        latestTargetHit[0],
-                        latestTargetHit[1],
-                        latestTargetHit[2]
-                    };
-                    measuredDist = dist3D(finishCalPointA, finishCalPointB);
+                if (lastTrackingState == TrackingState.TRACKING && latestCalHit != null && calPointA != null) {
+                    measuredDist = dist3D(calPointA, latestCalHit);
                     if (measuredDist <= MIN_CAL_DISTANCE_M) {
                         currentStep = FlowStep.CAL_RANGE_ERROR;
                     } else {
@@ -772,7 +998,7 @@ public class MinreportSpatialScannerActivity
                 }
             } else if (currentStep == FlowStep.CAL_RANGE_ERROR) {
                 calPointA = null;
-                latestTargetHit = null;
+                latestCalHit = null;
                 liveCalDistanceM = -1.0f;
                 currentStep = FlowStep.CAL_START;
             }
@@ -785,12 +1011,47 @@ public class MinreportSpatialScannerActivity
             triggerDoubleHaptic();
         }
         if (shouldFinishScan) {
-            finalizeAndReturnScan();
+            updateHudFromState(true);
+            finalizeAndReturnScanAsync();
         } else if (shouldFinishCalibration) {
             finalizeAndReturnCalibration(measuredDist, computedScale);
         } else {
             updateHudFromState(true);
         }
+    }
+
+    private void resetWalkCaptureStateLocked() {
+        offlineEngine.reset();
+        walkRingPoses.clear();
+        savedKeyframes.clear();
+        groundSampleGrid.clear();
+        extraVioCloud.clear();
+        Arrays.fill(sectorStates, 0);
+        Arrays.fill(sectorKfCounts, 0);
+        sectorsCovered = 0;
+        liveEstDiameterM = 0.0f;
+        liveEstHeightM = 0.0f;
+        liveEstVolumeM3 = 0.0f;
+        readyHapticFired = false;
+        rejectedBlurCount = 0;
+        lastWalkPosePos = null;
+        lastKfPos = null;
+        lastKfFwdXZ = null;
+        clearBurstLocked();
+        if (renderer != null) {
+            renderer.clearLiveOverlay();
+        }
+    }
+
+    private void clearBurstLocked() {
+        burstActive = false;
+        burstStartMs = 0L;
+        burstBestBlur = -1.0;
+        burstBestNv21 = null;
+        burstBestLumaSmall = null;
+        burstBestRwc = null;
+        burstBestTwc = null;
+        burstBestIntr = null;
     }
 
     private void cancelAndExit() {
@@ -801,679 +1062,330 @@ public class MinreportSpatialScannerActivity
         finish();
     }
 
-    private void configureArSession(final Session targetSession) {
-        final Config config = new Config(targetSession);
-        config.setFocusMode(Config.FocusMode.AUTO);
-        config.setUpdateMode(Config.UpdateMode.LATEST_CAMERA_IMAGE);
-        config.setPlaneFindingMode(Config.PlaneFindingMode.HORIZONTAL);
+    @Override
+    public void onArFrame(final Session activeSession, final Frame frame) {
+        final Camera camera = frame.getCamera();
+        final TrackingState trackingState = camera.getTrackingState();
 
-        if (targetSession.isDepthModeSupported(Config.DepthMode.RAW_DEPTH_ONLY)) {
-            config.setDepthMode(Config.DepthMode.RAW_DEPTH_ONLY);
-            configuredDepthMode = "RAW_DEPTH_ONLY";
-        } else if (targetSession.isDepthModeSupported(Config.DepthMode.AUTOMATIC)) {
-            config.setDepthMode(Config.DepthMode.AUTOMATIC);
-            configuredDepthMode = "AUTOMATIC";
+        boolean fireShortPulse = false;
+        boolean fireDoubleReadyPulse = false;
+        boolean forceHud = false;
+
+        synchronized (stateLock) {
+            lastTrackingState = trackingState;
+            if (finishing) {
+                return;
+            }
+
+            if (trackingState != TrackingState.TRACKING) {
+                latestCalHit = null;
+                liveCalDistanceM = -1.0f;
+                updateHudThrottled(false);
+                return;
+            }
+
+            final long nowMs = System.currentTimeMillis();
+
+            if (currentStep == FlowStep.CAL_FLOOR) {
+                if (calFloorStartedAtMs == 0L) calFloorStartedAtMs = nowMs;
+                if (nowMs - lastCalSampleAtMs >= 120L) {
+                    collectCalibrationFloorSamples(activeSession, frame, camera);
+                    lastCalSampleAtMs = nowMs;
+                }
+                if (nowMs - calFloorStartedAtMs >= CAL_FLOOR_DURATION_MS) {
+                    if (evaluateCalibrationFloorNoise()) {
+                        currentStep = FlowStep.CAL_START;
+                        fireShortPulse = true;
+                    } else {
+                        currentStep = FlowStep.CAL_FLOOR_ERROR;
+                    }
+                    forceHud = true;
+                }
+            } else if (currentStep == FlowStep.CAL_START || currentStep == FlowStep.CAL_END) {
+                latestCalHit = resolveCalibrationFloorHit(frame, camera);
+                if (currentStep == FlowStep.CAL_END && calPointA != null && latestCalHit != null) {
+                    liveCalDistanceM = dist3D(calPointA, latestCalHit);
+                } else {
+                    liveCalDistanceM = -1.0f;
+                }
+            } else if (currentStep == FlowStep.CAPTURING_WALK) {
+                final Pose camPose = camera.getPose();
+                final float[] camPos = camPose.getTranslation();
+                final float[] zAxis = camPose.getZAxis();
+                final float fwdX = -zAxis[0];
+                final float fwdY = -zAxis[1];
+                final float fwdZ = -zAxis[2];
+
+                // 1. Record walk-ring trajectory every >= 0.25 m
+                if (lastWalkPosePos == null || dist3D(camPos, lastWalkPosePos) >= MIN_WALK_POSE_STEP_M) {
+                    walkRingPoses.add(new WalkRingToeSolver.WalkPose(
+                        camPos[0], camPos[1], camPos[2], fwdX, fwdY, fwdZ, frame.getTimestamp()
+                    ));
+                    lastWalkPosePos = Arrays.copyOf(camPos, 3);
+                }
+
+                // 2. Collect horizontal ground planes strictly below camera corridor (y <= y_cam - 0.80f)
+                if (nowMs - lastGroundSampleAtMs >= 300L) {
+                    collectFilteredGroundPlanes(activeSession, camPos[1] - 0.80f);
+                    lastGroundSampleAtMs = nowMs;
+                }
+
+                // 3. Update live heading & sector index against dynamic Auto-ROI center
+                final float[] autoCenter = WalkRingToeSolver.estimateAutoCenterXZ(walkRingPoses, extraVioCloud);
+                liveHeadingDeg = (float) computeSectorAngleDeg(camPos, autoCenter);
+                final int curSector = Math.min(
+                    SECTOR_COUNT - 1,
+                    Math.max(0, (int) Math.floor(liveHeadingDeg / (360.0f / SECTOR_COUNT)))
+                );
+
+                // 4. Adaptive keyframe trigger: Δd = clamp(0.14 * R_est, 0.40, 1.30) OR Δyaw >= 12° (cap 32)
+                final float rEst = Math.max(1.5f, (float) Math.hypot(camPos[0] - autoCenter[0], camPos[2] - autoCenter[2]));
+                final float stepThreshM = clamp(0.14f * rEst, MIN_KF_STEP_M, MAX_KF_STEP_M);
+                final boolean kfTriggered = shouldTriggerKeyframe(camPos, fwdX, fwdZ, stepThreshM);
+
+                if (savedKeyframes.size() < MAX_KEYFRAME_PHOTOS && (kfTriggered || burstActive)) {
+                    if (!burstActive) {
+                        burstActive = true;
+                        burstStartMs = nowMs;
+                        burstBestBlur = -1.0;
+                    }
+                    evaluateBurstCandidateLocked(frame, camera, camPose, nowMs);
+
+                    final boolean burstFinished =
+                        (nowMs - burstStartMs >= 130L) ||
+                        (burstBestBlur >= BLUR_VARIANCE_THRESHOLD * 2.2 && liveGyroNormRadS < MAX_GYRO_NORM_RAD_S);
+                    if (burstFinished) {
+                        final boolean committed = commitBestBurstKeyframeLocked(curSector, liveHeadingDeg, nowMs);
+                        clearBurstLocked();
+                        if (committed) {
+                            fireShortPulse = true;
+                            maybeScheduleLiveOverlayRefreshLocked(nowMs);
+                        }
+                    }
+                }
+
+                if (liveGyroNormRadS > MAX_GYRO_NORM_RAD_S * 1.4f) {
+                    lastSpeedAlertAtMs = nowMs;
+                }
+
+                final double covPct = (sectorsCovered / (double) SECTOR_COUNT) * 100.0;
+                if (covPct >= 75.0 && savedKeyframes.size() >= 12 && !readyHapticFired) {
+                    readyHapticFired = true;
+                    fireDoubleReadyPulse = true;
+                }
+            }
+        }
+
+        if (fireShortPulse) {
+            mainHandler.post(this::triggerShortHaptic);
+        }
+        if (fireDoubleReadyPulse) {
+            mainHandler.post(this::triggerDoubleHaptic);
+        }
+        if (forceHud) {
+            mainHandler.post(() -> updateHudFromState(true));
         } else {
-            config.setDepthMode(Config.DepthMode.DISABLED);
-            configuredDepthMode = "VIO_POINTCLOUD";
+            updateHudThrottled(false);
         }
-
-        targetSession.configure(config);
     }
 
-    private float[] resolveCrosshairWorldPoint(
-        final Frame frame,
-        final Camera camera,
-        final boolean preferFloorPlane
+    private boolean shouldTriggerKeyframe(
+        final float[] camPos,
+        final float fwdX,
+        final float fwdZ,
+        final float stepThreshM
     ) {
-        final int vw = renderer != null ? renderer.getViewportWidth() : 0;
-        final int vh = renderer != null ? renderer.getViewportHeight() : 0;
-        final float cxPx = vw * 0.5f;
-        final float cyPx = vh * 0.5f;
-
-        if (preferFloorPlane && vw > 0 && vh > 0) {
-            final float[] planeHit = hitTestPlane(frame, cxPx, cyPx);
-            if (planeHit != null) {
-                return planeHit;
-            }
-        }
-
-        if (vw > 0 && vh > 0) {
-            final float[] depthPointHit = hitTestDepthOrPoint(frame, cxPx, cyPx);
-            if (depthPointHit != null) {
-                return depthPointHit;
-            }
-        }
-
-        final float[] depthCenterHit = unprojectCenterDepthPatch(frame, camera);
-        if (depthCenterHit != null) {
-            return depthCenterHit;
-        }
-
-        if (!preferFloorPlane && vw > 0 && vh > 0) {
-            final float[] planeHit = hitTestPlane(frame, cxPx, cyPx);
-            if (planeHit != null) {
-                return planeHit;
-            }
-        }
-
-        return findClosestPointCloudHitAlongCenterRay(frame, camera);
-    }
-
-    private static float[] hitTestPlane(final Frame frame, final float cxPx, final float cyPx) {
-        try {
-            final List<HitResult> hits = frame.hitTest(cxPx, cyPx);
-            for (HitResult hit : hits) {
-                final Trackable trackable = hit.getTrackable();
-                if (
-                    trackable instanceof Plane &&
-                    ((Plane) trackable).getType() == Plane.Type.HORIZONTAL_UPWARD_FACING &&
-                    ((Plane) trackable).isPoseInPolygon(hit.getHitPose())
-                ) {
-                    final float dist = hit.getDistance();
-                    if (dist >= MIN_DEPTH_M && dist <= MAX_DEPTH_M) {
-                        return hit.getHitPose().getTranslation();
-                    }
-                }
-            }
-        } catch (Exception ignored) {
-        }
-        return null;
-    }
-
-    private static float[] hitTestDepthOrPoint(final Frame frame, final float cxPx, final float cyPx) {
-        try {
-            final List<HitResult> hits = frame.hitTest(cxPx, cyPx);
-            for (HitResult hit : hits) {
-                final Trackable trackable = hit.getTrackable();
-                if (trackable instanceof DepthPoint || trackable instanceof Point) {
-                    final float dist = hit.getDistance();
-                    if (dist >= MIN_DEPTH_M && dist <= MAX_DEPTH_M) {
-                        return hit.getHitPose().getTranslation();
-                    }
-                }
-            }
-        } catch (Exception ignored) {
-        }
-        return null;
-    }
-
-    private float[] unprojectCenterDepthPatch(final Frame frame, final Camera camera) {
-        final float zM = readCenterPatchMedianDepthMeters(frame);
-        if (zM < MIN_DEPTH_M || zM > MAX_DEPTH_M) {
-            return null;
-        }
-        return camera.getPose().transformPoint(new float[] { 0.0f, 0.0f, -zM });
-    }
-
-    private float readCenterPatchMedianDepthMeters(final Frame frame) {
-        if ("RAW_DEPTH_ONLY".equals(configuredDepthMode)) {
-            try (
-                Image depthImg = frame.acquireRawDepthImage16Bits();
-                Image confImg = frame.acquireRawDepthConfidenceImage()
-            ) {
-                return extractCenterPatchMedianMeters(depthImg, confImg);
-            } catch (Exception ignored) {
-            }
-        }
-        if ("AUTOMATIC".equals(configuredDepthMode) || "RAW_DEPTH_ONLY".equals(configuredDepthMode)) {
-            try (Image depthImg = frame.acquireDepthImage16Bits()) {
-                return extractCenterPatchMedianMeters(depthImg, null);
-            } catch (Exception ignored) {
-            }
-        }
-        return -1.0f;
-    }
-
-    private float extractCenterPatchMedianMeters(final Image depthImg, final Image confImg) {
-        final int w = depthImg.getWidth();
-        final int h = depthImg.getHeight();
-        if (w <= 0 || h <= 0) {
-            return -1.0f;
-        }
-        final Image.Plane dPlane = depthImg.getPlanes()[0];
-        final ByteBuffer dBuf = dPlane.getBuffer().duplicate().order(ByteOrder.LITTLE_ENDIAN);
-        final int dRowStride = dPlane.getRowStride();
-        final int dPixelStride = dPlane.getPixelStride();
-
-        final ByteBuffer cBuf = confImg != null ? confImg.getPlanes()[0].getBuffer().duplicate() : null;
-        final int cRowStride = confImg != null ? confImg.getPlanes()[0].getRowStride() : 0;
-        final int cPixelStride = confImg != null ? confImg.getPlanes()[0].getPixelStride() : 0;
-
-        final int minU = Math.round(w * 0.43f);
-        final int maxU = Math.round(w * 0.57f);
-        final int minV = Math.round(h * 0.43f);
-        final int maxV = Math.round(h * 0.57f);
-
-        final float[] samples = new float[256];
-        int count = 0;
-        final int step = Math.max(1, (maxU - minU) / 12);
-        for (int v = minV; v <= maxV && count < samples.length; v += step) {
-            for (int u = minU; u <= maxU && count < samples.length; u += step) {
-                if (cBuf != null) {
-                    final int cIdx = v * cRowStride + u * cPixelStride;
-                    if (cIdx >= cBuf.limit() || (cBuf.get(cIdx) & 0xFF) < MIN_DEPTH_CONFIDENCE) {
-                        continue;
-                    }
-                }
-                final int dIdx = v * dRowStride + u * dPixelStride;
-                if (dIdx + 1 >= dBuf.limit()) {
-                    continue;
-                }
-                final int mm = dBuf.getShort(dIdx) & 0xFFFF;
-                final float zM = mm * 0.001f;
-                if (zM >= MIN_DEPTH_M && zM <= MAX_DEPTH_M) {
-                    samples[count++] = zM;
-                }
-            }
-        }
-        if (count < 3) {
-            return -1.0f;
-        }
-        Arrays.sort(samples, 0, count);
-        return samples[count / 2];
-    }
-
-    private float[] findClosestPointCloudHitAlongCenterRay(final Frame frame, final Camera camera) {
-        final Pose camPose = camera.getPose();
-        final float[] origin = camPose.getTranslation();
-        final float[] zAxis = camPose.getZAxis();
-        final float dirX = -zAxis[0];
-        final float dirY = -zAxis[1];
-        final float dirZ = -zAxis[2];
-        final double minCos = Math.cos(Math.toRadians(7.0));
-
-        float bestScore = Float.MAX_VALUE;
-        float[] bestPt = null;
-
-        try (PointCloud pc = frame.acquirePointCloud()) {
-            final FloatBuffer pts = pc.getPoints();
-            final int limit = pts.limit();
-            for (int i = 0; i + 3 < limit; i += 4) {
-                final float x = pts.get(i);
-                final float y = pts.get(i + 1);
-                final float z = pts.get(i + 2);
-                final float conf = pts.get(i + 3);
-                if (conf < 0.35f) {
-                    continue;
-                }
-                final float vx = x - origin[0];
-                final float vy = y - origin[1];
-                final float vz = z - origin[2];
-                final float dist = (float) Math.sqrt(vx * vx + vy * vy + vz * vz);
-                if (dist < MIN_DEPTH_M || dist > MAX_DEPTH_M) {
-                    continue;
-                }
-                final float dot = (vx * dirX + vy * dirY + vz * dirZ) / dist;
-                if (dot >= minCos) {
-                    final float anglePenalty = (1.0f - dot) * 40.0f + dist * 0.05f;
-                    if (anglePenalty < bestScore) {
-                        bestScore = anglePenalty;
-                        bestPt = new float[] { x, y, z };
-                    }
-                }
-            }
-        } catch (Exception ignored) {
-        }
-        return bestPt;
-    }
-
-    private void collectCalibrationFloorSamples(final Frame frame, final Camera camera) {
-        if (calFloorSamples.size() >= 600) {
-            return;
-        }
-        final CameraIntrinsics intr = camera.getImageIntrinsics();
-        final float[] focal = intr.getFocalLength();
-        final float[] principal = intr.getPrincipalPoint();
-        final int[] cpuDims = intr.getImageDimensions();
-        final Pose camPose = camera.getPose();
-
-        if (cpuDims[0] > 0 && cpuDims[1] > 0) {
-            if ("RAW_DEPTH_ONLY".equals(configuredDepthMode)) {
-                try (
-                    Image depthImg = frame.acquireRawDepthImage16Bits();
-                    Image confImg = frame.acquireRawDepthConfidenceImage()
-                ) {
-                    appendCenterFloorDepthSamples(depthImg, confImg, focal, principal, cpuDims, camPose);
-                    return;
-                } catch (Exception ignored) {
-                }
-            }
-            if ("AUTOMATIC".equals(configuredDepthMode) || "RAW_DEPTH_ONLY".equals(configuredDepthMode)) {
-                try (Image depthImg = frame.acquireDepthImage16Bits()) {
-                    appendCenterFloorDepthSamples(depthImg, null, focal, principal, cpuDims, camPose);
-                    return;
-                } catch (Exception ignored) {
-                }
-            }
-        }
-
-        // VIO PointCloud fallback
-        final float[] pt = findClosestPointCloudHitAlongCenterRay(frame, camera);
-        if (pt != null && calFloorSamples.size() < 600) {
-            calFloorSamples.add(pt);
-        }
-    }
-
-    private void appendCenterFloorDepthSamples(
-        final Image depthImg,
-        final Image confImg,
-        final float[] focal,
-        final float[] principal,
-        final int[] cpuDims,
-        final Pose camPose
-    ) {
-        final int depthW = depthImg.getWidth();
-        final int depthH = depthImg.getHeight();
-        if (depthW <= 0 || depthH <= 0) {
-            return;
-        }
-        final float scaleX = depthW / (float) cpuDims[0];
-        final float scaleY = depthH / (float) cpuDims[1];
-        final float fxD = focal[0] * scaleX;
-        final float fyD = focal[1] * scaleY;
-        final float cxD = principal[0] * scaleX;
-        final float cyD = principal[1] * scaleY;
-        if (fxD <= 1.0f || fyD <= 1.0f) {
-            return;
-        }
-
-        final Image.Plane dPlane = depthImg.getPlanes()[0];
-        final ByteBuffer dBuf = dPlane.getBuffer().duplicate().order(ByteOrder.LITTLE_ENDIAN);
-        final int dRowStride = dPlane.getRowStride();
-        final int dPixelStride = dPlane.getPixelStride();
-
-        final ByteBuffer cBuf = confImg != null ? confImg.getPlanes()[0].getBuffer().duplicate() : null;
-        final int cRowStride = confImg != null ? confImg.getPlanes()[0].getRowStride() : 0;
-        final int cPixelStride = confImg != null ? confImg.getPlanes()[0].getPixelStride() : 0;
-
-        final int minU = Math.round(depthW * 0.35f);
-        final int maxU = Math.round(depthW * 0.65f);
-        final int minV = Math.round(depthH * 0.35f);
-        final int maxV = Math.round(depthH * 0.65f);
-        final int step = Math.max(2, (maxU - minU) / 6);
-
-        final float[] camPt = new float[3];
-        final float[] worldPt = new float[3];
-        for (int v = minV; v <= maxV && calFloorSamples.size() < 600; v += step) {
-            for (int u = minU; u <= maxU && calFloorSamples.size() < 600; u += step) {
-                if (cBuf != null) {
-                    final int cIdx = v * cRowStride + u * cPixelStride;
-                    if (cIdx >= cBuf.limit() || (cBuf.get(cIdx) & 0xFF) < MIN_DEPTH_CONFIDENCE) {
-                        continue;
-                    }
-                }
-                final int dIdx = v * dRowStride + u * dPixelStride;
-                if (dIdx + 1 >= dBuf.limit()) {
-                    continue;
-                }
-                final float zM = (dBuf.getShort(dIdx) & 0xFFFF) * 0.001f;
-                if (zM < MIN_DEPTH_M || zM > 6.0f) {
-                    continue;
-                }
-                camPt[0] = ((u - cxD) / fxD) * zM;
-                camPt[1] = -((v - cyD) / fyD) * zM;
-                camPt[2] = -zM;
-                camPose.transformPoint(camPt, 0, worldPt, 0);
-                calFloorSamples.add(new float[] { worldPt[0], worldPt[1], worldPt[2] });
-            }
-        }
-    }
-
-    private boolean evaluateCalibrationFloorNoise() {
-        final int n = calFloorSamples.size();
-        if (n < 12) {
-            calPlaneNoiseRmsM = 0.099f;
-            return false;
-        }
-
-        // Ordinary least squares plane y = a*x + b*z + d
-        double sXX = 0.0;
-        double sXZ = 0.0;
-        double sX = 0.0;
-        double sZZ = 0.0;
-        double sZ = 0.0;
-        double sXY = 0.0;
-        double sZY = 0.0;
-        double sY = 0.0;
-        for (float[] p : calFloorSamples) {
-            final double x = p[0];
-            final double y = p[1];
-            final double z = p[2];
-            sXX += x * x;
-            sXZ += x * z;
-            sX += x;
-            sZZ += z * z;
-            sZ += z;
-            sXY += x * y;
-            sZY += z * y;
-            sY += y;
-        }
-
-        final double[] coeffs = solve3x3(
-            new double[][] {
-                { sXX, sXZ, sX },
-                { sXZ, sZZ, sZ },
-                { sX, sZ, n }
-            },
-            new double[] { sXY, sZY, sY }
-        );
-
-        final double a = coeffs != null ? coeffs[0] : 0.0;
-        final double b = coeffs != null ? coeffs[1] : 0.0;
-        final double d = coeffs != null ? coeffs[2] : (sY / n);
-
-        double sumSqErr = 0.0;
-        final double normScale = 1.0 / Math.sqrt(1.0 + a * a + b * b);
-        for (float[] p : calFloorSamples) {
-            final double err = (p[1] - (a * p[0] + b * p[2] + d)) * normScale;
-            sumSqErr += err * err;
-        }
-
-        calPlaneNoiseRmsM = (float) Math.sqrt(sumSqErr / n);
-        calImuPitchOffsetDeg = (float) Math.toDegrees(Math.atan(b));
-        calImuRollOffsetDeg = (float) Math.toDegrees(Math.atan(a));
-        return calPlaneNoiseRmsM <= MAX_CAL_FLOOR_NOISE_RMS_M;
-    }
-
-    private static double[] solve3x3(final double[][] mat, final double[] rhs) {
-        final double[][] m = new double[3][4];
-        for (int r = 0; r < 3; r++) {
-            m[r][0] = mat[r][0];
-            m[r][1] = mat[r][1];
-            m[r][2] = mat[r][2];
-            m[r][3] = rhs[r];
-        }
-        for (int col = 0; col < 3; col++) {
-            int pivot = col;
-            for (int row = col + 1; row < 3; row++) {
-                if (Math.abs(m[row][col]) > Math.abs(m[pivot][col])) {
-                    pivot = row;
-                }
-            }
-            if (Math.abs(m[pivot][col]) < 1e-10) {
-                return null;
-            }
-            final double[] tmp = m[col];
-            m[col] = m[pivot];
-            m[pivot] = tmp;
-
-            final double div = m[col][col];
-            for (int c = col; c < 4; c++) {
-                m[col][c] /= div;
-            }
-            for (int row = 0; row < 3; row++) {
-                if (row == col) {
-                    continue;
-                }
-                final double factor = m[row][col];
-                for (int c = col; c < 4; c++) {
-                    m[row][c] -= factor * m[col][c];
-                }
-            }
-        }
-        return new double[] { m[0][3], m[1][3], m[2][3] };
-    }
-
-    private boolean processWalkFrame(
-        final Frame frame,
-        final Camera camera,
-        final int sector,
-        final double angleDeg,
-        final long nowMs,
-        final boolean isNewSector
-    ) {
-        byte[] nv21Snapshot = null;
-        int imgW = 0;
-        int imgH = 0;
-        double blurScore = 0.0;
-
-        try (Image camImg = frame.acquireCameraImage()) {
-            if (camImg.getFormat() != ImageFormat.YUV_420_888) {
-                return false;
-            }
-            blurScore = computeLaplacianVariance(camImg);
-            if (blurScore < BLUR_VARIANCE_THRESHOLD) {
-                if (nowMs - lastBlurCountAtMs >= 250L) {
-                    rejectedBlurCount++;
-                    lastBlurCountAtMs = nowMs;
-                }
-                lastBlurWarningAtMs = nowMs;
-                manualSampleRequested = false;
-                return false;
-            }
-
-            if (shouldSaveKeyframePhoto(angleDeg)) {
-                imgW = camImg.getWidth();
-                imgH = camImg.getHeight();
-                nv21Snapshot = extractNv21Bytes(camImg);
-            }
-        } catch (NotYetAvailableException e) {
-            return false;
-        } catch (Exception ignored) {
-            return false;
-        }
-
-        boolean newlyAddedSector = false;
-        if (isNewSector && !visitedSectors[sector]) {
-            visitedSectors[sector] = true;
-            sectorsCovered++;
-            newlyAddedSector = true;
-            if (startSector < 0) {
-                startSector = sector;
-            }
-        }
-        if (startSector >= 0) {
-            final int delta = Math.abs(sector - startSector);
-            final int circularDelta = Math.min(delta, SECTOR_COUNT - delta);
-            if (circularDelta >= 3) {
-                visitedOppositeSector = true;
-            }
-            if (visitedOppositeSector && circularDelta <= 1) {
-                returnedNearStartSector = true;
-            }
-        }
-
-        fusedKeyframeCount++;
-
-        ingestFrameDepth(frame, camera);
-        ingestFramePointCloud(frame, camera.getPose().getTranslation());
-
-        if (nv21Snapshot != null && imgW > 0 && imgH > 0) {
-            final int kfIndex = savedKeyframes.size();
-            final File photoFile = new File(
-                getCacheDir(),
-                String.format(Locale.US, "minreport_%s_kf_%d.jpg", scanId, kfIndex)
-            );
-            savedKeyframes.add(new KeyframeMeta(kfIndex, round1(angleDeg), round1(blurScore), photoFile.getAbsolutePath()));
-            final int rotDeg = (rearSensorOrientation - renderer.getDisplayRotationDegrees() + 360) % 360;
-            final byte[] bytesToEncode = nv21Snapshot;
-            final int encodeW = imgW;
-            final int encodeH = imgH;
-            if (ioExecutor != null && !ioExecutor.isShutdown()) {
-                ioExecutor.execute(() -> saveNv21AsJpeg(bytesToEncode, encodeW, encodeH, rotDeg, photoFile));
-            }
-        }
-
-        manualSampleRequested = false;
-        return newlyAddedSector;
-    }
-
-    private boolean shouldSaveKeyframePhoto(final double angleDeg) {
-        if (savedKeyframes.size() >= MAX_KEYFRAME_PHOTOS) {
-            return false;
-        }
-        if (savedKeyframes.isEmpty()) {
+        if (lastKfPos == null || lastKfFwdXZ == null) {
             return true;
         }
-        double minSep = 360.0;
-        for (KeyframeMeta meta : savedKeyframes) {
-            final double diff = Math.abs(angleDeg - meta.angleDeg);
-            final double sep = Math.min(diff, 360.0 - diff);
-            if (sep < minSep) {
-                minSep = sep;
+        final float distMoved = dist3D(camPos, lastKfPos);
+        if (distMoved >= stepThreshM) {
+            return true;
+        }
+        final float len = (float) Math.hypot(fwdX, fwdZ);
+        if (len > 0.1f) {
+            final float nx = fwdX / len;
+            final float nz = fwdZ / len;
+            final float dot = clamp(nx * lastKfFwdXZ[0] + nz * lastKfFwdXZ[1], -1.0f, 1.0f);
+            final double yawDeltaDeg = Math.toDegrees(Math.acos(dot));
+            if (yawDeltaDeg >= MIN_KF_YAW_DEG && distMoved >= 0.18f) {
+                return true;
             }
         }
-        return minSep >= MIN_KEYFRAME_ANGULAR_SEPARATION_DEG;
+        return false;
     }
 
-    private void ingestFrameDepth(final Frame frame, final Camera camera) {
-        final CameraIntrinsics intr = camera.getImageIntrinsics();
-        final float[] focal = intr.getFocalLength();
-        final float[] principal = intr.getPrincipalPoint();
-        final int[] cpuDims = intr.getImageDimensions();
-        if (cpuDims[0] <= 0 || cpuDims[1] <= 0) {
-            return;
-        }
-        final Pose camPose = camera.getPose();
-
-        if ("RAW_DEPTH_ONLY".equals(configuredDepthMode)) {
-            try (
-                Image depthImg = frame.acquireRawDepthImage16Bits();
-                Image confImg = frame.acquireRawDepthConfidenceImage()
-            ) {
-                unprojectDepthImage(depthImg, confImg, focal, principal, cpuDims, camPose);
-                return;
-            } catch (NotYetAvailableException e) {
-                // Fall through to smoothed depth if available
-            } catch (Exception ignored) {
-            }
-        }
-
-        if ("AUTOMATIC".equals(configuredDepthMode) || "RAW_DEPTH_ONLY".equals(configuredDepthMode)) {
-            try (Image depthImg = frame.acquireDepthImage16Bits()) {
-                unprojectDepthImage(depthImg, null, focal, principal, cpuDims, camPose);
-            } catch (Exception ignored) {
-            }
-        }
-    }
-
-    private void unprojectDepthImage(
-        final Image depthImg,
-        final Image confImg,
-        final float[] focal,
-        final float[] principal,
-        final int[] cpuDims,
-        final Pose camPose
+    private void evaluateBurstCandidateLocked(
+        final Frame frame,
+        final Camera camera,
+        final Pose camPose,
+        final long nowMs
     ) {
-        final int depthW = depthImg.getWidth();
-        final int depthH = depthImg.getHeight();
-        if (depthW <= 0 || depthH <= 0) {
+        if (liveGyroNormRadS > MAX_GYRO_NORM_RAD_S * 1.35f) {
+            lastSpeedAlertAtMs = nowMs;
             return;
         }
-
-        final float scaleX = depthW / (float) cpuDims[0];
-        final float scaleY = depthH / (float) cpuDims[1];
-        final float fxD = focal[0] * scaleX;
-        final float fyD = focal[1] * scaleY;
-        final float cxD = principal[0] * scaleX;
-        final float cyD = principal[1] * scaleY;
-        if (fxD <= 1.0f || fyD <= 1.0f) {
-            return;
-        }
-
-        final Image.Plane dPlane = depthImg.getPlanes()[0];
-        final ByteBuffer dBuf = dPlane.getBuffer().duplicate().order(ByteOrder.LITTLE_ENDIAN);
-        final int dRowStride = dPlane.getRowStride();
-        final int dPixelStride = dPlane.getPixelStride();
-
-        final ByteBuffer cBuf = confImg != null ? confImg.getPlanes()[0].getBuffer().duplicate() : null;
-        final int cRowStride = confImg != null ? confImg.getPlanes()[0].getRowStride() : 0;
-        final int cPixelStride = confImg != null ? confImg.getPlanes()[0].getPixelStride() : 0;
-
-        final float[] camPt = new float[3];
-        final float[] worldPt = new float[3];
-        final int step = roiRadiusM <= 2.5f ? 1 : 2;
-
-        for (int v = 0; v < depthH; v += step) {
-            for (int u = 0; u < depthW; u += step) {
-                if (cBuf != null) {
-                    final int cIdx = v * cRowStride + u * cPixelStride;
-                    if (cIdx >= cBuf.limit() || (cBuf.get(cIdx) & 0xFF) < MIN_DEPTH_CONFIDENCE) {
-                        continue;
-                    }
-                }
-                final int dIdx = v * dRowStride + u * dPixelStride;
-                if (dIdx + 1 >= dBuf.limit()) {
-                    continue;
-                }
-                final float zM = (dBuf.getShort(dIdx) & 0xFFFF) * 0.001f;
-                if (zM < MIN_DEPTH_M || zM > MAX_DEPTH_M) {
-                    continue;
-                }
-
-                camPt[0] = ((u - cxD) / fxD) * zM;
-                camPt[1] = -((v - cyD) / fyD) * zM;
-                camPt[2] = -zM;
-                camPose.transformPoint(camPt, 0, worldPt, 0);
-                insertVoxelPoint(worldPt[0], worldPt[1], worldPt[2]);
+        try (Image camImg = frame.acquireCameraImage()) {
+            if (camImg.getFormat() != ImageFormat.YUV_420_888) {
+                return;
             }
-        }
-    }
-
-    private void ingestFramePointCloud(final Frame frame, final float[] camPos) {
-        try (PointCloud pc = frame.acquirePointCloud()) {
-            final FloatBuffer pts = pc.getPoints();
-            final int limit = pts.limit();
-            for (int i = 0; i + 3 < limit; i += 4) {
-                final float x = pts.get(i);
-                final float y = pts.get(i + 1);
-                final float z = pts.get(i + 2);
-                final float conf = pts.get(i + 3);
-                if (conf < 0.35f) {
-                    continue;
-                }
-                final float dx = x - camPos[0];
-                final float dy = y - camPos[1];
-                final float dz = z - camPos[2];
-                final float distSq = dx * dx + dy * dy + dz * dz;
-                if (distSq < (MIN_DEPTH_M * MIN_DEPTH_M) || distSq > (MAX_DEPTH_M * MAX_DEPTH_M)) {
-                    continue;
-                }
-                insertVoxelPoint(x, y, z);
+            final double blurScore = computeLaplacianVarianceStep2(camImg);
+            if (blurScore < BLUR_VARIANCE_THRESHOLD) {
+                rejectedBlurCount++;
+                lastSpeedAlertAtMs = nowMs;
+                return;
             }
+            if (blurScore <= burstBestBlur) {
+                return;
+            }
+
+            final int w = camImg.getWidth();
+            final int h = camImg.getHeight();
+            final CameraIntrinsics intr = camera.getImageIntrinsics();
+            final float[] focal = intr.getFocalLength();
+            final float[] principal = intr.getPrincipalPoint();
+            final int[] intrDims = intr.getImageDimensions();
+            if (intrDims[0] <= 0 || intrDims[1] <= 0) {
+                return;
+            }
+            final float sx = w / (float) intrDims[0];
+            final float sy = h / (float) intrDims[1];
+
+            burstBestBlur = blurScore;
+            burstBestW = w;
+            burstBestH = h;
+            burstBestNv21 = extractNv21Bytes(camImg);
+            burstBestLumaSmall = extractDownscaledLuma(camImg, MVS_LUMA_W, MVS_LUMA_H);
+            burstBestRwc = poseToRowMajorRotation3x3(camPose);
+            burstBestTwc = camPose.getTranslation();
+            burstBestIntr = new float[] { focal[0] * sx, focal[1] * sy, principal[0] * sx, principal[1] * sy };
+            burstBestTsNs = frame.getTimestamp();
+            burstBestPitch = liveImuPitchDeg;
+            burstBestRoll = liveImuRollDeg;
+        } catch (NotYetAvailableException ignored) {
         } catch (Exception ignored) {
         }
     }
 
-    private void insertVoxelPoint(final float wx, final float wy, final float wz) {
-        if (anchorCenter == null) {
-            return;
-        }
-        final float maxLateralRadius = roiRadiusM * ROI_MARGIN_FACTOR;
-        final float ax = wx - anchorCenter[0];
-        final float az = wz - anchorCenter[2];
-        if ((ax * ax + az * az) > (maxLateralRadius * maxLateralRadius)) {
-            return;
-        }
-        final float maxVerticalSpan = Math.max(6.0f, roiRadiusM * 2.0f);
-        if (Math.abs(wy - anchorCenter[1]) > maxVerticalSpan) {
-            return;
+    private boolean commitBestBurstKeyframeLocked(final int sector, final double angleDeg, final long nowMs) {
+        if (burstBestNv21 == null || burstBestLumaSmall == null || burstBestRwc == null || burstBestTwc == null) {
+            return false;
         }
 
-        final float voxelSizeM = roiRadiusM <= 2.5f ? 0.04f : 0.08f;
-        final int vx = (int) Math.floor(wx / voxelSizeM);
-        final int vy = (int) Math.floor(wy / voxelSizeM);
-        final int vz = (int) Math.floor(wz / voxelSizeM);
-        final long key = (((long) (vx & 0x1FFFFFL)) << 42)
-            | (((long) (vy & 0x1FFFFFL)) << 21)
-            | ((long) (vz & 0x1FFFFFL));
+        final int kfIndex = savedKeyframes.size();
+        final File photoFile = new File(
+            getCacheDir(),
+            String.format(Locale.US, "minreport_%s_kf_%02d.webp", scanId, kfIndex)
+        );
 
-        final float[] acc = voxelGrid.get(key);
-        if (acc == null) {
-            if (voxelGrid.size() >= MAX_VOXEL_POINTS * 4) {
-                return;
-            }
-            voxelGrid.put(key, new float[] { wx, wy, wz, 1.0f });
+        // Compute scaled intrinsics matching the saved unrotated WebP dimensions
+        final float outScale = Math.min(1.0f, MAX_PHOTO_DIMENSION_PX / (float) Math.max(burstBestW, burstBestH));
+        final int outW = Math.max(1, Math.round(burstBestW * outScale));
+        final int outH = Math.max(1, Math.round(burstBestH * outScale));
+        final float fxOut = burstBestIntr[0] * (outW / (float) burstBestW);
+        final float fyOut = burstBestIntr[1] * (outH / (float) burstBestH);
+        final float cxOut = burstBestIntr[2] * (outW / (float) burstBestW);
+        final float cyOut = burstBestIntr[3] * (outH / (float) burstBestH);
+
+        final int displayRotDeg = (rearSensorOrientation - (renderer != null ? renderer.getDisplayRotationDegrees() : 90) + 360) % 360;
+
+        final KeyframeRecord rec = new KeyframeRecord(
+            kfIndex,
+            round1(angleDeg),
+            round1(burstBestBlur),
+            photoFile.getAbsolutePath(),
+            displayRotDeg,
+            burstBestTsNs,
+            round1f(burstBestPitch),
+            round1f(burstBestRoll),
+            burstBestRwc,
+            burstBestTwc,
+            fxOut, fyOut, cxOut, cyOut,
+            outW, outH,
+            burstBestNv21.length
+        );
+        savedKeyframes.add(rec);
+
+        lastKfPos = Arrays.copyOf(burstBestTwc, 3);
+        final float fxDir = -burstBestRwc[2];
+        final float fzDir = -burstBestRwc[8];
+        final float fLen = (float) Math.hypot(fxDir, fzDir);
+        lastKfFwdXZ = fLen > 1e-4f ? new float[] { fxDir / fLen, fzDir / fLen } : new float[] { 0.0f, -1.0f };
+
+        if (sectorKfCounts[sector] == 0) {
+            sectorsCovered++;
+        }
+        sectorKfCounts[sector]++;
+        sectorStates[sector] = sectorKfCounts[sector] >= 2 ? 2 : 1;
+
+        // 1. Save UNROTATED WebP off-thread + compute CAS sha256 & savingsPct
+        final byte[] nv21Copy = burstBestNv21;
+        final int srcW = burstBestW;
+        final int srcH = burstBestH;
+        if (ioExecutor != null && !ioExecutor.isShutdown()) {
+            ioExecutor.execute(() -> saveUnrotatedWebpWithCasStats(nv21Copy, srcW, srcH, outW, outH, photoFile, rec));
+        }
+
+        // 2. Feed 4:3 luma into incremental FAST+rBRIEF VIO triangulation off-thread (< 5 ms)
+        final float mvsScaleX = MVS_LUMA_W / (float) burstBestW;
+        final float mvsScaleY = MVS_LUMA_H / (float) burstBestH;
+        final OfflineVioMvsEngine.KeyframeFrame mvsKf = new OfflineVioMvsEngine.KeyframeFrame(
+            kfIndex,
+            MVS_LUMA_W,
+            MVS_LUMA_H,
+            burstBestLumaSmall,
+            burstBestIntr[0] * mvsScaleX,
+            burstBestIntr[1] * mvsScaleY,
+            burstBestIntr[2] * mvsScaleX,
+            burstBestIntr[3] * mvsScaleY,
+            burstBestRwc,
+            burstBestTwc,
+            burstBestTsNs
+        );
+        if (visionExecutor != null && !visionExecutor.isShutdown()) {
+            visionExecutor.execute(() -> offlineEngine.ingestKeyframeIncremental(mvsKf));
+        }
+        return true;
+    }
+
+    private void maybeScheduleLiveOverlayRefreshLocked(final long nowMs) {
+        if (nowMs - lastLiveOverlaySolveAtMs < 650L || !liveOverlayBusy.compareAndSet(false, true)) {
+            return;
+        }
+        lastLiveOverlaySolveAtMs = nowMs;
+        final List<WalkRingToeSolver.WalkPose> walkSnap = new ArrayList<>(walkRingPoses);
+        final List<float[]> groundSnap = new ArrayList<>(groundSampleGrid.values());
+        final List<float[]> extraSnap = new ArrayList<>(extraVioCloud);
+
+        if (visionExecutor != null && !visionExecutor.isShutdown()) {
+            visionExecutor.execute(() -> {
+                try {
+                    final List<float[]> pts = offlineEngine.getIncrementalPointsSnapshot();
+                    pts.addAll(extraSnap);
+                    if (pts.size() >= 20) {
+                        final WalkRingToeSolver.MetrologyResult liveRes = WalkRingToeSolver.solve(
+                            pts, walkSnap, groundSnap, hasScaleAnchor, -1.0
+                        );
+                        if (liveRes.liveOverlay != null && renderer != null) {
+                            renderer.updateLiveOverlay(liveRes.liveOverlay);
+                        }
+                        synchronized (stateLock) {
+                            liveEstDiameterM = (float) Math.max(liveRes.dimA, liveRes.dimB);
+                            liveEstHeightM = (float) liveRes.dimH;
+                            liveEstVolumeM3 = (float) liveRes.volumeM3;
+                        }
+                    }
+                } catch (Exception ignored) {
+                } finally {
+                    liveOverlayBusy.set(false);
+                }
+            });
         } else {
-            acc[0] += wx;
-            acc[1] += wy;
-            acc[2] += wz;
-            acc[3] += 1.0f;
+            liveOverlayBusy.set(false);
         }
     }
 
-    private void collectHorizontalGroundSamples(final Session activeSession) {
+    private void collectFilteredGroundPlanes(final Session activeSession, final float maxAllowedY) {
         if (groundSampleGrid.size() >= MAX_GROUND_SAMPLES) {
             return;
         }
@@ -1486,97 +1398,654 @@ public class MinreportSpatialScannerActivity
                 continue;
             }
             final Pose centerPose = plane.getCenterPose();
-            addGroundSampleIfNearAnchor(centerPose.getTranslation());
+            addFilteredGroundSample(centerPose.getTranslation(), maxAllowedY);
 
             final FloatBuffer poly = plane.getPolygon();
             final int limit = poly.limit();
             final float[] localPt = new float[3];
             final float[] worldPt = new float[3];
-            float prevLocalX = 0.0f;
-            float prevLocalZ = 0.0f;
-            boolean hasPrev = false;
             for (int i = 0; i + 1 < limit && groundSampleGrid.size() < MAX_GROUND_SAMPLES; i += 2) {
-                final float lx = poly.get(i);
-                final float lz = poly.get(i + 1);
-                localPt[0] = lx;
+                localPt[0] = poly.get(i);
                 localPt[1] = 0.0f;
-                localPt[2] = lz;
+                localPt[2] = poly.get(i + 1);
                 centerPose.transformPoint(localPt, 0, worldPt, 0);
-                addGroundSampleIfNearAnchor(worldPt);
-
-                if (hasPrev) {
-                    localPt[0] = (prevLocalX + lx) * 0.5f;
-                    localPt[1] = 0.0f;
-                    localPt[2] = (prevLocalZ + lz) * 0.5f;
-                    centerPose.transformPoint(localPt, 0, worldPt, 0);
-                    addGroundSampleIfNearAnchor(worldPt);
-                }
-                prevLocalX = lx;
-                prevLocalZ = lz;
-                hasPrev = true;
+                addFilteredGroundSample(worldPt, maxAllowedY);
             }
         }
     }
 
-    private void addGroundSampleIfNearAnchor(final float[] pt) {
-        if (groundSampleGrid.size() >= MAX_GROUND_SAMPLES || anchorCenter == null) {
+    /**
+     * Enforces y <= y_cam - 0.80f AND always retains the minimum Y per 0.25m 2D cell
+     * (never freezes an elevated plateau plane above the true pad).
+     */
+    private void addFilteredGroundSample(final float[] pt, final float maxAllowedY) {
+        if (pt[1] > maxAllowedY) {
             return;
         }
-        final float groundLimit = Math.max(roiRadiusM * 1.6f, 2.5f);
-        final float dx = pt[0] - anchorCenter[0];
-        final float dz = pt[2] - anchorCenter[2];
-        if ((dx * dx + dz * dz) > (groundLimit * groundLimit)) {
-            return;
-        }
-        final float cell = roiRadiusM <= 2.5f ? 0.15f : 0.25f;
+        final float cell = 0.25f;
         final int gx = (int) Math.floor(pt[0] / cell);
         final int gz = (int) Math.floor(pt[2] / cell);
         final long key = (((long) (gx & 0xFFFFFFFFL)) << 32) | ((long) (gz & 0xFFFFFFFFL));
-        if (!groundSampleGrid.containsKey(key)) {
-            groundSampleGrid.put(key, new float[] { pt[0], pt[1], pt[2] });
+        final float[] existing = groundSampleGrid.get(key);
+        if (existing == null) {
+            if (groundSampleGrid.size() < MAX_GROUND_SAMPLES) {
+                groundSampleGrid.put(key, new float[] { pt[0], pt[1], pt[2] });
+            }
+        } else if (pt[1] < existing[1]) {
+            existing[0] = pt[0];
+            existing[1] = pt[1];
+            existing[2] = pt[2];
         }
     }
 
-    private double computeLaplacianVariance(final Image camImg) {
+    private void finalizeAndReturnScanAsync() {
+        final ExecutorService bg = Executors.newSingleThreadExecutor();
+        bg.execute(() -> {
+            try {
+                // Wait for pending keyframe WebP writes and Stage 0 triangulations off Main Thread
+                if (ioExecutor != null && !ioExecutor.isShutdown()) {
+                    ioExecutor.shutdown();
+                    ioExecutor.awaitTermination(6, TimeUnit.SECONDS);
+                }
+                if (visionExecutor != null && !visionExecutor.isShutdown()) {
+                    visionExecutor.shutdown();
+                    visionExecutor.awaitTermination(4, TimeUnit.SECONDS);
+                }
+
+                final List<WalkRingToeSolver.WalkPose> walkSnap;
+                final List<float[]> groundSnap;
+                final List<float[]> extraSnap;
+                final List<KeyframeRecord> kfSnap;
+                final int coveredSnap;
+                final int blurSnap;
+                final boolean anchorSnap;
+                synchronized (stateLock) {
+                    walkSnap = new ArrayList<>(walkRingPoses);
+                    groundSnap = new ArrayList<>(groundSampleGrid.values());
+                    extraSnap = new ArrayList<>(extraVioCloud);
+                    kfSnap = new ArrayList<>(savedKeyframes);
+                    coveredSnap = sectorsCovered;
+                    blurSnap = rejectedBlurCount;
+                    anchorSnap = hasScaleAnchor;
+                }
+
+                final boolean thermalDegraded = isThermallyThrottled();
+                final OfflineVioMvsEngine.EngineOutput engineOut = offlineEngine.solveFullOffline(
+                    walkSnap,
+                    groundSnap,
+                    extraSnap,
+                    anchorSnap,
+                    thermalDegraded
+                );
+
+                final JSONObject payload = buildScanResultJsonV2(
+                    engineOut,
+                    walkSnap,
+                    kfSnap,
+                    coveredSnap,
+                    blurSnap
+                );
+
+                final File resultFile = new File(getCacheDir(), scanId + "_result.json");
+                try (FileOutputStream fos = new FileOutputStream(resultFile)) {
+                    fos.write(payload.toString().getBytes(StandardCharsets.UTF_8));
+                    fos.flush();
+                }
+
+                mainHandler.post(() -> {
+                    final Intent resultIntent = new Intent();
+                    resultIntent.putExtra(EXTRA_RESULT_FILE_PATH, resultFile.getAbsolutePath());
+                    setResult(RESULT_OK, resultIntent);
+                    finish();
+                });
+            } catch (Exception e) {
+                mainHandler.post(() -> {
+                    setResult(RESULT_CANCELED);
+                    finish();
+                });
+            } finally {
+                bg.shutdown();
+            }
+        });
+    }
+
+    private boolean isThermallyThrottled() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            try {
+                final PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+                if (pm != null) {
+                    return pm.getCurrentThermalStatus() >= PowerManager.THERMAL_STATUS_MODERATE;
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        return false;
+    }
+
+    private JSONObject buildScanResultJsonV2(
+        final OfflineVioMvsEngine.EngineOutput engineOut,
+        final List<WalkRingToeSolver.WalkPose> walkSnap,
+        final List<KeyframeRecord> kfSnap,
+        final int covered,
+        final int blurRejected
+    ) throws Exception {
+        final WalkRingToeSolver.MetrologyResult m = engineOut.metrology;
+        final JSONObject root = new JSONObject();
+
+        final String manufacturer = Build.MANUFACTURER != null ? Build.MANUFACTURER : "";
+        final String model = Build.MODEL != null ? Build.MODEL : "";
+        final String deviceModel = (manufacturer + " " + model).trim();
+        final double coveragePct = round1((covered / (double) SECTOR_COUNT) * 100.0);
+
+        // Legacy fields preserved 100% for backwards compatibility
+        root.put("cancelled", false);
+        root.put("scanId", scanId);
+        root.put("deviceModel", deviceModel);
+        root.put("depthMode", configuredDepthMode);
+        root.put("roiRadiusM", round3(m.roiRadiusM));
+        root.put("sectorsTotal", SECTOR_COUNT);
+        root.put("sectorsCovered", covered);
+        root.put("coveragePct", coveragePct);
+        root.put("keyframeCount", Math.max(1, kfSnap.size()));
+        root.put("loopClosed", m.loopClosed);
+        root.put("rejectedBlurCount", blurRejected);
+
+        // V2 engine metadata
+        root.put("scannerEngineVersion", SCANNER_ENGINE_VERSION);
+        root.put("orientationMode", "sensorLandscape");
+        root.put("hasHardwareDepthSensor", hasHardwareDepthSensor);
+
+        // Optional stored calibration metadata (without pre-scaling coordinates)
+        final SharedPreferences calPrefs = getSharedPreferences(PREFS_CALIBRATION_NAME, Context.MODE_PRIVATE);
+        final boolean hasCal = calPrefs.getBoolean("calibrated", false);
+        final float calScale = calPrefs.getFloat("scaleFactor", 1.0f);
+        if (hasCal && calScale >= MIN_SCALE_FACTOR && calScale <= MAX_SCALE_FACTOR) {
+            root.put("calibrationScaleFactor", round4(calScale));
+            root.put("calibrationPlaneNoiseRmsM", round4(calPrefs.getFloat("planeNoiseRmsM", 0.0f)));
+            root.put("deviceCalibratedAt", calPrefs.getLong("calibratedAt", 0L));
+        }
+
+        final JSONObject anchorJson = new JSONObject();
+        anchorJson.put("x", round3(m.anchorX));
+        anchorJson.put("y", round3(m.anchorY));
+        anchorJson.put("z", round3(m.anchorZ));
+        root.put("anchorCenter", anchorJson);
+
+        final JSONArray pointsArr = new JSONArray();
+        for (float[] p : m.stratifiedPointsM) {
+            final JSONArray pt = new JSONArray();
+            pt.put(round3(p[0]));
+            pt.put(round3(p[1]));
+            pt.put(round3(p[2]));
+            pointsArr.put(pt);
+        }
+        root.put("pointsM", pointsArr);
+
+        final JSONArray groundArr = new JSONArray();
+        for (float[] g : m.filteredGroundM) {
+            final JSONArray pt = new JSONArray();
+            pt.put(round3(g[0]));
+            pt.put(round3(g[1]));
+            pt.put(round3(g[2]));
+            groundArr.put(pt);
+        }
+        root.put("groundSamplesM", groundArr);
+
+        // Walk-ring trajectory poses
+        final JSONArray walkArr = new JSONArray();
+        for (WalkRingToeSolver.WalkPose wp : walkSnap) {
+            final JSONObject wj = new JSONObject();
+            wj.put("x", round3(wp.x));
+            wj.put("y", round3(wp.y));
+            wj.put("z", round3(wp.z));
+            wj.put("fx", round4(wp.fwdX));
+            wj.put("fy", round4(wp.fwdY));
+            wj.put("fz", round4(wp.fwdZ));
+            wj.put("ts", wp.timestampNs);
+            walkArr.put(wj);
+        }
+        root.put("walkRingPoses", walkArr);
+
+        // Legacy keyframes + full V2 unrotated WebP keyframes with SE(3) + intrinsics + CAS stats
+        final JSONArray kfLegacyArr = new JSONArray();
+        final JSONArray kfV2Arr = new JSONArray();
+        for (KeyframeRecord rec : kfSnap) {
+            final File photoFile = new File(rec.photoPath);
+            if (!photoFile.exists() || photoFile.length() <= 0L) {
+                continue;
+            }
+            final JSONObject legacyObj = new JSONObject();
+            legacyObj.put("index", rec.index);
+            legacyObj.put("angleDeg", rec.angleDeg);
+            legacyObj.put("blurScore", rec.blurScore);
+            legacyObj.put("photoPath", rec.photoPath);
+            kfLegacyArr.put(legacyObj);
+
+            final JSONObject v2Obj = new JSONObject();
+            v2Obj.put("index", rec.index);
+            v2Obj.put("angleDeg", rec.angleDeg);
+            v2Obj.put("blurScore", rec.blurScore);
+            v2Obj.put("photoPath", rec.photoPath);
+            v2Obj.put("mimeType", "image/webp");
+            v2Obj.put("displayRotationDeg", rec.displayRotationDeg);
+            v2Obj.put("timestampNs", rec.timestampNs);
+            v2Obj.put("imuPitchDeg", rec.imuPitchDeg);
+            v2Obj.put("imuRollDeg", rec.imuRollDeg);
+            v2Obj.put("originalBytes", rec.originalBytes);
+            v2Obj.put("optimizedBytes", rec.optimizedBytes > 0 ? rec.optimizedBytes : (int) photoFile.length());
+            v2Obj.put("savingsPct", round1(rec.savingsPct));
+            if (rec.sha256 != null) {
+                v2Obj.put("sha256", rec.sha256);
+            }
+
+            final JSONObject poseObj = new JSONObject();
+            final JSONArray rArr = new JSONArray();
+            for (float rv : rec.rWc) rArr.put(round5(rv));
+            final JSONArray tArr = new JSONArray();
+            for (float tv : rec.tWc) tArr.put(round4(tv));
+            poseObj.put("r", rArr);
+            poseObj.put("t", tArr);
+            v2Obj.put("poseSE3", poseObj);
+
+            final JSONObject intrObj = new JSONObject();
+            intrObj.put("fx", round2(rec.fx));
+            intrObj.put("fy", round2(rec.fy));
+            intrObj.put("cx", round2(rec.cx));
+            intrObj.put("cy", round2(rec.cy));
+            intrObj.put("width", rec.imgWidth);
+            intrObj.put("height", rec.imgHeight);
+            v2Obj.put("intrinsics", intrObj);
+
+            kfV2Arr.put(v2Obj);
+        }
+        root.put("keyframes", kfLegacyArr);
+        root.put("keyframesV2", kfV2Arr);
+
+        // V2 In-Situ Offline Metrology block
+        final JSONObject metObj = new JSONObject();
+        metObj.put("volumeM3", round3(m.volumeM3));
+        final JSONObject dimsObj = new JSONObject();
+        dimsObj.put("a", round2(m.dimA));
+        dimsObj.put("b", round2(m.dimB));
+        dimsObj.put("h", round2(m.dimH));
+        metObj.put("dimensionsM", dimsObj);
+        metObj.put("groundSlopeDeg", round2(m.groundSlopeDeg));
+        metObj.put("slopeAngleAvgDeg", round2(m.slopeAngleAvgDeg));
+        metObj.put("toeScore", round1(m.toeScore));
+        metObj.put("occludedVolumePct", round1(m.occludedVolumePct));
+        metObj.put("zeroCellsInside", m.zeroCellsInside);
+        metObj.put("loopDriftPct", round2(m.loopDriftPct));
+        metObj.put("planeMismatchDeg", round2(m.planeMismatchDeg));
+        metObj.put("uncertaintyPct", round1(m.uncertaintyPct));
+        metObj.put("metrologyGrade", m.metrologyGrade);
+        metObj.put("wallConfinement", m.wallConfinement);
+        metObj.put("observedCells", m.observedCells);
+        metObj.put("totalFootprintCells", m.totalFootprintCells);
+        metObj.put("densePointsCount", m.densePointsCount);
+        metObj.put("sparseTriangulatedCount", engineOut.sparseTriangulatedCount);
+        metObj.put("denseMvsCount", engineOut.denseMvsCount);
+        metObj.put("computeMs", engineOut.computeMs);
+        metObj.put("thermalDegraded", engineOut.thermalDegraded);
+        root.put("inSituMetrology", metObj);
+
+        // V2 Compact Local Preview Mesh (< 60 KB dem_grid_v1)
+        if (m.previewMesh != null) {
+            final WalkRingToeSolver.LocalPreviewMesh pm = m.previewMesh;
+            final JSONObject meshObj = new JSONObject();
+            meshObj.put("format", pm.format);
+            meshObj.put("originX", round3(pm.originX));
+            meshObj.put("originZ", round3(pm.originZ));
+            meshObj.put("cellSizeM", round3(pm.cellSizeM));
+            meshObj.put("cols", pm.cols);
+            meshObj.put("rows", pm.rows);
+            meshObj.put("groundSlopeDeg", round2(pm.groundSlopeDeg));
+            meshObj.put("volumeM3", round3(pm.volumeM3));
+            meshObj.put("maxHeightM", round3(pm.maxHeightM));
+
+            final JSONArray hArr = new JSONArray();
+            for (float hv : pm.heightsM) hArr.put(round3(hv));
+            meshObj.put("heightsM", hArr);
+
+            final JSONArray obsArr = new JSONArray();
+            for (byte ov : pm.observedMask) obsArr.put(ov != 0 ? 1 : 0);
+            meshObj.put("observedMask", obsArr);
+
+            root.put("localPreviewMesh", meshObj);
+        }
+
+        return root;
+    }
+
+    private void updateHudThrottled(final boolean force) {
+        final long now = System.currentTimeMillis();
+        if (!force && (now - lastUiUpdateAtMs) < 180L) {
+            return;
+        }
+        lastUiUpdateAtMs = now;
+        runOnUiThread(() -> updateHudFromState(false));
+    }
+
+    private void updateHudFromState(final boolean ignoreFinishing) {
+        final FlowStep step;
+        final boolean isTracking;
+        final int[] statesSnap = new int[SECTOR_COUNT];
+        final int covered;
+        final int kfCount;
+        final float heading;
+        final float diam;
+        final float height;
+        final float vol;
+        final boolean showSpeed;
+        final boolean showAnchor;
+        final float calDist;
+        final boolean hasCalHit;
+        final long nowMs = System.currentTimeMillis();
+
+        synchronized (stateLock) {
+            if (!ignoreFinishing && finishing && currentStep != FlowStep.FINALIZING) {
+                return;
+            }
+            step = currentStep;
+            isTracking = lastTrackingState == TrackingState.TRACKING;
+            System.arraycopy(sectorStates, 0, statesSnap, 0, SECTOR_COUNT);
+            covered = sectorsCovered;
+            kfCount = savedKeyframes.size();
+            heading = liveHeadingDeg;
+            diam = liveEstDiameterM;
+            height = liveEstHeightM;
+            vol = liveEstVolumeM3;
+            showSpeed = (nowMs - lastSpeedAlertAtMs) < 1400L;
+            showAnchor = hasScaleAnchor;
+            calDist = liveCalDistanceM;
+            hasCalHit = latestCalHit != null;
+        }
+
+        imuHorizonView.updateImu(liveImuPitchDeg, liveImuRollDeg);
+        trackingIcon.setColorFilter(isTracking ? COLOR_CYAN : COLOR_COPPER);
+        speedAlertIcon.setVisibility(showSpeed ? View.VISIBLE : View.GONE);
+        anchorDetectedIcon.setVisibility(showAnchor ? View.VISIBLE : View.GONE);
+
+        final Live3DOverlayRenderer.FramingStatus framing = renderer != null
+            ? renderer.getLastFramingStatus()
+            : new Live3DOverlayRenderer.FramingStatus(false, false);
+        final boolean showCrownGuard = step == FlowStep.CAPTURING_WALK && framing.crownClipped;
+        final boolean showToeGuard = step == FlowStep.CAPTURING_WALK && framing.toeClipped;
+        crownBorderLine.setVisibility(showCrownGuard ? View.VISIBLE : View.GONE);
+        crownGuardIcon.setVisibility(showCrownGuard ? View.VISIBLE : View.GONE);
+        toeBorderLine.setVisibility(showToeGuard ? View.VISIBLE : View.GONE);
+        toeGuardIcon.setVisibility(showToeGuard ? View.VISIBLE : View.GONE);
+
+        if (step == FlowStep.READY_TRACKING) {
+            finalizingBar.setVisibility(View.GONE);
+            perimeterRingView.setVisibility(View.VISIBLE);
+            perimeterRingView.updateState(statesSnap, heading, false, 0, false);
+            liveVolumeText.setText("--.- m³");
+            liveVolumeText.setTextColor(COLOR_DISABLED);
+            liveDimsText.setText("Ø --.- m · H --.- m");
+            liveKfCountText.setText("0 KF");
+
+            primaryActionButton.setEnabled(isTracking);
+            primaryActionButton.setImageResource(R.drawable.ic_ms_play_arrow);
+            primaryActionButton.setColorFilter(isTracking ? Color.BLACK : COLOR_DISABLED);
+            primaryActionButton.setBackgroundColor(isTracking ? COLOR_COPPER : COLOR_BORDER);
+        } else if (step == FlowStep.CAPTURING_WALK) {
+            finalizingBar.setVisibility(View.GONE);
+            final int pctInt = (int) Math.round((covered / (double) SECTOR_COUNT) * 100.0);
+            final boolean optimalReady = pctInt >= 75 && kfCount >= 12;
+            final boolean minReady = (kfCount >= 6 && covered >= 4) || (kfCount >= 4 && covered >= 3);
+
+            perimeterRingView.setVisibility(View.VISIBLE);
+            perimeterRingView.updateState(statesSnap, heading, true, pctInt, optimalReady);
+
+            // Anti-false-volume rule: show ~XX.X m³ in neutral #F3F4F6 ONLY at >= 75% coverage
+            if (pctInt >= 75 && vol > 0.05f) {
+                liveVolumeText.setText(String.format(Locale.US, "~%.1f m³", vol));
+                liveVolumeText.setTextColor(COLOR_PRIMARY);
+            } else {
+                liveVolumeText.setText("--.- m³");
+                liveVolumeText.setTextColor(COLOR_DISABLED);
+            }
+
+            if (covered >= 3 && diam > 0.1f) {
+                liveDimsText.setText(String.format(Locale.US, "Ø %.1f m · H %.1f m", diam, height));
+            } else {
+                liveDimsText.setText("Ø --.- m · H --.- m");
+            }
+            liveKfCountText.setText(String.format(Locale.US, "%d KF", kfCount));
+
+            primaryActionButton.setEnabled(minReady);
+            if (optimalReady) {
+                primaryActionButton.setImageResource(R.drawable.ic_ms_check);
+                primaryActionButton.setColorFilter(Color.BLACK);
+                primaryActionButton.setBackgroundColor(COLOR_CYAN);
+            } else if (minReady) {
+                primaryActionButton.setImageResource(R.drawable.ic_ms_stop);
+                primaryActionButton.setColorFilter(Color.BLACK);
+                primaryActionButton.setBackgroundColor(COLOR_COPPER);
+            } else {
+                primaryActionButton.setImageResource(R.drawable.ic_ms_stop);
+                primaryActionButton.setColorFilter(COLOR_DISABLED);
+                primaryActionButton.setBackgroundColor(COLOR_BORDER);
+            }
+        } else if (step == FlowStep.FINALIZING) {
+            finalizingBar.setVisibility(View.VISIBLE);
+            primaryActionButton.setEnabled(false);
+            primaryActionButton.setImageResource(R.drawable.ic_ms_check);
+            primaryActionButton.setColorFilter(COLOR_DISABLED);
+            primaryActionButton.setBackgroundColor(COLOR_BORDER);
+        } else {
+            // Optional diagnostic calibration mode (2.00 m)
+            perimeterRingView.setVisibility(View.GONE);
+            calCrosshairView.setVisibility(View.VISIBLE);
+            calCrosshairView.setAccentColor(hasCalHit ? COLOR_CYAN : COLOR_COPPER);
+            finalizingBar.setVisibility(step == FlowStep.CAL_FLOOR ? View.VISIBLE : View.GONE);
+
+            if (step == FlowStep.CAL_END && calDist > 0.0f) {
+                liveVolumeText.setText(String.format(Locale.US, "%.2f m", calDist));
+                liveVolumeText.setTextColor(COLOR_CYAN);
+            } else if (step == FlowStep.CAL_FLOOR_ERROR || step == FlowStep.CAL_RANGE_ERROR) {
+                liveVolumeText.setText("ERR");
+                liveVolumeText.setTextColor(COLOR_COPPER);
+            } else {
+                liveVolumeText.setText("2.00 m");
+                liveVolumeText.setTextColor(COLOR_PRIMARY);
+            }
+            liveDimsText.setText(step.name());
+            liveKfCountText.setText("");
+
+            final boolean calBtnEnabled = step != FlowStep.CAL_FLOOR;
+            primaryActionButton.setEnabled(calBtnEnabled);
+            primaryActionButton.setImageResource(
+                step == FlowStep.CAL_END ? R.drawable.ic_ms_check : R.drawable.ic_ms_play_arrow
+            );
+            primaryActionButton.setColorFilter(calBtnEnabled ? Color.BLACK : COLOR_DISABLED);
+            primaryActionButton.setBackgroundColor(calBtnEnabled ? COLOR_COPPER : COLOR_BORDER);
+        }
+    }
+
+    // --- Calibration Helpers ---
+
+    private float[] resolveCalibrationFloorHit(final Frame frame, final Camera camera) {
+        final int vw = renderer != null ? renderer.getViewportWidth() : 0;
+        final int vh = renderer != null ? renderer.getViewportHeight() : 0;
+        if (vw > 0 && vh > 0) {
+            try {
+                final List<HitResult> hits = frame.hitTest(vw * 0.5f, vh * 0.5f);
+                for (HitResult hit : hits) {
+                    final Trackable t = hit.getTrackable();
+                    if (
+                        t instanceof Plane &&
+                        ((Plane) t).getType() == Plane.Type.HORIZONTAL_UPWARD_FACING &&
+                        ((Plane) t).isPoseInPolygon(hit.getHitPose())
+                    ) {
+                        final float dist = hit.getDistance();
+                        if (dist >= MIN_DEPTH_M && dist <= MAX_DEPTH_M) {
+                            return hit.getHitPose().getTranslation();
+                        }
+                    }
+                }
+                for (HitResult hit : hits) {
+                    final Trackable t = hit.getTrackable();
+                    if (t instanceof DepthPoint || t instanceof Point) {
+                        final float dist = hit.getDistance();
+                        if (dist >= MIN_DEPTH_M && dist <= MAX_DEPTH_M) {
+                            return hit.getHitPose().getTranslation();
+                        }
+                    }
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        return null;
+    }
+
+    private void collectCalibrationFloorSamples(final Session activeSession, final Frame frame, final Camera camera) {
+        if (calFloorSamples.size() >= 300) return;
+        for (Plane plane : activeSession.getAllTrackables(Plane.class)) {
+            if (
+                plane.getTrackingState() == TrackingState.TRACKING &&
+                plane.getSubsumedBy() == null &&
+                plane.getType() == Plane.Type.HORIZONTAL_UPWARD_FACING
+            ) {
+                final Pose cp = plane.getCenterPose();
+                calFloorSamples.add(cp.getTranslation());
+                final FloatBuffer poly = plane.getPolygon();
+                final float[] lp = new float[3];
+                final float[] wp = new float[3];
+                for (int i = 0; i + 1 < poly.limit() && calFloorSamples.size() < 300; i += 2) {
+                    lp[0] = poly.get(i);
+                    lp[1] = 0.0f;
+                    lp[2] = poly.get(i + 1);
+                    cp.transformPoint(lp, 0, wp, 0);
+                    calFloorSamples.add(new float[] { wp[0], wp[1], wp[2] });
+                }
+            }
+        }
+        if (calFloorSamples.size() < 12) {
+            try (PointCloud pc = frame.acquirePointCloud()) {
+                final FloatBuffer pts = pc.getPoints();
+                for (int i = 0; i + 3 < pts.limit() && calFloorSamples.size() < 300; i += 4) {
+                    if (pts.get(i + 3) >= 0.5f) {
+                        calFloorSamples.add(new float[] { pts.get(i), pts.get(i + 1), pts.get(i + 2) });
+                    }
+                }
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    private boolean evaluateCalibrationFloorNoise() {
+        final int n = calFloorSamples.size();
+        if (n < 12) {
+            calPlaneNoiseRmsM = 0.099f;
+            return false;
+        }
+        final double[] coeffs = WalkRingToeSolver.fitPlaneOLS(calFloorSamples);
+        final double a = coeffs != null ? coeffs[0] : 0.0;
+        final double b = coeffs != null ? coeffs[1] : 0.0;
+        double sumY = 0.0;
+        for (float[] p : calFloorSamples) sumY += p[1];
+        final double d = coeffs != null ? coeffs[2] : (sumY / n);
+
+        double sumSq = 0.0;
+        final double normScale = 1.0 / Math.sqrt(1.0 + a * a + b * b);
+        for (float[] p : calFloorSamples) {
+            final double err = (p[1] - (a * p[0] + b * p[2] + d)) * normScale;
+            sumSq += err * err;
+        }
+        calPlaneNoiseRmsM = (float) Math.sqrt(sumSq / n);
+        calImuPitchOffsetDeg = (float) Math.toDegrees(Math.atan(b));
+        calImuRollOffsetDeg = (float) Math.toDegrees(Math.atan(a));
+        return calPlaneNoiseRmsM <= MAX_CAL_FLOOR_NOISE_RMS_M;
+    }
+
+    private void finalizeAndReturnCalibration(final float measuredDistanceM, final float scaleFactor) {
+        final long calibratedAt = System.currentTimeMillis();
+        final float planeNoiseRms;
+        final float pitchDeg;
+        final float rollDeg;
+        synchronized (stateLock) {
+            planeNoiseRms = calPlaneNoiseRmsM;
+            pitchDeg = calImuPitchOffsetDeg;
+            rollDeg = calImuRollOffsetDeg;
+        }
+        getSharedPreferences(PREFS_CALIBRATION_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean("calibrated", true)
+            .putFloat("scaleFactor", scaleFactor)
+            .putFloat("referenceDistanceM", CAL_REFERENCE_DISTANCE_M)
+            .putFloat("measuredDistanceM", measuredDistanceM)
+            .putFloat("planeNoiseRmsM", planeNoiseRms)
+            .putFloat("imuPitchOffsetDeg", pitchDeg)
+            .putFloat("imuRollOffsetDeg", rollDeg)
+            .putLong("calibratedAt", calibratedAt)
+            .commit();
+
+        try {
+            final JSONObject payload = new JSONObject();
+            payload.put("calibrated", true);
+            payload.put("scaleFactor", round4(scaleFactor));
+            payload.put("referenceDistanceM", round2(CAL_REFERENCE_DISTANCE_M));
+            payload.put("measuredDistanceM", round4(measuredDistanceM));
+            payload.put("planeNoiseRmsM", round4(planeNoiseRms));
+            payload.put("imuPitchOffsetDeg", round2(pitchDeg));
+            payload.put("imuRollOffsetDeg", round2(rollDeg));
+            payload.put("calibratedAt", calibratedAt);
+
+            final File resultFile = new File(getCacheDir(), scanId + "_calibration.json");
+            try (FileOutputStream fos = new FileOutputStream(resultFile)) {
+                fos.write(payload.toString().getBytes(StandardCharsets.UTF_8));
+                fos.flush();
+            }
+            final Intent resultIntent = new Intent();
+            resultIntent.putExtra(EXTRA_RESULT_FILE_PATH, resultFile.getAbsolutePath());
+            setResult(RESULT_OK, resultIntent);
+            finish();
+        } catch (Exception e) {
+            setResult(RESULT_CANCELED);
+            finish();
+        }
+    }
+
+    // --- Image & Geometry Utilities ---
+
+    /**
+     * Laplacian sharpness variance on central ROI with step=2 (fixes step=4 blur blindspot).
+     */
+    private static double computeLaplacianVarianceStep2(final Image camImg) {
         final Image.Plane yPlane = camImg.getPlanes()[0];
         final ByteBuffer yBuf = yPlane.getBuffer();
         final int width = camImg.getWidth();
         final int height = camImg.getHeight();
         final int rowStride = yPlane.getRowStride();
         final int pixelStride = yPlane.getPixelStride();
-        final int step = 4;
-        if (width <= step * 2 || height <= step * 2) {
+        final int step = 2;
+        if (width <= step * 4 || height <= step * 4) {
             return 0.0;
         }
-
-        final int startX = Math.max(step, width / 8);
-        final int endX = Math.min(width - step, (width * 7) / 8);
-        final int startY = Math.max(step, height / 8);
-        final int endY = Math.min(height - step, (height * 7) / 8);
+        final int startX = width / 5;
+        final int endX = (width * 4) / 5;
+        final int startY = height / 5;
+        final int endY = (height * 4) / 5;
         final int bufLimit = yBuf.limit();
 
         double sum = 0.0;
         double sumSq = 0.0;
         int count = 0;
 
-        for (int y = startY; y < endY; y += step) {
-            final int rowOffset = y * rowStride;
-            final int upOffset = (y - step) * rowStride;
-            final int downOffset = (y + step) * rowStride;
-            for (int x = startX; x < endX; x += step) {
+        for (int y = startY; y < endY; y += step * 2) {
+            final int rowOff = y * rowStride;
+            final int upOff = (y - step) * rowStride;
+            final int dnOff = (y + step) * rowStride;
+            for (int x = startX; x < endX; x += step * 2) {
                 final int xOff = x * pixelStride;
-                final int cIdx = rowOffset + xOff;
-                final int lIdx = rowOffset + (x - step) * pixelStride;
-                final int rIdx = rowOffset + (x + step) * pixelStride;
-                final int uIdx = upOffset + xOff;
-                final int dIdx = downOffset + xOff;
-                if (dIdx >= bufLimit || rIdx >= bufLimit) {
-                    continue;
-                }
-                final int c = yBuf.get(cIdx) & 0xFF;
-                final int l = yBuf.get(lIdx) & 0xFF;
+                final int dIdx = dnOff + xOff;
+                final int rIdx = rowOff + (x + step) * pixelStride;
+                if (dIdx >= bufLimit || rIdx >= bufLimit) continue;
+                final int c = yBuf.get(rowOff + xOff) & 0xFF;
+                final int l = yBuf.get(rowOff + (x - step) * pixelStride) & 0xFF;
                 final int r = yBuf.get(rIdx) & 0xFF;
-                final int u = yBuf.get(uIdx) & 0xFF;
+                final int u = yBuf.get(upOff + xOff) & 0xFF;
                 final int d = yBuf.get(dIdx) & 0xFF;
                 final double lap = (4.0 * c) - l - r - u - d;
                 sum += lap;
@@ -1584,14 +2053,37 @@ public class MinreportSpatialScannerActivity
                 count++;
             }
         }
-        if (count < 16) {
-            return 0.0;
-        }
+        if (count < 16) return 0.0;
         final double mean = sum / count;
         return Math.max(0.0, (sumSq / count) - (mean * mean));
     }
 
-    private byte[] extractNv21Bytes(final Image image) {
+    private static byte[] extractDownscaledLuma(final Image camImg, final int dstW, final int dstH) {
+        final Image.Plane yPlane = camImg.getPlanes()[0];
+        final ByteBuffer yBuf = yPlane.getBuffer();
+        final int srcW = camImg.getWidth();
+        final int srcH = camImg.getHeight();
+        final int rowStride = yPlane.getRowStride();
+        final int pixelStride = yPlane.getPixelStride();
+        final int limit = yBuf.limit();
+
+        final byte[] out = new byte[dstW * dstH];
+        final float stepX = srcW / (float) dstW;
+        final float stepY = srcH / (float) dstH;
+        for (int y = 0; y < dstH; y++) {
+            final int sy = Math.min(srcH - 1, (int) (y * stepY));
+            final int srcRow = sy * rowStride;
+            final int dstRow = y * dstW;
+            for (int x = 0; x < dstW; x++) {
+                final int sx = Math.min(srcW - 1, (int) (x * stepX));
+                final int idx = srcRow + sx * pixelStride;
+                out[dstRow + x] = idx < limit ? yBuf.get(idx) : 0;
+            }
+        }
+        return out;
+    }
+
+    private static byte[] extractNv21Bytes(final Image image) {
         final int width = image.getWidth();
         final int height = image.getHeight();
         final Image.Plane[] planes = image.getPlanes();
@@ -1610,9 +2102,7 @@ public class MinreportSpatialScannerActivity
             final byte[] rowData = new byte[yRowStride];
             for (int row = 0; row < height; row++) {
                 final int offset = row * yRowStride;
-                if (offset >= yBuffer.limit()) {
-                    break;
-                }
+                if (offset >= yBuffer.limit()) break;
                 yBuffer.position(offset);
                 final int len = Math.min(yBuffer.remaining(), yRowStride);
                 yBuffer.get(rowData, 0, len);
@@ -1647,437 +2137,83 @@ public class MinreportSpatialScannerActivity
         return nv21;
     }
 
-    private void saveNv21AsJpeg(
+    /**
+     * Saves UNROTATED WebP (1:1 match with camera.getImageIntrinsics() and camera.getPose(),
+     * preventing ROTATION_270 180-degree pose inversion) with CAS SHA-256 and weight traceability.
+     */
+    @SuppressWarnings("deprecation")
+    private static void saveUnrotatedWebpWithCasStats(
         final byte[] nv21,
-        final int width,
-        final int height,
-        final int rotationDegrees,
-        final File outFile
+        final int srcW,
+        final int srcH,
+        final int targetW,
+        final int targetH,
+        final File outFile,
+        final KeyframeRecord rec
     ) {
         Bitmap decoded = null;
-        Bitmap rotated = null;
         Bitmap scaled = null;
         try {
-            final YuvImage yuvImage = new YuvImage(nv21, ImageFormat.NV21, width, height, null);
+            final YuvImage yuvImage = new YuvImage(nv21, ImageFormat.NV21, srcW, srcH, null);
             final ByteArrayOutputStream rawOut = new ByteArrayOutputStream();
-            yuvImage.compressToJpeg(new Rect(0, 0, width, height), 90, rawOut);
-            final byte[] rawJpeg = rawOut.toByteArray();
+            yuvImage.compressToJpeg(new Rect(0, 0, srcW, srcH), 92, rawOut);
+            final byte[] tmpJpeg = rawOut.toByteArray();
 
-            decoded = BitmapFactory.decodeByteArray(rawJpeg, 0, rawJpeg.length);
-            if (decoded == null) {
-                return;
-            }
+            decoded = BitmapFactory.decodeByteArray(tmpJpeg, 0, tmpJpeg.length);
+            if (decoded == null) return;
 
             Bitmap current = decoded;
-            if (rotationDegrees != 0) {
-                final Matrix matrix = new Matrix();
-                matrix.postRotate(rotationDegrees);
-                rotated = Bitmap.createBitmap(
-                    current,
-                    0,
-                    0,
-                    current.getWidth(),
-                    current.getHeight(),
-                    matrix,
-                    true
-                );
-                current = rotated;
-            }
-
-            final int maxDim = Math.max(current.getWidth(), current.getHeight());
-            if (maxDim > MAX_PHOTO_DIMENSION_PX) {
-                final float ratio = MAX_PHOTO_DIMENSION_PX / (float) maxDim;
-                final int targetW = Math.max(1, Math.round(current.getWidth() * ratio));
-                final int targetH = Math.max(1, Math.round(current.getHeight() * ratio));
-                scaled = Bitmap.createScaledBitmap(current, targetW, targetH, true);
+            if (decoded.getWidth() != targetW || decoded.getHeight() != targetH) {
+                scaled = Bitmap.createScaledBitmap(decoded, targetW, targetH, true);
                 current = scaled;
             }
 
+            final ByteArrayOutputStream webpOut = new ByteArrayOutputStream(65536);
+            final Bitmap.CompressFormat fmt = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
+                ? Bitmap.CompressFormat.WEBP_LOSSY
+                : Bitmap.CompressFormat.WEBP;
+            current.compress(fmt, WEBP_QUALITY, webpOut);
+            final byte[] webpBytes = webpOut.toByteArray();
+
             try (FileOutputStream fos = new FileOutputStream(outFile)) {
-                current.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, fos);
+                fos.write(webpBytes);
                 fos.flush();
             }
+
+            rec.optimizedBytes = webpBytes.length;
+            rec.savingsPct = rec.originalBytes > 0
+                ? Math.max(0.0, (1.0 - (webpBytes.length / (double) rec.originalBytes)) * 100.0)
+                : 0.0;
+            rec.sha256 = sha256Hex(webpBytes);
         } catch (Exception ignored) {
         } finally {
-            if (scaled != null && scaled != rotated && scaled != decoded) {
-                scaled.recycle();
-            }
-            if (rotated != null && rotated != decoded) {
-                rotated.recycle();
-            }
-            if (decoded != null) {
-                decoded.recycle();
-            }
+            if (scaled != null && scaled != decoded) scaled.recycle();
+            if (decoded != null) decoded.recycle();
         }
     }
 
-    private void finalizeAndReturnScan() {
-        primaryActionButton.setEnabled(false);
-        primaryActionButton.setText("PROCESANDO...");
-
-        if (ioExecutor != null && !ioExecutor.isShutdown()) {
-            ioExecutor.shutdown();
-            try {
-                ioExecutor.awaitTermination(4, TimeUnit.SECONDS);
-            } catch (InterruptedException ignored) {
-                Thread.currentThread().interrupt();
-            }
-        }
-
+    private static String sha256Hex(final byte[] data) {
         try {
-            final JSONObject payload = buildScanResultJson();
-            final File resultFile = new File(getCacheDir(), scanId + "_result.json");
-            try (FileOutputStream fos = new FileOutputStream(resultFile)) {
-                fos.write(payload.toString().getBytes(StandardCharsets.UTF_8));
-                fos.flush();
+            final MessageDigest md = MessageDigest.getInstance("SHA-256");
+            final byte[] digest = md.digest(data);
+            final StringBuilder sb = new StringBuilder(digest.length * 2);
+            for (byte b : digest) {
+                sb.append(String.format(Locale.US, "%02x", b & 0xFF));
             }
-
-            final Intent resultIntent = new Intent();
-            resultIntent.putExtra(EXTRA_RESULT_FILE_PATH, resultFile.getAbsolutePath());
-            setResult(RESULT_OK, resultIntent);
-            finish();
+            return sb.toString();
         } catch (Exception e) {
-            setResult(RESULT_CANCELED);
-            finish();
+            return null;
         }
     }
 
-    private JSONObject buildScanResultJson() throws Exception {
-        final JSONObject root = new JSONObject();
-
-        final int covered;
-        final double coveragePct;
-        final boolean loopClosed;
-        final int kfCount;
-        final int blurRejected;
-        final float radiusSnapshot;
-        final float[] anchorSnapshot;
-        final List<float[]> groundSnapshot;
-        final List<KeyframeMeta> keyframeSnapshot;
-        final List<float[]> voxelSnapshot;
-
-        synchronized (stateLock) {
-            covered = sectorsCovered;
-            coveragePct = round1((covered / (double) SECTOR_COUNT) * 100.0);
-            loopClosed = (covered >= 7) || (covered >= 6 && visitedOppositeSector && returnedNearStartSector);
-            kfCount = Math.max(1, Math.max(fusedKeyframeCount, savedKeyframes.size()));
-            blurRejected = rejectedBlurCount;
-            radiusSnapshot = roiRadiusM;
-            anchorSnapshot = anchorCenter != null
-                ? new float[] { anchorCenter[0], anchorCenter[1], anchorCenter[2] }
-                : new float[] { 0.0f, 0.0f, 0.0f };
-            groundSnapshot = new ArrayList<>(groundSampleGrid.values());
-            keyframeSnapshot = new ArrayList<>(savedKeyframes);
-
-            voxelSnapshot = new ArrayList<>(Math.min(MAX_VOXEL_POINTS, voxelGrid.size()));
-            final int totalVoxels = voxelGrid.size();
-            final int stride = totalVoxels > MAX_VOXEL_POINTS
-                ? (int) Math.ceil(totalVoxels / (double) MAX_VOXEL_POINTS)
-                : 1;
-            int idx = 0;
-            for (float[] acc : voxelGrid.values()) {
-                if (idx % stride == 0 && voxelSnapshot.size() < MAX_VOXEL_POINTS) {
-                    final float c = acc[3] > 0.0f ? acc[3] : 1.0f;
-                    voxelSnapshot.add(new float[] { acc[0] / c, acc[1] / c, acc[2] / c });
-                }
-                idx++;
-            }
-        }
-
-        final String manufacturer = Build.MANUFACTURER != null ? Build.MANUFACTURER : "";
-        final String model = Build.MODEL != null ? Build.MODEL : "";
-        final String deviceModel = (manufacturer + " " + model).trim();
-
-        root.put("cancelled", false);
-        root.put("scanId", scanId);
-        root.put("deviceModel", deviceModel);
-        root.put("depthMode", configuredDepthMode);
-        root.put("roiRadiusM", round3(radiusSnapshot));
-        root.put("sectorsTotal", SECTOR_COUNT);
-        root.put("sectorsCovered", covered);
-        root.put("coveragePct", coveragePct);
-        root.put("keyframeCount", kfCount);
-        root.put("loopClosed", loopClosed);
-        root.put("rejectedBlurCount", blurRejected);
-
-        // Attach stored calibration metadata without pre-scaling raw ARCore metric coordinates
-        final SharedPreferences calPrefs = getSharedPreferences(PREFS_CALIBRATION_NAME, Context.MODE_PRIVATE);
-        final boolean hasCal = calPrefs.getBoolean("calibrated", false);
-        final float calScale = calPrefs.getFloat("scaleFactor", 1.0f);
-        if (hasCal && calScale >= MIN_SCALE_FACTOR && calScale <= MAX_SCALE_FACTOR) {
-            root.put("calibrationScaleFactor", round4(calScale));
-            root.put("calibrationPlaneNoiseRmsM", round4(calPrefs.getFloat("planeNoiseRmsM", 0.0f)));
-            root.put("deviceCalibratedAt", calPrefs.getLong("calibratedAt", 0L));
-        }
-
-        final JSONObject anchorJson = new JSONObject();
-        anchorJson.put("x", round3(anchorSnapshot[0]));
-        anchorJson.put("y", round3(anchorSnapshot[1]));
-        anchorJson.put("z", round3(anchorSnapshot[2]));
-        root.put("anchorCenter", anchorJson);
-
-        final JSONArray pointsArr = new JSONArray();
-        for (float[] p : voxelSnapshot) {
-            final JSONArray pt = new JSONArray();
-            pt.put(round3(p[0]));
-            pt.put(round3(p[1]));
-            pt.put(round3(p[2]));
-            pointsArr.put(pt);
-        }
-        root.put("pointsM", pointsArr);
-
-        final JSONArray groundArr = new JSONArray();
-        for (float[] g : groundSnapshot) {
-            final JSONArray pt = new JSONArray();
-            pt.put(round3(g[0]));
-            pt.put(round3(g[1]));
-            pt.put(round3(g[2]));
-            groundArr.put(pt);
-        }
-        root.put("groundSamplesM", groundArr);
-
-        final JSONArray kfArr = new JSONArray();
-        for (KeyframeMeta meta : keyframeSnapshot) {
-            final File photoFile = new File(meta.photoPath);
-            if (!photoFile.exists() || photoFile.length() <= 0L) {
-                continue;
-            }
-            final JSONObject kfJson = new JSONObject();
-            kfJson.put("index", meta.index);
-            kfJson.put("angleDeg", meta.angleDeg);
-            kfJson.put("blurScore", meta.blurScore);
-            kfJson.put("photoPath", meta.photoPath);
-            kfArr.put(kfJson);
-        }
-        root.put("keyframes", kfArr);
-
-        return root;
-    }
-
-    private void finalizeAndReturnCalibration(final float measuredDistanceM, final float scaleFactor) {
-        final long calibratedAt = System.currentTimeMillis();
-        final float planeNoiseRms;
-        final float pitchDeg;
-        final float rollDeg;
-        synchronized (stateLock) {
-            planeNoiseRms = calPlaneNoiseRmsM;
-            pitchDeg = calImuPitchOffsetDeg;
-            rollDeg = calImuRollOffsetDeg;
-        }
-
-        getSharedPreferences(PREFS_CALIBRATION_NAME, Context.MODE_PRIVATE)
-            .edit()
-            .putBoolean("calibrated", true)
-            .putFloat("scaleFactor", scaleFactor)
-            .putFloat("referenceDistanceM", CAL_REFERENCE_DISTANCE_M)
-            .putFloat("measuredDistanceM", measuredDistanceM)
-            .putFloat("planeNoiseRmsM", planeNoiseRms)
-            .putFloat("imuPitchOffsetDeg", pitchDeg)
-            .putFloat("imuRollOffsetDeg", rollDeg)
-            .putLong("calibratedAt", calibratedAt)
-            .commit();
-
-        try {
-            final JSONObject payload = new JSONObject();
-            payload.put("calibrated", true);
-            payload.put("scaleFactor", round4(scaleFactor));
-            payload.put("referenceDistanceM", round2(CAL_REFERENCE_DISTANCE_M));
-            payload.put("measuredDistanceM", round4(measuredDistanceM));
-            payload.put("planeNoiseRmsM", round4(planeNoiseRms));
-            payload.put("imuPitchOffsetDeg", round2(pitchDeg));
-            payload.put("imuRollOffsetDeg", round2(rollDeg));
-            payload.put("calibratedAt", calibratedAt);
-
-            final File resultFile = new File(getCacheDir(), scanId + "_calibration.json");
-            try (FileOutputStream fos = new FileOutputStream(resultFile)) {
-                fos.write(payload.toString().getBytes(StandardCharsets.UTF_8));
-                fos.flush();
-            }
-
-            final Intent resultIntent = new Intent();
-            resultIntent.putExtra(EXTRA_RESULT_FILE_PATH, resultFile.getAbsolutePath());
-            setResult(RESULT_OK, resultIntent);
-            finish();
-        } catch (Exception e) {
-            setResult(RESULT_CANCELED);
-            finish();
-        }
-    }
-
-    private void updateHudThrottled(final boolean force) {
-        final long now = System.currentTimeMillis();
-        if (!force && (now - lastUiUpdateAtMs) < 120L) {
-            return;
-        }
-        lastUiUpdateAtMs = now;
-        runOnUiThread(() -> updateHudFromState(false));
-    }
-
-    private void updateHudFromState(final boolean ignoreFinishing) {
-        final FlowStep step;
-        final boolean isTracking;
-        final boolean hasHit;
-        final float radiusPreview;
-        final float calDistPreview;
-        final boolean[] sectorsSnapshot = new boolean[SECTOR_COUNT];
-        final int covered;
-        final int ptsCount;
-        final long nowMs = System.currentTimeMillis();
-        final boolean showSlowWarning;
-        final boolean showAimWarning;
-
-        synchronized (stateLock) {
-            if (!ignoreFinishing && finishing) {
-                return;
-            }
-            step = currentStep;
-            isTracking = lastTrackingState == TrackingState.TRACKING;
-            hasHit = latestTargetHit != null;
-            radiusPreview = liveMeasuredRadiusM;
-            calDistPreview = liveCalDistanceM;
-            System.arraycopy(visitedSectors, 0, sectorsSnapshot, 0, SECTOR_COUNT);
-            covered = sectorsCovered;
-            ptsCount = voxelGrid.size();
-            showSlowWarning = (nowMs - lastBlurWarningAtMs) < 1800L;
-            showAimWarning = (nowMs - lastTargetPromptAtMs) < 1800L || !isTracking;
-        }
-
-        switch (step) {
-            case STEP_CENTER:
-                stepTitleText.setText("1/3 · APUNTA AL CENTRO DEL ACOPIO");
-                liveMetricText.setVisibility(View.GONE);
-                sectorBlocksRow.setVisibility(View.GONE);
-                crosshairView.setAccentColor(hasHit ? COLOR_CYAN : COLOR_COPPER);
-                primaryActionButton.setEnabled(true);
-                primaryActionButton.setText("MARCAR CENTRO");
-                primaryActionButton.setBackgroundColor(COLOR_COPPER);
-                primaryActionButton.setTextColor(Color.BLACK);
-                showExceptionIfAny(showAimWarning ? "APUNTA AL ACOPIO" : null);
-                break;
-
-            case STEP_EDGE:
-                stepTitleText.setText("2/3 · APUNTA AL BORDE DEL ACOPIO");
-                liveMetricText.setVisibility(View.VISIBLE);
-                liveMetricText.setText(
-                    radiusPreview > 0.0f
-                        ? String.format(Locale.US, "RADIO: %.2f m", clamp(radiusPreview, MIN_ROI_RADIUS_M, MAX_ROI_RADIUS_M))
-                        : "RADIO: --.-- m"
-                );
-                liveMetricText.setTextColor(radiusPreview > 0.0f ? COLOR_CYAN : COLOR_WHITE);
-                sectorBlocksRow.setVisibility(View.GONE);
-                crosshairView.setAccentColor(hasHit ? COLOR_CYAN : COLOR_COPPER);
-                primaryActionButton.setEnabled(true);
-                primaryActionButton.setText("MARCAR BORDE");
-                primaryActionButton.setBackgroundColor(COLOR_COPPER);
-                primaryActionButton.setTextColor(Color.BLACK);
-                showExceptionIfAny(showAimWarning ? "APUNTA AL ACOPIO" : null);
-                break;
-
-            case STEP_WALK:
-                stepTitleText.setText("3/3 · CAMINA ALREDEDOR DESPACIO");
-                liveMetricText.setVisibility(View.GONE);
-                sectorBlocksRow.setVisibility(View.VISIBLE);
-                for (int i = 0; i < SECTOR_COUNT; i++) {
-                    sectorBlocks[i].setBackgroundColor(sectorsSnapshot[i] ? COLOR_CYAN : COLOR_GRAY_IDLE);
-                }
-                crosshairView.setAccentColor(isTracking ? COLOR_WHITE : COLOR_COPPER);
-
-                final boolean canFinish = (covered >= 5) || (covered >= 3 && ptsCount >= 120);
-                final boolean optimalCoverage = covered >= 6;
-                primaryActionButton.setEnabled(canFinish);
-                primaryActionButton.setText("TERMINAR MEDICIÓN");
-                if (!canFinish) {
-                    primaryActionButton.setBackgroundColor(COLOR_GRAY_IDLE);
-                    primaryActionButton.setTextColor(COLOR_MUTED);
-                } else {
-                    primaryActionButton.setBackgroundColor(optimalCoverage ? COLOR_CYAN : COLOR_COPPER);
-                    primaryActionButton.setTextColor(Color.BLACK);
-                }
-
-                if (showSlowWarning) {
-                    showExceptionIfAny("MUÉVETE MÁS LENTO");
-                } else if (!isTracking) {
-                    showExceptionIfAny("APUNTA AL ACOPIO");
-                } else {
-                    showExceptionIfAny(null);
-                }
-                break;
-
-            case CAL_FLOOR:
-                stepTitleText.setText("1/3 · APUNTA AL SUELO PLANO SIN MOVERTE");
-                liveMetricText.setVisibility(View.GONE);
-                sectorBlocksRow.setVisibility(View.GONE);
-                crosshairView.setAccentColor(isTracking ? COLOR_CYAN : COLOR_COPPER);
-                primaryActionButton.setEnabled(false);
-                primaryActionButton.setText("ANALIZANDO SUELO...");
-                primaryActionButton.setBackgroundColor(COLOR_GRAY_IDLE);
-                primaryActionButton.setTextColor(COLOR_WHITE);
-                showExceptionIfAny(!isTracking ? "APUNTA AL SUELO PLANO" : null);
-                break;
-
-            case CAL_FLOOR_ERROR:
-                stepTitleText.setText("1/3 · APUNTA AL SUELO PLANO SIN MOVERTE");
-                liveMetricText.setVisibility(View.GONE);
-                sectorBlocksRow.setVisibility(View.GONE);
-                crosshairView.setAccentColor(COLOR_COPPER);
-                primaryActionButton.setEnabled(true);
-                primaryActionButton.setText("REINTENTAR");
-                primaryActionButton.setBackgroundColor(COLOR_COPPER);
-                primaryActionButton.setTextColor(Color.BLACK);
-                showExceptionIfAny("LENTE SUCIO O POCA LUZ");
-                break;
-
-            case CAL_START:
-                stepTitleText.setText("2/3 · APUNTA AL 0.00 m DE LA HUINCHA");
-                liveMetricText.setVisibility(View.GONE);
-                sectorBlocksRow.setVisibility(View.GONE);
-                crosshairView.setAccentColor(hasHit ? COLOR_CYAN : COLOR_COPPER);
-                primaryActionButton.setEnabled(true);
-                primaryActionButton.setText("MARCAR 0.00 m");
-                primaryActionButton.setBackgroundColor(COLOR_COPPER);
-                primaryActionButton.setTextColor(Color.BLACK);
-                showExceptionIfAny(showAimWarning ? "APUNTA AL SUELO" : null);
-                break;
-
-            case CAL_END:
-                stepTitleText.setText("3/3 · APUNTA A LOS 2.00 m DE LA HUINCHA");
-                liveMetricText.setVisibility(View.VISIBLE);
-                liveMetricText.setText(
-                    calDistPreview > 0.0f
-                        ? String.format(Locale.US, "DISTANCIA: %.2f m", calDistPreview)
-                        : "DISTANCIA: --.-- m"
-                );
-                liveMetricText.setTextColor(calDistPreview > 0.0f ? COLOR_CYAN : COLOR_WHITE);
-                sectorBlocksRow.setVisibility(View.GONE);
-                crosshairView.setAccentColor(hasHit ? COLOR_CYAN : COLOR_COPPER);
-                primaryActionButton.setEnabled(true);
-                primaryActionButton.setText("MARCAR 2.00 m");
-                primaryActionButton.setBackgroundColor(COLOR_COPPER);
-                primaryActionButton.setTextColor(Color.BLACK);
-                showExceptionIfAny(showAimWarning ? "APUNTA AL SUELO" : null);
-                break;
-
-            case CAL_RANGE_ERROR:
-                stepTitleText.setText("3/3 · APUNTA A LOS 2.00 m DE LA HUINCHA");
-                liveMetricText.setVisibility(View.GONE);
-                sectorBlocksRow.setVisibility(View.GONE);
-                crosshairView.setAccentColor(COLOR_COPPER);
-                primaryActionButton.setEnabled(true);
-                primaryActionButton.setText("REINTENTAR");
-                primaryActionButton.setBackgroundColor(COLOR_COPPER);
-                primaryActionButton.setTextColor(Color.BLACK);
-                showExceptionIfAny("DISTANCIA FUERA DE RANGO — REPITE LOS 2 PUNTOS");
-                break;
-        }
-    }
-
-    private void showExceptionIfAny(final String message) {
-        if (message == null || message.isEmpty()) {
-            exceptionBannerText.setVisibility(View.GONE);
-        } else {
-            exceptionBannerText.setText(message);
-            exceptionBannerText.setVisibility(View.VISIBLE);
-        }
+    private static float[] poseToRowMajorRotation3x3(final Pose pose) {
+        final float[] m = new float[16];
+        pose.toMatrix(m, 0); // column-major OpenGL 4x4
+        return new float[] {
+            m[0], m[4], m[8],
+            m[1], m[5], m[9],
+            m[2], m[6], m[10]
+        };
     }
 
     private void triggerShortHaptic() {
@@ -2103,9 +2239,7 @@ public class MinreportSpatialScannerActivity
                     final Integer facing = chars.get(CameraCharacteristics.LENS_FACING);
                     if (facing != null && facing == CameraCharacteristics.LENS_FACING_BACK) {
                         final Integer sensorOrientation = chars.get(CameraCharacteristics.SENSOR_ORIENTATION);
-                        if (sensorOrientation != null) {
-                            return sensorOrientation;
-                        }
+                        if (sensorOrientation != null) return sensorOrientation;
                     }
                 }
             }
@@ -2114,8 +2248,8 @@ public class MinreportSpatialScannerActivity
         return 90;
     }
 
-    private static float clamp(final float val, final float minVal, final float maxVal) {
-        return Math.max(minVal, Math.min(maxVal, val));
+    private static float clamp(final float v, final float min, final float max) {
+        return Math.max(min, Math.min(max, v));
     }
 
     private static float dist3D(final float[] a, final float[] b) {
@@ -2125,14 +2259,16 @@ public class MinreportSpatialScannerActivity
         return (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
     }
 
-    private static double computeSectorAngleDeg(final float[] camPos, final float[] center) {
-        final double dx = camPos[0] - center[0];
-        final double dz = camPos[2] - center[2];
+    private static double computeSectorAngleDeg(final float[] camPos, final float[] centerXZ) {
+        final double dx = camPos[0] - centerXZ[0];
+        final double dz = camPos[2] - centerXZ[1];
         double deg = Math.toDegrees(Math.atan2(dz, dx));
-        if (deg < 0.0) {
-            deg += 360.0;
-        }
+        if (deg < 0.0) deg += 360.0;
         return deg;
+    }
+
+    private static float round1f(final float val) {
+        return Math.round(val * 10.0f) / 10.0f;
     }
 
     private static double round1(final double val) {
@@ -2149,6 +2285,10 @@ public class MinreportSpatialScannerActivity
 
     private static double round4(final double val) {
         return Math.round(val * 10000.0) / 10000.0;
+    }
+
+    private static double round5(final double val) {
+        return Math.round(val * 100000.0) / 100000.0;
     }
 
     private int dp(final int value) {
