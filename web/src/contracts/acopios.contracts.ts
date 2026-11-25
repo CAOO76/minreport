@@ -272,7 +272,7 @@ export function normalizeWalkRingPoseToXyz(pose: WalkRingPose): NormalizedWalkRi
     if (Array.isArray(pose)) {
         return { x: pose[0], y: pose[1], z: pose[2] };
     }
-    if ('t' in pose && Array.isArray(pose.t)) {
+    if ('t' in pose) {
         return {
             x: pose.t[0],
             y: pose.t[1],

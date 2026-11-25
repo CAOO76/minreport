@@ -1676,7 +1676,7 @@ class SyncQueueEngine {
                             ? { mesh_source: resBody.meshSource ?? resBody.mesh_source }
                             : {}),
                         ...(typeof (resBody?.tinVolumeM3 ?? resBody?.tin_volume_m3) === 'number'
-                            ? { tin_volume_m3: resBody.tinVolumeM3 ?? resBody.tin_volume_m3 }
+                            ? { tin_volume_m3: resBody?.tinVolumeM3 ?? resBody?.tin_volume_m3 }
                             : {}),
                         ...(resBody?.boundingBoxM || resBody?.mesh_bounding_box_m
                             ? {

@@ -1,7 +1,5 @@
-import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
-import * as THREE from 'three';
 import {
     CaptureSessionPackageV2Schema,
     DemGridV1Schema,
@@ -634,10 +632,9 @@ describe('SyncQueueEngine — HTTP 422 -> REJECTED_METROLOGY + CAPTURE_SESSION_U
                 scope: 'TENANT_PRIVATE',
                 tenantId: session.tenantId,
                 filename: 'bundle.json',
-                extension: 'json',
                 originalBytes: bundleBlob.size,
                 optimizedBytes: bundleBlob.size,
-                createdAt: Date.now(),
+                updatedAt: Date.now(),
             },
         });
         vi.spyOn(offlineStorage, 'getCaptureSession').mockImplementation(async () => savedSession);
@@ -685,7 +682,17 @@ describe('SyncQueueEngine — HTTP 422 -> REJECTED_METROLOGY + CAPTURE_SESSION_U
                 headers: { 'Content-Type': 'model/gltf-binary' },
             });
         });
-        vi.spyOn(localCasFilesystem, 'cacheRemoteGlb').mockResolvedValue();
+        vi.spyOn(localCasFilesystem, 'cacheRemoteGlb').mockResolvedValue({
+            sha256: VALID_SHA_A,
+            mimeType: 'model/gltf-binary',
+            profile: 'MESH_3D_GLB',
+            scope: 'TENANT_PRIVATE',
+            tenantId: session.tenantId,
+            filename: `${VALID_SHA_A}.glb`,
+            originalBytes: 24,
+            optimizedBytes: 24,
+            updatedAt: Date.now(),
+        });
 
         const origFetch = globalThis.fetch;
         globalThis.fetch = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));

@@ -605,7 +605,9 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                 : 'CAPTURED_OFFLINE_VALID';
             const metrologyGrade: MetrologyGrade =
                 inSituMetrology?.metrologyGrade ?? 'VALID_IN_SITU';
-            const reconciliationStatus = hasCloudSpatial ? 'AUTO_CONCILIATED' : 'PENDING_CLOUD';
+            const reconciliationStatus: 'AUTO_CONCILIATED' | 'PENDING_CLOUD' = hasCloudSpatial
+                ? 'AUTO_CONCILIATED'
+                : 'PENDING_CLOUD';
             const analysisStatus: GeolappAnalysisStatus = 'AI_VERIFIED';
 
             const { density: resolvedDensity } = resolveEffectiveDensityFactor({

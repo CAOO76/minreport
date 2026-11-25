@@ -16,7 +16,6 @@ import { storage as firebaseStorage } from '../../../../config/firebase';
 import { mediaDigestorClient } from '../../../../core/media/MediaDigestorClient';
 import { coreAuthFetch } from '../../../../core/network/coreAuthFetch';
 import { localCasFilesystem } from '../../../../core/offline/LocalCasFilesystemService';
-import { offlineStorage } from '../../../../core/offline/OfflineStorage';
 import { syncQueueEngine } from '../../../../core/offline/SyncQueueEngine';
 
 export interface UploadOptions {
