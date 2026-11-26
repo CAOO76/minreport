@@ -29,6 +29,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.PowerManager;
+import android.os.SystemClock;
 import android.text.TextUtils;
 import android.util.DisplayMetrics;
 import android.util.Log;
@@ -74,7 +75,6 @@ import com.google.ar.core.exceptions.NotYetAvailableException;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
-import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -112,7 +112,7 @@ public class MinreportSpatialScannerActivity
     public static final String PREFS_CALIBRATION_NAME = "minreport_spatial_calibration";
 
     private static final String TAG = "MinreportSpatialScanner";
-    private static final String SCANNER_ENGINE_VERSION = "2.0.1-vio-mvs-java";
+    private static final String SCANNER_ENGINE_VERSION = "2.0.2-vio-mvs-java";
     private static final int KEYCODE_XCOVER_KEY = 1015;
     private static final int KEYCODE_XCOVER_TOP_KEY = 1079;
 
@@ -131,9 +131,8 @@ public class MinreportSpatialScannerActivity
     private static final float GYRO_EMA_ALPHA = 0.25f;
     private static final float SPEED_ALERT_GYRO_RAD_S = 0.75f;
     private static final float MAX_CAPTURE_GYRO_RAD_S = 1.10f;
-    private static final double BLUR_VARIANCE_THRESHOLD = 8.0;
-    private static final double BLUR_FALLBACK_THRESHOLD = 4.0;
-    private static final long BURST_WINDOW_MS = 220L;
+    private static final float LIVE_VISUAL_POINT_MIN_CONF = 0.1f;
+    private static final long CAPTURE_FLASH_DURATION_MS = 120L;
     private static final float LOCAL_GROUND_CLEARANCE_M = 0.55f;
 
     private static final float MIN_DEPTH_M = 0.25f;
@@ -149,6 +148,7 @@ public class MinreportSpatialScannerActivity
     private static final int COLOR_BG = 0xFF000000;
     private static final int COLOR_BORDER = 0xFF12151C;
     private static final int COLOR_BTN_WAITING_BG = 0xFF1E2430;
+    private static final int COLOR_BTN_RECORDING_BG = 0xFF14100D;
     private static final int COLOR_GRAY_IDLE = 0xFF2A2F3A;
     private static final int COLOR_CYAN = 0xFF00AEEF;
     private static final int COLOR_COPPER = 0xFFC68346;
@@ -452,6 +452,12 @@ public class MinreportSpatialScannerActivity
     private ImageView crownGuardIcon;
     private View toeBorderLine;
     private ImageView toeGuardIcon;
+    private View captureFlashBorderView;
+    private final Runnable hideCaptureFlashRunnable = () -> {
+        if (captureFlashBorderView != null) {
+            captureFlashBorderView.setVisibility(View.GONE);
+        }
+    };
 
     // Right rail HUD widgets (zero prose)
     private ImageButton closeButton;
@@ -509,20 +515,9 @@ public class MinreportSpatialScannerActivity
     private long lastLiveOverlaySolveAtMs = 0L;
     private final AtomicBoolean liveOverlayBusy = new AtomicBoolean(false);
 
-    // Best-of-Burst buffer
-    private boolean burstActive = false;
-    private long burstStartMs = 0L;
-    private double burstBestBlur = -1.0;
-    private byte[] burstBestNv21 = null;
-    private byte[] burstBestLumaSmall = null;
-    private int burstBestW = 0;
-    private int burstBestH = 0;
-    private float[] burstBestRwc = null;
-    private float[] burstBestTwc = null;
-    private float[] burstBestIntr = null; // fx, fy, cx, cy
-    private long burstBestTsNs = 0L;
-    private float burstBestPitch = 0.0f;
-    private float burstBestRoll = 0.0f;
+    // Atomic Best-of-Burst capture state machine (anti-deadlock + MediaTek GL fallback)
+    private final CapturePipelineHelper.BurstCaptureState burstState =
+        new CapturePipelineHelper.BurstCaptureState();
 
     // Optional calibration state
     private float[] latestCalHit = null;
@@ -873,6 +868,25 @@ public class MinreportSpatialScannerActivity
         toeIconParams.bottomMargin = dp(8);
         this.cameraContainer.addView(this.toeGuardIcon, toeIconParams);
 
+        // Cyan 2dp hairline flash border around 4:3 viewport on each keyframe commit (120 ms)
+        this.captureFlashBorderView = new View(this);
+        final GradientDrawable flashStroke = new GradientDrawable();
+        flashStroke.setShape(GradientDrawable.RECTANGLE);
+        flashStroke.setCornerRadius(0.0f);
+        flashStroke.setColor(Color.TRANSPARENT);
+        flashStroke.setStroke(dp(2), COLOR_CYAN);
+        this.captureFlashBorderView.setBackground(flashStroke);
+        this.captureFlashBorderView.setClickable(false);
+        this.captureFlashBorderView.setFocusable(false);
+        this.captureFlashBorderView.setVisibility(View.GONE);
+        this.cameraContainer.addView(
+            this.captureFlashBorderView,
+            new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        );
+
         root.addView(
             this.cameraContainer,
             new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 61.8f)
@@ -1078,13 +1092,13 @@ public class MinreportSpatialScannerActivity
             if (finishing) {
                 return;
             }
-            final long nowMs = System.currentTimeMillis();
+            final long nowMs = SystemClock.elapsedRealtime();
 
             if (currentStep == FlowStep.READY_TRACKING) {
                 if (lastTrackingState == TrackingState.TRACKING) {
                     pendingStartCapture = false;
                     currentStep = FlowStep.CAPTURING_WALK;
-                    resetWalkCaptureStateLocked();
+                    resetWalkCaptureStateLocked(nowMs);
                     hapticSuccess = true;
                 } else {
                     // Arm capture so it starts the exact millisecond ARCore locks TRACKING (zero lost taps)
@@ -1169,7 +1183,7 @@ public class MinreportSpatialScannerActivity
         }
     }
 
-    private void resetWalkCaptureStateLocked() {
+    private void resetWalkCaptureStateLocked(final long nowMs) {
         offlineEngine.reset();
         walkRingPoses.clear();
         savedKeyframes.clear();
@@ -1188,21 +1202,13 @@ public class MinreportSpatialScannerActivity
         lastKfPos = null;
         lastKfFwdXZ = null;
         lastVioPointCloudAtMs = 0L;
-        clearBurstLocked();
+        lastGroundSampleAtMs = 0L;
+        lastLiveOverlaySolveAtMs = 0L;
+        burstState.resetAll(nowMs);
         if (renderer != null) {
             renderer.clearLiveOverlay();
+            renderer.clearGlFallbackRequest();
         }
-    }
-
-    private void clearBurstLocked() {
-        burstActive = false;
-        burstStartMs = 0L;
-        burstBestBlur = -1.0;
-        burstBestNv21 = null;
-        burstBestLumaSmall = null;
-        burstBestRwc = null;
-        burstBestTwc = null;
-        burstBestIntr = null;
     }
 
     private void cancelAndExit() {
@@ -1236,6 +1242,7 @@ public class MinreportSpatialScannerActivity
 
         boolean fireShortPulse = false;
         boolean fireDoubleReadyPulse = false;
+        boolean fireCaptureFlash = false;
         boolean forceHud = false;
 
         synchronized (stateLock) {
@@ -1248,19 +1255,28 @@ public class MinreportSpatialScannerActivity
             if (trackingState != TrackingState.TRACKING) {
                 latestCalHit = null;
                 liveCalDistanceM = -1.0f;
+                if (renderer != null) {
+                    renderer.clearLiveTrackingVisuals();
+                }
                 updateHudThrottled(false);
                 return;
             }
 
-            final long nowMs = System.currentTimeMillis();
+            final long nowMs = SystemClock.elapsedRealtime();
 
             // Auto-transition immediately if operator pre-armed capture before ARCore locked TRACKING
             if (currentStep == FlowStep.READY_TRACKING && pendingStartCapture) {
                 pendingStartCapture = false;
                 currentStep = FlowStep.CAPTURING_WALK;
-                resetWalkCaptureStateLocked();
+                resetWalkCaptureStateLocked(nowMs);
                 fireShortPulse = true;
                 forceHud = true;
+            }
+
+            // Immediate 3D visual feedback from Frame 1 (both READY_TRACKING & CAPTURING_WALK, even at 0 KF)
+            if (currentStep == FlowStep.READY_TRACKING || currentStep == FlowStep.CAPTURING_WALK) {
+                updateLivePointCloudAndVioLocked(frame, nowMs, currentStep == FlowStep.CAPTURING_WALK);
+                updateLivePlaneOutlines(activeSession);
             }
 
             if (currentStep == FlowStep.CAL_FLOOR) {
@@ -1307,12 +1323,6 @@ public class MinreportSpatialScannerActivity
                     lastGroundSampleAtMs = nowMs;
                 }
 
-                // 2b. Feed high-confidence ARCore VIO feature points (conf >= 0.5f) into extraVioCloud
-                if (extraVioCloud.size() < MAX_EXTRA_VIO_POINTS && nowMs - lastVioPointCloudAtMs >= 250L) {
-                    collectVioPointCloudSamplesLocked(frame);
-                    lastVioPointCloudAtMs = nowMs;
-                }
-
                 // 3. Update live heading & recompute sector coverage whenever Auto-ROI center converges
                 final float[] autoCenter = WalkRingToeSolver.estimateAutoCenterXZ(walkRingPoses, extraVioCloud);
                 if (
@@ -1340,25 +1350,28 @@ public class MinreportSpatialScannerActivity
                 final float stepThreshM = clamp(0.14f * rEst, MIN_KF_STEP_M, MAX_KF_STEP_M);
                 final boolean kfTriggered = shouldTriggerKeyframe(camPos, fwdX, fwdZ, stepThreshM);
 
-                if (savedKeyframes.size() < MAX_KEYFRAME_PHOTOS && (kfTriggered || burstActive)) {
-                    if (!burstActive) {
-                        burstActive = true;
-                        burstStartMs = nowMs;
-                        burstBestBlur = -1.0;
-                    }
+                if (savedKeyframes.size() < MAX_KEYFRAME_PHOTOS && (kfTriggered || burstState.isActive())) {
+                    burstState.beginBurstIfNeeded(nowMs);
                     evaluateBurstCandidateLocked(frame, camera, camPose, nowMs);
 
-                    final boolean burstFinished =
-                        (nowMs - burstStartMs >= BURST_WINDOW_MS) ||
-                        (burstBestBlur >= BLUR_VARIANCE_THRESHOLD * 2.2 && liveGyroNormRadS < SPEED_ALERT_GYRO_RAD_S);
-                    if (burstFinished) {
+                    if (burstState.shouldRequestGlFallback() && renderer != null) {
+                        renderer.requestGlFallbackFrame();
+                    }
+
+                    if (burstState.isBurstFinished(nowMs, liveGyroNormRadS, SPEED_ALERT_GYRO_RAD_S)) {
                         final boolean committed = commitBestBurstKeyframeLocked(curSector, liveHeadingDeg, nowMs);
-                        clearBurstLocked();
                         if (committed) {
                             fireShortPulse = true;
+                            fireCaptureFlash = true;
+                            forceHud = true;
                             maybeScheduleLiveOverlayRefreshLocked(nowMs);
                         }
                     }
+                }
+
+                // 5. Periodic 3D DEM overlay refresh every 650 ms even before next KF commits
+                if (extraVioCloud.size() >= 20) {
+                    maybeScheduleLiveOverlayRefreshLocked(nowMs);
                 }
 
                 if (liveGyroNormRadS > SPEED_ALERT_GYRO_RAD_S) {
@@ -1373,6 +1386,9 @@ public class MinreportSpatialScannerActivity
             }
         }
 
+        if (fireCaptureFlash) {
+            mainHandler.post(this::triggerCaptureFlash);
+        }
         if (fireShortPulse) {
             mainHandler.post(this::triggerShortHaptic);
         }
@@ -1386,26 +1402,122 @@ public class MinreportSpatialScannerActivity
         }
     }
 
-    private void collectVioPointCloudSamplesLocked(final Frame frame) {
+    private void updateLivePointCloudAndVioLocked(
+        final Frame frame,
+        final long nowMs,
+        final boolean collectMetrologicalVio
+    ) {
         try (PointCloud pc = frame.acquirePointCloud()) {
             final FloatBuffer pts = pc.getPoints();
             if (pts == null) {
                 return;
             }
-            final int limit = pts.limit();
-            for (int i = 0; i + 3 < limit && extraVioCloud.size() < MAX_EXTRA_VIO_POINTS; i += 4) {
-                final float conf = pts.get(i + 3);
-                if (conf >= 0.5f) {
-                    final float px = pts.get(i);
-                    final float py = pts.get(i + 1);
-                    final float pz = pts.get(i + 2);
-                    if (Float.isFinite(px) && Float.isFinite(py) && Float.isFinite(pz)) {
-                        extraVioCloud.add(new float[] { px, py, pz, conf });
+            // Immediate live visual feedback (conf >= 0.1f, cap 1024 points, visible from Frame 1 / 0 KF)
+            if (renderer != null) {
+                final float[] visualVerts = CapturePipelineHelper.extractVisualPointCloudVertices(
+                    pts,
+                    LIVE_VISUAL_POINT_MIN_CONF,
+                    Live3DOverlayRenderer.MAX_LIVE_POINTS
+                );
+                renderer.updateLivePointCloud(visualVerts);
+            }
+
+            // High-confidence VIO points (conf >= 0.5f) reserved strictly for metrology
+            if (
+                collectMetrologicalVio &&
+                extraVioCloud.size() < MAX_EXTRA_VIO_POINTS &&
+                (nowMs - lastVioPointCloudAtMs) >= 250L
+            ) {
+                final int limit = pts.limit();
+                for (int i = 0; i + 3 < limit && extraVioCloud.size() < MAX_EXTRA_VIO_POINTS; i += 4) {
+                    final float conf = pts.get(i + 3);
+                    if (conf >= 0.5f) {
+                        final float px = pts.get(i);
+                        final float py = pts.get(i + 1);
+                        final float pz = pts.get(i + 2);
+                        if (Float.isFinite(px) && Float.isFinite(py) && Float.isFinite(pz)) {
+                            extraVioCloud.add(new float[] { px, py, pz, conf });
+                        }
                     }
                 }
+                lastVioPointCloudAtMs = nowMs;
             }
         } catch (Throwable t) {
             Log.w(TAG, "Failed to sample ARCore VIO point cloud", t);
+        }
+    }
+
+    private void updateLivePlaneOutlines(final Session activeSession) {
+        if (renderer == null) {
+            return;
+        }
+        try {
+            final List<Float> segs = new ArrayList<>(128);
+            final float[] localPt = new float[3];
+            final float[] worldPt = new float[3];
+            final float[] prevPt = new float[3];
+            final float[] firstPt = new float[3];
+
+            for (Plane plane : activeSession.getAllTrackables(Plane.class)) {
+                if (
+                    plane.getTrackingState() != TrackingState.TRACKING ||
+                    plane.getSubsumedBy() != null ||
+                    plane.getType() != Plane.Type.HORIZONTAL_UPWARD_FACING
+                ) {
+                    continue;
+                }
+                final FloatBuffer poly = plane.getPolygon();
+                final int limit = poly != null ? poly.limit() : 0;
+                if (limit < 6) {
+                    continue;
+                }
+                final Pose centerPose = plane.getCenterPose();
+                boolean hasPrev = false;
+                for (int i = 0; i + 1 < limit; i += 2) {
+                    localPt[0] = poly.get(i);
+                    localPt[1] = 0.0f;
+                    localPt[2] = poly.get(i + 1);
+                    centerPose.transformPoint(localPt, 0, worldPt, 0);
+                    if (!hasPrev) {
+                        firstPt[0] = worldPt[0];
+                        firstPt[1] = worldPt[1];
+                        firstPt[2] = worldPt[2];
+                        prevPt[0] = worldPt[0];
+                        prevPt[1] = worldPt[1];
+                        prevPt[2] = worldPt[2];
+                        hasPrev = true;
+                    } else {
+                        segs.add(prevPt[0]);
+                        segs.add(prevPt[1]);
+                        segs.add(prevPt[2]);
+                        segs.add(worldPt[0]);
+                        segs.add(worldPt[1]);
+                        segs.add(worldPt[2]);
+                        prevPt[0] = worldPt[0];
+                        prevPt[1] = worldPt[1];
+                        prevPt[2] = worldPt[2];
+                    }
+                }
+                if (hasPrev) {
+                    segs.add(prevPt[0]);
+                    segs.add(prevPt[1]);
+                    segs.add(prevPt[2]);
+                    segs.add(firstPt[0]);
+                    segs.add(firstPt[1]);
+                    segs.add(firstPt[2]);
+                }
+            }
+            if (segs.isEmpty()) {
+                renderer.updateLivePlaneOutlines(null);
+            } else {
+                final float[] out = new float[segs.size()];
+                for (int i = 0; i < segs.size(); i++) {
+                    out[i] = segs.get(i);
+                }
+                renderer.updateLivePlaneOutlines(out);
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "Failed to update live plane outline overlay", t);
         }
     }
 
@@ -1459,59 +1571,183 @@ public class MinreportSpatialScannerActivity
         final Pose camPose,
         final long nowMs
     ) {
+        final ArCoreCameraRenderer.GlFallbackFrame glFallback =
+            renderer != null ? renderer.consumeGlFallbackFrame() : null;
+
         if (liveGyroNormRadS > MAX_CAPTURE_GYRO_RAD_S) {
             lastSpeedAlertAtMs = nowMs;
+            burstState.recordNonAcquireDiag(CapturePipelineHelper.DIAG_GYR);
             return;
         }
+
+        boolean acquiredPrimary = false;
         try (Image camImg = frame.acquireCameraImage()) {
             if (camImg.getFormat() != ImageFormat.YUV_420_888) {
-                return;
+                burstState.recordNonAcquireDiag(CapturePipelineHelper.DIAG_FMT);
+            } else {
+                acquiredPrimary = true;
+                final int w = camImg.getWidth();
+                final int h = camImg.getHeight();
+                final Image.Plane[] planes = camImg.getPlanes();
+                final byte[] nv21 = CapturePipelineHelper.extractNv21FromPlanes(
+                    planes[0].getBuffer(),
+                    planes[0].getRowStride(),
+                    planes[0].getPixelStride(),
+                    planes[1].getBuffer(),
+                    planes[1].getRowStride(),
+                    planes[1].getPixelStride(),
+                    planes[2].getBuffer(),
+                    planes[2].getRowStride(),
+                    planes[2].getPixelStride(),
+                    w,
+                    h
+                );
+                final double blurScore = CapturePipelineHelper.computeLaplacianVarianceFromY(nv21, w, h);
+                if (blurScore < CapturePipelineHelper.BLUR_VARIANCE_THRESHOLD) {
+                    rejectedBlurCount++;
+                    if (blurScore < CapturePipelineHelper.BLUR_LOW_THRESHOLD) {
+                        lastSpeedAlertAtMs = nowMs;
+                    }
+                }
+                if (burstState.shouldEvaluateScore(blurScore)) {
+                    burstState.tryAcceptCandidate(blurScore, nowMs, () -> {
+                        final byte[] lumaSmall = CapturePipelineHelper.downscaleLumaFromNv21(
+                            nv21,
+                            w,
+                            h,
+                            MVS_LUMA_W,
+                            MVS_LUMA_H
+                        );
+                        final float[] rWc = poseToRowMajorRotation3x3(camPose);
+                        final float[] tWc = camPose.getTranslation();
+                        final float[] intr = resolveCameraIntrinsicsLocked(camera, w, h, false);
+                        return new CapturePipelineHelper.BurstCandidate(
+                            blurScore,
+                            nv21,
+                            lumaSmall,
+                            w,
+                            h,
+                            rWc,
+                            tWc,
+                            intr,
+                            frame.getTimestamp(),
+                            liveImuPitchDeg,
+                            liveImuRollDeg,
+                            false
+                        );
+                    });
+                } else {
+                    burstState.recordAcquireSuccess();
+                }
             }
-            final double blurScore = computeLaplacianVarianceStep2(camImg);
-            if (blurScore < BLUR_FALLBACK_THRESHOLD) {
-                rejectedBlurCount++;
-                lastSpeedAlertAtMs = nowMs;
-                return;
-            }
-            if (blurScore < BLUR_VARIANCE_THRESHOLD) {
-                rejectedBlurCount++;
-                // Allow best-of-burst fallback (>= 4.0) if no sharper frame (>= 8.0) arrives in 220 ms
-            }
-            if (blurScore <= burstBestBlur) {
-                return;
-            }
-
-            final int w = camImg.getWidth();
-            final int h = camImg.getHeight();
-            final CameraIntrinsics intr = camera.getImageIntrinsics();
-            final float[] focal = intr.getFocalLength();
-            final float[] principal = intr.getPrincipalPoint();
-            final int[] intrDims = intr.getImageDimensions();
-            if (intrDims[0] <= 0 || intrDims[1] <= 0) {
-                return;
-            }
-            final float sx = w / (float) intrDims[0];
-            final float sy = h / (float) intrDims[1];
-
-            burstBestBlur = blurScore;
-            burstBestW = w;
-            burstBestH = h;
-            burstBestNv21 = extractNv21Bytes(camImg);
-            burstBestLumaSmall = extractDownscaledLuma(camImg, MVS_LUMA_W, MVS_LUMA_H);
-            burstBestRwc = poseToRowMajorRotation3x3(camPose);
-            burstBestTwc = camPose.getTranslation();
-            burstBestIntr = new float[] { focal[0] * sx, focal[1] * sy, principal[0] * sx, principal[1] * sy };
-            burstBestTsNs = frame.getTimestamp();
-            burstBestPitch = liveImuPitchDeg;
-            burstBestRoll = liveImuRollDeg;
         } catch (NotYetAvailableException ignored) {
+            burstState.recordAcquireFailure(CapturePipelineHelper.DIAG_NYA, nowMs);
         } catch (Throwable t) {
             Log.w(TAG, "Failed to evaluate keyframe burst candidate", t);
+            burstState.recordAcquireFailure(CapturePipelineHelper.DIAG_ERR, nowMs);
+        }
+
+        // Anti-HAL MediaTek GL Readback fallback: guarantees commit even if acquireCameraImage() fails 100%
+        if (
+            !acquiredPrimary &&
+            glFallback != null &&
+            glFallback.rgbaBytes != null &&
+            glFallback.width > 0 &&
+            glFallback.height > 0
+        ) {
+            try {
+                final int w = glFallback.width;
+                final int h = glFallback.height;
+                final byte[] nv21 = CapturePipelineHelper.rgbToNv21(glFallback.rgbaBytes, w, h);
+                final double blurScore = CapturePipelineHelper.computeLaplacianVarianceFromY(nv21, w, h);
+                if (burstState.shouldEvaluateScore(blurScore)) {
+                    burstState.tryAcceptCandidate(blurScore, nowMs, () -> {
+                        final byte[] lumaSmall = CapturePipelineHelper.downscaleLumaFromNv21(
+                            nv21,
+                            w,
+                            h,
+                            MVS_LUMA_W,
+                            MVS_LUMA_H
+                        );
+                        final float[] rWc = poseToRowMajorRotation3x3(camPose);
+                        final float[] tWc = camPose.getTranslation();
+                        final float[] intr = resolveCameraIntrinsicsLocked(camera, w, h, true);
+                        return new CapturePipelineHelper.BurstCandidate(
+                            blurScore,
+                            nv21,
+                            lumaSmall,
+                            w,
+                            h,
+                            rWc,
+                            tWc,
+                            intr,
+                            frame.getTimestamp(),
+                            liveImuPitchDeg,
+                            liveImuRollDeg,
+                            true
+                        );
+                    });
+                }
+            } catch (Throwable t) {
+                Log.w(TAG, "Failed to process GL fallback keyframe candidate", t);
+                burstState.recordNonAcquireDiag(CapturePipelineHelper.DIAG_ERR);
+            }
         }
     }
 
+    private float[] resolveCameraIntrinsicsLocked(
+        final Camera camera,
+        final int targetW,
+        final int targetH,
+        final boolean preferTexture
+    ) {
+        float[] imgFocal = null;
+        float[] imgPrincipal = null;
+        int[] imgDims = null;
+        float[] texFocal = null;
+        float[] texPrincipal = null;
+        int[] texDims = null;
+
+        try {
+            final CameraIntrinsics imgIntr = camera.getImageIntrinsics();
+            if (imgIntr != null) {
+                imgFocal = imgIntr.getFocalLength();
+                imgPrincipal = imgIntr.getPrincipalPoint();
+                imgDims = imgIntr.getImageDimensions();
+            }
+        } catch (Throwable ignored) {
+        }
+        try {
+            final CameraIntrinsics texIntr = camera.getTextureIntrinsics();
+            if (texIntr != null) {
+                texFocal = texIntr.getFocalLength();
+                texPrincipal = texIntr.getPrincipalPoint();
+                texDims = texIntr.getImageDimensions();
+            }
+        } catch (Throwable ignored) {
+        }
+
+        final int[] primaryDims = preferTexture ? texDims : imgDims;
+        if (primaryDims == null || primaryDims.length < 2 || primaryDims[0] <= 0 || primaryDims[1] <= 0) {
+            burstState.recordNonAcquireDiag(CapturePipelineHelper.DIAG_INT);
+        }
+
+        return preferTexture
+            ? CapturePipelineHelper.resolveSafeIntrinsics(
+                texFocal, texPrincipal, texDims,
+                imgFocal, imgPrincipal, imgDims,
+                targetW, targetH
+            )
+            : CapturePipelineHelper.resolveSafeIntrinsics(
+                imgFocal, imgPrincipal, imgDims,
+                texFocal, texPrincipal, texDims,
+                targetW, targetH
+            );
+    }
+
     private boolean commitBestBurstKeyframeLocked(final int sector, final double angleDeg, final long nowMs) {
-        if (burstBestNv21 == null || burstBestLumaSmall == null || burstBestRwc == null || burstBestTwc == null) {
+        final CapturePipelineHelper.BurstCandidate winner = burstState.consumeCommittedCandidate();
+        if (winner == null || !winner.isComplete()) {
             return false;
         }
 
@@ -1522,36 +1758,38 @@ public class MinreportSpatialScannerActivity
         );
 
         // Compute scaled intrinsics matching the saved unrotated WebP dimensions
-        final float outScale = Math.min(1.0f, MAX_PHOTO_DIMENSION_PX / (float) Math.max(burstBestW, burstBestH));
-        final int outW = Math.max(1, Math.round(burstBestW * outScale));
-        final int outH = Math.max(1, Math.round(burstBestH * outScale));
-        final float fxOut = burstBestIntr[0] * (outW / (float) burstBestW);
-        final float fyOut = burstBestIntr[1] * (outH / (float) burstBestH);
-        final float cxOut = burstBestIntr[2] * (outW / (float) burstBestW);
-        final float cyOut = burstBestIntr[3] * (outH / (float) burstBestH);
+        final float outScale = Math.min(1.0f, MAX_PHOTO_DIMENSION_PX / (float) Math.max(winner.width, winner.height));
+        final int outW = Math.max(1, Math.round(winner.width * outScale));
+        final int outH = Math.max(1, Math.round(winner.height * outScale));
+        final float fxOut = winner.intr[0] * (outW / (float) winner.width);
+        final float fyOut = winner.intr[1] * (outH / (float) winner.height);
+        final float cxOut = winner.intr[2] * (outW / (float) winner.width);
+        final float cyOut = winner.intr[3] * (outH / (float) winner.height);
 
-        final int displayRotDeg = (rearSensorOrientation - (renderer != null ? renderer.getDisplayRotationDegrees() : 90) + 360) % 360;
+        final int displayRotDeg = winner.fromGlFallback
+            ? 0
+            : (rearSensorOrientation - (renderer != null ? renderer.getDisplayRotationDegrees() : 90) + 360) % 360;
 
         final KeyframeRecord rec = new KeyframeRecord(
             kfIndex,
             round1(angleDeg),
-            round1(burstBestBlur),
+            round1(winner.blurScore),
             photoFile.getAbsolutePath(),
             displayRotDeg,
-            burstBestTsNs,
-            round1f(burstBestPitch),
-            round1f(burstBestRoll),
-            burstBestRwc,
-            burstBestTwc,
+            winner.timestampNs,
+            round1f(winner.pitchDeg),
+            round1f(winner.rollDeg),
+            winner.rWc,
+            winner.tWc,
             fxOut, fyOut, cxOut, cyOut,
             outW, outH,
-            burstBestNv21.length
+            winner.nv21.length
         );
         savedKeyframes.add(rec);
 
-        lastKfPos = Arrays.copyOf(burstBestTwc, 3);
-        final float fxDir = -burstBestRwc[2];
-        final float fzDir = -burstBestRwc[8];
+        lastKfPos = Arrays.copyOf(winner.tWc, 3);
+        final float fxDir = -winner.rWc[2];
+        final float fzDir = -winner.rWc[8];
         final float fLen = (float) Math.hypot(fxDir, fzDir);
         lastKfFwdXZ = fLen > 1e-4f ? new float[] { fxDir / fLen, fzDir / fLen } : new float[] { 0.0f, -1.0f };
 
@@ -1562,28 +1800,28 @@ public class MinreportSpatialScannerActivity
         sectorStates[sector] = sectorKfCounts[sector] >= 2 ? 2 : 1;
 
         // 1. Save UNROTATED WebP off-thread + compute CAS sha256 & savingsPct
-        final byte[] nv21Copy = burstBestNv21;
-        final int srcW = burstBestW;
-        final int srcH = burstBestH;
+        final byte[] nv21Copy = winner.nv21;
+        final int srcW = winner.width;
+        final int srcH = winner.height;
         if (ioExecutor != null && !ioExecutor.isShutdown()) {
             ioExecutor.execute(() -> saveUnrotatedWebpWithCasStats(nv21Copy, srcW, srcH, outW, outH, photoFile, rec));
         }
 
         // 2. Feed 4:3 luma into incremental FAST+rBRIEF VIO triangulation off-thread (< 5 ms)
-        final float mvsScaleX = MVS_LUMA_W / (float) burstBestW;
-        final float mvsScaleY = MVS_LUMA_H / (float) burstBestH;
+        final float mvsScaleX = MVS_LUMA_W / (float) winner.width;
+        final float mvsScaleY = MVS_LUMA_H / (float) winner.height;
         final OfflineVioMvsEngine.KeyframeFrame mvsKf = new OfflineVioMvsEngine.KeyframeFrame(
             kfIndex,
             MVS_LUMA_W,
             MVS_LUMA_H,
-            burstBestLumaSmall,
-            burstBestIntr[0] * mvsScaleX,
-            burstBestIntr[1] * mvsScaleY,
-            burstBestIntr[2] * mvsScaleX,
-            burstBestIntr[3] * mvsScaleY,
-            burstBestRwc,
-            burstBestTwc,
-            burstBestTsNs
+            winner.lumaSmall,
+            winner.intr[0] * mvsScaleX,
+            winner.intr[1] * mvsScaleY,
+            winner.intr[2] * mvsScaleX,
+            winner.intr[3] * mvsScaleY,
+            winner.rWc,
+            winner.tWc,
+            winner.timestampNs
         );
         if (visionExecutor != null && !visionExecutor.isShutdown()) {
             visionExecutor.execute(() -> {
@@ -1993,12 +2231,21 @@ public class MinreportSpatialScannerActivity
     }
 
     private void updateHudThrottled(final boolean force) {
-        final long now = System.currentTimeMillis();
+        final long now = SystemClock.elapsedRealtime();
         if (!force && (now - lastUiUpdateAtMs) < 180L) {
             return;
         }
         lastUiUpdateAtMs = now;
         runOnUiThread(() -> updateHudFromState(false));
+    }
+
+    private void triggerCaptureFlash() {
+        if (captureFlashBorderView == null) {
+            return;
+        }
+        mainHandler.removeCallbacks(hideCaptureFlashRunnable);
+        captureFlashBorderView.setVisibility(View.VISIBLE);
+        mainHandler.postDelayed(hideCaptureFlashRunnable, CAPTURE_FLASH_DURATION_MS);
     }
 
     private static String mapTrackingFailureCode(final TrackingFailureReason reason) {
@@ -2035,7 +2282,8 @@ public class MinreportSpatialScannerActivity
         final boolean showAnchor;
         final float calDist;
         final boolean hasCalHit;
-        final long nowMs = System.currentTimeMillis();
+        final String captureDiagCode;
+        final long nowMs = SystemClock.elapsedRealtime();
 
         synchronized (stateLock) {
             if (!ignoreFinishing && finishing && currentStep != FlowStep.FINALIZING) {
@@ -2056,16 +2304,23 @@ public class MinreportSpatialScannerActivity
             showAnchor = hasScaleAnchor;
             calDist = liveCalDistanceM;
             hasCalHit = latestCalHit != null;
+            captureDiagCode = (step == FlowStep.CAPTURING_WALK && burstState.shouldShowDiagCode(nowMs))
+                ? burstState.getLastDiagCode()
+                : null;
         }
 
         imuHorizonView.updateImu(liveImuPitchDeg, liveImuRollDeg);
         trackingIcon.setColorFilter(isTracking ? COLOR_CYAN : COLOR_COPPER);
-        if (isTracking) {
-            trackingCodeText.setVisibility(View.GONE);
-        } else {
+        if (!isTracking) {
             trackingCodeText.setText(mapTrackingFailureCode(failureReason));
             trackingCodeText.setTextColor(COLOR_COPPER);
             trackingCodeText.setVisibility(View.VISIBLE);
+        } else if (captureDiagCode != null) {
+            trackingCodeText.setText(captureDiagCode);
+            trackingCodeText.setTextColor(COLOR_COPPER);
+            trackingCodeText.setVisibility(View.VISIBLE);
+        } else {
+            trackingCodeText.setVisibility(View.GONE);
         }
         speedAlertIcon.setVisibility(showSpeed ? View.VISIBLE : View.GONE);
         anchorDetectedIcon.setVisibility(showAnchor ? View.VISIBLE : View.GONE);
@@ -2123,13 +2378,11 @@ public class MinreportSpatialScannerActivity
             }
             liveKfCountText.setText(String.format(Locale.US, "%d KF", kfCount));
 
-            primaryActionButton.setEnabled(minReady);
-            if (optimalReady) {
+            primaryActionButton.setEnabled(true);
+            if (minReady) {
                 applyPrimaryButtonStyle(COLOR_CYAN, 0, 0, R.drawable.ic_ms_check, Color.BLACK);
-            } else if (minReady) {
-                applyPrimaryButtonStyle(COLOR_COPPER, 0, 0, R.drawable.ic_ms_stop, Color.BLACK);
             } else {
-                applyPrimaryButtonStyle(COLOR_BTN_WAITING_BG, COLOR_DISABLED, 1, R.drawable.ic_ms_stop, COLOR_SECONDARY);
+                applyPrimaryButtonStyle(COLOR_BTN_RECORDING_BG, COLOR_COPPER, 2, R.drawable.ic_ms_stop, COLOR_COPPER);
             }
         } else if (step == FlowStep.FINALIZING) {
             finalizingBar.setVisibility(View.VISIBLE);
@@ -2314,146 +2567,6 @@ public class MinreportSpatialScannerActivity
     }
 
     // --- Image & Geometry Utilities ---
-
-    /**
-     * Laplacian sharpness variance on central ROI with step=2 (fixes step=4 blur blindspot).
-     */
-    private static double computeLaplacianVarianceStep2(final Image camImg) {
-        final Image.Plane yPlane = camImg.getPlanes()[0];
-        final ByteBuffer yBuf = yPlane.getBuffer();
-        final int width = camImg.getWidth();
-        final int height = camImg.getHeight();
-        final int rowStride = yPlane.getRowStride();
-        final int pixelStride = yPlane.getPixelStride();
-        final int step = 2;
-        if (width <= step * 4 || height <= step * 4) {
-            return 0.0;
-        }
-        final int startX = width / 5;
-        final int endX = (width * 4) / 5;
-        final int startY = height / 5;
-        final int endY = (height * 4) / 5;
-        final int bufLimit = yBuf.limit();
-
-        double sum = 0.0;
-        double sumSq = 0.0;
-        int count = 0;
-
-        for (int y = startY; y < endY; y += step * 2) {
-            final int rowOff = y * rowStride;
-            final int upOff = (y - step) * rowStride;
-            final int dnOff = (y + step) * rowStride;
-            for (int x = startX; x < endX; x += step * 2) {
-                final int xOff = x * pixelStride;
-                final int dIdx = dnOff + xOff;
-                final int rIdx = rowOff + (x + step) * pixelStride;
-                if (dIdx >= bufLimit || rIdx >= bufLimit) continue;
-                final int c = yBuf.get(rowOff + xOff) & 0xFF;
-                final int l = yBuf.get(rowOff + (x - step) * pixelStride) & 0xFF;
-                final int r = yBuf.get(rIdx) & 0xFF;
-                final int u = yBuf.get(upOff + xOff) & 0xFF;
-                final int d = yBuf.get(dIdx) & 0xFF;
-                final double lap = (4.0 * c) - l - r - u - d;
-                sum += lap;
-                sumSq += lap * lap;
-                count++;
-            }
-        }
-        if (count < 16) return 0.0;
-        final double mean = sum / count;
-        return Math.max(0.0, (sumSq / count) - (mean * mean));
-    }
-
-    private static byte[] extractDownscaledLuma(final Image camImg, final int dstW, final int dstH) {
-        final Image.Plane yPlane = camImg.getPlanes()[0];
-        final ByteBuffer yBuf = yPlane.getBuffer();
-        final int srcW = camImg.getWidth();
-        final int srcH = camImg.getHeight();
-        final int rowStride = yPlane.getRowStride();
-        final int pixelStride = yPlane.getPixelStride();
-        final int limit = yBuf.limit();
-
-        final byte[] out = new byte[dstW * dstH];
-        final float stepX = srcW / (float) dstW;
-        final float stepY = srcH / (float) dstH;
-        for (int y = 0; y < dstH; y++) {
-            final int sy0 = Math.min(srcH - 1, (int) (y * stepY));
-            final int sy1 = Math.min(srcH - 1, sy0 + 1);
-            final int srcRow0 = sy0 * rowStride;
-            final int srcRow1 = sy1 * rowStride;
-            final int dstRow = y * dstW;
-            for (int x = 0; x < dstW; x++) {
-                final int sx0 = Math.min(srcW - 1, (int) (x * stepX));
-                final int sx1 = Math.min(srcW - 1, sx0 + 1);
-                final int x0Off = sx0 * pixelStride;
-                final int x1Off = sx1 * pixelStride;
-                final int i00 = srcRow0 + x0Off;
-                final int i10 = srcRow0 + x1Off;
-                final int i01 = srcRow1 + x0Off;
-                final int i11 = srcRow1 + x1Off;
-                final int p00 = i00 < limit ? (yBuf.get(i00) & 0xFF) : 0;
-                final int p10 = i10 < limit ? (yBuf.get(i10) & 0xFF) : p00;
-                final int p01 = i01 < limit ? (yBuf.get(i01) & 0xFF) : p00;
-                final int p11 = i11 < limit ? (yBuf.get(i11) & 0xFF) : p00;
-                out[dstRow + x] = (byte) ((p00 + p10 + p01 + p11 + 2) >> 2);
-            }
-        }
-        return out;
-    }
-
-    private static byte[] extractNv21Bytes(final Image image) {
-        final int width = image.getWidth();
-        final int height = image.getHeight();
-        final Image.Plane[] planes = image.getPlanes();
-        final byte[] nv21 = new byte[(width * height * 3) / 2];
-
-        final Image.Plane yPlane = planes[0];
-        final ByteBuffer yBuffer = yPlane.getBuffer().duplicate();
-        final int yRowStride = yPlane.getRowStride();
-        final int yPixelStride = yPlane.getPixelStride();
-        int pos = 0;
-        if (yPixelStride == 1 && yRowStride == width) {
-            yBuffer.position(0);
-            yBuffer.get(nv21, 0, Math.min(width * height, yBuffer.remaining()));
-            pos = width * height;
-        } else {
-            final byte[] rowData = new byte[yRowStride];
-            for (int row = 0; row < height; row++) {
-                final int offset = row * yRowStride;
-                if (offset >= yBuffer.limit()) break;
-                yBuffer.position(offset);
-                final int len = Math.min(yBuffer.remaining(), yRowStride);
-                yBuffer.get(rowData, 0, len);
-                for (int col = 0; col < width && pos < width * height; col++) {
-                    final int idx = col * yPixelStride;
-                    nv21[pos++] = idx < len ? rowData[idx] : 0;
-                }
-            }
-        }
-
-        final Image.Plane uPlane = planes[1];
-        final Image.Plane vPlane = planes[2];
-        final ByteBuffer uBuffer = uPlane.getBuffer().duplicate();
-        final ByteBuffer vBuffer = vPlane.getBuffer().duplicate();
-        final int uRowStride = uPlane.getRowStride();
-        final int vRowStride = vPlane.getRowStride();
-        final int uPixelStride = uPlane.getPixelStride();
-        final int vPixelStride = vPlane.getPixelStride();
-        final int chromaHeight = height / 2;
-        final int chromaWidth = width / 2;
-
-        for (int row = 0; row < chromaHeight; row++) {
-            final int uRowOffset = row * uRowStride;
-            final int vRowOffset = row * vRowStride;
-            for (int col = 0; col < chromaWidth && pos + 1 < nv21.length; col++) {
-                final int vIndex = vRowOffset + col * vPixelStride;
-                final int uIndex = uRowOffset + col * uPixelStride;
-                nv21[pos++] = vIndex < vBuffer.limit() ? vBuffer.get(vIndex) : 0;
-                nv21[pos++] = uIndex < uBuffer.limit() ? uBuffer.get(uIndex) : 0;
-            }
-        }
-        return nv21;
-    }
 
     /**
      * Saves UNROTATED WebP (1:1 match with camera.getImageIntrinsics() and camera.getPose(),

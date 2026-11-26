@@ -20,6 +20,7 @@ import java.nio.FloatBuffer;
 public final class Live3DOverlayRenderer {
 
     private static final String TAG = "Live3DOverlayRenderer";
+    public static final int MAX_LIVE_POINTS = 1024;
     private static final int MAX_VERTICES_PER_BUFFER = 4096;
     private static final int FLOATS_PER_VERTEX = 3;
 
@@ -28,6 +29,7 @@ public final class Live3DOverlayRenderer {
         "attribute vec3 a_Position;\n" +
         "void main() {\n" +
         "    gl_Position = u_MvpMatrix * vec4(a_Position, 1.0);\n" +
+        "    gl_PointSize = 7.0;\n" +
         "}\n";
 
     private static final String FRAG_SHADER =
@@ -38,11 +40,13 @@ public final class Live3DOverlayRenderer {
         "}\n";
 
     // ANSI/ISA-101 MINREPORT palette
-    private static final float[] COLOR_CYAN_MESH = { 0.0f, 0.682f, 0.937f, 0.12f };      // #00AEEF 12%
-    private static final float[] COLOR_CYAN_CONTOUR = { 0.0f, 0.682f, 0.937f, 0.72f };   // #00AEEF 72%
-    private static final float[] COLOR_CYAN_TOE = { 0.0f, 0.682f, 0.937f, 0.95f };       // #00AEEF 95%
-    private static final float[] COLOR_COPPER_GAP = { 0.776f, 0.514f, 0.275f, 0.65f };   // #C68346 65%
-    private static final float[] COLOR_COPPER_TOE = { 0.776f, 0.514f, 0.275f, 0.95f };   // #C68346 95%
+    private static final float[] COLOR_CYAN_MESH = { 0.0f, 0.682f, 0.937f, 0.12f };          // #00AEEF 12%
+    private static final float[] COLOR_CYAN_CONTOUR = { 0.0f, 0.682f, 0.937f, 0.72f };       // #00AEEF 72%
+    private static final float[] COLOR_CYAN_TOE = { 0.0f, 0.682f, 0.937f, 0.95f };           // #00AEEF 95%
+    private static final float[] COLOR_CYAN_LIVE_POINTS = { 0.0f, 0.682f, 0.937f, 0.85f };   // #00AEEF 85%
+    private static final float[] COLOR_CYAN_PLANE_OUTLINE = { 0.0f, 0.682f, 0.937f, 0.35f }; // #00AEEF 35%
+    private static final float[] COLOR_COPPER_GAP = { 0.776f, 0.514f, 0.275f, 0.65f };       // #C68346 65%
+    private static final float[] COLOR_COPPER_TOE = { 0.776f, 0.514f, 0.275f, 0.95f };       // #C68346 95%
 
     public static final class FramingStatus {
         public final boolean crownClipped;
@@ -59,15 +63,20 @@ public final class Live3DOverlayRenderer {
     private int colorUniform = -1;
     private int posAttrib = -1;
 
-    // 5 dynamic VBOs: 0=verifiedTris, 1=gapLines, 2=contours, 3=toeAnchored, 4=toeOpen
-    private final int[] vboIds = new int[5];
-    private final int[] vboVertCounts = new int[5];
+    // 7 dynamic VBOs:
+    // 0=verifiedTris, 1=gapLines, 2=contours, 3=toeAnchored, 4=toeOpen, 5=livePoints (GL_POINTS), 6=livePlaneLines (GL_LINES)
+    private final int[] vboIds = new int[7];
+    private final int[] vboVertCounts = new int[7];
     private boolean glInitialized = false;
 
     private final Object snapshotLock = new Object();
     private WalkRingToeSolver.LiveOverlaySnapshot pendingSnapshot = null;
     private WalkRingToeSolver.LiveOverlaySnapshot activeSnapshot = null;
     private boolean snapshotDirty = false;
+    private float[] pendingLivePoints = null;
+    private boolean livePointsDirty = false;
+    private float[] pendingLivePlaneLines = null;
+    private boolean livePlanesDirty = false;
 
     private final float[] vpMatrix = new float[16];
     private final float[] tmpVecIn = new float[4];
@@ -117,6 +126,12 @@ public final class Live3DOverlayRenderer {
                 pendingSnapshot = activeSnapshot;
                 snapshotDirty = true;
             }
+            if (pendingLivePoints != null) {
+                livePointsDirty = true;
+            }
+            if (pendingLivePlaneLines != null) {
+                livePlanesDirty = true;
+            }
         }
     }
 
@@ -124,6 +139,49 @@ public final class Live3DOverlayRenderer {
         synchronized (snapshotLock) {
             this.pendingSnapshot = snapshot;
             this.snapshotDirty = true;
+        }
+    }
+
+    public void updateLivePointCloud(final float[] pointVertsXyz) {
+        final float[] capped;
+        if (pointVertsXyz == null || pointVertsXyz.length < FLOATS_PER_VERTEX) {
+            capped = null;
+        } else {
+            final int maxFloats = MAX_LIVE_POINTS * FLOATS_PER_VERTEX;
+            final int len = Math.min(pointVertsXyz.length, maxFloats);
+            final int alignedLen = len - (len % FLOATS_PER_VERTEX);
+            capped = new float[alignedLen];
+            System.arraycopy(pointVertsXyz, 0, capped, 0, alignedLen);
+        }
+        synchronized (snapshotLock) {
+            this.pendingLivePoints = capped;
+            this.livePointsDirty = true;
+        }
+    }
+
+    public void updateLivePlaneOutlines(final float[] lineVertsXyz) {
+        final float[] capped;
+        if (lineVertsXyz == null || lineVertsXyz.length < FLOATS_PER_VERTEX * 2) {
+            capped = null;
+        } else {
+            final int maxFloats = MAX_VERTICES_PER_BUFFER * FLOATS_PER_VERTEX;
+            final int len = Math.min(lineVertsXyz.length, maxFloats);
+            final int alignedLen = len - (len % (FLOATS_PER_VERTEX * 2));
+            capped = new float[alignedLen];
+            System.arraycopy(lineVertsXyz, 0, capped, 0, alignedLen);
+        }
+        synchronized (snapshotLock) {
+            this.pendingLivePlaneLines = capped;
+            this.livePlanesDirty = true;
+        }
+    }
+
+    public void clearLiveTrackingVisuals() {
+        synchronized (snapshotLock) {
+            this.pendingLivePoints = null;
+            this.livePointsDirty = true;
+            this.pendingLivePlaneLines = null;
+            this.livePlanesDirty = true;
         }
     }
 
@@ -135,32 +193,70 @@ public final class Live3DOverlayRenderer {
         }
     }
 
+    int getLivePointCount() {
+        synchronized (snapshotLock) {
+            if (pendingLivePoints != null) {
+                return pendingLivePoints.length / FLOATS_PER_VERTEX;
+            }
+            return vboVertCounts[5];
+        }
+    }
+
+    int getLivePlaneLineVertexCount() {
+        synchronized (snapshotLock) {
+            if (pendingLivePlaneLines != null) {
+                return pendingLivePlaneLines.length / FLOATS_PER_VERTEX;
+            }
+            return vboVertCounts[6];
+        }
+    }
+
     public FramingStatus draw(final float[] viewMatrix, final float[] projectionMatrix) {
         if (!glInitialized || programId == 0) {
             return new FramingStatus(false, false);
         }
 
         WalkRingToeSolver.LiveOverlaySnapshot toUpload = null;
-        boolean needsClear = false;
+        boolean needsClearSnapshot = false;
+        float[] pointsToUpload = null;
+        boolean updatePoints = false;
+        float[] planesToUpload = null;
+        boolean updatePlanes = false;
         synchronized (snapshotLock) {
             if (snapshotDirty) {
                 toUpload = pendingSnapshot;
                 activeSnapshot = pendingSnapshot;
-                needsClear = (pendingSnapshot == null);
+                needsClearSnapshot = (pendingSnapshot == null);
                 snapshotDirty = false;
+            }
+            if (livePointsDirty) {
+                pointsToUpload = pendingLivePoints;
+                updatePoints = true;
+                livePointsDirty = false;
+            }
+            if (livePlanesDirty) {
+                planesToUpload = pendingLivePlaneLines;
+                updatePlanes = true;
+                livePlanesDirty = false;
             }
         }
 
-        if (needsClear) {
-            for (int i = 0; i < vboVertCounts.length; i++) {
+        if (needsClearSnapshot) {
+            for (int i = 0; i < 5; i++) {
                 vboVertCounts[i] = 0;
             }
         } else if (toUpload != null) {
-            uploadVbo(0, toUpload.verifiedTriVerts);
-            uploadVbo(1, toUpload.gapLineVerts);
-            uploadVbo(2, toUpload.contourLineVerts);
-            uploadVbo(3, toUpload.toeAnchoredLineVerts);
-            uploadVbo(4, toUpload.toeOpenLineVerts);
+            uploadVbo(0, toUpload.verifiedTriVerts, MAX_VERTICES_PER_BUFFER);
+            uploadVbo(1, toUpload.gapLineVerts, MAX_VERTICES_PER_BUFFER);
+            uploadVbo(2, toUpload.contourLineVerts, MAX_VERTICES_PER_BUFFER);
+            uploadVbo(3, toUpload.toeAnchoredLineVerts, MAX_VERTICES_PER_BUFFER);
+            uploadVbo(4, toUpload.toeOpenLineVerts, MAX_VERTICES_PER_BUFFER);
+        }
+        if (updatePoints) {
+            uploadVbo(5, pointsToUpload, MAX_LIVE_POINTS);
+        }
+        if (updatePlanes) {
+            uploadVbo(6, planesToUpload, MAX_VERTICES_PER_BUFFER);
         }
 
         Matrix.multiplyMM(vpMatrix, 0, projectionMatrix, 0, viewMatrix, 0);
@@ -174,6 +270,8 @@ public final class Live3DOverlayRenderer {
         GLES20.glUniformMatrix4fv(mvpUniform, 1, false, vpMatrix, 0);
         GLES20.glEnableVertexAttribArray(posAttrib);
 
+        // 0. Detected horizontal ground plane outlines (#00AEEF 35%)
+        drawVbo(6, GLES20.GL_LINES, COLOR_CYAN_PLANE_OUTLINE, 1.5f);
         // 1. Translucent verified surface (#00AEEF <= 12%)
         drawVbo(0, GLES20.GL_TRIANGLES, COLOR_CYAN_MESH, 1.0f);
         // 2. Gap wireframe (#C68346 65%)
@@ -183,6 +281,8 @@ public final class Live3DOverlayRenderer {
         // 4. Perimeter Toe anchored (#00AEEF) and open (#C68346)
         drawVbo(3, GLES20.GL_LINES, COLOR_CYAN_TOE, 3.0f);
         drawVbo(4, GLES20.GL_LINES, COLOR_COPPER_TOE, 3.0f);
+        // 5. Immediate live VIO feature points from Frame 1 (#00AEEF 85%, gl_PointSize = 7.0)
+        drawVbo(5, GLES20.GL_POINTS, COLOR_CYAN_LIVE_POINTS, 1.0f);
 
         GLES20.glDisableVertexAttribArray(posAttrib);
         GLES20.glBindBuffer(GLES20.GL_ARRAY_BUFFER, 0);
@@ -203,12 +303,13 @@ public final class Live3DOverlayRenderer {
         }
     }
 
-    private void uploadVbo(final int slot, final float[] data) {
+    private void uploadVbo(final int slot, final float[] data, final int maxVerts) {
         if (data == null || data.length < FLOATS_PER_VERTEX || uploadBuffer == null) {
             vboVertCounts[slot] = 0;
             return;
         }
-        final int maxFloats = MAX_VERTICES_PER_BUFFER * FLOATS_PER_VERTEX;
+        final int capVerts = Math.min(MAX_VERTICES_PER_BUFFER, maxVerts);
+        final int maxFloats = capVerts * FLOATS_PER_VERTEX;
         final int len = Math.min(data.length, maxFloats);
         final int alignedLen = len - (len % FLOATS_PER_VERTEX);
         uploadBuffer.clear();

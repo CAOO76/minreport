@@ -28,6 +28,24 @@ import javax.microedition.khronos.opengles.GL10;
 public class ArCoreCameraRenderer implements GLSurfaceView.Renderer {
 
     private static final String TAG = "ArCoreCameraRenderer";
+    private static final int MAX_GL_FALLBACK_WIDTH = 640;
+    private static final int MAX_GL_FALLBACK_HEIGHT = 480;
+
+    /**
+     * Captured RGBA frame read back from OpenGL right after drawCameraQuad() (before 3D overlays)
+     * when ARCore acquireCameraImage() fails persistently on MediaTek HALs.
+     */
+    public static final class GlFallbackFrame {
+        public final byte[] rgbaBytes;
+        public final int width;
+        public final int height;
+
+        public GlFallbackFrame(final byte[] rgbaBytes, final int width, final int height) {
+            this.rgbaBytes = rgbaBytes;
+            this.width = width;
+            this.height = height;
+        }
+    }
 
     /**
      * Callback invoked on the GL thread immediately after each successful ARCore frame update.
@@ -89,6 +107,15 @@ public class ArCoreCameraRenderer implements GLSurfaceView.Renderer {
     private int texCoordAttrib = -1;
     private int textureUniform = -1;
 
+    // Anti-HAL MediaTek GL Readback fallback (offscreen FBO <= 640x480, disposed cleanly)
+    private volatile boolean glFallbackRequested = false;
+    private GlFallbackFrame pendingGlFallbackFrame = null;
+    private int fallbackFboId = 0;
+    private int fallbackTexId = 0;
+    private int fallbackWidth = 0;
+    private int fallbackHeight = 0;
+    private ByteBuffer fallbackReadBuffer = null;
+
     public ArCoreCameraRenderer(final Context context, final FrameListener frameListener) {
         this.displayRotationHelper = new DisplayRotationHelper(context);
         this.frameListener = frameListener;
@@ -136,8 +163,35 @@ public class ArCoreCameraRenderer implements GLSurfaceView.Renderer {
         overlayRenderer.updateSnapshot(snapshot);
     }
 
+    public void updateLivePointCloud(final float[] pointVertsXyz) {
+        overlayRenderer.updateLivePointCloud(pointVertsXyz);
+    }
+
+    public void updateLivePlaneOutlines(final float[] lineVertsXyz) {
+        overlayRenderer.updateLivePlaneOutlines(lineVertsXyz);
+    }
+
+    public void clearLiveTrackingVisuals() {
+        overlayRenderer.clearLiveTrackingVisuals();
+    }
+
     public void clearLiveOverlay() {
         overlayRenderer.clearSnapshot();
+    }
+
+    public void requestGlFallbackFrame() {
+        this.glFallbackRequested = true;
+    }
+
+    public void clearGlFallbackRequest() {
+        this.glFallbackRequested = false;
+        this.pendingGlFallbackFrame = null;
+    }
+
+    public GlFallbackFrame consumeGlFallbackFrame() {
+        final GlFallbackFrame frame = this.pendingGlFallbackFrame;
+        this.pendingGlFallbackFrame = null;
+        return frame;
     }
 
     public Live3DOverlayRenderer.FramingStatus getLastFramingStatus() {
@@ -146,6 +200,7 @@ public class ArCoreCameraRenderer implements GLSurfaceView.Renderer {
 
     public void releaseGlResources() {
         overlayRenderer.release();
+        releaseFallbackFbo();
         if (programId != 0) {
             GLES20.glDeleteProgram(programId);
             programId = 0;
@@ -214,6 +269,10 @@ public class ArCoreCameraRenderer implements GLSurfaceView.Renderer {
             textureBoundToSession = false;
             texCoordsInitialized = false;
         }
+        fallbackFboId = 0;
+        fallbackTexId = 0;
+        fallbackWidth = 0;
+        fallbackHeight = 0;
         overlayRenderer.onSurfaceCreated();
     }
 
@@ -267,7 +326,20 @@ public class ArCoreCameraRenderer implements GLSurfaceView.Renderer {
                 drawCameraQuad();
             }
 
+            pendingGlFallbackFrame = null;
             final Camera camera = frame.getCamera();
+            if (
+                glFallbackRequested &&
+                frameTimestamp != 0L &&
+                camera.getTrackingState() == TrackingState.TRACKING
+            ) {
+                glFallbackRequested = false;
+                pendingGlFallbackFrame = captureCameraQuadFallback(
+                    displayRotationHelper.getViewportWidth(),
+                    displayRotationHelper.getViewportHeight()
+                );
+            }
+
             if (frameTimestamp != 0L && camera.getTrackingState() == TrackingState.TRACKING) {
                 camera.getViewMatrix(viewMatrix, 0);
                 camera.getProjectionMatrix(projectionMatrix, 0, 0.1f, 60.0f);
@@ -277,7 +349,13 @@ public class ArCoreCameraRenderer implements GLSurfaceView.Renderer {
             }
 
             if (frameListener != null) {
-                frameListener.onArFrame(activeSession, frame);
+                try {
+                    frameListener.onArFrame(activeSession, frame);
+                } finally {
+                    pendingGlFallbackFrame = null;
+                }
+            } else {
+                pendingGlFallbackFrame = null;
             }
         } catch (CameraNotAvailableException | SessionPausedException | DeadlineExceededException transientEx) {
             // Expected transient ARCore lifecycle states during pause/resume transitions.
@@ -312,6 +390,163 @@ public class ArCoreCameraRenderer implements GLSurfaceView.Renderer {
 
         GLES20.glDepthMask(true);
         GLES20.glEnable(GLES20.GL_DEPTH_TEST);
+    }
+
+    /**
+     * Reads back a clean camera-only RGBA frame (<= 640x480, even dimensions) using an offscreen
+     * FBO to preserve full FOV matching camera.getTextureIntrinsics(), falling back to centered
+     * default-framebuffer glReadPixels if FBO allocation is unsupported.
+     */
+    private GlFallbackFrame captureCameraQuadFallback(final int vw, final int vh) {
+        if (vw < 4 || vh < 4) {
+            return null;
+        }
+        final float scale = Math.min(
+            1.0f,
+            Math.min(MAX_GL_FALLBACK_WIDTH / (float) vw, MAX_GL_FALLBACK_HEIGHT / (float) vh)
+        );
+        final int targetW = Math.max(4, ((int) Math.floor(vw * scale)) & ~1);
+        final int targetH = Math.max(4, ((int) Math.floor(vh * scale)) & ~1);
+
+        try {
+            if (ensureFallbackFbo(targetW, targetH)) {
+                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fallbackFboId);
+                GLES20.glViewport(0, 0, targetW, targetH);
+                drawCameraQuad();
+                GLES20.glPixelStorei(GLES20.GL_PACK_ALIGNMENT, 1);
+                fallbackReadBuffer.clear();
+                GLES20.glReadPixels(
+                    0,
+                    0,
+                    targetW,
+                    targetH,
+                    GLES20.GL_RGBA,
+                    GLES20.GL_UNSIGNED_BYTE,
+                    fallbackReadBuffer
+                );
+                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0);
+                GLES20.glViewport(0, 0, vw, vh);
+
+                final byte[] out = new byte[targetW * targetH * 4];
+                fallbackReadBuffer.position(0);
+                fallbackReadBuffer.get(out);
+                return new GlFallbackFrame(out, targetW, targetH);
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "Offscreen FBO readback failed; falling back to centered default FBO readback", t);
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0);
+            GLES20.glViewport(0, 0, vw, vh);
+            releaseFallbackFbo();
+        }
+
+        // Secondary fallback: centered read directly from default framebuffer (already rendered by drawCameraQuad)
+        try {
+            final int readW = Math.max(4, Math.min(vw, MAX_GL_FALLBACK_WIDTH) & ~1);
+            final int readH = Math.max(4, Math.min(vh, MAX_GL_FALLBACK_HEIGHT) & ~1);
+            final int x0 = Math.max(0, (vw - readW) / 2);
+            final int y0 = Math.max(0, (vh - readH) / 2);
+            final int bytesNeeded = readW * readH * 4;
+            if (fallbackReadBuffer == null || fallbackReadBuffer.capacity() < bytesNeeded) {
+                fallbackReadBuffer = ByteBuffer.allocateDirect(bytesNeeded).order(ByteOrder.nativeOrder());
+            }
+            GLES20.glPixelStorei(GLES20.GL_PACK_ALIGNMENT, 1);
+            fallbackReadBuffer.clear();
+            fallbackReadBuffer.limit(bytesNeeded);
+            GLES20.glReadPixels(
+                x0,
+                y0,
+                readW,
+                readH,
+                GLES20.GL_RGBA,
+                GLES20.GL_UNSIGNED_BYTE,
+                fallbackReadBuffer
+            );
+            final byte[] out = new byte[bytesNeeded];
+            fallbackReadBuffer.position(0);
+            fallbackReadBuffer.get(out);
+            return new GlFallbackFrame(out, readW, readH);
+        } catch (Throwable t) {
+            Log.w(TAG, "Default FBO glReadPixels fallback failed", t);
+            return null;
+        }
+    }
+
+    private boolean ensureFallbackFbo(final int width, final int height) {
+        if (
+            fallbackFboId != 0 &&
+            fallbackTexId != 0 &&
+            fallbackWidth == width &&
+            fallbackHeight == height &&
+            fallbackReadBuffer != null &&
+            fallbackReadBuffer.capacity() >= width * height * 4
+        ) {
+            return true;
+        }
+        releaseFallbackFbo();
+
+        final int[] tex = new int[1];
+        GLES20.glGenTextures(1, tex, 0);
+        if (tex[0] == 0) {
+            return false;
+        }
+        fallbackTexId = tex[0];
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, fallbackTexId);
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR);
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR);
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE);
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE);
+        GLES20.glTexImage2D(
+            GLES20.GL_TEXTURE_2D,
+            0,
+            GLES20.GL_RGBA,
+            width,
+            height,
+            0,
+            GLES20.GL_RGBA,
+            GLES20.GL_UNSIGNED_BYTE,
+            null
+        );
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0);
+
+        final int[] fbo = new int[1];
+        GLES20.glGenFramebuffers(1, fbo, 0);
+        if (fbo[0] == 0) {
+            releaseFallbackFbo();
+            return false;
+        }
+        fallbackFboId = fbo[0];
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fallbackFboId);
+        GLES20.glFramebufferTexture2D(
+            GLES20.GL_FRAMEBUFFER,
+            GLES20.GL_COLOR_ATTACHMENT0,
+            GLES20.GL_TEXTURE_2D,
+            fallbackTexId,
+            0
+        );
+        final int status = GLES20.glCheckFramebufferStatus(GLES20.GL_FRAMEBUFFER);
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0);
+        if (status != GLES20.GL_FRAMEBUFFER_COMPLETE) {
+            releaseFallbackFbo();
+            return false;
+        }
+        fallbackWidth = width;
+        fallbackHeight = height;
+        fallbackReadBuffer = ByteBuffer.allocateDirect(width * height * 4).order(ByteOrder.nativeOrder());
+        return true;
+    }
+
+    private void releaseFallbackFbo() {
+        if (fallbackFboId != 0) {
+            GLES20.glDeleteFramebuffers(1, new int[] { fallbackFboId }, 0);
+            fallbackFboId = 0;
+        }
+        if (fallbackTexId != 0) {
+            GLES20.glDeleteTextures(1, new int[] { fallbackTexId }, 0);
+            fallbackTexId = 0;
+        }
+        fallbackWidth = 0;
+        fallbackHeight = 0;
+        fallbackReadBuffer = null;
     }
 
     private static int compileShader(final int type, final String source) {
