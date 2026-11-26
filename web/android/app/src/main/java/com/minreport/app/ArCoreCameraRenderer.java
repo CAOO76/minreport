@@ -52,6 +52,8 @@ public class ArCoreCameraRenderer implements GLSurfaceView.Renderer {
      */
     public interface FrameListener {
         void onArFrame(Session session, Frame frame);
+
+        default void onArRenderError(String errorCode) {}
     }
 
     private static final String VERTEX_SHADER =
@@ -340,14 +342,6 @@ public class ArCoreCameraRenderer implements GLSurfaceView.Renderer {
                 );
             }
 
-            if (frameTimestamp != 0L && camera.getTrackingState() == TrackingState.TRACKING) {
-                camera.getViewMatrix(viewMatrix, 0);
-                camera.getProjectionMatrix(projectionMatrix, 0, 0.1f, 60.0f);
-                lastFramingStatus = overlayRenderer.draw(viewMatrix, projectionMatrix);
-            } else {
-                lastFramingStatus = new Live3DOverlayRenderer.FramingStatus(false, false);
-            }
-
             if (frameListener != null) {
                 try {
                     frameListener.onArFrame(activeSession, frame);
@@ -357,10 +351,22 @@ public class ArCoreCameraRenderer implements GLSurfaceView.Renderer {
             } else {
                 pendingGlFallbackFrame = null;
             }
+
+            // Draw 3D overlay AFTER onArFrame() so live points/planes/mesh appear on the same frame
+            if (frameTimestamp != 0L && camera.getTrackingState() == TrackingState.TRACKING) {
+                camera.getViewMatrix(viewMatrix, 0);
+                camera.getProjectionMatrix(projectionMatrix, 0, 0.1f, 60.0f);
+                lastFramingStatus = overlayRenderer.draw(viewMatrix, projectionMatrix);
+            } else {
+                lastFramingStatus = new Live3DOverlayRenderer.FramingStatus(false, false);
+            }
         } catch (CameraNotAvailableException | SessionPausedException | DeadlineExceededException transientEx) {
             // Expected transient ARCore lifecycle states during pause/resume transitions.
-        } catch (Exception unexpectedEx) {
+        } catch (Throwable unexpectedEx) {
             Log.w(TAG, "Unexpected ARCore render frame error", unexpectedEx);
+            if (frameListener != null) {
+                frameListener.onArRenderError(unexpectedEx.getClass().getSimpleName());
+            }
         }
     }
 
@@ -409,6 +415,9 @@ public class ArCoreCameraRenderer implements GLSurfaceView.Renderer {
         final int targetH = Math.max(4, ((int) Math.floor(vh * scale)) & ~1);
 
         try {
+            while (GLES20.glGetError() != GLES20.GL_NO_ERROR) {
+                // Drain prior GL error state before validating offscreen FBO readback.
+            }
             if (ensureFallbackFbo(targetW, targetH)) {
                 GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fallbackFboId);
                 GLES20.glViewport(0, 0, targetW, targetH);
@@ -424,13 +433,22 @@ public class ArCoreCameraRenderer implements GLSurfaceView.Renderer {
                     GLES20.GL_UNSIGNED_BYTE,
                     fallbackReadBuffer
                 );
+                final int glErr = GLES20.glGetError();
                 GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0);
                 GLES20.glViewport(0, 0, vw, vh);
 
-                final byte[] out = new byte[targetW * targetH * 4];
-                fallbackReadBuffer.position(0);
-                fallbackReadBuffer.get(out);
-                return new GlFallbackFrame(out, targetW, targetH);
+                if (glErr == GLES20.GL_NO_ERROR) {
+                    final byte[] out = new byte[targetW * targetH * 4];
+                    fallbackReadBuffer.position(0);
+                    fallbackReadBuffer.get(out);
+                    if (hasNonBlackRgbSample(out, targetW, targetH)) {
+                        return new GlFallbackFrame(out, targetW, targetH);
+                    }
+                    Log.w(TAG, "Offscreen FBO readback returned black pixels; falling back to default FBO");
+                } else {
+                    Log.w(TAG, "Offscreen FBO glReadPixels error=" + glErr + "; falling back to default FBO");
+                }
+                releaseFallbackFbo();
             }
         } catch (Throwable t) {
             Log.w(TAG, "Offscreen FBO readback failed; falling back to centered default FBO readback", t);
@@ -469,6 +487,29 @@ public class ArCoreCameraRenderer implements GLSurfaceView.Renderer {
             Log.w(TAG, "Default FBO glReadPixels fallback failed", t);
             return null;
         }
+    }
+
+    private static boolean hasNonBlackRgbSample(final byte[] rgba, final int width, final int height) {
+        if (rgba == null || width <= 0 || height <= 0) {
+            return false;
+        }
+        final int stepX = Math.max(1, width / 5);
+        final int stepY = Math.max(1, height / 5);
+        for (int y = stepY / 2; y < height; y += stepY) {
+            for (int x = stepX / 2; x < width; x += stepX) {
+                final int off = (y * width + x) * 4;
+                if (off + 2 >= rgba.length) {
+                    continue;
+                }
+                final int r = rgba[off] & 0xFF;
+                final int g = rgba[off + 1] & 0xFF;
+                final int b = rgba[off + 2] & 0xFF;
+                if (r > 4 || g > 4 || b > 4) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private boolean ensureFallbackFbo(final int width, final int height) {

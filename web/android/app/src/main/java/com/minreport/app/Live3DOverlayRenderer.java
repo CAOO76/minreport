@@ -6,6 +6,7 @@ import android.util.Log;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.FloatBuffer;
+import java.util.Arrays;
 
 /**
  * GLES 2.0 Real-Time 3D Volume Recognition Overlay Renderer (MINREPORT ANSI/ISA-101 HMI):
@@ -20,7 +21,7 @@ import java.nio.FloatBuffer;
 public final class Live3DOverlayRenderer {
 
     private static final String TAG = "Live3DOverlayRenderer";
-    public static final int MAX_LIVE_POINTS = 1024;
+    public static final int MAX_LIVE_POINTS = 2048;
     private static final int MAX_VERTICES_PER_BUFFER = 4096;
     private static final int FLOATS_PER_VERTEX = 3;
 
@@ -29,7 +30,7 @@ public final class Live3DOverlayRenderer {
         "attribute vec3 a_Position;\n" +
         "void main() {\n" +
         "    gl_Position = u_MvpMatrix * vec4(a_Position, 1.0);\n" +
-        "    gl_PointSize = 7.0;\n" +
+        "    gl_PointSize = 16.0;\n" +
         "}\n";
 
     private static final String FRAG_SHADER =
@@ -43,8 +44,8 @@ public final class Live3DOverlayRenderer {
     private static final float[] COLOR_CYAN_MESH = { 0.0f, 0.682f, 0.937f, 0.12f };          // #00AEEF 12%
     private static final float[] COLOR_CYAN_CONTOUR = { 0.0f, 0.682f, 0.937f, 0.72f };       // #00AEEF 72%
     private static final float[] COLOR_CYAN_TOE = { 0.0f, 0.682f, 0.937f, 0.95f };           // #00AEEF 95%
-    private static final float[] COLOR_CYAN_LIVE_POINTS = { 0.0f, 0.682f, 0.937f, 0.85f };   // #00AEEF 85%
-    private static final float[] COLOR_CYAN_PLANE_OUTLINE = { 0.0f, 0.682f, 0.937f, 0.35f }; // #00AEEF 35%
+    private static final float[] COLOR_CYAN_LIVE_POINTS = { 0.0f, 0.682f, 0.937f, 0.95f };   // #00AEEF 95%
+    private static final float[] COLOR_CYAN_PLANE_OUTLINE = { 0.0f, 0.682f, 0.937f, 0.72f }; // #00AEEF 72%
     private static final float[] COLOR_COPPER_GAP = { 0.776f, 0.514f, 0.275f, 0.65f };       // #C68346 65%
     private static final float[] COLOR_COPPER_TOE = { 0.776f, 0.514f, 0.275f, 0.95f };       // #C68346 95%
 
@@ -115,6 +116,7 @@ public final class Live3DOverlayRenderer {
         posAttrib = GLES20.glGetAttribLocation(programId, "a_Position");
 
         GLES20.glGenBuffers(vboIds.length, vboIds, 0);
+        Arrays.fill(vboVertCounts, 0);
         uploadBuffer = ByteBuffer
             .allocateDirect(MAX_VERTICES_PER_BUFFER * FLOATS_PER_VERTEX * 4)
             .order(ByteOrder.nativeOrder())
@@ -270,8 +272,8 @@ public final class Live3DOverlayRenderer {
         GLES20.glUniformMatrix4fv(mvpUniform, 1, false, vpMatrix, 0);
         GLES20.glEnableVertexAttribArray(posAttrib);
 
-        // 0. Detected horizontal ground plane outlines (#00AEEF 35%)
-        drawVbo(6, GLES20.GL_LINES, COLOR_CYAN_PLANE_OUTLINE, 1.5f);
+        // 0. Detected horizontal ground plane outlines (#00AEEF 72%)
+        drawVbo(6, GLES20.GL_LINES, COLOR_CYAN_PLANE_OUTLINE, 3.0f);
         // 1. Translucent verified surface (#00AEEF <= 12%)
         drawVbo(0, GLES20.GL_TRIANGLES, COLOR_CYAN_MESH, 1.0f);
         // 2. Gap wireframe (#C68346 65%)

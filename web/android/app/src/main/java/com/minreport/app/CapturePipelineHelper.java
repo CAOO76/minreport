@@ -18,7 +18,8 @@ public final class CapturePipelineHelper {
     public static final double BLUR_VARIANCE_THRESHOLD = 8.0;
     public static final double BLUR_EARLY_COMMIT_THRESHOLD = BLUR_VARIANCE_THRESHOLD * 2.2; // 17.6
     public static final double BLUR_LOW_THRESHOLD = 4.0;
-    public static final int GL_FALLBACK_FAILURE_THRESHOLD = 8;
+    public static final int GL_FALLBACK_FAILURE_THRESHOLD = 5;
+    public static final long GL_FALLBACK_GRACE_MS = 280L;
     public static final long DIAG_DISPLAY_DELAY_MS = 1000L;
 
     public static final String DIAG_NYA = "IMG · NYA";
@@ -518,6 +519,83 @@ public final class CapturePipelineHelper {
         return exact;
     }
 
+    /**
+     * Persistent circular ring buffer of world-space 3D VIO points (x, y, z) so live GL_POINTS
+     * remain visible as the operator walks around the stockpile even across sparse/empty frames.
+     */
+    public static final class LivePointCloudAccumulator {
+        private final int maxPoints;
+        private final float[] buffer;
+        private int writeIdx = 0;
+        private int count = 0;
+
+        public LivePointCloudAccumulator(final int maxPoints) {
+            this.maxPoints = Math.max(1, maxPoints);
+            this.buffer = new float[this.maxPoints * 3];
+        }
+
+        public synchronized void clear() {
+            writeIdx = 0;
+            count = 0;
+        }
+
+        public synchronized int size() {
+            return count;
+        }
+
+        public synchronized int appendFromPointCloud(
+            final FloatBuffer pointsBuf,
+            final float minConfidence,
+            final int maxPerFrame
+        ) {
+            if (pointsBuf == null || maxPerFrame <= 0) {
+                return 0;
+            }
+            final int limit = pointsBuf.limit();
+            final int totalPts = limit / 4;
+            if (totalPts <= 0) {
+                return 0;
+            }
+            final int stride = totalPts > maxPerFrame ? Math.max(1, totalPts / maxPerFrame) : 1;
+            int added = 0;
+            for (int p = 0; p < totalPts && added < maxPerFrame; p += stride) {
+                final int i = p * 4;
+                if (i + 3 >= limit) {
+                    break;
+                }
+                final float conf = pointsBuf.get(i + 3);
+                if (conf < minConfidence) {
+                    continue;
+                }
+                final float px = pointsBuf.get(i);
+                final float py = pointsBuf.get(i + 1);
+                final float pz = pointsBuf.get(i + 2);
+                if (!Float.isFinite(px) || !Float.isFinite(py) || !Float.isFinite(pz)) {
+                    continue;
+                }
+                final int base = writeIdx * 3;
+                buffer[base] = px;
+                buffer[base + 1] = py;
+                buffer[base + 2] = pz;
+                writeIdx = (writeIdx + 1) % maxPoints;
+                if (count < maxPoints) {
+                    count++;
+                }
+                added++;
+            }
+            return added;
+        }
+
+        public synchronized float[] snapshot() {
+            if (count <= 0) {
+                return null;
+            }
+            final float[] out = new float[count * 3];
+            System.arraycopy(buffer, 0, out, 0, count * 3);
+            return out;
+        }
+    }
+
     private static int clampByte(final int v) {
         if (v < 0) return 0;
         if (v > 255) return 255;
@@ -601,6 +679,7 @@ public final class CapturePipelineHelper {
 
         private int consecutiveAcquireFailures = 0;
         private boolean glFallbackActive = false;
+        private long glFallbackRequestedAtMs = 0L;
         private String lastDiagCode = null;
         private long capturingStartedAtMs = 0L;
         private long lastCandidateAcceptedAtMs = 0L;
@@ -609,6 +688,7 @@ public final class CapturePipelineHelper {
             clearBurst();
             consecutiveAcquireFailures = 0;
             glFallbackActive = false;
+            glFallbackRequestedAtMs = 0L;
             lastDiagCode = null;
             capturingStartedAtMs = nowMs;
             lastCandidateAcceptedAtMs = 0L;
@@ -619,6 +699,17 @@ public final class CapturePipelineHelper {
             burstStartMs = 0L;
             bestBlur = -1.0;
             bestCandidate = null;
+            glFallbackRequestedAtMs = 0L;
+        }
+
+        public void markGlFallbackRequested(final long nowMs) {
+            if (active && glFallbackRequestedAtMs == 0L) {
+                glFallbackRequestedAtMs = nowMs;
+            }
+        }
+
+        public boolean isTimedOutWithNoCandidate(final long nowMs, final long thresholdMs) {
+            return active && bestCandidate == null && burstStartMs > 0L && (nowMs - burstStartMs) >= thresholdMs;
         }
 
         public void beginBurstIfNeeded(final long nowMs) {
@@ -691,7 +782,11 @@ public final class CapturePipelineHelper {
             try {
                 candidate = extractor.extract();
             } catch (Throwable t) {
-                recordNonAcquireDiag(DIAG_ERR);
+                recordAcquireFailure(DIAG_ERR, nowMs);
+                return false;
+            }
+            if (candidate == null || !candidate.isComplete()) {
+                recordAcquireFailure(DIAG_ERR, nowMs);
                 return false;
             }
             return commitExtractedCandidate(candidate, nowMs);
@@ -711,6 +806,7 @@ public final class CapturePipelineHelper {
             this.bestCandidate = candidate;
             this.bestBlur = candidate.blurScore;
             this.lastCandidateAcceptedAtMs = nowMs;
+            this.glFallbackRequestedAtMs = 0L;
             if (candidate.fromGlFallback) {
                 this.lastDiagCode = DIAG_GLF;
             } else {
@@ -725,6 +821,7 @@ public final class CapturePipelineHelper {
             if (
                 DIAG_NYA.equals(lastDiagCode) ||
                 DIAG_ERR.equals(lastDiagCode) ||
+                DIAG_FMT.equals(lastDiagCode) ||
                 DIAG_GLF.equals(lastDiagCode)
             ) {
                 lastDiagCode = null;
@@ -751,6 +848,13 @@ public final class CapturePipelineHelper {
             final float speedAlertGyroRadS
         ) {
             if (!active) {
+                return false;
+            }
+            if (
+                bestCandidate == null &&
+                glFallbackRequestedAtMs > 0L &&
+                (nowMs - glFallbackRequestedAtMs) < GL_FALLBACK_GRACE_MS
+            ) {
                 return false;
             }
             final boolean timedOut = (nowMs - burstStartMs) >= BURST_WINDOW_MS;

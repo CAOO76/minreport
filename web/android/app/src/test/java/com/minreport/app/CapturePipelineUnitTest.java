@@ -190,8 +190,8 @@ public class CapturePipelineUnitTest {
         state.resetAll(10_000L);
         state.beginBurstIfNeeded(10_000L);
 
-        // 7 consecutive NotYetAvailableException failures -> still below threshold (8)
-        for (int i = 1; i <= 7; i++) {
+        // 4 consecutive NotYetAvailableException failures -> still below threshold (5)
+        for (int i = 1; i <= 4; i++) {
             state.recordAcquireFailure(CapturePipelineHelper.DIAG_NYA, 10_000L + i * 33L);
             assertEquals(i, state.getConsecutiveAcquireFailures());
             assertEquals(CapturePipelineHelper.DIAG_NYA, state.getLastDiagCode());
@@ -202,8 +202,8 @@ public class CapturePipelineUnitTest {
         assertFalse(state.shouldShowDiagCode(10_500L));
         assertTrue(state.shouldShowDiagCode(11_001L));
 
-        // 8th..10th consecutive failure -> triggers GL Readback fallback
-        for (int i = 8; i <= 10; i++) {
+        // 5th..7th consecutive failure -> triggers GL Readback fallback
+        for (int i = 5; i <= 7; i++) {
             state.recordAcquireFailure(CapturePipelineHelper.DIAG_NYA, 10_000L + i * 33L);
             assertTrue(state.isGlFallbackActive());
             assertTrue(state.shouldRequestGlFallback());
@@ -263,9 +263,9 @@ public class CapturePipelineUnitTest {
         overlay.updateLivePointCloud(verts);
         assertEquals(7, overlay.getLivePointCount());
 
-        // Verify strict 1024-point GPU cap
-        final FloatBuffer bigBuf = FloatBuffer.allocate(1500 * 4);
-        for (int i = 0; i < 1500; i++) {
+        // Verify strict 2048-point GPU cap
+        final FloatBuffer bigBuf = FloatBuffer.allocate(2400 * 4);
+        for (int i = 0; i < 2400; i++) {
             bigBuf.put(i * 0.01f);
             bigBuf.put(0.2f);
             bigBuf.put(-2.5f);
@@ -277,9 +277,88 @@ public class CapturePipelineUnitTest {
             0.1f,
             Live3DOverlayRenderer.MAX_LIVE_POINTS
         );
-        assertEquals(1024 * 3, cappedVerts.length);
+        assertEquals(2048 * 3, cappedVerts.length);
         overlay.updateLivePointCloud(cappedVerts);
-        assertEquals(1024, overlay.getLivePointCount());
+        assertEquals(2048, overlay.getLivePointCount());
+    }
+
+    @Test
+    public void testFormatAndExtractionFailuresEscalateToGlFallback() {
+        final CapturePipelineHelper.BurstCaptureState state = new CapturePipelineHelper.BurstCaptureState();
+        state.resetAll(20_000L);
+        state.beginBurstIfNeeded(20_000L);
+
+        // 2 format errors + 3 extractor failures -> 5 consecutive failures -> activates GL fallback
+        state.recordAcquireFailure(CapturePipelineHelper.DIAG_FMT, 20_033L);
+        state.recordAcquireFailure(CapturePipelineHelper.DIAG_FMT, 20_066L);
+        assertFalse(state.tryAcceptCandidate(18.0, 20_099L, () -> {
+            throw new IllegalStateException("extractor crash");
+        }));
+        assertFalse(state.tryAcceptCandidate(18.0, 20_132L, () -> null));
+        assertFalse(state.isGlFallbackActive());
+
+        state.recordAcquireFailure(CapturePipelineHelper.DIAG_ERR, 20_165L);
+        assertTrue(state.isGlFallbackActive());
+        assertTrue(state.shouldRequestGlFallback());
+        assertEquals(CapturePipelineHelper.DIAG_ERR, state.getLastDiagCode());
+    }
+
+    @Test
+    public void testGlFallbackGraceWindowPreventsBurstDropAtTimeout() {
+        final CapturePipelineHelper.BurstCaptureState state = new CapturePipelineHelper.BurstCaptureState();
+        state.resetAll(30_000L);
+        state.beginBurstIfNeeded(30_000L);
+
+        for (int i = 1; i <= 5; i++) {
+            state.recordAcquireFailure(CapturePipelineHelper.DIAG_NYA, 30_000L + i * 33L);
+        }
+        assertTrue(state.shouldRequestGlFallback());
+        state.markGlFallbackRequested(30_190L);
+
+        // At 220 ms burst window (30_220L), GL fallback frame was only requested 30 ms ago -> MUST NOT drop burst
+        assertFalse(
+            "Burst must wait for requested GL fallback frame instead of clearing at 220 ms",
+            state.isBurstFinished(30_220L, 0.1f, 0.75f)
+        );
+        // Same at 30_450L (260 ms < 280 ms grace)
+        assertFalse(state.isBurstFinished(30_450L, 0.1f, 0.75f));
+
+        // When GL fallback arrives at 30_240L -> burst finishes and commits KF #1
+        assertTrue(state.commitExtractedCandidate(makeCandidate(14.0, true), 30_240L));
+        assertTrue(state.isBurstFinished(30_240L, 0.1f, 0.75f));
+        assertNotNull(state.consumeCommittedCandidate());
+    }
+
+    @Test
+    public void testLivePointCloudAccumulatorPersistsAcrossEmptyFrames() {
+        final CapturePipelineHelper.LivePointCloudAccumulator acc =
+            new CapturePipelineHelper.LivePointCloudAccumulator(6);
+
+        final FloatBuffer f1 = FloatBuffer.allocate(3 * 4);
+        f1.put(new float[] { 1.0f, 0.2f, -1.0f, 0.3f });
+        f1.put(new float[] { 1.1f, 0.3f, -1.0f, 0.05f }); // below conf 0.1 -> ignored
+        f1.put(new float[] { 1.2f, 0.4f, -1.0f, 0.6f });
+        f1.flip();
+        assertEquals(2, acc.appendFromPointCloud(f1, 0.1f, 180));
+        assertEquals(2, acc.size());
+
+        // Subsequent empty frame MUST NOT clear accumulated world-space points
+        final FloatBuffer empty = FloatBuffer.allocate(0);
+        assertEquals(0, acc.appendFromPointCloud(empty, 0.1f, 180));
+        assertEquals(2, acc.size());
+        final float[] snap = acc.snapshot();
+        assertNotNull(snap);
+        assertEquals(2 * 3, snap.length);
+
+        // Ring buffer caps at maxPoints=6
+        final FloatBuffer f2 = FloatBuffer.allocate(6 * 4);
+        for (int i = 0; i < 6; i++) {
+            f2.put(new float[] { 2.0f + i, 0.5f, -2.0f, 0.4f });
+        }
+        f2.flip();
+        acc.appendFromPointCloud(f2, 0.1f, 180);
+        assertEquals(6, acc.size());
+        assertEquals(6 * 3, acc.snapshot().length);
     }
 
     @Test
