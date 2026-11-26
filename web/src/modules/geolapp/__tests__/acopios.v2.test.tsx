@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
+import { Capacitor } from '@capacitor/core';
 import {
     CaptureSessionPackageV2Schema,
     DemGridV1Schema,
@@ -19,10 +20,19 @@ import {
 } from '../../../core/offline/LocalCasFilesystemService';
 import { offlineStorage, type OfflineCasBlobRecord } from '../../../core/offline/OfflineStorage';
 import { syncQueueEngine } from '../../../core/offline/SyncQueueEngine';
-import { normalizeNativeSpatialScan } from '../core/services/spatialScannerService';
+import { mediaDigestorClient } from '../../../core/media/MediaDigestorClient';
+import * as SpatialScannerServiceMod from '../core/services/spatialScannerService';
+import {
+    loadPairedScanKeyframes,
+    normalizeNativeSpatialScan,
+    persistCaptureSessionOffline,
+    type SpatialDepthMode,
+} from '../core/services/spatialScannerService';
+import * as SpatialDeviceCapabilityMod from '../core/services/spatialDeviceCapability';
 import * as StorageServiceMod from '../core/services/StorageService';
 import * as CoreAuthFetchMod from '../../../core/network/coreAuthFetch';
 import { StockpileTwin3D } from '../components/StockpileTwin3D';
+import { MobileScanner } from '../components/MobileScanner';
 
 vi.mock('react-i18next', () => ({
     useTranslation: () => ({
@@ -740,5 +750,235 @@ describe('SyncQueueEngine — HTTP 422 -> REJECTED_METROLOGY + CAPTURE_SESSION_U
         expect(savedMeas.payload.cloud_refined_m3).toBe(45.2);
         expect(savedMeas.payload.reconciliation_delta_pct).toBe(6.35);
         expect(savedMeas.payload.volumen_m3).toBe(45.2);
+    });
+});
+
+describe('Puente Capacitor / Web — Emparejamiento 1:1 Keyframes, SpatialDepthMode y Errores Nativos', () => {
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    it('mantiene emparejamiento estricto 1:1 photoBlobs <-> keyframesV2 cuando falla el fetch de un keyframe', async () => {
+        const rawScan = normalizeNativeSpatialScan({
+            scanId: 'scan_pair_test_01',
+            scannerEngineVersion: '2.0-vio-mvs',
+            orientationMode: 'LANDSCAPE_4_3',
+            depthMode: 'VIO_MVS_OFFLINE' satisfies SpatialDepthMode,
+            deviceModel: 'Samsung SM-G556B',
+            coveragePct: 87.5,
+            sectorsCovered: 14,
+            sectorsTotal: 16,
+            loopClosed: true,
+            keyframesV2: [
+                {
+                    index: 0,
+                    photoPath: '/data/cache/kf_0.webp',
+                    mimeType: 'image/webp',
+                    originalBytes: 300_000,
+                    optimizedBytes: 50_000,
+                    savingsPct: 83.3,
+                    displayRotationDeg: 0,
+                    poseSE3: { r: [1, 0, 0, 0, 1, 0, 0, 0, 1], t: [0, 1.5, 4.0] },
+                    intrinsics: { fx: 950, fy: 950, cx: 640, cy: 480, width: 1280, height: 960 },
+                    timestampNs: 1_000_000_000,
+                    azimuthDeg: 0,
+                    sharpnessScore: 150,
+                },
+                {
+                    index: 1,
+                    photoPath: '/data/cache/kf_1_missing.webp',
+                    mimeType: 'image/webp',
+                    originalBytes: 310_000,
+                    optimizedBytes: 51_000,
+                    savingsPct: 83.5,
+                    displayRotationDeg: 0,
+                    poseSE3: { r: [0, 0, -1, 0, 1, 0, 1, 0, 0], t: [4.0, 1.5, 0] },
+                    intrinsics: { fx: 950, fy: 950, cx: 640, cy: 480, width: 1280, height: 960 },
+                    timestampNs: 2_000_000_000,
+                    azimuthDeg: 90,
+                    sharpnessScore: 145,
+                },
+                {
+                    index: 2,
+                    photoPath: '/data/cache/kf_2.webp',
+                    mimeType: 'image/webp',
+                    originalBytes: 320_000,
+                    optimizedBytes: 52_000,
+                    savingsPct: 83.8,
+                    displayRotationDeg: 0,
+                    poseSE3: { r: [-1, 0, 0, 0, 1, 0, 0, 0, -1], t: [0, 1.5, -4.0] },
+                    intrinsics: { fx: 950, fy: 950, cx: 640, cy: 480, width: 1280, height: 960 },
+                    timestampNs: 3_000_000_000,
+                    azimuthDeg: 180,
+                    sharpnessScore: 162,
+                },
+            ],
+            inSituMetrology: {
+                volumeM3: 38.4,
+                dimensionsM: { a: 6.8, b: 6.0, h: 2.6 },
+                groundSlopeDeg: 1.1,
+                uncertaintyPct: 5.5,
+                toeScore: 86,
+                zeroCellsInside: 0,
+                metrologyGrade: 'VALID_IN_SITU',
+            },
+        });
+
+        const bytesKf0 = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0x00, 0x01]);
+        const bytesKf2 = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0x02, 0x03]);
+        const mockFetch = vi.fn(async (input: RequestInfo | URL) => {
+            const url = String(input);
+            if (url.includes('kf_0.webp')) {
+                return new Response(bytesKf0, {
+                    status: 200,
+                    headers: { 'Content-Type': 'image/webp' },
+                });
+            }
+            if (url.includes('kf_1_missing.webp')) {
+                return new Response(null, { status: 404 });
+            }
+            if (url.includes('kf_2.webp')) {
+                return new Response(bytesKf2, {
+                    status: 200,
+                    headers: { 'Content-Type': 'image/webp' },
+                });
+            }
+            return new Response(null, { status: 404 });
+        }) as unknown as typeof fetch;
+
+        const loaded = await loadPairedScanKeyframes(rawScan, {
+            convertFileSrc: (p) => `https://localhost/_capacitor_file_${p}`,
+            fetchFn: mockFetch,
+        });
+
+        // Verificación estricta 1:1 tras fallo en kf_1
+        expect(loaded.photoBlobs).toHaveLength(2);
+        expect(loaded.pairedKeyframes).toHaveLength(2);
+        expect(loaded.scan.keyframesV2).toHaveLength(2);
+        expect(loaded.pairedKeyframes[0].meta?.index).toBe(0);
+        expect(loaded.pairedKeyframes[0].meta?.poseSE3?.t).toEqual([0, 1.5, 4.0]);
+        expect(loaded.pairedKeyframes[1].meta?.index).toBe(2);
+        expect(loaded.pairedKeyframes[1].meta?.poseSE3?.t).toEqual([0, 1.5, -4.0]);
+        expect(loaded.scan.keyframesV2![1].poseSE3?.t).toEqual([0, 1.5, -4.0]);
+
+        // Persistir con persistCaptureSessionOffline y verificar que las poses SE(3) no se desfasan
+        let digestCallIdx = 0;
+        vi.spyOn(mediaDigestorClient, 'digestFile').mockImplementation(async (blob) => {
+            const sha = digestCallIdx === 0 ? VALID_SHA_A : VALID_SHA_B;
+            digestCallIdx += 1;
+            return {
+                blob,
+                sha256: sha,
+                mimeType: 'image/webp',
+                extension: 'webp',
+                originalBytes: blob.size,
+                optimizedBytes: blob.size,
+                savingsPct: 0,
+            } as any;
+        });
+        vi.spyOn(localCasFilesystem, 'putBlob').mockResolvedValue({} as any);
+        vi.spyOn(offlineStorage, 'saveCaptureSession').mockResolvedValue(undefined);
+        vi.spyOn(syncQueueEngine, 'enqueueTask').mockResolvedValue('task_pair_01');
+
+        const persisted = await persistCaptureSessionOffline({
+            sessionId: 'sess_pair_01',
+            tenantId: 'tenant-atacama-01',
+            assetId: 'asset_pair_01',
+            measurementId: 'meas_pair_01',
+            capturedAt: 1700000020000,
+            scan: loaded.scan,
+            keyframeBlobs: loaded.photoBlobs,
+            pairedKeyframes: loaded.pairedKeyframes,
+            inSituMetrology: loaded.scan.inSituMetrology!,
+            locale: 'es',
+        });
+
+        expect(persisted.depthMode).toBe('VIO_MVS_OFFLINE');
+        expect(persisted.keyframes).toHaveLength(2);
+        expect(persisted.keyframes[0].index).toBe(0);
+        expect(persisted.keyframes[0].sha256).toBe(VALID_SHA_A);
+        expect(persisted.keyframes[0].poseSE3.t).toEqual([0, 1.5, 4.0]);
+        expect(persisted.keyframes[0].azimuthDeg).toBe(0);
+        expect(persisted.keyframes[1].index).toBe(2);
+        expect(persisted.keyframes[1].sha256).toBe(VALID_SHA_B);
+        expect(persisted.keyframes[1].poseSE3.t).toEqual([0, 1.5, -4.0]);
+        expect(persisted.keyframes[1].azimuthDeg).toBe(180);
+    });
+
+    it('acepta SpatialDepthMode VIO_MVS_OFFLINE y HARDWARE_TOF_DEPTH en normalización y contrato V2', () => {
+        const modes: SpatialDepthMode[] = [
+            'DISABLED',
+            'VIO_ORB_MVS',
+            'VIO_MVS_OFFLINE',
+            'RAW_DEPTH_ONLY',
+            'HARDWARE_TOF_DEPTH',
+            'AUTOMATIC',
+            'VIO_POINTCLOUD',
+        ];
+        for (const mode of modes) {
+            const normalized = normalizeNativeSpatialScan({
+                scanId: `scan_mode_${mode}`,
+                depthMode: mode,
+            });
+            expect(normalized.depthMode).toBe(mode);
+            const session = makeSampleSession({ depthMode: mode });
+            expect(session.depthMode).toBe(mode);
+        }
+    });
+
+    it('MobileScanner muestra stage ERROR con reintento (sin salir con onBack) ante error nativo del plugin', async () => {
+        vi.spyOn(Capacitor, 'isNativePlatform').mockReturnValue(true);
+        const optimalCap: SpatialDeviceCapabilityMod.SpatialDeviceCapabilityReport = {
+            platform: 'android',
+            manufacturer: 'Samsung',
+            model: 'SM-G556B',
+            device: 'xcover7',
+            sdkInt: 34,
+            arCoreAvailability: 'SUPPORTED_INSTALLED',
+            arCoreSupported: true,
+            depthApiSupported: false,
+            rawDepthSupported: false,
+            hasGyroscope: true,
+            hasAccelerometer: true,
+            camera2Level: 'FULL',
+            tier: 'COMPATIBLE_VIO',
+            reasons: [],
+        };
+        vi.spyOn(SpatialDeviceCapabilityMod, 'getCachedSpatialDeviceCapability').mockReturnValue(
+            optimalCap
+        );
+        vi.spyOn(SpatialDeviceCapabilityMod, 'useSpatialDeviceCapability').mockReturnValue({
+            capability: optimalCap,
+            loading: false,
+            refresh: vi.fn(),
+            requestInstall: vi.fn(),
+        });
+
+        const nativeErr = Object.assign(new Error('ARCORE_SESSION_ERROR: Camera unavailable'), {
+            code: 'ARCORE_SESSION_ERROR',
+        });
+        const scanSpy = vi
+            .spyOn(SpatialScannerServiceMod, 'startNativeSpatialScan')
+            .mockRejectedValue(nativeErr);
+        const onBack = vi.fn();
+        const onSuccess = vi.fn();
+
+        render(
+            <MobileScanner
+                assetName="AC-9001"
+                autoStartScan
+                onBack={onBack}
+                onSuccess={onSuccess}
+            />
+        );
+
+        await waitFor(() => {
+            expect(screen.getByRole('alert')).toHaveTextContent(
+                'ARCORE_SESSION_ERROR: Camera unavailable'
+            );
+        });
+        expect(onBack).not.toHaveBeenCalled();
+        expect(scanSpy).toHaveBeenCalledTimes(1);
+        expect(screen.getByRole('button', { name: 'VOLVER A MEDIR' })).toBeInTheDocument();
     });
 });

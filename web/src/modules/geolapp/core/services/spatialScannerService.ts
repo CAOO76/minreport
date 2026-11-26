@@ -27,7 +27,9 @@ import type { CopperMineralDomain, GeolappGeometryType } from '../types/GeolappT
 export type SpatialDepthMode =
     | 'DISABLED'
     | 'VIO_ORB_MVS'
+    | 'VIO_MVS_OFFLINE'
     | 'RAW_DEPTH_ONLY'
+    | 'HARDWARE_TOF_DEPTH'
     | 'AUTOMATIC'
     | 'VIO_POINTCLOUD';
 
@@ -115,8 +117,15 @@ export interface SpatialScanKeyframeV2Native {
     blurScore?: number;
 }
 
+export interface PairedSpatialKeyframe {
+    blob: Blob;
+    meta?: SpatialScanKeyframeV2Native;
+}
+
 export interface SpatialScanNativeResult {
     cancelled?: boolean;
+    errorCode?: string;
+    errorMessage?: string;
     scanId?: string;
     scannerEngineVersion?: string;
     orientationMode?: string;
@@ -981,65 +990,152 @@ export function normalizeNativeSpatialScan(rawInput: unknown): SpatialScanNative
 }
 
 /**
+ * Carga blobs locales de keyframes preservando emparejamiento estricto 1:1 entre `photoBlobs`
+ * y `keyframesV2` (si un `fetch` falla, ese índice también se descarta de `keyframesV2` y
+ * `pairedKeyframes` para que jamás se asigne una pose `SE(3)` a la imagen equivocada).
+ */
+export async function loadPairedScanKeyframes(
+    scan: SpatialScanNativeResult,
+    options?: {
+        convertFileSrc?: (path: string) => string;
+        fetchFn?: typeof fetch;
+    }
+): Promise<{
+    scan: SpatialScanNativeResult;
+    photoBlobs: Blob[];
+    pairedKeyframes: PairedSpatialKeyframe[];
+}> {
+    const convertSrc = options?.convertFileSrc ?? ((p: string) => Capacitor.convertFileSrc(p));
+    const fetchImpl = options?.fetchFn ?? fetch;
+
+    const hasV2 = Array.isArray(scan.keyframesV2) && scan.keyframesV2.length > 0;
+    const hasLegacy = Array.isArray(scan.keyframes) && scan.keyframes.length > 0;
+
+    const photoBlobs: Blob[] = [];
+    const pairedKeyframes: PairedSpatialKeyframe[] = [];
+    const survivingV2: SpatialScanKeyframeV2Native[] = [];
+    const survivingLegacy: SpatialScanKeyframe[] = [];
+
+    const loadBlobForPath = async (rawPath: unknown): Promise<Blob | null> => {
+        const path = typeof rawPath === 'string' ? rawPath.trim() : '';
+        if (!path) return null;
+        try {
+            const webSrc = convertSrc(path);
+            const res = await fetchImpl(webSrc);
+            if (!res.ok) return null;
+            const rawBlob = await res.blob();
+            if (!rawBlob || rawBlob.size <= 0) return null;
+            if (rawBlob.type && rawBlob.type.startsWith('image/')) {
+                return rawBlob;
+            }
+            const ab = await rawBlob.arrayBuffer();
+            const inferredType = path.toLowerCase().endsWith('.webp')
+                ? 'image/webp'
+                : 'image/jpeg';
+            return new Blob([ab], { type: inferredType });
+        } catch {
+            return null;
+        }
+    };
+
+    if (hasV2) {
+        const legacyByIdx = hasLegacy
+            ? new Map(scan.keyframes!.map((k) => [k.index, k]))
+            : null;
+        for (let i = 0; i < scan.keyframesV2!.length; i++) {
+            const kf = scan.keyframesV2![i];
+            const blob = await loadBlobForPath(kf?.photoPath);
+            if (!blob) continue;
+            photoBlobs.push(blob);
+            survivingV2.push(kf);
+            pairedKeyframes.push({ blob, meta: kf });
+            if (legacyByIdx) {
+                const legacyMatch = legacyByIdx.get(kf.index) ?? scan.keyframes?.[i];
+                if (legacyMatch) survivingLegacy.push(legacyMatch);
+            }
+        }
+    } else if (hasLegacy) {
+        for (const kf of scan.keyframes!) {
+            const blob = await loadBlobForPath(kf?.photoPath);
+            if (!blob) continue;
+            photoBlobs.push(blob);
+            survivingLegacy.push(kf);
+            pairedKeyframes.push({ blob });
+        }
+    }
+
+    const alignedScan: SpatialScanNativeResult = {
+        ...scan,
+        ...(hasV2 ? { keyframesV2: survivingV2 } : {}),
+        ...(hasLegacy ? { keyframes: survivingLegacy } : {}),
+    };
+
+    return {
+        scan: alignedScan,
+        photoBlobs,
+        pairedKeyframes,
+    };
+}
+
+/**
  * Ejecuta el escáner espacial nativo Android ARCore VIO/Depth y convierte las rutas locales
- * `keyframes[].photoPath` a `Blob[]` reales listos para digestión CAS y vista previa.
+ * `keyframes[].photoPath` a `Blob[]` reales emparejados 1:1 con `keyframesV2`.
  */
 export async function startNativeSpatialScan(): Promise<{
     scan: SpatialScanNativeResult;
     photoBlobs: Blob[];
+    pairedKeyframes: PairedSpatialKeyframe[];
 }> {
     if (!Capacitor.isNativePlatform()) {
-        return { scan: { cancelled: true }, photoBlobs: [] };
+        return { scan: { cancelled: true }, photoBlobs: [], pairedKeyframes: [] };
     }
 
     let raw: SpatialScanNativeResult;
     try {
         raw = await MinreportSpatialScanner.startSpatialScan();
     } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err || '');
-        if (/cancel/i.test(msg)) {
-            return { scan: { cancelled: true }, photoBlobs: [] };
+        const errObj =
+            err && typeof err === 'object'
+                ? (err as { code?: unknown; message?: unknown })
+                : null;
+        const code = typeof errObj?.code === 'string' ? errObj.code.trim() : '';
+        const msg =
+            err instanceof Error
+                ? err.message
+                : typeof errObj?.message === 'string'
+                  ? errObj.message
+                  : String(err || '');
+        const isExplicitCancel = /cancel/i.test(code) || (!code && /cancel/i.test(msg));
+        if (isExplicitCancel) {
+            return { scan: { cancelled: true }, photoBlobs: [], pairedKeyframes: [] };
         }
-        throw err instanceof Error ? err : new Error(msg || 'Error iniciando escaneo espacial.');
+        const formattedMsg =
+            code && msg && !msg.includes(code)
+                ? `${code}: ${msg}`
+                : msg || code || 'Error iniciando escaneo espacial.';
+        const wrapped = new Error(formattedMsg) as Error & { code?: string };
+        if (code) wrapped.code = code;
+        throw wrapped;
+    }
+
+    const rawErrorCode = typeof raw?.errorCode === 'string' ? raw.errorCode.trim() : '';
+    const rawErrorMessage = typeof raw?.errorMessage === 'string' ? raw.errorMessage.trim() : '';
+    if (rawErrorCode || rawErrorMessage) {
+        const formattedMsg =
+            rawErrorCode && rawErrorMessage && !rawErrorMessage.includes(rawErrorCode)
+                ? `${rawErrorCode}: ${rawErrorMessage}`
+                : rawErrorMessage || rawErrorCode;
+        const wrapped = new Error(formattedMsg) as Error & { code?: string };
+        if (rawErrorCode) wrapped.code = rawErrorCode;
+        throw wrapped;
     }
 
     if (!raw || raw.cancelled) {
-        return { scan: { ...(raw || {}), cancelled: true }, photoBlobs: [] };
+        return { scan: { ...(raw || {}), cancelled: true }, photoBlobs: [], pairedKeyframes: [] };
     }
 
     const normalizedScan = normalizeNativeSpatialScan(raw);
-    const v2Frames =
-        Array.isArray(normalizedScan.keyframesV2) && normalizedScan.keyframesV2.length > 0
-            ? normalizedScan.keyframesV2
-            : null;
-    const keyframes =
-        v2Frames ?? (Array.isArray(normalizedScan.keyframes) ? normalizedScan.keyframes : []);
-    const photoBlobs: Blob[] = [];
-
-    for (const kf of keyframes) {
-        const path = typeof kf?.photoPath === 'string' ? kf.photoPath.trim() : '';
-        if (!path) continue;
-        try {
-            const webSrc = Capacitor.convertFileSrc(path);
-            const res = await fetch(webSrc);
-            if (!res.ok) continue;
-            const rawBlob = await res.blob();
-            if (!rawBlob || rawBlob.size <= 0) continue;
-            if (rawBlob.type && rawBlob.type.startsWith('image/')) {
-                photoBlobs.push(rawBlob);
-            } else {
-                const ab = await rawBlob.arrayBuffer();
-                const inferredType = path.toLowerCase().endsWith('.webp')
-                    ? 'image/webp'
-                    : 'image/jpeg';
-                photoBlobs.push(new Blob([ab], { type: inferredType }));
-            }
-        } catch {
-            // Omitir keyframe ilegible sin abortar la nube métrica capturada
-        }
-    }
-
-    return { scan: normalizedScan, photoBlobs };
+    return loadPairedScanKeyframes(normalizedScan);
 }
 
 /**
@@ -1103,6 +1199,7 @@ export async function persistCaptureSessionOffline(params: {
     capturedAt: number;
     scan: SpatialScanNativeResult;
     keyframeBlobs: Blob[];
+    pairedKeyframes?: PairedSpatialKeyframe[];
     inSituMetrology: InSituMetrology;
     localPreviewMesh?: DemGridV1 | null;
     locale?: 'es' | 'en' | 'pt';
@@ -1115,6 +1212,7 @@ export async function persistCaptureSessionOffline(params: {
         capturedAt,
         scan,
         keyframeBlobs,
+        pairedKeyframes,
         inSituMetrology,
         localPreviewMesh = null,
         locale = 'es',
@@ -1122,13 +1220,19 @@ export async function persistCaptureSessionOffline(params: {
 
     const resolvedTenant = tenantId.trim() || 'offline-local';
     const v2Meta = Array.isArray(scan.keyframesV2) ? scan.keyframesV2 : [];
+    const resolvedPairs: PairedSpatialKeyframe[] =
+        Array.isArray(pairedKeyframes) && pairedKeyframes.length > 0
+            ? pairedKeyframes
+            : keyframeBlobs.map((blob, idx) => ({
+                  blob,
+                  meta: v2Meta[idx],
+              }));
     const keyframes: CaptureKeyframeV2[] = [];
     let totalOriginalBytes = 0;
     let totalOptimizedBytes = 0;
 
-    for (let i = 0; i < keyframeBlobs.length; i++) {
-        const rawBlob = keyframeBlobs[i];
-        const meta = v2Meta[i];
+    for (let i = 0; i < resolvedPairs.length; i++) {
+        const { blob: rawBlob, meta } = resolvedPairs[i];
         let digestedBlob = rawBlob;
         let mimeType = rawBlob.type || meta?.mimeType || 'image/webp';
         let extension = mimeType.includes('webp') ? 'webp' : 'jpg';

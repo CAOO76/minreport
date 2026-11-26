@@ -24,6 +24,7 @@ import {
     persistCaptureSessionOffline,
     saveOfflineSpatialPayload,
     startNativeSpatialScan,
+    type PairedSpatialKeyframe,
     type SpatialAnalyzeResult,
     type SpatialScanNativeResult,
 } from '../core/services/spatialScannerService';
@@ -188,6 +189,7 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
     const [photoPreview, setPhotoPreview] = useState<string | null>(null);
     const [extraPhotos, setExtraPhotos] = useState<Array<{ blob: Blob; previewUrl: string }>>([]);
     const [allKeyframeBlobs, setAllKeyframeBlobs] = useState<Blob[]>([]);
+    const [pairedKeyframes, setPairedKeyframes] = useState<PairedSpatialKeyframe[]>([]);
     const [spatialScan, setSpatialScan] = useState<SpatialScanNativeResult | null>(null);
     const [inSituMetrology, setInSituMetrology] = useState<InSituMetrology | null>(null);
     const [localPreviewMesh, setLocalPreviewMesh] = useState<DemGridV1 | null>(null);
@@ -211,6 +213,7 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
     const [showSpecsPanel, setShowSpecsPanel] = useState<boolean>(false);
 
     const [isScanningSpatial, setIsScanningSpatial] = useState<boolean>(false);
+    const scanningSpatialRef = useRef<boolean>(false);
     const [isSaving, setIsSaving] = useState<boolean>(false);
     const [isRequestingArCore, setIsRequestingArCore] = useState<boolean>(false);
     const [uploadProgress, setUploadProgress] = useState<number>(0);
@@ -255,6 +258,7 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
             return [];
         });
         setAllKeyframeBlobs([]);
+        setPairedKeyframes([]);
         setSpatialScan(null);
         setInSituMetrology(null);
         setLocalPreviewMesh(null);
@@ -381,7 +385,9 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
     );
 
     const handleStartSpatialScan = useCallback(async () => {
-        if (isSaving || isScanningSpatial || !isSpatialCapable) return;
+        if (isSaving || isScanningSpatial || scanningSpatialRef.current || !isSpatialCapable) return;
+        autoTriggeredRef.current = true;
+        scanningSpatialRef.current = true;
         setIsScanningSpatial(true);
         setRejectionMessage(null);
         setErrorMessage(null);
@@ -389,7 +395,8 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
         void triggerFieldImpact('MEDIUM');
 
         try {
-            const { scan, photoBlobs } = await startNativeSpatialScan();
+            const { scan, photoBlobs, pairedKeyframes: nextPairedKeyframes } =
+                await startNativeSpatialScan();
             if (scan.cancelled) {
                 if (autoStartScan && stageRef.current === 'READY') {
                     onBack();
@@ -398,6 +405,7 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
             }
             setSpatialScan(scan);
             setAllKeyframeBlobs(photoBlobs);
+            setPairedKeyframes(nextPairedKeyframes);
 
             const primary = photoBlobs.length > 0 ? photoBlobs[0] : null;
             const extraRawBlobs = photoBlobs.slice(1, MAX_AUTO_THUMBS);
@@ -425,11 +433,26 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
 
             await runSpatialAnalysis(scan, primary, extraRawBlobs);
         } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : String(err || '');
-            setErrorMessage(msg || t('digital_v2.save_error', 'ERROR EN ESCÁNER'));
+            const errObj =
+                err && typeof err === 'object'
+                    ? (err as { code?: unknown; message?: unknown })
+                    : null;
+            const code = typeof errObj?.code === 'string' ? errObj.code.trim() : '';
+            const rawMsg =
+                err instanceof Error
+                    ? err.message
+                    : typeof errObj?.message === 'string'
+                      ? errObj.message
+                      : String(err || '');
+            const displayMsg =
+                code && rawMsg && !rawMsg.includes(code)
+                    ? `${code}: ${rawMsg}`
+                    : rawMsg || code || t('digital_v2.save_error', 'ERROR EN ESCÁNER');
+            setErrorMessage(displayMsg);
             setStage('ERROR');
             void triggerFieldNotification('ERROR');
         } finally {
+            scanningSpatialRef.current = false;
             setIsScanningSpatial(false);
         }
     }, [
@@ -502,6 +525,7 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
         e.target.value = '';
         if (!file) return;
         setAllKeyframeBlobs([]);
+        setPairedKeyframes([]);
         setSpatialScan(null);
         setInSituMetrology(null);
         setLocalPreviewMesh(null);
@@ -825,6 +849,7 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                         capturedAt: now,
                         scan: spatialScan,
                         keyframeBlobs: blobsToPersist,
+                        pairedKeyframes: pairedKeyframes.length > 0 ? pairedKeyframes : undefined,
                         inSituMetrology,
                         localPreviewMesh,
                         locale: resolvedLocale,
@@ -883,6 +908,7 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
         localPreviewMesh,
         manualDensityText,
         onSuccess,
+        pairedKeyframes,
         photoBlob,
         resolvedLocale,
         selectedCopperDomain,

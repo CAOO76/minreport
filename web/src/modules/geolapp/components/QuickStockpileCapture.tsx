@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Capacitor } from '@capacitor/core';
 import { Geolocation } from '@capacitor/geolocation';
@@ -74,8 +74,15 @@ export const QuickStockpileCapture: React.FC<QuickStockpileCaptureProps> = ({
     const [gnssStatus, setGnssStatus] = useState<GeolappGnssStatus>(
         existingAsset?.geo_point ? 'FIX_OK' : 'UNDERGROUND_NO_FIX'
     );
-    const [gnssResolved, setGnssResolved] = useState<boolean>(() => Boolean(existingAsset?.geo_point));
-    const [isLocating, setIsLocating] = useState<boolean>(false);
+    const locatingRef = useRef<boolean>(false);
+    const mountedRef = useRef<boolean>(true);
+
+    useEffect(() => {
+        mountedRef.current = true;
+        return () => {
+            mountedRef.current = false;
+        };
+    }, []);
 
     useEffect(() => {
         if (!isNewAsset) return;
@@ -85,8 +92,8 @@ export const QuickStockpileCapture: React.FC<QuickStockpileCaptureProps> = ({
     }, [draftKey, isNewAsset, stockpileName]);
 
     const captureGnssFix = useCallback(async () => {
-        if (isLocating) return;
-        setIsLocating(true);
+        if (locatingRef.current) return;
+        locatingRef.current = true;
         try {
             if (Capacitor.isNativePlatform()) {
                 const pos = await Geolocation.getCurrentPosition({
@@ -94,6 +101,7 @@ export const QuickStockpileCapture: React.FC<QuickStockpileCaptureProps> = ({
                     timeout: 4500,
                     maximumAge: 15000,
                 });
+                if (!mountedRef.current) return;
                 const lat = pos.coords.latitude;
                 const lng = pos.coords.longitude;
                 if (Number.isFinite(lat) && Number.isFinite(lng) && (lat !== 0 || lng !== 0)) {
@@ -114,6 +122,7 @@ export const QuickStockpileCapture: React.FC<QuickStockpileCaptureProps> = ({
                         maximumAge: 15000,
                     });
                 });
+                if (!mountedRef.current) return;
                 const lat = pos.coords.latitude;
                 const lng = pos.coords.longitude;
                 if (Number.isFinite(lat) && Number.isFinite(lng) && (lat !== 0 || lng !== 0)) {
@@ -127,20 +136,23 @@ export const QuickStockpileCapture: React.FC<QuickStockpileCaptureProps> = ({
                     return;
                 }
             }
-            setGnssStatus('UNDERGROUND_NO_FIX');
+            if (mountedRef.current) {
+                setGnssStatus('UNDERGROUND_NO_FIX');
+            }
         } catch {
-            setGnssStatus('UNDERGROUND_NO_FIX');
+            if (mountedRef.current) {
+                setGnssStatus('UNDERGROUND_NO_FIX');
+            }
         } finally {
-            setIsLocating(false);
-            setGnssResolved(true);
+            locatingRef.current = false;
         }
-    }, [isLocating]);
+    }, []);
 
     useEffect(() => {
         if (!existingAsset) {
             void captureGnssFix();
         }
-    }, []);
+    }, [captureGnssFix, existingAsset]);
 
     const handleChildSuccess = useCallback(
         (measurementId: string, createdAssetId?: string) => {
@@ -217,7 +229,7 @@ export const QuickStockpileCapture: React.FC<QuickStockpileCaptureProps> = ({
         <MobileScanner
             assetName={stockpileName}
             draftAsset={draftAssetPayload}
-            autoStartScan={gnssResolved}
+            autoStartScan
             onDraftNameChange={setStockpileName}
             onSuccess={handleChildSuccess}
             onBack={onCancel}
