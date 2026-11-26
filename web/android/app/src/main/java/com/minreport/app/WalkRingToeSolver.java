@@ -16,8 +16,10 @@ public final class WalkRingToeSolver {
     private static final int MAX_DEM_DIM = 64;
     private static final int PREVIEW_MAX_DIM = 32;
     private static final float MIN_CELL_SIZE_M = 0.08f;
-    private static final float MAX_CELL_SIZE_M = 0.25f;
+    private static final float MAX_CELL_SIZE_M = 0.75f;
     private static final float MAX_GRAVITY_MISMATCH_DEG = 3.5f;
+    private static final float DEFAULT_FORWARD_PROJECTION_M = 3.0f;
+    private static final float LOCAL_GROUND_CLEARANCE_M = 0.55f;
 
     private WalkRingToeSolver() {}
 
@@ -250,7 +252,7 @@ public final class WalkRingToeSolver {
         final List<WalkPose> walkPoses,
         final List<float[]> points3D
     ) {
-        if (walkPoses != null && walkPoses.size() >= 3) {
+        if (walkPoses != null && !walkPoses.isEmpty()) {
             double h00 = 0.0;
             double h01 = 0.0;
             double h11 = 0.0;
@@ -260,6 +262,8 @@ public final class WalkRingToeSolver {
 
             double sumPx = 0.0;
             double sumPz = 0.0;
+            double sumFwdX = 0.0;
+            double sumFwdZ = 0.0;
             for (WalkPose wp : walkPoses) {
                 sumPx += wp.x;
                 sumPz += wp.z;
@@ -269,6 +273,8 @@ public final class WalkRingToeSolver {
                 }
                 final double dx = wp.fwdX / lenXZ;
                 final double dz = wp.fwdZ / lenXZ;
+                sumFwdX += dx;
+                sumFwdZ += dz;
                 final double nx = -dz;
                 final double nz = dx;
                 final double rhs = nx * wp.x + nz * wp.z;
@@ -283,7 +289,7 @@ public final class WalkRingToeSolver {
             final double meanPx = sumPx / walkPoses.size();
             final double meanPz = sumPz / walkPoses.size();
 
-            if (validRays >= 3) {
+            if (walkPoses.size() >= 3 && validRays >= 3) {
                 final double det = h00 * h11 - h01 * h01;
                 if (Math.abs(det) > 1e-5) {
                     final double cx = (h11 * b0 - h01 * b1) / det;
@@ -307,22 +313,41 @@ public final class WalkRingToeSolver {
                     }
                 }
             }
-            return new float[] { (float) meanPx, (float) meanPz };
+
+            // Fallback when < 3 poses or ray intersection does not converge:
+            // project +3.0 m forward along mean horizontal optical direction (never {0,0} or {meanPx,meanPz}).
+            final double meanFwdLen = Math.hypot(sumFwdX, sumFwdZ);
+            if (meanFwdLen > 1e-4) {
+                final double dirX = sumFwdX / meanFwdLen;
+                final double dirZ = sumFwdZ / meanFwdLen;
+                return new float[] {
+                    (float) (meanPx + dirX * DEFAULT_FORWARD_PROJECTION_M),
+                    (float) (meanPz + dirZ * DEFAULT_FORWARD_PROJECTION_M)
+                };
+            }
+            if (points3D != null && !points3D.isEmpty()) {
+                return computeMedianPointsXZ(points3D);
+            }
+            return new float[] { (float) meanPx, (float) (meanPz - DEFAULT_FORWARD_PROJECTION_M) };
         }
 
         if (points3D != null && !points3D.isEmpty()) {
-            final float[] xs = new float[points3D.size()];
-            final float[] zs = new float[points3D.size()];
-            for (int i = 0; i < points3D.size(); i++) {
-                final float[] p = points3D.get(i);
-                xs[i] = p[0];
-                zs[i] = p[2];
-            }
-            Arrays.sort(xs);
-            Arrays.sort(zs);
-            return new float[] { xs[xs.length / 2], zs[zs.length / 2] };
+            return computeMedianPointsXZ(points3D);
         }
-        return new float[] { 0.0f, 0.0f };
+        return new float[] { 0.0f, -DEFAULT_FORWARD_PROJECTION_M };
+    }
+
+    private static float[] computeMedianPointsXZ(final List<float[]> points3D) {
+        final float[] xs = new float[points3D.size()];
+        final float[] zs = new float[points3D.size()];
+        for (int i = 0; i < points3D.size(); i++) {
+            final float[] p = points3D.get(i);
+            xs[i] = p[0];
+            zs[i] = p[2];
+        }
+        Arrays.sort(xs);
+        Arrays.sort(zs);
+        return new float[] { xs[xs.length / 2], zs[zs.length / 2] };
     }
 
     public static MetrologyResult solve(
@@ -355,9 +380,8 @@ public final class WalkRingToeSolver {
             ? explicitLoopDriftPct
             : estimateWalkLoopDriftPct(poses, loopClosed);
 
-        // 2. Filter ground samples strictly below camera corridor (y <= medianCamY - 0.8f)
+        // 2. Filter ground samples strictly below local camera corridor (y <= nearestCamY - 0.55f)
         final List<float[]> filteredGround = new ArrayList<>();
-        final float maxGroundY = hasWalkPoses ? (medianCamY - 0.80f) : Float.MAX_VALUE;
         for (float[] g : groundInput) {
             if (g == null || g.length < 3) {
                 continue;
@@ -365,7 +389,24 @@ public final class WalkRingToeSolver {
             if (!Float.isFinite(g[0]) || !Float.isFinite(g[1]) || !Float.isFinite(g[2])) {
                 continue;
             }
-            if (g[1] <= maxGroundY) {
+            final float localMaxGroundY;
+            if (!poses.isEmpty()) {
+                float nearestCamY = medianCamY;
+                float bestDistSq = Float.MAX_VALUE;
+                for (WalkPose wp : poses) {
+                    final float ddx = g[0] - wp.x;
+                    final float ddz = g[2] - wp.z;
+                    final float dSq = ddx * ddx + ddz * ddz;
+                    if (dSq < bestDistSq) {
+                        bestDistSq = dSq;
+                        nearestCamY = wp.y;
+                    }
+                }
+                localMaxGroundY = nearestCamY - LOCAL_GROUND_CLEARANCE_M;
+            } else {
+                localMaxGroundY = Float.MAX_VALUE;
+            }
+            if (g[1] <= localMaxGroundY) {
                 filteredGround.add(new float[] { g[0], g[1], g[2] });
             }
         }
@@ -422,7 +463,7 @@ public final class WalkRingToeSolver {
             planeD
         );
 
-        // 6. Compute adaptive 2.5D DEM grid (cellSizeM in [0.08, 0.25], nx/nz <= 64)
+        // 6. Compute adaptive 2.5D DEM grid (cellSizeM in [0.08, 0.75], nx/nz <= 64)
         float minX = Float.MAX_VALUE;
         float maxX = -Float.MAX_VALUE;
         float minZ = Float.MAX_VALUE;

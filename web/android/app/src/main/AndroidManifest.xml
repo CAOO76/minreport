@@ -30,7 +30,7 @@
             android:name=".MinreportSpatialScannerActivity"
             android:exported="false"
             android:screenOrientation="sensorLandscape"
-            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout"
+            android:configChanges="orientation|keyboardHidden|screenSize|smallestScreenSize|screenLayout"
             android:theme="@style/Theme.AppCompat.NoActionBar" />
 
         <provider

@@ -2,6 +2,7 @@ package com.minreport.app;
 
 import android.opengl.GLES20;
 import android.opengl.Matrix;
+import android.util.Log;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.FloatBuffer;
@@ -18,6 +19,7 @@ import java.nio.FloatBuffer;
  */
 public final class Live3DOverlayRenderer {
 
+    private static final String TAG = "Live3DOverlayRenderer";
     private static final int MAX_VERTICES_PER_BUFFER = 4096;
     private static final int FLOATS_PER_VERTEX = 3;
 
@@ -75,6 +77,13 @@ public final class Live3DOverlayRenderer {
     public void onSurfaceCreated() {
         final int vs = compileShader(GLES20.GL_VERTEX_SHADER, VERT_SHADER);
         final int fs = compileShader(GLES20.GL_FRAGMENT_SHADER, FRAG_SHADER);
+        if (vs == 0 || fs == 0) {
+            if (vs != 0) GLES20.glDeleteShader(vs);
+            if (fs != 0) GLES20.glDeleteShader(fs);
+            Log.e(TAG, "Aborting Live3DOverlayRenderer init due to shader compile failure");
+            programId = 0;
+            return;
+        }
         programId = GLES20.glCreateProgram();
         GLES20.glAttachShader(programId, vs);
         GLES20.glAttachShader(programId, fs);
@@ -85,6 +94,8 @@ public final class Live3DOverlayRenderer {
         GLES20.glDeleteShader(vs);
         GLES20.glDeleteShader(fs);
         if (link[0] == 0) {
+            final String log = GLES20.glGetProgramInfoLog(programId);
+            Log.e(TAG, "Failed to link Live3DOverlayRenderer GLES 2.0 program: " + log);
             GLES20.glDeleteProgram(programId);
             programId = 0;
             return;
@@ -286,6 +297,8 @@ public final class Live3DOverlayRenderer {
         final int[] ok = new int[1];
         GLES20.glGetShaderiv(shader, GLES20.GL_COMPILE_STATUS, ok, 0);
         if (ok[0] == 0) {
+            final String log = GLES20.glGetShaderInfoLog(shader);
+            Log.e(TAG, "Failed to compile Live3DOverlayRenderer GLES 2.0 shader (type=" + type + "): " + log);
             GLES20.glDeleteShader(shader);
             return 0;
         }

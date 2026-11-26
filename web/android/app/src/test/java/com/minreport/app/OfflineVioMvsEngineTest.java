@@ -1,6 +1,7 @@
 package com.minreport.app;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
@@ -166,6 +167,146 @@ public class OfflineVioMvsEngineTest {
                 engine.getIncrementalPointCount() + ")",
             engine.getIncrementalPointCount() >= 4
         );
+    }
+
+    @Test
+    public void testEstimateAutoCenterProjectsForward3mOnFewPosesAndShortCollinearArc() {
+        // 0 poses & no points -> never {0,0}, projects +3.0m along -Z
+        final float[] estEmpty = WalkRingToeSolver.estimateAutoCenterXZ(new ArrayList<>(), new ArrayList<>());
+        assertEquals(0.0f, estEmpty[0], 1e-4f);
+        assertEquals(-3.0f, estEmpty[1], 1e-4f);
+
+        // 1 pose at (2, 0, 5) facing +X -> projects to (5.0, 5.0)
+        final List<WalkRingToeSolver.WalkPose> onePose = new ArrayList<>();
+        onePose.add(new WalkRingToeSolver.WalkPose(2.0f, 1.5f, 5.0f, 1.0f, -0.2f, 0.0f, 100L));
+        final float[] estOne = WalkRingToeSolver.estimateAutoCenterXZ(onePose, new ArrayList<>());
+        assertEquals(5.0f, estOne[0], 0.05f);
+        assertEquals(5.0f, estOne[1], 0.05f);
+
+        // 2 poses walking along Z while looking toward -Z (mean pos = (1.0, 2.0), fwd = (0, -1)) -> (1.0, -1.0)
+        final List<WalkRingToeSolver.WalkPose> twoPoses = new ArrayList<>();
+        twoPoses.add(new WalkRingToeSolver.WalkPose(0.5f, 1.5f, 2.0f, 0.0f, -0.2f, -1.0f, 100L));
+        twoPoses.add(new WalkRingToeSolver.WalkPose(1.5f, 1.5f, 2.0f, 0.0f, -0.2f, -1.0f, 200L));
+        final float[] estTwo = WalkRingToeSolver.estimateAutoCenterXZ(twoPoses, new ArrayList<>());
+        assertEquals(1.0f, estTwo[0], 0.05f);
+        assertEquals(-1.0f, estTwo[1], 0.05f);
+
+        // 4 parallel rays (short collinear walk, ray intersection det == 0) -> projects +3.0m forward, never {meanPx, meanPz}
+        final List<WalkRingToeSolver.WalkPose> collinear = new ArrayList<>();
+        for (int i = 0; i < 4; i++) {
+            collinear.add(new WalkRingToeSolver.WalkPose(i * 0.4f, 1.5f, 4.0f, 0.0f, -0.2f, -1.0f, i * 100L));
+        }
+        final float[] estCollinear = WalkRingToeSolver.estimateAutoCenterXZ(collinear, new ArrayList<>());
+        assertEquals(0.6f, estCollinear[0], 0.05f);
+        assertEquals(1.0f, estCollinear[1], 0.05f);
+    }
+
+    @Test
+    public void testDenseSweepPartialArcNoWrapAroundAndEndpointSingleNeighbor() {
+        // 6 keyframes on a linear front pass (not a closed loop: dist(0, 5) = 3.0m > 2.5m)
+        final int w = 160;
+        final int h = 120;
+        final float fx = 140.0f;
+        final float fy = 140.0f;
+        final float cx = 80.0f;
+        final float cy = 60.0f;
+
+        final List<float[]> worldMarkers = new ArrayList<>();
+        for (int iy = -3; iy <= 3; iy++) {
+            for (int ix = -6; ix <= 6; ix++) {
+                worldMarkers.add(new float[] { ix * 0.40f, iy * 0.30f, -3.5f });
+            }
+        }
+
+        final float[] identityR = { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
+        final List<OfflineVioMvsEngine.KeyframeFrame> kfs = new ArrayList<>();
+        final List<WalkRingToeSolver.WalkPose> walkPoses = new ArrayList<>();
+        for (int k = 0; k < 6; k++) {
+            final float camX = -1.5f + k * 0.6f; // span = 3.0m (> 2.5m loop closure gate)
+            final byte[] luma = renderSyntheticLuma(w, h, fx, fy, cx, cy, camX, worldMarkers);
+            final OfflineVioMvsEngine.KeyframeFrame kf = new OfflineVioMvsEngine.KeyframeFrame(
+                k, w, h, luma, fx, fy, cx, cy,
+                identityR, new float[] { camX, 0.0f, 0.0f },
+                k * 100_000_000L
+            );
+            kfs.add(kf);
+            walkPoses.add(new WalkRingToeSolver.WalkPose(camX, 0.0f, 0.0f, 0.0f, 0.0f, -1.0f, k * 100_000_000L));
+        }
+
+        assertFalse(
+            "Linear 3.0m pass must NOT qualify as closed loop",
+            OfflineVioMvsEngine.isLoopClosurePair(kfs.get(0), kfs.get(kfs.size() - 1))
+        );
+
+        final List<float[]> openSweepPts = OfflineVioMvsEngine.runDenseCensusZnccSweep(
+            kfs, 0.0f, -3.5f, walkPoses, false, false
+        );
+        assertTrue(
+            "Open-arc dense sweep without wrap-around must reconstruct points (got " + openSweepPts.size() + ")",
+            openSweepPts.size() >= 10
+        );
+
+        // Verify at least some points come from single-neighbor endpoints (weight == 1.0f)
+        int endpointPts = 0;
+        for (float[] p : openSweepPts) {
+            if (p.length >= 4 && Math.abs(p[3] - 1.0f) < 1e-3f) {
+                endpointPts++;
+            }
+        }
+        assertTrue(
+            "Endpoints 0 and totalKf-1 must emit single-neighbor points on partial arc (got " + endpointPts + ")",
+            endpointPts > 0
+        );
+    }
+
+    @Test
+    public void testLargeStockpileOver16mNoTruncationAndLocalGroundFilter() {
+        // Large mining stockpile: radius = 10.0 m (diameter = 20.0 m > 16 m), height = 4.5 m
+        final float radiusM = 10.0f;
+        final float heightM = 4.5f;
+        final double exactVolumeM3 = (Math.PI * radiusM * radiusM * heightM) / 3.0;
+        final float groundY = -1.45f;
+
+        final List<float[]> points = new ArrayList<>();
+        final List<float[]> groundSamples = new ArrayList<>();
+        final List<WalkRingToeSolver.WalkPose> walkPoses = new ArrayList<>();
+
+        for (float x = -radiusM; x <= radiusM; x += 0.35f) {
+            for (float z = -radiusM; z <= radiusM; z += 0.35f) {
+                final float r = (float) Math.hypot(x, z);
+                if (r <= radiusM) {
+                    final float h = heightM * (1.0f - (r / radiusM));
+                    points.add(new float[] { x, groundY + h, z, 2.0f });
+                } else if (r <= radiusM + 1.5f) {
+                    groundSamples.add(new float[] { x, groundY, z });
+                }
+            }
+        }
+
+        for (int i = 0; i < 32; i++) {
+            final double ang = (2.0 * Math.PI * i) / 32.0;
+            final float wx = (float) (Math.cos(ang) * 13.0);
+            final float wz = (float) (Math.sin(ang) * 13.0);
+            walkPoses.add(new WalkRingToeSolver.WalkPose(
+                wx, 0.0f, wz, (float) (-Math.cos(ang)), -0.25f, (float) (-Math.sin(ang)), i * 100_000_000L
+            ));
+        }
+
+        final WalkRingToeSolver.MetrologyResult res = WalkRingToeSolver.solve(
+            points, walkPoses, groundSamples, false, 0.4
+        );
+
+        final double relErrPct = Math.abs(res.volumeM3 - exactVolumeM3) / exactVolumeM3 * 100.0;
+        assertTrue(
+            "20m stockpile must NOT be truncated (expected dimA >= 18.5m, got " + res.dimA + "m)",
+            res.dimA >= 18.5
+        );
+        assertTrue(
+            "20m stockpile volume must stay within 8% of " + exactVolumeM3 + " (got " + res.volumeM3 + ", err=" + relErrPct + "%)",
+            relErrPct < 8.0
+        );
+        assertEquals("Interior crater cells must be strictly 0", 0, res.zeroCellsInside);
+        assertEquals("VALID_IN_SITU", res.metrologyGrade);
     }
 
     private static byte[] renderSyntheticLuma(

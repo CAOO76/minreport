@@ -15,6 +15,7 @@ import android.graphics.Rect;
 import android.graphics.RectF;
 import android.graphics.Typeface;
 import android.graphics.YuvImage;
+import android.graphics.drawable.GradientDrawable;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
@@ -28,6 +29,9 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.PowerManager;
+import android.text.TextUtils;
+import android.util.DisplayMetrics;
+import android.util.Log;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.HapticFeedbackConstants;
@@ -45,7 +49,10 @@ import android.widget.TextView;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.ContextCompat;
 import androidx.core.content.res.ResourcesCompat;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 import com.google.ar.core.ArCoreApk;
 import com.google.ar.core.Camera;
@@ -60,6 +67,7 @@ import com.google.ar.core.PointCloud;
 import com.google.ar.core.Pose;
 import com.google.ar.core.Session;
 import com.google.ar.core.Trackable;
+import com.google.ar.core.TrackingFailureReason;
 import com.google.ar.core.TrackingState;
 import com.google.ar.core.exceptions.CameraNotAvailableException;
 import com.google.ar.core.exceptions.NotYetAvailableException;
@@ -97,11 +105,14 @@ public class MinreportSpatialScannerActivity
 
     public static final String EXTRA_RESULT_FILE_PATH = "minreport_spatial_scan_result_file";
     public static final String EXTRA_SCAN_MODE = "minreport_spatial_scan_mode";
+    public static final String EXTRA_ERROR_CODE = "minreport_spatial_scan_error_code";
+    public static final String EXTRA_ERROR_MESSAGE = "minreport_spatial_scan_error_message";
     public static final String MODE_SCAN = "SCAN";
     public static final String MODE_CALIBRATE = "CALIBRATE";
     public static final String PREFS_CALIBRATION_NAME = "minreport_spatial_calibration";
 
-    private static final String SCANNER_ENGINE_VERSION = "2.0.0-vio-mvs-java";
+    private static final String TAG = "MinreportSpatialScanner";
+    private static final String SCANNER_ENGINE_VERSION = "2.0.1-vio-mvs-java";
     private static final int KEYCODE_XCOVER_KEY = 1015;
     private static final int KEYCODE_XCOVER_TOP_KEY = 1079;
 
@@ -112,12 +123,18 @@ public class MinreportSpatialScannerActivity
     private static final int MVS_LUMA_W = 320;
     private static final int MVS_LUMA_H = 240;
     private static final int MAX_GROUND_SAMPLES = 600;
+    private static final int MAX_EXTRA_VIO_POINTS = 2400;
     private static final float MIN_WALK_POSE_STEP_M = 0.25f;
     private static final float MIN_KF_STEP_M = 0.40f;
     private static final float MAX_KF_STEP_M = 1.30f;
     private static final float MIN_KF_YAW_DEG = 12.0f;
-    private static final float MAX_GYRO_NORM_RAD_S = 0.45f;
-    private static final double BLUR_VARIANCE_THRESHOLD = 22.0;
+    private static final float GYRO_EMA_ALPHA = 0.25f;
+    private static final float SPEED_ALERT_GYRO_RAD_S = 0.75f;
+    private static final float MAX_CAPTURE_GYRO_RAD_S = 1.10f;
+    private static final double BLUR_VARIANCE_THRESHOLD = 8.0;
+    private static final double BLUR_FALLBACK_THRESHOLD = 4.0;
+    private static final long BURST_WINDOW_MS = 220L;
+    private static final float LOCAL_GROUND_CLEARANCE_M = 0.55f;
 
     private static final float MIN_DEPTH_M = 0.25f;
     private static final float MAX_DEPTH_M = 35.0f;
@@ -131,6 +148,7 @@ public class MinreportSpatialScannerActivity
     // MINREPORT ANSI/ISA-101 Palette (>= 85% neutral monochrome)
     private static final int COLOR_BG = 0xFF000000;
     private static final int COLOR_BORDER = 0xFF12151C;
+    private static final int COLOR_BTN_WAITING_BG = 0xFF1E2430;
     private static final int COLOR_GRAY_IDLE = 0xFF2A2F3A;
     private static final int COLOR_CYAN = 0xFF00AEEF;
     private static final int COLOR_COPPER = 0xFFC68346;
@@ -223,6 +241,8 @@ public class MinreportSpatialScannerActivity
         private boolean showHeading = false;
         private int coveragePctInt = 0;
         private boolean readyHighlight = false;
+        private String centerLabelOverride = null;
+        private final float maxCenterTextPx;
 
         PerimeterRing360View(final Context context, final Typeface monoBold) {
             super(context);
@@ -233,11 +253,12 @@ public class MinreportSpatialScannerActivity
             dotPaint.setStyle(Paint.Style.FILL);
             dotPaint.setColor(COLOR_PRIMARY);
 
+            maxCenterTextPx = TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_SP, 24, context.getResources().getDisplayMetrics()
+            );
             textPaint.setTypeface(monoBold);
             textPaint.setTextAlign(Paint.Align.CENTER);
-            textPaint.setTextSize(TypedValue.applyDimension(
-                TypedValue.COMPLEX_UNIT_SP, 26, context.getResources().getDisplayMetrics()
-            ));
+            textPaint.setTextSize(maxCenterTextPx);
             textPaint.setColor(COLOR_PRIMARY);
         }
 
@@ -246,13 +267,15 @@ public class MinreportSpatialScannerActivity
             final float headingDeg,
             final boolean showHead,
             final int pctInt,
-            final boolean isReady
+            final boolean isReady,
+            final String labelOverride
         ) {
             System.arraycopy(states, 0, this.sectorStates, 0, SECTOR_COUNT);
             this.headingAngleDeg = headingDeg;
             this.showHeading = showHead;
             this.coveragePctInt = pctInt;
             this.readyHighlight = isReady;
+            this.centerLabelOverride = labelOverride;
             invalidate();
         }
 
@@ -260,7 +283,7 @@ public class MinreportSpatialScannerActivity
         protected void onDraw(final Canvas canvas) {
             super.onDraw(canvas);
             final float size = Math.min(getWidth(), getHeight());
-            final float pad = arcPaint.getStrokeWidth() + 10.0f;
+            final float pad = arcPaint.getStrokeWidth() + 8.0f;
             final float cx = getWidth() * 0.5f;
             final float cy = getHeight() * 0.5f;
             final float r = Math.max(20.0f, size * 0.5f - pad);
@@ -288,10 +311,17 @@ public class MinreportSpatialScannerActivity
                 canvas.drawRect(dx - 5.0f, dy - 5.0f, dx + 5.0f, dy + 5.0f, dotPaint);
             }
 
-            textPaint.setColor(readyHighlight ? COLOR_CYAN : COLOR_PRIMARY);
+            final float fittedTextPx = Math.min(maxCenterTextPx, Math.max(12.0f, size * 0.23f));
+            textPaint.setTextSize(fittedTextPx);
+            final String label = centerLabelOverride != null ? centerLabelOverride : (coveragePctInt + "%");
+            textPaint.setColor(
+                centerLabelOverride != null
+                    ? COLOR_SECONDARY
+                    : (readyHighlight ? COLOR_CYAN : COLOR_PRIMARY)
+            );
             final Paint.FontMetrics fm = textPaint.getFontMetrics();
             final float textY = cy - (fm.ascent + fm.descent) * 0.5f;
-            canvas.drawText(coveragePctInt + "%", cx, textY, textPaint);
+            canvas.drawText(label, cx, textY, textPaint);
         }
 
         private static float dpStatic(final Context ctx, final int dpVal) {
@@ -425,6 +455,7 @@ public class MinreportSpatialScannerActivity
 
     // Right rail HUD widgets (zero prose)
     private ImageButton closeButton;
+    private TextView trackingCodeText;
     private ImageView trackingIcon;
     private ImageView speedAlertIcon;
     private ImageView anchorDetectedIcon;
@@ -446,8 +477,10 @@ public class MinreportSpatialScannerActivity
     private String scanId;
     private String configuredDepthMode = "VIO_MVS_OFFLINE";
     private boolean finishing = false;
+    private boolean pendingStartCapture = false;
 
     private TrackingState lastTrackingState = TrackingState.PAUSED;
+    private TrackingFailureReason lastTrackingFailureReason = TrackingFailureReason.NONE;
     private final OfflineVioMvsEngine offlineEngine = new OfflineVioMvsEngine();
     private final List<WalkRingToeSolver.WalkPose> walkRingPoses = new ArrayList<>(256);
     private final List<KeyframeRecord> savedKeyframes = new ArrayList<>(MAX_KEYFRAME_PHOTOS);
@@ -457,6 +490,7 @@ public class MinreportSpatialScannerActivity
     private final int[] sectorStates = new int[SECTOR_COUNT];
     private final int[] sectorKfCounts = new int[SECTOR_COUNT];
     private int sectorsCovered = 0;
+    private float[] lastSectorCenterXZ = null;
     private float liveHeadingDeg = 0.0f;
     private float liveEstDiameterM = 0.0f;
     private float liveEstHeightM = 0.0f;
@@ -470,6 +504,7 @@ public class MinreportSpatialScannerActivity
     private float[] lastKfFwdXZ = null;
     private long lastSpeedAlertAtMs = 0L;
     private long lastGroundSampleAtMs = 0L;
+    private long lastVioPointCloudAtMs = 0L;
     private long lastUiUpdateAtMs = 0L;
     private long lastLiveOverlaySolveAtMs = 0L;
     private final AtomicBoolean liveOverlayBusy = new AtomicBoolean(false);
@@ -549,13 +584,13 @@ public class MinreportSpatialScannerActivity
     @Override
     protected void onResume() {
         super.onResume();
+        configureSystemBars();
 
         if (
             ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) !=
             PackageManager.PERMISSION_GRANTED
         ) {
-            setResult(RESULT_CANCELED);
-            finish();
+            finishWithError("CAMERA_PERMISSION_DENIED", "Camera permission is required for spatial scanning");
             return;
         }
 
@@ -578,10 +613,12 @@ public class MinreportSpatialScannerActivity
                 }
                 session = new Session(this);
                 configureArSession(session);
-                renderer.setSession(session);
             } catch (Exception e) {
-                setResult(RESULT_CANCELED);
-                finish();
+                Log.e(TAG, "Failed to initialize ARCore session", e);
+                finishWithError(
+                    "ARCORE_SESSION_INIT_FAILED",
+                    e.getMessage() != null ? e.getMessage() : "ARCore session initialization failed"
+                );
                 return;
             }
         }
@@ -589,11 +626,23 @@ public class MinreportSpatialScannerActivity
         try {
             session.resume();
         } catch (CameraNotAvailableException e) {
-            setResult(RESULT_CANCELED);
-            finish();
+            Log.e(TAG, "Camera unavailable while resuming ARCore session", e);
+            finishWithError(
+                "CAMERA_NOT_AVAILABLE",
+                e.getMessage() != null ? e.getMessage() : "Camera not available for ARCore session"
+            );
+            return;
+        } catch (Exception e) {
+            Log.e(TAG, "Unexpected failure resuming ARCore session", e);
+            finishWithError(
+                "ARCORE_SESSION_RESUME_FAILED",
+                e.getMessage() != null ? e.getMessage() : "ARCore session resume failed"
+            );
             return;
         }
 
+        // Expose session to GLThread strictly AFTER session.resume() and BEFORE glSurfaceView.onResume()
+        renderer.setSession(session);
         glSurfaceView.onResume();
         renderer.onResume();
         updateHudFromState(true);
@@ -650,16 +699,22 @@ public class MinreportSpatialScannerActivity
             final float gx = event.values[0];
             final float gy = event.values[1];
             final float gz = event.values[2];
-            liveGyroNormRadS = (float) Math.sqrt(gx * gx + gy * gy + gz * gz);
+            final float rawNorm = (float) Math.sqrt(gx * gx + gy * gy + gz * gz);
+            final float prev = liveGyroNormRadS;
+            liveGyroNormRadS = prev <= 0.0f
+                ? rawNorm
+                : (GYRO_EMA_ALPHA * rawNorm + (1.0f - GYRO_EMA_ALPHA) * prev);
         } else if (type == Sensor.TYPE_GRAVITY || type == Sensor.TYPE_ACCELEROMETER) {
-            // In landscape orientation, device local Y/X aligns with horizon; compute pitch/roll vs gravity
+            // In landscape orientation, device local Y/X aligns with horizon; compensate ROTATION_270 sign flip
             final float ax = event.values[0];
             final float ay = event.values[1];
             final float az = event.values[2];
             final float norm = (float) Math.sqrt(ax * ax + ay * ay + az * az);
             if (norm > 1.0f) {
+                final int displayRotDeg = renderer != null ? renderer.getDisplayRotationDegrees() : 90;
+                final float signedAy = displayRotDeg == 270 ? -ay : ay;
                 final float pitchRad = (float) Math.asin(clamp(-az / norm, -1.0f, 1.0f));
-                final float rollRad = (float) Math.atan2(ay, Math.abs(ax) + 0.001f);
+                final float rollRad = (float) Math.atan2(signedAy, Math.abs(ax) + 0.001f);
                 liveImuPitchDeg = (float) Math.toDegrees(pitchRad);
                 liveImuRollDeg = (float) Math.toDegrees(rollRad);
             }
@@ -689,9 +744,24 @@ public class MinreportSpatialScannerActivity
         return true;
     }
 
+    @Override
+    public void onWindowFocusChanged(final boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) {
+            configureSystemBars();
+        }
+    }
+
     private void configureSystemBars() {
         final Window window = getWindow();
         if (window != null) {
+            WindowCompat.setDecorFitsSystemWindows(window, false);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                final WindowManager.LayoutParams lp = window.getAttributes();
+                lp.layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+                window.setAttributes(lp);
+            }
             window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
             window.setStatusBarColor(Color.BLACK);
             window.setNavigationBarColor(Color.BLACK);
@@ -700,6 +770,10 @@ public class MinreportSpatialScannerActivity
             if (controller != null) {
                 controller.setAppearanceLightStatusBars(false);
                 controller.setAppearanceLightNavigationBars(false);
+                controller.setSystemBarsBehavior(
+                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                );
+                controller.hide(WindowInsetsCompat.Type.systemBars());
             }
         }
     }
@@ -730,6 +804,11 @@ public class MinreportSpatialScannerActivity
         final LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.HORIZONTAL);
         root.setBackgroundColor(COLOR_BG);
+        ViewCompat.setOnApplyWindowInsetsListener(root, (v, windowInsets) -> {
+            final Insets cutout = windowInsets.getInsets(WindowInsetsCompat.Type.displayCutout());
+            v.setPadding(cutout.left, cutout.top, cutout.right, cutout.bottom);
+            return windowInsets;
+        });
         this.rootView = root;
 
         // Left 61.8% (Golden Ratio major): 4:3 uncropped camera viewport + Dark Cockpit exception overlays
@@ -770,7 +849,7 @@ public class MinreportSpatialScannerActivity
         crownLineParams.gravity = Gravity.TOP;
         this.cameraContainer.addView(this.crownBorderLine, crownLineParams);
 
-        this.crownGuardIcon = createIconView(R.drawable.ic_ms_arrow_upward, COLOR_COPPER, dp(28));
+        this.crownGuardIcon = createIconView(R.drawable.ic_ms_arrow_upward, COLOR_COPPER, dp(4));
         this.crownGuardIcon.setVisibility(View.GONE);
         final FrameLayout.LayoutParams crownIconParams = new FrameLayout.LayoutParams(dp(36), dp(36));
         crownIconParams.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
@@ -787,7 +866,7 @@ public class MinreportSpatialScannerActivity
         toeLineParams.gravity = Gravity.BOTTOM;
         this.cameraContainer.addView(this.toeBorderLine, toeLineParams);
 
-        this.toeGuardIcon = createIconView(R.drawable.ic_ms_arrow_downward, COLOR_COPPER, dp(28));
+        this.toeGuardIcon = createIconView(R.drawable.ic_ms_arrow_downward, COLOR_COPPER, dp(4));
         this.toeGuardIcon.setVisibility(View.GONE);
         final FrameLayout.LayoutParams toeIconParams = new FrameLayout.LayoutParams(dp(36), dp(36));
         toeIconParams.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
@@ -804,13 +883,13 @@ public class MinreportSpatialScannerActivity
         divider.setBackgroundColor(COLOR_BORDER);
         root.addView(divider, new LinearLayout.LayoutParams(dp(1), ViewGroup.LayoutParams.MATCH_PARENT));
 
-        // Right 38.2% (Golden Ratio minor): #000000 zero-prose control rail
+        // Right 38.2% (Golden Ratio minor): #000000 zero-prose control rail (compact XCover 7 budget)
         final LinearLayout rightRail = new LinearLayout(this);
         rightRail.setOrientation(LinearLayout.VERTICAL);
         rightRail.setBackgroundColor(COLOR_BG);
-        rightRail.setPadding(dp(13), dp(8), dp(13), dp(13));
+        rightRail.setPadding(dp(13), dp(8), dp(13), dp(8));
 
-        // 1. Top strip (56dp): close + exception-only status icons
+        // 1. Top strip (48dp): close (48x48dp) + exception-only status indicators
         final LinearLayout topStrip = new LinearLayout(this);
         topStrip.setOrientation(LinearLayout.HORIZONTAL);
         topStrip.setGravity(Gravity.CENTER_VERTICAL);
@@ -819,7 +898,8 @@ public class MinreportSpatialScannerActivity
         this.closeButton.setImageResource(R.drawable.ic_ms_close);
         this.closeButton.setColorFilter(COLOR_PRIMARY);
         this.closeButton.setBackgroundColor(Color.TRANSPARENT);
-        this.closeButton.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        this.closeButton.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        this.closeButton.setPadding(dp(12), dp(12), dp(12), dp(12));
         this.closeButton.setContentDescription("CLOSE");
         this.closeButton.setOnClickListener(v -> cancelAndExit());
         topStrip.addView(this.closeButton, new LinearLayout.LayoutParams(dp(48), dp(48)));
@@ -827,37 +907,61 @@ public class MinreportSpatialScannerActivity
         final View spacer = new View(this);
         topStrip.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1.0f));
 
-        this.anchorDetectedIcon = createIconView(R.drawable.ic_ms_qr_code_scanner, COLOR_CYAN, dp(22));
+        this.trackingCodeText = new TextView(this);
+        this.trackingCodeText.setTypeface(fontMonoBold);
+        this.trackingCodeText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        this.trackingCodeText.setTextColor(COLOR_COPPER);
+        this.trackingCodeText.setMaxLines(1);
+        this.trackingCodeText.setSingleLine(true);
+        this.trackingCodeText.setEllipsize(TextUtils.TruncateAt.END);
+        this.trackingCodeText.setPadding(dp(4), 0, dp(4), 0);
+        this.trackingCodeText.setVisibility(View.GONE);
+        topStrip.addView(
+            this.trackingCodeText,
+            new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        );
+
+        this.anchorDetectedIcon = createIconView(R.drawable.ic_ms_qr_code_scanner, COLOR_CYAN, dp(6));
         this.anchorDetectedIcon.setVisibility(View.GONE);
         topStrip.addView(this.anchorDetectedIcon, new LinearLayout.LayoutParams(dp(34), dp(34)));
 
-        this.speedAlertIcon = createIconView(R.drawable.ic_ms_speed, COLOR_COPPER, dp(22));
+        this.speedAlertIcon = createIconView(R.drawable.ic_ms_speed, COLOR_COPPER, dp(6));
         this.speedAlertIcon.setVisibility(View.GONE);
         topStrip.addView(this.speedAlertIcon, new LinearLayout.LayoutParams(dp(34), dp(34)));
 
-        this.trackingIcon = createIconView(R.drawable.ic_ms_view_in_ar, COLOR_COPPER, dp(24));
+        this.trackingIcon = createIconView(R.drawable.ic_ms_view_in_ar, COLOR_COPPER, dp(6));
         topStrip.addView(this.trackingIcon, new LinearLayout.LayoutParams(dp(36), dp(36)));
 
         rightRail.addView(
             topStrip,
-            new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56))
+            new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48))
         );
 
-        // 2. Center telemetry block (360° 16-segment ring + tabular metrics)
+        // 2. Center telemetry block (adaptive 96-124dp 16-segment ring + compact maxLines=1 metrics <= 180dp)
+        final DisplayMetrics dm = getResources().getDisplayMetrics();
+        final float screenShortDp = Math.min(dm.widthPixels, dm.heightPixels) / Math.max(1.0f, dm.density);
+        final float fontScale = Math.max(1.0f, getResources().getConfiguration().fontScale);
+        final int estTextDp = Math.round(56.0f * fontScale);
+        final int maxCenterBudgetDp = Math.min(180, Math.round(screenShortDp - 48.0f - 64.0f - 20.0f));
+        final int ringDp = Math.max(96, Math.min(124, maxCenterBudgetDp - estTextDp));
+
         final LinearLayout centerBlock = new LinearLayout(this);
         centerBlock.setOrientation(LinearLayout.VERTICAL);
         centerBlock.setGravity(Gravity.CENTER);
 
         this.perimeterRingView = new PerimeterRing360View(this, fontMonoBold);
         this.perimeterRingView.setVisibility(MODE_CALIBRATE.equals(mode) ? View.GONE : View.VISIBLE);
-        centerBlock.addView(this.perimeterRingView, new LinearLayout.LayoutParams(dp(140), dp(140)));
+        centerBlock.addView(this.perimeterRingView, new LinearLayout.LayoutParams(dp(ringDp), dp(ringDp)));
 
         this.liveVolumeText = new TextView(this);
         this.liveVolumeText.setTypeface(fontMonoBold);
-        this.liveVolumeText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 26);
+        this.liveVolumeText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
         this.liveVolumeText.setTextColor(COLOR_DISABLED);
         this.liveVolumeText.setGravity(Gravity.CENTER);
-        this.liveVolumeText.setPadding(0, dp(8), 0, dp(2));
+        this.liveVolumeText.setMaxLines(1);
+        this.liveVolumeText.setSingleLine(true);
+        this.liveVolumeText.setEllipsize(TextUtils.TruncateAt.END);
+        this.liveVolumeText.setPadding(0, dp(4), 0, dp(1));
         this.liveVolumeText.setText("--.- m³");
         centerBlock.addView(
             this.liveVolumeText,
@@ -866,9 +970,12 @@ public class MinreportSpatialScannerActivity
 
         this.liveDimsText = new TextView(this);
         this.liveDimsText.setTypeface(fontMonoRegular);
-        this.liveDimsText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        this.liveDimsText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         this.liveDimsText.setTextColor(COLOR_SECONDARY);
         this.liveDimsText.setGravity(Gravity.CENTER);
+        this.liveDimsText.setMaxLines(1);
+        this.liveDimsText.setSingleLine(true);
+        this.liveDimsText.setEllipsize(TextUtils.TruncateAt.END);
         this.liveDimsText.setText("Ø --.- m · H --.- m");
         centerBlock.addView(
             this.liveDimsText,
@@ -877,10 +984,13 @@ public class MinreportSpatialScannerActivity
 
         this.liveKfCountText = new TextView(this);
         this.liveKfCountText.setTypeface(fontMonoRegular);
-        this.liveKfCountText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        this.liveKfCountText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
         this.liveKfCountText.setTextColor(COLOR_DISABLED);
         this.liveKfCountText.setGravity(Gravity.CENTER);
-        this.liveKfCountText.setPadding(0, dp(4), 0, 0);
+        this.liveKfCountText.setMaxLines(1);
+        this.liveKfCountText.setSingleLine(true);
+        this.liveKfCountText.setEllipsize(TextUtils.TruncateAt.END);
+        this.liveKfCountText.setPadding(0, dp(2), 0, 0);
         this.liveKfCountText.setText("0 KF");
         centerBlock.addView(
             this.liveKfCountText,
@@ -893,7 +1003,7 @@ public class MinreportSpatialScannerActivity
         final LinearLayout.LayoutParams barParams = new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(4)
         );
-        barParams.topMargin = dp(13);
+        barParams.topMargin = dp(8);
         centerBlock.addView(this.finalizingBar, barParams);
 
         rightRail.addView(
@@ -901,21 +1011,20 @@ public class MinreportSpatialScannerActivity
             new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.0f)
         );
 
-        // 3. Bottom single primary button (>= 72dp height, rounded-none, #000000 icon on #C68346/#00AEEF)
+        // 3. Bottom single primary button (64dp height, rounded-none, 36dp crisp icon via FIT_CENTER + 14dp pad)
         this.primaryActionButton = new ImageButton(this);
-        this.primaryActionButton.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        this.primaryActionButton.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        this.primaryActionButton.setPadding(dp(14), dp(14), dp(14), dp(14));
         this.primaryActionButton.setStateListAnimator(null);
         this.primaryActionButton.setElevation(0.0f);
-        this.primaryActionButton.setMinimumHeight(dp(72));
-        this.primaryActionButton.setImageResource(R.drawable.ic_ms_play_arrow);
-        this.primaryActionButton.setColorFilter(Color.BLACK);
-        this.primaryActionButton.setBackgroundColor(COLOR_COPPER);
+        this.primaryActionButton.setMinimumHeight(dp(64));
         this.primaryActionButton.setContentDescription("PRIMARY_ACTION");
         this.primaryActionButton.setOnClickListener(v -> onPrimaryActionClick());
+        applyPrimaryButtonStyle(COLOR_BTN_WAITING_BG, COLOR_DISABLED, 1, R.drawable.ic_ms_play_arrow, COLOR_SECONDARY);
 
         rightRail.addView(
             this.primaryActionButton,
-            new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(72))
+            new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(64))
         );
 
         root.addView(
@@ -927,12 +1036,31 @@ public class MinreportSpatialScannerActivity
         updateHudFromState(true);
     }
 
+    private void applyPrimaryButtonStyle(
+        final int fillColor,
+        final int borderColor,
+        final int borderWidthDp,
+        final int iconRes,
+        final int iconTint
+    ) {
+        final GradientDrawable bg = new GradientDrawable();
+        bg.setShape(GradientDrawable.RECTANGLE);
+        bg.setCornerRadius(0.0f);
+        bg.setColor(fillColor);
+        if (borderWidthDp > 0) {
+            bg.setStroke(dp(borderWidthDp), borderColor);
+        }
+        primaryActionButton.setBackground(bg);
+        primaryActionButton.setImageResource(iconRes);
+        primaryActionButton.setColorFilter(iconTint);
+    }
+
     private ImageView createIconView(final int resId, final int tintColor, final int padPx) {
         final ImageView iv = new ImageView(this);
         iv.setImageResource(resId);
         iv.setColorFilter(tintColor);
-        iv.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
-        iv.setPadding(dp(4), dp(4), dp(4), dp(4));
+        iv.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        iv.setPadding(padPx, padPx, padPx, padPx);
         return iv;
     }
 
@@ -941,6 +1069,7 @@ public class MinreportSpatialScannerActivity
         boolean shouldFinishCalibration = false;
         boolean hapticSuccess = false;
         boolean hapticDouble = false;
+        boolean hapticReject = false;
 
         float measuredDist = 0.0f;
         float computedScale = 1.0f;
@@ -953,8 +1082,13 @@ public class MinreportSpatialScannerActivity
 
             if (currentStep == FlowStep.READY_TRACKING) {
                 if (lastTrackingState == TrackingState.TRACKING) {
+                    pendingStartCapture = false;
                     currentStep = FlowStep.CAPTURING_WALK;
                     resetWalkCaptureStateLocked();
+                    hapticSuccess = true;
+                } else {
+                    // Arm capture so it starts the exact millisecond ARCore locks TRACKING (zero lost taps)
+                    pendingStartCapture = true;
                     hapticSuccess = true;
                 }
             } else if (currentStep == FlowStep.CAPTURING_WALK) {
@@ -966,12 +1100,17 @@ public class MinreportSpatialScannerActivity
                     currentStep = FlowStep.FINALIZING;
                     shouldFinishScan = true;
                     hapticDouble = true;
+                } else {
+                    hapticReject = true;
                 }
+            } else if (currentStep == FlowStep.CAL_FLOOR) {
+                hapticReject = true;
             } else if (currentStep == FlowStep.CAL_FLOOR_ERROR) {
                 calFloorSamples.clear();
                 calFloorStartedAtMs = nowMs;
                 lastCalSampleAtMs = 0L;
                 currentStep = FlowStep.CAL_FLOOR;
+                hapticSuccess = true;
             } else if (currentStep == FlowStep.CAL_START) {
                 if (lastTrackingState == TrackingState.TRACKING && latestCalHit != null) {
                     calPointA = Arrays.copyOf(latestCalHit, 3);
@@ -979,28 +1118,35 @@ public class MinreportSpatialScannerActivity
                     liveCalDistanceM = -1.0f;
                     currentStep = FlowStep.CAL_END;
                     hapticSuccess = true;
+                } else {
+                    hapticReject = true;
                 }
             } else if (currentStep == FlowStep.CAL_END) {
                 if (lastTrackingState == TrackingState.TRACKING && latestCalHit != null && calPointA != null) {
                     measuredDist = dist3D(calPointA, latestCalHit);
                     if (measuredDist <= MIN_CAL_DISTANCE_M) {
                         currentStep = FlowStep.CAL_RANGE_ERROR;
+                        hapticReject = true;
                     } else {
                         computedScale = CAL_REFERENCE_DISTANCE_M / measuredDist;
                         if (computedScale < MIN_SCALE_FACTOR || computedScale > MAX_SCALE_FACTOR) {
                             currentStep = FlowStep.CAL_RANGE_ERROR;
+                            hapticReject = true;
                         } else {
                             finishing = true;
                             shouldFinishCalibration = true;
                             hapticDouble = true;
                         }
                     }
+                } else {
+                    hapticReject = true;
                 }
             } else if (currentStep == FlowStep.CAL_RANGE_ERROR) {
                 calPointA = null;
                 latestCalHit = null;
                 liveCalDistanceM = -1.0f;
                 currentStep = FlowStep.CAL_START;
+                hapticSuccess = true;
             }
         }
 
@@ -1009,6 +1155,9 @@ public class MinreportSpatialScannerActivity
         }
         if (hapticDouble) {
             triggerDoubleHaptic();
+        }
+        if (hapticReject) {
+            triggerRejectHaptic();
         }
         if (shouldFinishScan) {
             updateHudFromState(true);
@@ -1029,6 +1178,7 @@ public class MinreportSpatialScannerActivity
         Arrays.fill(sectorStates, 0);
         Arrays.fill(sectorKfCounts, 0);
         sectorsCovered = 0;
+        lastSectorCenterXZ = null;
         liveEstDiameterM = 0.0f;
         liveEstHeightM = 0.0f;
         liveEstVolumeM3 = 0.0f;
@@ -1037,6 +1187,7 @@ public class MinreportSpatialScannerActivity
         lastWalkPosePos = null;
         lastKfPos = null;
         lastKfFwdXZ = null;
+        lastVioPointCloudAtMs = 0L;
         clearBurstLocked();
         if (renderer != null) {
             renderer.clearLiveOverlay();
@@ -1056,9 +1207,22 @@ public class MinreportSpatialScannerActivity
 
     private void cancelAndExit() {
         synchronized (stateLock) {
+            pendingStartCapture = false;
             finishing = true;
         }
         setResult(RESULT_CANCELED);
+        finish();
+    }
+
+    private void finishWithError(final String errorCode, final String errorMessage) {
+        synchronized (stateLock) {
+            pendingStartCapture = false;
+            finishing = true;
+        }
+        final Intent errorIntent = new Intent();
+        errorIntent.putExtra(EXTRA_ERROR_CODE, errorCode);
+        errorIntent.putExtra(EXTRA_ERROR_MESSAGE, errorMessage);
+        setResult(RESULT_CANCELED, errorIntent);
         finish();
     }
 
@@ -1066,6 +1230,9 @@ public class MinreportSpatialScannerActivity
     public void onArFrame(final Session activeSession, final Frame frame) {
         final Camera camera = frame.getCamera();
         final TrackingState trackingState = camera.getTrackingState();
+        final TrackingFailureReason failureReason = trackingState == TrackingState.TRACKING
+            ? TrackingFailureReason.NONE
+            : camera.getTrackingFailureReason();
 
         boolean fireShortPulse = false;
         boolean fireDoubleReadyPulse = false;
@@ -1073,6 +1240,7 @@ public class MinreportSpatialScannerActivity
 
         synchronized (stateLock) {
             lastTrackingState = trackingState;
+            lastTrackingFailureReason = failureReason;
             if (finishing) {
                 return;
             }
@@ -1085,6 +1253,15 @@ public class MinreportSpatialScannerActivity
             }
 
             final long nowMs = System.currentTimeMillis();
+
+            // Auto-transition immediately if operator pre-armed capture before ARCore locked TRACKING
+            if (currentStep == FlowStep.READY_TRACKING && pendingStartCapture) {
+                pendingStartCapture = false;
+                currentStep = FlowStep.CAPTURING_WALK;
+                resetWalkCaptureStateLocked();
+                fireShortPulse = true;
+                forceHud = true;
+            }
 
             if (currentStep == FlowStep.CAL_FLOOR) {
                 if (calFloorStartedAtMs == 0L) calFloorStartedAtMs = nowMs;
@@ -1124,14 +1301,34 @@ public class MinreportSpatialScannerActivity
                     lastWalkPosePos = Arrays.copyOf(camPos, 3);
                 }
 
-                // 2. Collect horizontal ground planes strictly below camera corridor (y <= y_cam - 0.80f)
+                // 2. Collect horizontal ground planes below local camera height (y <= y_cam - 0.55f)
                 if (nowMs - lastGroundSampleAtMs >= 300L) {
-                    collectFilteredGroundPlanes(activeSession, camPos[1] - 0.80f);
+                    collectFilteredGroundPlanes(activeSession, camPos[1] - LOCAL_GROUND_CLEARANCE_M);
                     lastGroundSampleAtMs = nowMs;
                 }
 
-                // 3. Update live heading & sector index against dynamic Auto-ROI center
+                // 2b. Feed high-confidence ARCore VIO feature points (conf >= 0.5f) into extraVioCloud
+                if (extraVioCloud.size() < MAX_EXTRA_VIO_POINTS && nowMs - lastVioPointCloudAtMs >= 250L) {
+                    collectVioPointCloudSamplesLocked(frame);
+                    lastVioPointCloudAtMs = nowMs;
+                }
+
+                // 3. Update live heading & recompute sector coverage whenever Auto-ROI center converges
                 final float[] autoCenter = WalkRingToeSolver.estimateAutoCenterXZ(walkRingPoses, extraVioCloud);
+                if (
+                    !savedKeyframes.isEmpty() &&
+                    (lastSectorCenterXZ == null ||
+                        Math.hypot(
+                            autoCenter[0] - lastSectorCenterXZ[0],
+                            autoCenter[1] - lastSectorCenterXZ[1]
+                        ) >= 0.35)
+                ) {
+                    recomputeSectorsFromKeyframesLocked(autoCenter);
+                    lastSectorCenterXZ = new float[] { autoCenter[0], autoCenter[1] };
+                } else if (lastSectorCenterXZ == null) {
+                    lastSectorCenterXZ = new float[] { autoCenter[0], autoCenter[1] };
+                }
+
                 liveHeadingDeg = (float) computeSectorAngleDeg(camPos, autoCenter);
                 final int curSector = Math.min(
                     SECTOR_COUNT - 1,
@@ -1152,8 +1349,8 @@ public class MinreportSpatialScannerActivity
                     evaluateBurstCandidateLocked(frame, camera, camPose, nowMs);
 
                     final boolean burstFinished =
-                        (nowMs - burstStartMs >= 130L) ||
-                        (burstBestBlur >= BLUR_VARIANCE_THRESHOLD * 2.2 && liveGyroNormRadS < MAX_GYRO_NORM_RAD_S);
+                        (nowMs - burstStartMs >= BURST_WINDOW_MS) ||
+                        (burstBestBlur >= BLUR_VARIANCE_THRESHOLD * 2.2 && liveGyroNormRadS < SPEED_ALERT_GYRO_RAD_S);
                     if (burstFinished) {
                         final boolean committed = commitBestBurstKeyframeLocked(curSector, liveHeadingDeg, nowMs);
                         clearBurstLocked();
@@ -1164,7 +1361,7 @@ public class MinreportSpatialScannerActivity
                     }
                 }
 
-                if (liveGyroNormRadS > MAX_GYRO_NORM_RAD_S * 1.4f) {
+                if (liveGyroNormRadS > SPEED_ALERT_GYRO_RAD_S) {
                     lastSpeedAlertAtMs = nowMs;
                 }
 
@@ -1186,6 +1383,47 @@ public class MinreportSpatialScannerActivity
             mainHandler.post(() -> updateHudFromState(true));
         } else {
             updateHudThrottled(false);
+        }
+    }
+
+    private void collectVioPointCloudSamplesLocked(final Frame frame) {
+        try (PointCloud pc = frame.acquirePointCloud()) {
+            final FloatBuffer pts = pc.getPoints();
+            if (pts == null) {
+                return;
+            }
+            final int limit = pts.limit();
+            for (int i = 0; i + 3 < limit && extraVioCloud.size() < MAX_EXTRA_VIO_POINTS; i += 4) {
+                final float conf = pts.get(i + 3);
+                if (conf >= 0.5f) {
+                    final float px = pts.get(i);
+                    final float py = pts.get(i + 1);
+                    final float pz = pts.get(i + 2);
+                    if (Float.isFinite(px) && Float.isFinite(py) && Float.isFinite(pz)) {
+                        extraVioCloud.add(new float[] { px, py, pz, conf });
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "Failed to sample ARCore VIO point cloud", t);
+        }
+    }
+
+    private void recomputeSectorsFromKeyframesLocked(final float[] centerXZ) {
+        Arrays.fill(sectorKfCounts, 0);
+        Arrays.fill(sectorStates, 0);
+        sectorsCovered = 0;
+        for (KeyframeRecord kf : savedKeyframes) {
+            final double deg = computeSectorAngleDeg(kf.tWc, centerXZ);
+            final int s = Math.min(
+                SECTOR_COUNT - 1,
+                Math.max(0, (int) Math.floor(deg / (360.0 / SECTOR_COUNT)))
+            );
+            if (sectorKfCounts[s] == 0) {
+                sectorsCovered++;
+            }
+            sectorKfCounts[s]++;
+            sectorStates[s] = sectorKfCounts[s] >= 2 ? 2 : 1;
         }
     }
 
@@ -1221,7 +1459,7 @@ public class MinreportSpatialScannerActivity
         final Pose camPose,
         final long nowMs
     ) {
-        if (liveGyroNormRadS > MAX_GYRO_NORM_RAD_S * 1.35f) {
+        if (liveGyroNormRadS > MAX_CAPTURE_GYRO_RAD_S) {
             lastSpeedAlertAtMs = nowMs;
             return;
         }
@@ -1230,10 +1468,14 @@ public class MinreportSpatialScannerActivity
                 return;
             }
             final double blurScore = computeLaplacianVarianceStep2(camImg);
-            if (blurScore < BLUR_VARIANCE_THRESHOLD) {
+            if (blurScore < BLUR_FALLBACK_THRESHOLD) {
                 rejectedBlurCount++;
                 lastSpeedAlertAtMs = nowMs;
                 return;
+            }
+            if (blurScore < BLUR_VARIANCE_THRESHOLD) {
+                rejectedBlurCount++;
+                // Allow best-of-burst fallback (>= 4.0) if no sharper frame (>= 8.0) arrives in 220 ms
             }
             if (blurScore <= burstBestBlur) {
                 return;
@@ -1263,7 +1505,8 @@ public class MinreportSpatialScannerActivity
             burstBestPitch = liveImuPitchDeg;
             burstBestRoll = liveImuRollDeg;
         } catch (NotYetAvailableException ignored) {
-        } catch (Exception ignored) {
+        } catch (Throwable t) {
+            Log.w(TAG, "Failed to evaluate keyframe burst candidate", t);
         }
     }
 
@@ -1343,7 +1586,13 @@ public class MinreportSpatialScannerActivity
             burstBestTsNs
         );
         if (visionExecutor != null && !visionExecutor.isShutdown()) {
-            visionExecutor.execute(() -> offlineEngine.ingestKeyframeIncremental(mvsKf));
+            visionExecutor.execute(() -> {
+                try {
+                    offlineEngine.ingestKeyframeIncremental(mvsKf);
+                } catch (Throwable t) {
+                    Log.e(TAG, "Incremental VIO keyframe ingest failed for kf=" + kfIndex, t);
+                }
+            });
         }
         return true;
     }
@@ -1375,7 +1624,8 @@ public class MinreportSpatialScannerActivity
                             liveEstVolumeM3 = (float) liveRes.volumeM3;
                         }
                     }
-                } catch (Exception ignored) {
+                } catch (Throwable t) {
+                    Log.w(TAG, "Live 3D overlay solve failed", t);
                 } finally {
                     liveOverlayBusy.set(false);
                 }
@@ -1498,11 +1748,10 @@ public class MinreportSpatialScannerActivity
                     setResult(RESULT_OK, resultIntent);
                     finish();
                 });
-            } catch (Exception e) {
-                mainHandler.post(() -> {
-                    setResult(RESULT_CANCELED);
-                    finish();
-                });
+            } catch (Throwable t) {
+                Log.e(TAG, "Failed to finalize spatial scan", t);
+                final String msg = t.getMessage() != null ? t.getMessage() : "Spatial scan finalization failed";
+                mainHandler.post(() -> finishWithError("SCAN_FINALIZE_FAILED", msg));
             } finally {
                 bg.shutdown();
             }
@@ -1752,9 +2001,29 @@ public class MinreportSpatialScannerActivity
         runOnUiThread(() -> updateHudFromState(false));
     }
 
+    private static String mapTrackingFailureCode(final TrackingFailureReason reason) {
+        if (reason == null) {
+            return "AR · VIO";
+        }
+        switch (reason) {
+            case INSUFFICIENT_LIGHT:
+                return "AR · LUX";
+            case EXCESSIVE_MOTION:
+                return "AR · IMU";
+            case INSUFFICIENT_FEATURES:
+            case CAMERA_UNAVAILABLE:
+            case BAD_STATE:
+            case NONE:
+            default:
+                return "AR · VIO";
+        }
+    }
+
     private void updateHudFromState(final boolean ignoreFinishing) {
         final FlowStep step;
         final boolean isTracking;
+        final TrackingFailureReason failureReason;
+        final boolean isArmedStart;
         final int[] statesSnap = new int[SECTOR_COUNT];
         final int covered;
         final int kfCount;
@@ -1774,6 +2043,8 @@ public class MinreportSpatialScannerActivity
             }
             step = currentStep;
             isTracking = lastTrackingState == TrackingState.TRACKING;
+            failureReason = lastTrackingFailureReason;
+            isArmedStart = pendingStartCapture;
             System.arraycopy(sectorStates, 0, statesSnap, 0, SECTOR_COUNT);
             covered = sectorsCovered;
             kfCount = savedKeyframes.size();
@@ -1789,6 +2060,13 @@ public class MinreportSpatialScannerActivity
 
         imuHorizonView.updateImu(liveImuPitchDeg, liveImuRollDeg);
         trackingIcon.setColorFilter(isTracking ? COLOR_CYAN : COLOR_COPPER);
+        if (isTracking) {
+            trackingCodeText.setVisibility(View.GONE);
+        } else {
+            trackingCodeText.setText(mapTrackingFailureCode(failureReason));
+            trackingCodeText.setTextColor(COLOR_COPPER);
+            trackingCodeText.setVisibility(View.VISIBLE);
+        }
         speedAlertIcon.setVisibility(showSpeed ? View.VISIBLE : View.GONE);
         anchorDetectedIcon.setVisibility(showAnchor ? View.VISIBLE : View.GONE);
 
@@ -1805,16 +2083,21 @@ public class MinreportSpatialScannerActivity
         if (step == FlowStep.READY_TRACKING) {
             finalizingBar.setVisibility(View.GONE);
             perimeterRingView.setVisibility(View.VISIBLE);
-            perimeterRingView.updateState(statesSnap, heading, false, 0, false);
+            perimeterRingView.updateState(statesSnap, heading, false, 0, false, "--");
             liveVolumeText.setText("--.- m³");
             liveVolumeText.setTextColor(COLOR_DISABLED);
             liveDimsText.setText("Ø --.- m · H --.- m");
             liveKfCountText.setText("0 KF");
 
-            primaryActionButton.setEnabled(isTracking);
-            primaryActionButton.setImageResource(R.drawable.ic_ms_play_arrow);
-            primaryActionButton.setColorFilter(isTracking ? Color.BLACK : COLOR_DISABLED);
-            primaryActionButton.setBackgroundColor(isTracking ? COLOR_COPPER : COLOR_BORDER);
+            // Always clickable in READY_TRACKING so operator can arm pendingStartCapture before TRACKING locks
+            primaryActionButton.setEnabled(true);
+            if (isTracking) {
+                applyPrimaryButtonStyle(COLOR_COPPER, 0, 0, R.drawable.ic_ms_play_arrow, Color.BLACK);
+            } else if (isArmedStart) {
+                applyPrimaryButtonStyle(COLOR_BTN_WAITING_BG, COLOR_COPPER, 2, R.drawable.ic_ms_play_arrow, COLOR_COPPER);
+            } else {
+                applyPrimaryButtonStyle(COLOR_BTN_WAITING_BG, COLOR_DISABLED, 1, R.drawable.ic_ms_play_arrow, COLOR_SECONDARY);
+            }
         } else if (step == FlowStep.CAPTURING_WALK) {
             finalizingBar.setVisibility(View.GONE);
             final int pctInt = (int) Math.round((covered / (double) SECTOR_COUNT) * 100.0);
@@ -1822,7 +2105,7 @@ public class MinreportSpatialScannerActivity
             final boolean minReady = (kfCount >= 6 && covered >= 4) || (kfCount >= 4 && covered >= 3);
 
             perimeterRingView.setVisibility(View.VISIBLE);
-            perimeterRingView.updateState(statesSnap, heading, true, pctInt, optimalReady);
+            perimeterRingView.updateState(statesSnap, heading, true, pctInt, optimalReady, null);
 
             // Anti-false-volume rule: show ~XX.X m³ in neutral #F3F4F6 ONLY at >= 75% coverage
             if (pctInt >= 75 && vol > 0.05f) {
@@ -1842,24 +2125,16 @@ public class MinreportSpatialScannerActivity
 
             primaryActionButton.setEnabled(minReady);
             if (optimalReady) {
-                primaryActionButton.setImageResource(R.drawable.ic_ms_check);
-                primaryActionButton.setColorFilter(Color.BLACK);
-                primaryActionButton.setBackgroundColor(COLOR_CYAN);
+                applyPrimaryButtonStyle(COLOR_CYAN, 0, 0, R.drawable.ic_ms_check, Color.BLACK);
             } else if (minReady) {
-                primaryActionButton.setImageResource(R.drawable.ic_ms_stop);
-                primaryActionButton.setColorFilter(Color.BLACK);
-                primaryActionButton.setBackgroundColor(COLOR_COPPER);
+                applyPrimaryButtonStyle(COLOR_COPPER, 0, 0, R.drawable.ic_ms_stop, Color.BLACK);
             } else {
-                primaryActionButton.setImageResource(R.drawable.ic_ms_stop);
-                primaryActionButton.setColorFilter(COLOR_DISABLED);
-                primaryActionButton.setBackgroundColor(COLOR_BORDER);
+                applyPrimaryButtonStyle(COLOR_BTN_WAITING_BG, COLOR_DISABLED, 1, R.drawable.ic_ms_stop, COLOR_SECONDARY);
             }
         } else if (step == FlowStep.FINALIZING) {
             finalizingBar.setVisibility(View.VISIBLE);
             primaryActionButton.setEnabled(false);
-            primaryActionButton.setImageResource(R.drawable.ic_ms_check);
-            primaryActionButton.setColorFilter(COLOR_DISABLED);
-            primaryActionButton.setBackgroundColor(COLOR_BORDER);
+            applyPrimaryButtonStyle(COLOR_BTN_WAITING_BG, COLOR_DISABLED, 1, R.drawable.ic_ms_check, COLOR_SECONDARY);
         } else {
             // Optional diagnostic calibration mode (2.00 m)
             perimeterRingView.setVisibility(View.GONE);
@@ -1882,11 +2157,12 @@ public class MinreportSpatialScannerActivity
 
             final boolean calBtnEnabled = step != FlowStep.CAL_FLOOR;
             primaryActionButton.setEnabled(calBtnEnabled);
-            primaryActionButton.setImageResource(
-                step == FlowStep.CAL_END ? R.drawable.ic_ms_check : R.drawable.ic_ms_play_arrow
-            );
-            primaryActionButton.setColorFilter(calBtnEnabled ? Color.BLACK : COLOR_DISABLED);
-            primaryActionButton.setBackgroundColor(calBtnEnabled ? COLOR_COPPER : COLOR_BORDER);
+            final int calIcon = step == FlowStep.CAL_END ? R.drawable.ic_ms_check : R.drawable.ic_ms_play_arrow;
+            if (calBtnEnabled) {
+                applyPrimaryButtonStyle(COLOR_COPPER, 0, 0, calIcon, Color.BLACK);
+            } else {
+                applyPrimaryButtonStyle(COLOR_BTN_WAITING_BG, COLOR_DISABLED, 1, calIcon, COLOR_SECONDARY);
+            }
         }
     }
 
@@ -2029,8 +2305,11 @@ public class MinreportSpatialScannerActivity
             setResult(RESULT_OK, resultIntent);
             finish();
         } catch (Exception e) {
-            setResult(RESULT_CANCELED);
-            finish();
+            Log.e(TAG, "Failed to finalize calibration", e);
+            finishWithError(
+                "CALIBRATION_FINALIZE_FAILED",
+                e.getMessage() != null ? e.getMessage() : "Calibration finalization failed"
+            );
         }
     }
 
@@ -2098,13 +2377,25 @@ public class MinreportSpatialScannerActivity
         final float stepX = srcW / (float) dstW;
         final float stepY = srcH / (float) dstH;
         for (int y = 0; y < dstH; y++) {
-            final int sy = Math.min(srcH - 1, (int) (y * stepY));
-            final int srcRow = sy * rowStride;
+            final int sy0 = Math.min(srcH - 1, (int) (y * stepY));
+            final int sy1 = Math.min(srcH - 1, sy0 + 1);
+            final int srcRow0 = sy0 * rowStride;
+            final int srcRow1 = sy1 * rowStride;
             final int dstRow = y * dstW;
             for (int x = 0; x < dstW; x++) {
-                final int sx = Math.min(srcW - 1, (int) (x * stepX));
-                final int idx = srcRow + sx * pixelStride;
-                out[dstRow + x] = idx < limit ? yBuf.get(idx) : 0;
+                final int sx0 = Math.min(srcW - 1, (int) (x * stepX));
+                final int sx1 = Math.min(srcW - 1, sx0 + 1);
+                final int x0Off = sx0 * pixelStride;
+                final int x1Off = sx1 * pixelStride;
+                final int i00 = srcRow0 + x0Off;
+                final int i10 = srcRow0 + x1Off;
+                final int i01 = srcRow1 + x0Off;
+                final int i11 = srcRow1 + x1Off;
+                final int p00 = i00 < limit ? (yBuf.get(i00) & 0xFF) : 0;
+                final int p10 = i10 < limit ? (yBuf.get(i10) & 0xFF) : p00;
+                final int p01 = i01 < limit ? (yBuf.get(i01) & 0xFF) : p00;
+                final int p11 = i11 < limit ? (yBuf.get(i11) & 0xFF) : p00;
+                out[dstRow + x] = (byte) ((p00 + p10 + p01 + p11 + 2) >> 2);
             }
         }
         return out;
@@ -2212,7 +2503,8 @@ public class MinreportSpatialScannerActivity
                 ? Math.max(0.0, (1.0 - (webpBytes.length / (double) rec.originalBytes)) * 100.0)
                 : 0.0;
             rec.sha256 = sha256Hex(webpBytes);
-        } catch (Exception ignored) {
+        } catch (Throwable t) {
+            Log.w(TAG, "Failed to encode/save keyframe WebP", t);
         } finally {
             if (scaled != null && scaled != decoded) scaled.recycle();
             if (decoded != null) decoded.recycle();
@@ -2255,6 +2547,18 @@ public class MinreportSpatialScannerActivity
     private void triggerDoubleHaptic() {
         triggerShortHaptic();
         mainHandler.postDelayed(this::triggerShortHaptic, 110L);
+    }
+
+    private void triggerRejectHaptic() {
+        if (rootView != null) {
+            final int feedback = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
+                ? HapticFeedbackConstants.REJECT
+                : HapticFeedbackConstants.LONG_PRESS;
+            rootView.performHapticFeedback(
+                feedback,
+                HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING
+            );
+        }
     }
 
     private int resolveRearCameraSensorOrientation() {

@@ -2,6 +2,8 @@ package com.minreport.app;
 
 import android.Manifest;
 import android.content.Context;
+import android.content.SharedPreferences;
+import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraManager;
@@ -34,6 +36,11 @@ public class MinreportDeviceCapabilityPlugin extends Plugin {
 
     private static final int MAX_AVAILABILITY_RETRIES = 3;
     private static final long AVAILABILITY_RETRY_DELAY_MS = 150L;
+    private static final String PREFS_CAPABILITY_CACHE = "minreport_device_capability_cache";
+    private static final String ARCORE_PACKAGE_NAME = "com.google.ar.core";
+    private static final String KEY_ARCORE_VERSION = "arCoreApkVersion";
+    private static final String KEY_DEPTH_API_SUPPORTED = "depthApiSupported";
+    private static final String KEY_RAW_DEPTH_SUPPORTED = "rawDepthSupported";
 
     /**
      * Probes device hardware capabilities (ARCore, Depth API, IMU sensors, Camera2).
@@ -150,20 +157,42 @@ public class MinreportDeviceCapabilityPlugin extends Plugin {
 
             if (availability == ArCoreApk.Availability.SUPPORTED_INSTALLED) {
                 if (hasCameraPermission) {
-                    Session session = null;
-                    try {
-                        session = new Session(appContext);
-                        depthApiSupported = session.isDepthModeSupported(Config.DepthMode.AUTOMATIC);
-                        rawDepthSupported = session.isDepthModeSupported(Config.DepthMode.RAW_DEPTH_ONLY);
-                    } catch (Exception | UnsatisfiedLinkError e) {
-                        sessionProbeFailed = true;
-                        reasons.add("ARCORE_SESSION_PROBE_FAILED");
-                    } finally {
-                        if (session != null) {
-                            try {
-                                session.close();
-                            } catch (Exception ignored) {
-                                // Ignore cleanup failures during capability probe.
+                    final String arCoreApkVersion = resolveArCoreApkVersion(pm);
+                    final SharedPreferences cachePrefs =
+                        appContext.getSharedPreferences(PREFS_CAPABILITY_CACHE, Context.MODE_PRIVATE);
+                    final String cachedVersion = cachePrefs.getString(KEY_ARCORE_VERSION, null);
+                    final boolean cacheHit =
+                        arCoreApkVersion != null &&
+                        arCoreApkVersion.equals(cachedVersion) &&
+                        cachePrefs.contains(KEY_DEPTH_API_SUPPORTED);
+
+                    if (cacheHit) {
+                        depthApiSupported = cachePrefs.getBoolean(KEY_DEPTH_API_SUPPORTED, false);
+                        rawDepthSupported = cachePrefs.getBoolean(KEY_RAW_DEPTH_SUPPORTED, false);
+                    } else {
+                        Session session = null;
+                        try {
+                            session = new Session(appContext);
+                            depthApiSupported = session.isDepthModeSupported(Config.DepthMode.AUTOMATIC);
+                            rawDepthSupported = session.isDepthModeSupported(Config.DepthMode.RAW_DEPTH_ONLY);
+                            if (arCoreApkVersion != null) {
+                                cachePrefs
+                                    .edit()
+                                    .putString(KEY_ARCORE_VERSION, arCoreApkVersion)
+                                    .putBoolean(KEY_DEPTH_API_SUPPORTED, depthApiSupported)
+                                    .putBoolean(KEY_RAW_DEPTH_SUPPORTED, rawDepthSupported)
+                                    .apply();
+                            }
+                        } catch (Exception | UnsatisfiedLinkError e) {
+                            sessionProbeFailed = true;
+                            reasons.add("ARCORE_SESSION_PROBE_FAILED");
+                        } finally {
+                            if (session != null) {
+                                try {
+                                    session.close();
+                                } catch (Exception ignored) {
+                                    // Ignore cleanup failures during capability probe.
+                                }
                             }
                         }
                     }
@@ -236,6 +265,26 @@ public class MinreportDeviceCapabilityPlugin extends Plugin {
                 "CAPABILITY_PROBE_ERROR",
                 e
             );
+        }
+    }
+
+    @SuppressWarnings("deprecation")
+    private static String resolveArCoreApkVersion(final PackageManager pm) {
+        if (pm == null) {
+            return null;
+        }
+        try {
+            final PackageInfo info = pm.getPackageInfo(ARCORE_PACKAGE_NAME, 0);
+            if (info == null) {
+                return null;
+            }
+            final long versionCode = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
+                ? info.getLongVersionCode()
+                : info.versionCode;
+            final String versionName = info.versionName != null ? info.versionName : "";
+            return versionName + ":" + versionCode;
+        } catch (Exception ignored) {
+            return null;
         }
     }
 

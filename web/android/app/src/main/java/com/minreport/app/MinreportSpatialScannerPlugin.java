@@ -121,6 +121,24 @@ public class MinreportSpatialScannerPlugin extends Plugin {
         }
 
         if (result == null || result.getResultCode() != Activity.RESULT_OK || result.getData() == null) {
+            final Intent data = result != null ? result.getData() : null;
+            final String errorCode = data != null
+                ? data.getStringExtra(MinreportSpatialScannerActivity.EXTRA_ERROR_CODE)
+                : null;
+            final String errorMessage = data != null
+                ? data.getStringExtra(MinreportSpatialScannerActivity.EXTRA_ERROR_MESSAGE)
+                : null;
+            if ((errorCode != null && !errorCode.isEmpty()) || (errorMessage != null && !errorMessage.isEmpty())) {
+                call.reject(
+                    (errorMessage != null && !errorMessage.isEmpty())
+                        ? errorMessage
+                        : "Native spatial scanner failed",
+                    (errorCode != null && !errorCode.isEmpty())
+                        ? errorCode
+                        : "SPATIAL_SCANNER_ERROR"
+                );
+                return;
+            }
             final JSObject cancelledPayload = new JSObject();
             cancelledPayload.put("cancelled", true);
             call.resolve(cancelledPayload);

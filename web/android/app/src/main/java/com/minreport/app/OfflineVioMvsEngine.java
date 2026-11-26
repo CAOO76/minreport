@@ -214,8 +214,11 @@ public final class OfflineVioMvsEngine {
             sparsePoints.addAll(extraVioPoints);
         }
 
-        // Loop closure check between first and last keyframes if ring wrapped
-        if (kfSnapshot.size() >= 6) {
+        // Loop closure check between first and last keyframes ONLY if dist <= 2.5m && angle < 45 deg
+        final boolean loopClosedForSweep =
+            kfSnapshot.size() >= 6 &&
+            isLoopClosurePair(kfSnapshot.get(0), kfSnapshot.get(kfSnapshot.size() - 1));
+        if (loopClosedForSweep) {
             triangulatePair(kfSnapshot.get(0), kfSnapshot.get(kfSnapshot.size() - 1), sparsePoints);
         }
 
@@ -228,6 +231,7 @@ public final class OfflineVioMvsEngine {
             centerXZ[0],
             centerXZ[1],
             walkPoses,
+            loopClosedForSweep,
             thermalDegraded
         );
 
@@ -492,13 +496,46 @@ public final class OfflineVioMvsEngine {
     }
 
     /**
+     * Verifies geometric loop closure between two keyframes:
+     * camera distance <= 2.5 m AND viewing-axis angle < 45 degrees.
+     */
+    static boolean isLoopClosurePair(final KeyframeFrame first, final KeyframeFrame last) {
+        if (first == null || last == null) {
+            return false;
+        }
+        final float dx = last.tWc[0] - first.tWc[0];
+        final float dy = last.tWc[1] - first.tWc[1];
+        final float dz = last.tWc[2] - first.tWc[2];
+        final float dist = (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (dist > 2.5f) {
+            return false;
+        }
+        // Camera optical forward axis in world space is -Z column of Rwc
+        final float f1x = -first.rWc[2];
+        final float f1y = -first.rWc[5];
+        final float f1z = -first.rWc[8];
+        final float f2x = -last.rWc[2];
+        final float f2y = -last.rWc[5];
+        final float f2z = -last.rWc[8];
+        final float n1 = (float) Math.sqrt(f1x * f1x + f1y * f1y + f1z * f1z);
+        final float n2 = (float) Math.sqrt(f2x * f2x + f2y * f2y + f2z * f2z);
+        if (n1 < 1e-4f || n2 < 1e-4f) {
+            return false;
+        }
+        final float dot = Math.max(-1.0f, Math.min(1.0f, (f1x * f2x + f1y * f2y + f1z * f2z) / (n1 * n2)));
+        final double angleDeg = Math.toDegrees(Math.acos(dot));
+        return angleDeg < 45.0;
+    }
+
+    /**
      * Stage 1B: 4-thread Plane-Sweep Census + ZNCC inside the Walk-Ring projected ROI mask.
      */
-    private static List<float[]> runDenseCensusZnccSweep(
+    static List<float[]> runDenseCensusZnccSweep(
         final List<KeyframeFrame> keyframes,
         final float centerX,
         final float centerZ,
         final List<WalkRingToeSolver.WalkPose> walkPoses,
+        final boolean loopClosed,
         final boolean thermalDegraded
     ) {
         final int totalKf = keyframes.size();
@@ -536,8 +573,17 @@ public final class OfflineVioMvsEngine {
 
         for (int idx = 0; idx < totalKf; idx += refStep) {
             final KeyframeFrame ref = keyframes.get(idx);
-            final KeyframeFrame nbPrev = keyframes.get((idx - 1 + totalKf) % totalKf);
-            final KeyframeFrame nbNext = keyframes.get((idx + 1) % totalKf);
+            final KeyframeFrame nbPrev;
+            final KeyframeFrame nbNext;
+            if (loopClosed) {
+                nbPrev = keyframes.get((idx - 1 + totalKf) % totalKf);
+                nbNext = keyframes.get((idx + 1) % totalKf);
+            } else {
+                final int prevIdx = Math.max(0, idx - 1);
+                final int nextIdx = Math.min(totalKf - 1, idx + 1);
+                nbPrev = prevIdx != idx ? keyframes.get(prevIdx) : null;
+                nbNext = nextIdx != idx ? keyframes.get(nextIdx) : null;
+            }
             tasks.add(() -> sweepReferenceFrame(ref, nbPrev, nbNext, dMin, dMax, depthSteps, pixelStride));
         }
 
@@ -545,12 +591,16 @@ public final class OfflineVioMvsEngine {
         try {
             final List<Future<List<float[]>>> futures = pool.invokeAll(tasks);
             for (Future<List<float[]>> f : futures) {
-                final List<float[]> chunk = f.get();
-                if (chunk != null) {
-                    denseOut.addAll(chunk);
+                try {
+                    final List<float[]> chunk = f.get();
+                    if (chunk != null) {
+                        denseOut.addAll(chunk);
+                    }
+                } catch (Exception ignoredChunkEx) {
+                    // Isolate single sweep task error so remaining keyframes still fuse cleanly.
                 }
             }
-        } catch (Exception ignored) {
+        } catch (Exception ignoredInvokeEx) {
         } finally {
             pool.shutdownNow();
         }
@@ -567,6 +617,9 @@ public final class OfflineVioMvsEngine {
         final int stride
     ) {
         final List<float[]> pts = new ArrayList<>(256);
+        if (prev == null && next == null) {
+            return pts;
+        }
         final int w = ref.width;
         final int h = ref.height;
         final int pad = 6;
@@ -607,26 +660,46 @@ public final class OfflineVioMvsEngine {
                     final float wy = tRef[1] + rayWorldY * depth;
                     final float wz = tRef[2] + rayWorldZ * depth;
 
-                    final float scPrev = scoreProjectionCensusZncc(ref, prev, u, v, rIdx, wx, wy, wz);
-                    if (scPrev > bestScorePrev) {
-                        bestScorePrev = scPrev;
-                        bestDepthPrev = depth;
+                    if (prev != null) {
+                        final float scPrev = scoreProjectionCensusZncc(ref, prev, u, v, rIdx, wx, wy, wz);
+                        if (scPrev > bestScorePrev) {
+                            bestScorePrev = scPrev;
+                            bestDepthPrev = depth;
+                        }
                     }
-                    final float scNext = scoreProjectionCensusZncc(ref, next, u, v, rIdx, wx, wy, wz);
-                    if (scNext > bestScoreNext) {
-                        bestScoreNext = scNext;
-                        bestDepthNext = depth;
+                    if (next != null) {
+                        final float scNext = scoreProjectionCensusZncc(ref, next, u, v, rIdx, wx, wy, wz);
+                        if (scNext > bestScoreNext) {
+                            bestScoreNext = scNext;
+                            bestDepthNext = depth;
+                        }
                     }
                 }
 
-                // Multi-view consistency gate between prev and next neighbors
-                if (bestScorePrev >= 0.58f && bestScoreNext >= 0.58f && bestDepthPrev > 0.0f && bestDepthNext > 0.0f) {
-                    final float avgD = 0.5f * (bestDepthPrev + bestDepthNext);
-                    if (Math.abs(bestDepthPrev - bestDepthNext) / avgD <= 0.09f) {
-                        final float wx = tRef[0] + rayWorldX * avgD;
-                        final float wy = tRef[1] + rayWorldY * avgD;
-                        final float wz = tRef[2] + rayWorldZ * avgD;
-                        pts.add(new float[] { wx, wy, wz, 2.0f });
+                // Multi-view consistency gate (2-neighbor interior OR 1-neighbor endpoint on open arcs)
+                if (prev != null && next != null) {
+                    if (bestScorePrev >= 0.58f && bestScoreNext >= 0.58f && bestDepthPrev > 0.0f && bestDepthNext > 0.0f) {
+                        final float avgD = 0.5f * (bestDepthPrev + bestDepthNext);
+                        if (Math.abs(bestDepthPrev - bestDepthNext) / avgD <= 0.09f) {
+                            final float wx = tRef[0] + rayWorldX * avgD;
+                            final float wy = tRef[1] + rayWorldY * avgD;
+                            final float wz = tRef[2] + rayWorldZ * avgD;
+                            pts.add(new float[] { wx, wy, wz, 2.0f });
+                        }
+                    }
+                } else if (prev != null) {
+                    if (bestScorePrev >= 0.65f && bestDepthPrev > 0.0f) {
+                        final float wx = tRef[0] + rayWorldX * bestDepthPrev;
+                        final float wy = tRef[1] + rayWorldY * bestDepthPrev;
+                        final float wz = tRef[2] + rayWorldZ * bestDepthPrev;
+                        pts.add(new float[] { wx, wy, wz, 1.0f });
+                    }
+                } else {
+                    if (bestScoreNext >= 0.65f && bestDepthNext > 0.0f) {
+                        final float wx = tRef[0] + rayWorldX * bestDepthNext;
+                        final float wy = tRef[1] + rayWorldY * bestDepthNext;
+                        final float wz = tRef[2] + rayWorldZ * bestDepthNext;
+                        pts.add(new float[] { wx, wy, wz, 1.0f });
                     }
                 }
             }
@@ -735,7 +808,7 @@ public final class OfflineVioMvsEngine {
     }
 
     /**
-     * Downscales a 4:3 CPU Y-plane preserving aspect ratio (|scaleX - scaleY| < 1e-3).
+     * Downscales a 4:3 CPU Y-plane with 2x2 box anti-aliasing preserving aspect ratio.
      */
     public static byte[] downscaleLuma43(
         final byte[] src,
@@ -748,12 +821,19 @@ public final class OfflineVioMvsEngine {
         final float stepX = srcW / (float) dstW;
         final float stepY = srcH / (float) dstH;
         for (int y = 0; y < dstH; y++) {
-            final int sy = Math.min(srcH - 1, (int) (y * stepY));
-            final int srcRow = sy * srcW;
+            final int sy0 = Math.min(srcH - 1, (int) (y * stepY));
+            final int sy1 = Math.min(srcH - 1, sy0 + 1);
+            final int srcRow0 = sy0 * srcW;
+            final int srcRow1 = sy1 * srcW;
             final int dstRow = y * dstW;
             for (int x = 0; x < dstW; x++) {
-                final int sx = Math.min(srcW - 1, (int) (x * stepX));
-                dst[dstRow + x] = src[srcRow + sx];
+                final int sx0 = Math.min(srcW - 1, (int) (x * stepX));
+                final int sx1 = Math.min(srcW - 1, sx0 + 1);
+                final int p00 = src[srcRow0 + sx0] & 0xFF;
+                final int p10 = src[srcRow0 + sx1] & 0xFF;
+                final int p01 = src[srcRow1 + sx0] & 0xFF;
+                final int p11 = src[srcRow1 + sx1] & 0xFF;
+                dst[dstRow + x] = (byte) ((p00 + p10 + p01 + p11 + 2) >> 2);
             }
         }
         return dst;

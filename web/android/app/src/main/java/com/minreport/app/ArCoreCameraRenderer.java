@@ -228,37 +228,47 @@ public class ArCoreCameraRenderer implements GLSurfaceView.Renderer {
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT | GLES20.GL_DEPTH_BUFFER_BIT);
 
         final Session activeSession;
+        final boolean needsTextureBind;
         synchronized (this) {
             activeSession = this.session;
             if (activeSession == null || cameraTextureId == -1 || programId == 0) {
                 return;
             }
-            if (!textureBoundToSession) {
-                activeSession.setCameraTextureName(cameraTextureId);
-                textureBoundToSession = true;
-            }
+            needsTextureBind = !textureBoundToSession;
         }
 
-        displayRotationHelper.updateSessionIfNeeded(activeSession);
-
         try {
-            final Frame frame = activeSession.update();
-            if (!texCoordsInitialized || frame.hasDisplayGeometryChanged()) {
-                quadCoords.position(0);
-                quadTexCoords.position(0);
-                frame.transformCoordinates2d(
-                    Coordinates2d.OPENGL_NORMALIZED_DEVICE_COORDINATES,
-                    quadCoords,
-                    Coordinates2d.TEXTURE_NORMALIZED,
-                    quadTexCoords
-                );
-                texCoordsInitialized = true;
+            if (needsTextureBind) {
+                activeSession.setCameraTextureName(cameraTextureId);
+                synchronized (this) {
+                    if (this.session == activeSession) {
+                        textureBoundToSession = true;
+                    }
+                }
             }
 
-            drawCameraQuad();
+            displayRotationHelper.updateSessionIfNeeded(activeSession);
+
+            final Frame frame = activeSession.update();
+            final long frameTimestamp = frame.getTimestamp();
+            if (frameTimestamp != 0L) {
+                if (!texCoordsInitialized || frame.hasDisplayGeometryChanged()) {
+                    quadCoords.position(0);
+                    quadTexCoords.position(0);
+                    frame.transformCoordinates2d(
+                        Coordinates2d.OPENGL_NORMALIZED_DEVICE_COORDINATES,
+                        quadCoords,
+                        Coordinates2d.TEXTURE_NORMALIZED,
+                        quadTexCoords
+                    );
+                    texCoordsInitialized = true;
+                }
+
+                drawCameraQuad();
+            }
 
             final Camera camera = frame.getCamera();
-            if (camera.getTrackingState() == TrackingState.TRACKING) {
+            if (frameTimestamp != 0L && camera.getTrackingState() == TrackingState.TRACKING) {
                 camera.getViewMatrix(viewMatrix, 0);
                 camera.getProjectionMatrix(projectionMatrix, 0, 0.1f, 60.0f);
                 lastFramingStatus = overlayRenderer.draw(viewMatrix, projectionMatrix);
@@ -271,7 +281,7 @@ public class ArCoreCameraRenderer implements GLSurfaceView.Renderer {
             }
         } catch (CameraNotAvailableException | SessionPausedException | DeadlineExceededException transientEx) {
             // Expected transient ARCore lifecycle states during pause/resume transitions.
-        } catch (RuntimeException unexpectedEx) {
+        } catch (Exception unexpectedEx) {
             Log.w(TAG, "Unexpected ARCore render frame error", unexpectedEx);
         }
     }
@@ -330,6 +340,7 @@ public class ArCoreCameraRenderer implements GLSurfaceView.Renderer {
         }
 
         void onResume() {
+            viewportChanged = true;
             if (displayManager != null) {
                 displayManager.registerDisplayListener(this, null);
             }
