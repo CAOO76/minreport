@@ -142,6 +142,12 @@ function makeOwnerSession(): MinReportSession {
 describe('V3-E06 — SupplyWorkspace 7 Tabs Deferred Fetch & Profiles/Channels WS Matrix', () => {
     beforeEach(async () => {
         vi.restoreAllMocks();
+        vi.spyOn(supplyApi, 'listSupplyWarehouses').mockResolvedValue({
+            warehouses: [],
+            balances: [],
+        });
+        vi.spyOn(supplyApi, 'getSupplyBusinessUnitKpis').mockResolvedValue(null);
+        vi.spyOn(supplyApi, 'listSupplyConversationThreads').mockResolvedValue([]);
         sessionMockState.session = makeOwnerSession();
         await act(async () => {
             await i18n.changeLanguage('es');

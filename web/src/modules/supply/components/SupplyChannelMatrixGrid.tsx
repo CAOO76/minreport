@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import M3Switch from '../../../components/common/M3Switch';
 import HitlConfirmModal, { type HitlComparisonDiffItem } from '../../../components/common/HitlConfirmModal';
@@ -65,8 +65,22 @@ export const SupplyChannelMatrixGrid: React.FC<SupplyChannelMatrixGridProps> = (
         profile.permanentChannels
     );
     const [hitlOpen, setHitlOpen] = useState(false);
+    const lastSyncedRef = useRef({
+        profileId: profile.profileId,
+        permanentChannels: profile.permanentChannels,
+    });
 
     useEffect(() => {
+        if (
+            lastSyncedRef.current.profileId === profile.profileId &&
+            lastSyncedRef.current.permanentChannels === profile.permanentChannels
+        ) {
+            return;
+        }
+        lastSyncedRef.current = {
+            profileId: profile.profileId,
+            permanentChannels: profile.permanentChannels,
+        };
         setDraftChannels(profile.permanentChannels);
         setHitlOpen(false);
     }, [profile.profileId, profile.permanentChannels]);
