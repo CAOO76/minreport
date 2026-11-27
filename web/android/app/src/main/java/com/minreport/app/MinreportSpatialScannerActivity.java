@@ -3084,33 +3084,22 @@ public class MinreportSpatialScannerActivity
 
                     if (rawDepthSnap != null && depthIntr != null) {
                         final boolean useKfMaskForDepth = depthMatchesWinnerFrame && kfMask != null && kfMask.valid;
-                        final int refW = useKfMaskForDepth ? kfMask.width : rawDepthSnap.width;
-                        final int refH = useKfMaskForDepth ? kfMask.height : rawDepthSnap.height;
-                        final float fxD = useKfMaskForDepth
-                            ? depthIntr[0] * (refW / (float) Math.max(1, rawDepthSnap.width))
-                            : depthIntr[0];
-                        final float fyD = useKfMaskForDepth
-                            ? depthIntr[1] * (refH / (float) Math.max(1, rawDepthSnap.height))
-                            : depthIntr[1];
-                        final float cxD = useKfMaskForDepth
-                            ? depthIntr[2] * (refW / (float) Math.max(1, rawDepthSnap.width))
-                            : depthIntr[2];
-                        final float cyD = useKfMaskForDepth
-                            ? depthIntr[3] * (refH / (float) Math.max(1, rawDepthSnap.height))
-                            : depthIntr[3];
+                        final int maskW = useKfMaskForDepth ? kfMask.width : 0;
+                        final int maskH = useKfMaskForDepth ? kfMask.height : 0;
                         final boolean targetActive = targetSnap != null && targetSnap.active;
+                        // extractFilteredDepthPoints expects intrinsics strictly in depthW x depthH coordinates
                         final List<float[]> depthPts = DepthMaskFuser.extractFilteredDepthPoints(
                             useKfMaskForDepth ? kfMask.conf : null,
-                            refW,
-                            refH,
+                            maskW,
+                            maskH,
                             rawDepthSnap.depthMm,
                             rawDepthSnap.depthConf,
                             rawDepthSnap.width,
                             rawDepthSnap.height,
-                            fxD,
-                            fyD,
-                            cxD,
-                            cyD,
+                            depthIntr[0],
+                            depthIntr[1],
+                            depthIntr[2],
+                            depthIntr[3],
                             depthCamToWorld16,
                             estGroundY,
                             targetSnap,
