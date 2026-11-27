@@ -385,7 +385,7 @@ public final class WalkRingToeSolver {
     }
 
     /**
-     * Backwards-compatible solve overload without TargetVolumeConstraint.
+     * Backwards-compatible solve overload without TargetVolumeConstraint or VisualHullResult.
      */
     public static MetrologyResult solve(
         final List<float[]> rawPoints3D,
@@ -394,12 +394,29 @@ public final class WalkRingToeSolver {
         final boolean hasScaleAnchor,
         final double explicitLoopDriftPct
     ) {
-        return solve(rawPoints3D, walkPoses, rawGroundSamples, hasScaleAnchor, explicitLoopDriftPct, null);
+        return solve(rawPoints3D, walkPoses, rawGroundSamples, hasScaleAnchor, explicitLoopDriftPct, null, null);
     }
 
     /**
-     * Full in-situ stockpile metrology solver with optional TargetVolumeConstraint:
+     * Backwards-compatible solve overload with optional TargetVolumeConstraint (without VisualHullResult).
+     */
+    public static MetrologyResult solve(
+        final List<float[]> rawPoints3D,
+        final List<WalkPose> walkPoses,
+        final List<float[]> rawGroundSamples,
+        final boolean hasScaleAnchor,
+        final double explicitLoopDriftPct,
+        final TargetVolumeConstraint targetConstraint
+    ) {
+        return solve(rawPoints3D, walkPoses, rawGroundSamples, hasScaleAnchor, explicitLoopDriftPct, targetConstraint, null);
+    }
+
+    /**
+     * Full Tri-Modal in-situ stockpile metrology solver with optional TargetVolumeConstraint and
+     * optional VisualHullCarver.VisualHullResult:
      * - Unbiased p50 + Huber IRLS ground plane with padReferenceY anchoring and empirical sigmaGround
+     * - Tri-Modal DEM fusion (MVS/Depth + Probabilistic Visual Hull carving concavities via min(H_hull, H_obs)
+     *   and completing textureless smooth walls from silhouette height)
      * - Dual-hysteresis toe segmentation + 8-connected clustering + 3D marker-controlled Priority-Flood Watershed
      * - Bounded geodesic toe expansion + interior-only crater-free hole filling (no global scanline bridges)
      * - Strict object-flank slope angle via 16-sector radial Theil-Sen + gravity-corrected DEM gradient (up to 89.5 deg)
@@ -410,20 +427,24 @@ public final class WalkRingToeSolver {
         final List<float[]> rawGroundSamples,
         final boolean hasScaleAnchor,
         final double explicitLoopDriftPct,
-        final TargetVolumeConstraint targetConstraint
+        final TargetVolumeConstraint targetConstraint,
+        final VisualHullCarver.VisualHullResult visualHull
     ) {
         final List<float[]> points = rawPoints3D != null ? rawPoints3D : new ArrayList<>();
         final List<WalkPose> poses = walkPoses != null ? walkPoses : new ArrayList<>();
         final List<float[]> groundInput = rawGroundSamples != null ? rawGroundSamples : new ArrayList<>();
         final boolean hasTarget = targetConstraint != null && targetConstraint.active;
+        final boolean hasVisualHull = visualHull != null && visualHull.isValid();
 
-        if (points.size() < 12) {
+        if (points.size() < 12 && !hasVisualHull) {
             return buildRejectedResult(points, groundInput, poses, explicitLoopDriftPct);
         }
 
         final float[] centerXZ = hasTarget
             ? targetConstraint.getEffectiveCenterXZ()
-            : estimateAutoCenterXZ(poses, points);
+            : ((poses.isEmpty() && points.isEmpty() && hasVisualHull)
+                ? computeVisualHullCentroidXZ(visualHull)
+                : estimateAutoCenterXZ(poses, points));
         final float cx = centerXZ[0];
         final float cz = centerXZ[1];
 
@@ -540,16 +561,59 @@ public final class WalkRingToeSolver {
             if (hasTarget && !targetConstraint.containsXZ(p[0], p[2], 1.05f)) {
                 continue;
             }
+            if (hasVisualHull && visualHull.viewsUsed >= 6 && !isWithinVisualHullMargin(visualHull, p[0], p[2], 1)) {
+                continue;
+            }
             final float h = (float) (p[1] - (planeA * p[0] + planeB * p[2] + planeD));
             if (h > 0.0f) {
                 posHeightsTmp[posCount++] = h;
             }
         }
-        if (posCount < 8) {
+        float hPeakFromHull = 0.0f;
+        int hullPosCount = 0;
+        if (hasVisualHull) {
+            final float[] hullHeightsTmp = new float[visualHull.cols * visualHull.rows];
+            for (int hr = 0; hr < visualHull.rows; hr++) {
+                final float wz = visualHull.originZ + (hr + 0.5f) * visualHull.cellSizeM;
+                for (int hc = 0; hc < visualHull.cols; hc++) {
+                    final int hi = hr * visualHull.cols + hc;
+                    if (visualHull.hullFootprintMask[hi] == 0) {
+                        continue;
+                    }
+                    final float hh = visualHull.hullHeightsM[hi];
+                    if (hh <= 0.0f) {
+                        continue;
+                    }
+                    final float wx = visualHull.originX + (hc + 0.5f) * visualHull.cellSizeM;
+                    if (hasTarget && !targetConstraint.containsXZ(wx, wz, 1.05f)) {
+                        continue;
+                    }
+                    hullHeightsTmp[hullPosCount++] = hh;
+                }
+            }
+            if (hullPosCount > 0) {
+                Arrays.sort(hullHeightsTmp, 0, hullPosCount);
+                hPeakFromHull = hullHeightsTmp[Math.min(hullPosCount - 1, (int) Math.floor(hullPosCount * 0.995))];
+            }
+        }
+        if (posCount < 8 && hullPosCount < 4) {
             return buildRejectedResult(inEnvelopePoints, filteredGround, poses, loopDriftPct);
         }
-        Arrays.sort(posHeightsTmp, 0, posCount);
-        final float hPeakInitial = posHeightsTmp[Math.min(posCount - 1, (int) Math.floor(posCount * 0.995))];
+        final float hPeakFromPts;
+        if (posCount >= 8) {
+            Arrays.sort(posHeightsTmp, 0, posCount);
+            hPeakFromPts = posHeightsTmp[Math.min(posCount - 1, (int) Math.floor(posCount * 0.995))];
+        } else {
+            hPeakFromPts = 0.0f;
+        }
+        final float hPeakInitial;
+        if (hasVisualHull && hPeakFromHull > 0.05f) {
+            hPeakInitial = posCount >= 8
+                ? Math.min(Math.max(hPeakFromPts, hPeakFromHull), hPeakFromHull * 1.15f)
+                : hPeakFromHull;
+        } else {
+            hPeakInitial = hPeakFromPts;
+        }
         if (hPeakInitial < 0.05f) {
             return buildRejectedResult(inEnvelopePoints, filteredGround, poses, loopDriftPct);
         }
@@ -557,7 +621,7 @@ public final class WalkRingToeSolver {
         final float hSeed = (float) Math.max(0.08, Math.max(3.5 * sigmaGround, 0.15 * hPeakInitial));
         final float hToe = (float) Math.max(0.03, Math.max(2.0 * sigmaGround, 0.04 * hPeakInitial));
 
-        // Compute tight DEM bounds from points >= hToe (prevents noisy patio from coarsening small-object grid)
+        // Compute tight DEM bounds from points >= hToe and valid Visual Hull cells (prevents noisy patio from coarsening small-object grid)
         float minX = Float.MAX_VALUE;
         float maxX = -Float.MAX_VALUE;
         float minZ = Float.MAX_VALUE;
@@ -565,6 +629,9 @@ public final class WalkRingToeSolver {
         final List<float[]> aboveToePts = new ArrayList<>();
         for (float[] p : inEnvelopePoints) {
             if (hasTarget && targetConstraint.hasValidPolygon() && !targetConstraint.containsXZ(p[0], p[2], 1.02f)) {
+                continue;
+            }
+            if (hasVisualHull && visualHull.viewsUsed >= 6 && !isWithinVisualHullMargin(visualHull, p[0], p[2], 1)) {
                 continue;
             }
             final double gy = planeA * p[0] + planeB * p[2] + planeD;
@@ -577,22 +644,47 @@ public final class WalkRingToeSolver {
                 aboveToePts.add(p);
             }
         }
+        int hullAboveToeCount = 0;
+        if (hasVisualHull) {
+            final float halfHullCell = 0.5f * visualHull.cellSizeM;
+            for (int hr = 0; hr < visualHull.rows; hr++) {
+                final float wz = visualHull.originZ + (hr + 0.5f) * visualHull.cellSizeM;
+                for (int hc = 0; hc < visualHull.cols; hc++) {
+                    final int hi = hr * visualHull.cols + hc;
+                    if (visualHull.hullFootprintMask[hi] == 0 || visualHull.hullHeightsM[hi] < hToe) {
+                        continue;
+                    }
+                    final float wx = visualHull.originX + (hc + 0.5f) * visualHull.cellSizeM;
+                    if (hasTarget && targetConstraint.hasValidPolygon() && !targetConstraint.containsXZ(wx, wz, 1.02f)) {
+                        continue;
+                    }
+                    if (wx - halfHullCell < minX) minX = wx - halfHullCell;
+                    if (wx + halfHullCell > maxX) maxX = wx + halfHullCell;
+                    if (wz - halfHullCell < minZ) minZ = wz - halfHullCell;
+                    if (wz + halfHullCell > maxZ) maxZ = wz + halfHullCell;
+                    hullAboveToeCount++;
+                }
+            }
+        }
         final int aboveToeCount = aboveToePts.size();
-        if (aboveToeCount < 6 || maxX <= minX || maxZ <= minZ) {
+        if (aboveToeCount + hullAboveToeCount < 6 || maxX <= minX || maxZ <= minZ) {
             return buildRejectedResult(inEnvelopePoints, filteredGround, poses, loopDriftPct);
         }
 
         final float spanX = maxX - minX;
         final float spanZ = maxZ - minZ;
         final float maxSpan = Math.max(spanX, spanZ);
-        final float nnSpacingM = estimateLocalPointSpacingXZ(aboveToePts);
+        final float effectiveMinCellM = hasVisualHull
+            ? Math.max(0.015f, Math.min(MIN_CELL_SIZE_M, visualHull.cellSizeM))
+            : MIN_CELL_SIZE_M;
+        final float nnSpacingM = hasVisualHull ? 0.0f : estimateLocalPointSpacingXZ(aboveToePts);
         final float densityFloorCellM = Float.isFinite(nnSpacingM) && nnSpacingM > 0.0f
             ? nnSpacingM * 1.15f
-            : MIN_CELL_SIZE_M;
+            : effectiveMinCellM;
         final float spanFitCellM = maxSpan / (MAX_DEM_DIM - 5.0f);
         final float cellSizeM = clamp(
             Math.max(Math.max(maxSpan / 52.0f, spanFitCellM), densityFloorCellM),
-            MIN_CELL_SIZE_M,
+            effectiveMinCellM,
             MAX_CELL_SIZE_M
         );
 
@@ -643,16 +735,41 @@ public final class WalkRingToeSolver {
                     inAllowedRegion[idx] = true;
                 }
                 final ArrayList<Float> list = buckets[idx];
-                if (list != null && !list.isEmpty()) {
+                final boolean hasObsBucket = list != null && !list.isEmpty();
+                float med = 0.0f;
+                if (hasObsBucket) {
                     final float[] arr = new float[list.size()];
                     for (int k = 0; k < list.size(); k++) {
                         arr[k] = list.get(k);
                     }
                     Arrays.sort(arr);
-                    final float med = arr[arr.length / 2];
+                    med = arr[arr.length / 2];
                     if (med > 0.0f) {
                         rawHeights[idx] = med;
                         rawObserved[idx] = 1;
+                    }
+                }
+
+                // Tri-Modal Visual Hull fusion: carve real concavities via min(H_hull, H_obs),
+                // fill textureless smooth walls from silhouette height, and discard external noise
+                if (hasVisualHull) {
+                    if (visualHull.viewsUsed >= 6 && !isWithinVisualHullMargin(visualHull, wx, wz, 1)) {
+                        inAllowedRegion[idx] = false;
+                        rawHeights[idx] = 0.0f;
+                        rawObserved[idx] = 0;
+                    } else if (inAllowedRegion[idx]) {
+                        final float hHull = sampleVisualHullHeight(visualHull, wx, wz);
+                        if (hHull >= hToe) {
+                            if (obsCount[idx] >= 2 && hasObsBucket) {
+                                final float fusedH = Math.min(hHull, med);
+                                rawHeights[idx] = fusedH;
+                                rawObserved[idx] = fusedH > 0.0f ? (byte) 1 : (byte) 0;
+                            } else {
+                                rawHeights[idx] = hHull;
+                                rawObserved[idx] = 1;
+                                obsCount[idx] = Math.max(obsCount[idx], 2);
+                            }
+                        }
                     }
                 }
             }
@@ -816,7 +933,7 @@ public final class WalkRingToeSolver {
             toeScore < 45.0 ||
             loopDriftPct > 5.0 ||
             occludedVolumePct > 40.0 ||
-            totalVol <= 0.02
+            totalVol <= 0.003
         ) {
             metrologyGrade = "REJECTED";
         } else if (uncertaintyPct > 12.0) {
@@ -2771,6 +2888,75 @@ public final class WalkRingToeSolver {
         Arrays.sort(nnDists, 0, nnCount);
         final int p75Idx = Math.min(nnCount - 1, (int) Math.floor((nnCount - 1) * 0.75));
         return nnDists[p75Idx];
+    }
+
+    private static float sampleVisualHullHeight(
+        final VisualHullCarver.VisualHullResult hull,
+        final float wx,
+        final float wz
+    ) {
+        if (hull == null || !hull.isValid() || hull.cellSizeM <= 1e-6f) {
+            return 0.0f;
+        }
+        final int hc = Math.round((wx - hull.originX) / hull.cellSizeM - 0.5f);
+        final int hr = Math.round((wz - hull.originZ) / hull.cellSizeM - 0.5f);
+        if (hc < 0 || hc >= hull.cols || hr < 0 || hr >= hull.rows) {
+            return 0.0f;
+        }
+        final int idx = hr * hull.cols + hc;
+        return hull.hullFootprintMask[idx] != 0 ? hull.hullHeightsM[idx] : 0.0f;
+    }
+
+    private static boolean isWithinVisualHullMargin(
+        final VisualHullCarver.VisualHullResult hull,
+        final float wx,
+        final float wz,
+        final int marginCells
+    ) {
+        if (hull == null || !hull.isValid() || hull.cellSizeM <= 1e-6f) {
+            return false;
+        }
+        final int hc = Math.round((wx - hull.originX) / hull.cellSizeM - 0.5f);
+        final int hr = Math.round((wz - hull.originZ) / hull.cellSizeM - 0.5f);
+        final int r0 = Math.max(0, hr - marginCells);
+        final int r1 = Math.min(hull.rows - 1, hr + marginCells);
+        final int c0 = Math.max(0, hc - marginCells);
+        final int c1 = Math.min(hull.cols - 1, hc + marginCells);
+        if (r0 > r1 || c0 > c1) {
+            return false;
+        }
+        for (int r = r0; r <= r1; r++) {
+            final int rowOff = r * hull.cols;
+            for (int c = c0; c <= c1; c++) {
+                if (hull.hullFootprintMask[rowOff + c] != 0) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static float[] computeVisualHullCentroidXZ(final VisualHullCarver.VisualHullResult hull) {
+        if (hull == null || !hull.isValid()) {
+            return new float[] { 0.0f, -DEFAULT_FORWARD_PROJECTION_M };
+        }
+        double sumX = 0.0;
+        double sumZ = 0.0;
+        int count = 0;
+        for (int r = 0; r < hull.rows; r++) {
+            final float wz = hull.originZ + (r + 0.5f) * hull.cellSizeM;
+            for (int c = 0; c < hull.cols; c++) {
+                if (hull.hullFootprintMask[r * hull.cols + c] != 0) {
+                    sumX += hull.originX + (c + 0.5f) * hull.cellSizeM;
+                    sumZ += wz;
+                    count++;
+                }
+            }
+        }
+        if (count == 0) {
+            return new float[] { 0.0f, -DEFAULT_FORWARD_PROJECTION_M };
+        }
+        return new float[] { (float) (sumX / count), (float) (sumZ / count) };
     }
 
     private static float clamp(final float v, final float min, final float max) {

@@ -3,17 +3,17 @@ package com.minreport.app;
 import java.util.Arrays;
 
 /**
- * Pure-Java, immutable Target Object Volume Constraint for MINREPORT · ACOPIOS (2.1.0).
+ * Pure-Java, immutable Target Object Volume Constraint for MINREPORT · ACOPIOS (2.2.0).
  * Encapsulates user-selected ARCore target Anchor, adjustable horizontal radius (default 1.20 m,
- * clamped [0.20 m, 15.0 m]), optional 3..8 vertex XZ valley polygon for adjacent stockpiles,
- * and optional explicit 1-tap patio floor elevation (padReferenceY).
+ * clamped [0.12 m, 15.0 m]), optional estimated height (heightEstM), optional 3..8 vertex XZ
+ * valley polygon for adjacent stockpiles, and optional explicit 1-tap patio floor elevation (padReferenceY).
  *
  * Zero Android framework dependencies for deterministic JVM JUnit verification.
  */
 public final class TargetVolumeConstraint {
 
     public static final float DEFAULT_RADIUS_M = 1.20f;
-    public static final float MIN_RADIUS_M = 0.20f;
+    public static final float MIN_RADIUS_M = 0.12f;
     public static final float MAX_RADIUS_M = 15.0f;
     public static final int MIN_POLYGON_VERTICES = 3;
     public static final int MAX_POLYGON_VERTICES = 8;
@@ -27,6 +27,7 @@ public final class TargetVolumeConstraint {
         DEFAULT_RADIUS_M,
         EMPTY_POLY,
         false,
+        0.0f,
         0.0f
     );
 
@@ -39,6 +40,8 @@ public final class TargetVolumeConstraint {
     public final float[] polygonXZ;
     public final boolean hasPadReferenceY;
     public final float padReferenceY;
+    /** Optional estimated target height above ground in meters (0.0f when unestimated). */
+    public final float heightEstM;
 
     public TargetVolumeConstraint(
         final boolean active,
@@ -50,6 +53,20 @@ public final class TargetVolumeConstraint {
         final boolean hasPadReferenceY,
         final float padReferenceY
     ) {
+        this(active, anchorX, anchorY, anchorZ, radiusM, polygonXZ, hasPadReferenceY, padReferenceY, 0.0f);
+    }
+
+    public TargetVolumeConstraint(
+        final boolean active,
+        final float anchorX,
+        final float anchorY,
+        final float anchorZ,
+        final float radiusM,
+        final float[] polygonXZ,
+        final boolean hasPadReferenceY,
+        final float padReferenceY,
+        final float heightEstM
+    ) {
         final boolean validAnchor = Float.isFinite(anchorX) && Float.isFinite(anchorY) && Float.isFinite(anchorZ);
         this.active = active && validAnchor;
         this.anchorX = validAnchor ? anchorX : 0.0f;
@@ -59,6 +76,9 @@ public final class TargetVolumeConstraint {
         this.polygonXZ = sanitizePolygon(polygonXZ);
         this.hasPadReferenceY = hasPadReferenceY && Float.isFinite(padReferenceY);
         this.padReferenceY = this.hasPadReferenceY ? padReferenceY : 0.0f;
+        this.heightEstM = (Float.isFinite(heightEstM) && heightEstM > 0.0f)
+            ? Math.min(25.0f, heightEstM)
+            : 0.0f;
     }
 
     public static TargetVolumeConstraint inactive() {
@@ -140,7 +160,8 @@ public final class TargetVolumeConstraint {
             this.radiusM,
             this.polygonXZ,
             this.hasPadReferenceY,
-            this.padReferenceY
+            this.padReferenceY,
+            this.heightEstM
         );
     }
 
@@ -153,7 +174,8 @@ public final class TargetVolumeConstraint {
             newRadiusM,
             this.polygonXZ,
             this.hasPadReferenceY,
-            this.padReferenceY
+            this.padReferenceY,
+            this.heightEstM
         );
     }
 
@@ -166,7 +188,8 @@ public final class TargetVolumeConstraint {
             this.radiusM,
             newPolyXZ,
             this.hasPadReferenceY,
-            this.padReferenceY
+            this.padReferenceY,
+            this.heightEstM
         );
     }
 
@@ -179,7 +202,32 @@ public final class TargetVolumeConstraint {
             this.radiusM,
             this.polygonXZ,
             true,
-            padY
+            padY,
+            this.heightEstM
+        );
+    }
+
+    /**
+     * Updates anchor position, auto-fitted horizontal radius (clamped to [MIN_RADIUS_M, MAX_RADIUS_M]),
+     * and estimated target height while preserving polygonXZ and padReferenceY.
+     */
+    public TargetVolumeConstraint withAutoBounds(
+        final float anchorX,
+        final float anchorY,
+        final float anchorZ,
+        final float radiusM,
+        final float heightEstM
+    ) {
+        return new TargetVolumeConstraint(
+            true,
+            anchorX,
+            anchorY,
+            anchorZ,
+            clampRadius(radiusM),
+            this.polygonXZ,
+            this.hasPadReferenceY,
+            this.padReferenceY,
+            heightEstM
         );
     }
 
@@ -205,7 +253,7 @@ public final class TargetVolumeConstraint {
         if (!hasValidPolygon()) {
             return radiusM;
         }
-        float maxR = 0.20f;
+        float maxR = MIN_RADIUS_M;
         final int n = polygonXZ.length / 2;
         for (int i = 0; i < n; i++) {
             final float d = (float) Math.hypot(polygonXZ[i * 2] - anchorX, polygonXZ[i * 2 + 1] - anchorZ);
@@ -252,9 +300,18 @@ public final class TargetVolumeConstraint {
 
     /**
      * Returns true if 3D point (x, y, z) belongs to the target object volume for live dual-color
-     * point cloud visualization (excludes floor points below padReferenceY + 0.025m when pad is set).
+     * point cloud visualization. Strictly rejects floor points at or below baseY + 0.03 m.
      */
     public boolean contains3DForVisual(final float x, final float y, final float z) {
+        return contains3DForVisual(x, y, z, Float.NaN);
+    }
+
+    /**
+     * Returns true if 3D point (x, y, z) belongs to the target object volume for live dual-color
+     * point cloud visualization relative to an explicit ground elevation when padReferenceY is unset.
+     * Strictly requires y >= floorY + 0.03 m && y <= topY (never subtracts floor margin).
+     */
+    public boolean contains3DForVisual(final float x, final float y, final float z, final float groundY) {
         if (!active) {
             return true;
         }
@@ -264,9 +321,14 @@ public final class TargetVolumeConstraint {
         if (!containsXZ(x, z, 1.0f)) {
             return false;
         }
-        final float baseY = hasPadReferenceY ? padReferenceY : (anchorY - 0.12f);
-        final float topY = baseY + Math.max(1.20f, getEffectiveRadiusM() * 1.65f);
-        return y >= (baseY - 0.02f) && y <= topY;
+        final float floorY = hasPadReferenceY
+            ? padReferenceY
+            : (Float.isFinite(groundY) ? groundY : anchorY);
+        final float estTopSpan = heightEstM > 0.05f
+            ? Math.max(heightEstM * 1.25f, 0.35f)
+            : Math.max(1.20f, getEffectiveRadiusM() * 1.65f);
+        final float topY = floorY + estTopSpan;
+        return y >= (floorY + 0.03f) && y <= topY;
     }
 
     /**
