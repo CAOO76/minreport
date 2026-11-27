@@ -562,7 +562,7 @@ public final class WalkRingToeSolver {
         float maxX = -Float.MAX_VALUE;
         float minZ = Float.MAX_VALUE;
         float maxZ = -Float.MAX_VALUE;
-        int aboveToeCount = 0;
+        final List<float[]> aboveToePts = new ArrayList<>();
         for (float[] p : inEnvelopePoints) {
             if (hasTarget && targetConstraint.hasValidPolygon() && !targetConstraint.containsXZ(p[0], p[2], 1.02f)) {
                 continue;
@@ -574,9 +574,10 @@ public final class WalkRingToeSolver {
                 if (p[0] > maxX) maxX = p[0];
                 if (p[2] < minZ) minZ = p[2];
                 if (p[2] > maxZ) maxZ = p[2];
-                aboveToeCount++;
+                aboveToePts.add(p);
             }
         }
+        final int aboveToeCount = aboveToePts.size();
         if (aboveToeCount < 6 || maxX <= minX || maxZ <= minZ) {
             return buildRejectedResult(inEnvelopePoints, filteredGround, poses, loopDriftPct);
         }
@@ -584,7 +585,16 @@ public final class WalkRingToeSolver {
         final float spanX = maxX - minX;
         final float spanZ = maxZ - minZ;
         final float maxSpan = Math.max(spanX, spanZ);
-        final float cellSizeM = clamp((float) (maxSpan / 56.0), MIN_CELL_SIZE_M, MAX_CELL_SIZE_M);
+        final float nnSpacingM = estimateLocalPointSpacingXZ(aboveToePts);
+        final float densityFloorCellM = Float.isFinite(nnSpacingM) && nnSpacingM > 0.0f
+            ? nnSpacingM * 1.15f
+            : MIN_CELL_SIZE_M;
+        final float spanFitCellM = maxSpan / (MAX_DEM_DIM - 5.0f);
+        final float cellSizeM = clamp(
+            Math.max(Math.max(maxSpan / 52.0f, spanFitCellM), densityFloorCellM),
+            MIN_CELL_SIZE_M,
+            MAX_CELL_SIZE_M
+        );
 
         // Add 2-cell border padding so exterior flood-fill always surrounds the object cleanly
         final float padM = 2.0f * cellSizeM;
@@ -733,7 +743,10 @@ public final class WalkRingToeSolver {
         final float objCx = (float) (objCenterSumX / totalFootprintCells);
         final float objCz = (float) (objCenterSumZ / totalFootprintCells);
         Arrays.sort(fpHeights, 0, fpCount);
-        final double dimH = fpHeights[Math.min(fpCount - 1, (int) Math.floor(fpCount * 0.99))];
+        final int dimHIdx = fpCount >= 20
+            ? Math.max(fpCount - 2, (int) Math.floor(fpCount * 0.997))
+            : (fpCount - 1);
+        final double dimH = fpHeights[Math.min(fpCount - 1, dimHIdx)];
         final double occludedVolumePct = totalVol > 0.0 ? (occludedVol / totalVol) * 100.0 : 0.0;
 
         // 9. Footprint principal dimensions (a, b) via 2D covariance eigenvalues
@@ -2722,6 +2735,42 @@ public final class WalkRingToeSolver {
             }
         }
         return new double[] { m[0][3], m[1][3], m[2][3] };
+    }
+
+    private static float estimateLocalPointSpacingXZ(final List<float[]> pts) {
+        final int total = pts.size();
+        if (total < 2) {
+            return 0.0f;
+        }
+        final int probeTarget = Math.min(48, total);
+        final int probeStep = Math.max(1, total / probeTarget);
+        final int refStep = total > 1500 ? Math.max(1, total / 1500) : 1;
+
+        final float[] nnDists = new float[probeTarget];
+        int nnCount = 0;
+        for (int i = 0; i < total && nnCount < probeTarget; i += probeStep) {
+            final float[] p = pts.get(i);
+            float bestDistSq = Float.MAX_VALUE;
+            for (int j = 0; j < total; j += refStep) {
+                if (i == j) continue;
+                final float[] q = pts.get(j);
+                final float dx = p[0] - q[0];
+                final float dz = p[2] - q[2];
+                final float dSq = dx * dx + dz * dz;
+                if (dSq > 1e-8f && dSq < bestDistSq) {
+                    bestDistSq = dSq;
+                }
+            }
+            if (bestDistSq < Float.MAX_VALUE) {
+                nnDists[nnCount++] = (float) Math.sqrt(bestDistSq);
+            }
+        }
+        if (nnCount == 0) {
+            return 0.0f;
+        }
+        Arrays.sort(nnDists, 0, nnCount);
+        final int p75Idx = Math.min(nnCount - 1, (int) Math.floor((nnCount - 1) * 0.75));
+        return nnDists[p75Idx];
     }
 
     private static float clamp(final float v, final float min, final float max) {
