@@ -6,20 +6,34 @@ import { GLTFLoader, type GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { CopyButton } from '../../../components/common/CopyButton';
 import { M3LinearProgress } from '../../../components/common/M3LinearProgress';
 import type {
-    DemGridV1,
     MeasurementLifecycleStatus,
     UnifiedBoundingBoxM,
 } from '../../../contracts/acopios.contracts';
 import { resolveStockpileMeshBinary } from '../core/services/StorageService';
-import { buildThreeGeometryFromDemGridV1 } from '../core/utils/demGridGeometry';
+import {
+    buildThreeGeometryFromDemGridV1,
+    type DemGridGeometryUserData,
+    type DemGridInput,
+} from '../core/utils/demGridGeometry';
+import {
+    buildTwin3DDimensionsOverlay,
+    disposeMaterialResources,
+    disposeObject3DTree,
+    formatTwin3DVolumeM3,
+} from '../core/utils/twin3dDimensionsOverlay';
 
 export interface StockpileTwin3DProps {
     meshUrl?: string | null;
-    /** Superficie DEM 2.5D real generada in-situ en terreno (Nivel 1 Offline, < 60 KB) */
-    localPreviewMesh?: DemGridV1 | null;
+    /** Superficie DEM 2.5D real generada in-situ en terreno (Nivel 1 Offline, `dem_grid_v1` / `dem_grid_v2`) */
+    localPreviewMesh?: DemGridInput | null;
     lifecycleStatus?: MeasurementLifecycleStatus | null;
     copperDomain?: string;
     tinVolumeM3?: number | null;
+    dimensionsM?: { a?: number | null; b?: number | null; h?: number | null } | null;
+    volumeM3?: number | null;
+    slopeAngleDeg?: number | null;
+    footprintAreaM2?: number | null;
+    showDimensionsDefault?: boolean;
     casMetrics?: {
         originalBytes?: number;
         optimizedBytes?: number;
@@ -55,42 +69,6 @@ function formatCasBytes(bytes?: number | null): string | null {
     if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
     if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${Math.round(bytes)} B`;
-}
-
-function disposeMaterialResources(material: THREE.Material): void {
-    const record = material as unknown as Record<string, unknown>;
-    for (const key of Object.keys(record)) {
-        const value = record[key];
-        if (
-            value &&
-            typeof value === 'object' &&
-            'isTexture' in value &&
-            typeof (value as THREE.Texture).dispose === 'function'
-        ) {
-            (value as THREE.Texture).dispose();
-        }
-    }
-    material.dispose();
-}
-
-function disposeObject3DTree(root: THREE.Object3D): void {
-    root.traverse((obj) => {
-        const renderable = obj as unknown as {
-            geometry?: THREE.BufferGeometry;
-            material?: THREE.Material | THREE.Material[];
-        };
-        if (renderable.geometry && typeof renderable.geometry.dispose === 'function') {
-            renderable.geometry.dispose();
-        }
-        if (renderable.material) {
-            const mats = Array.isArray(renderable.material)
-                ? renderable.material
-                : [renderable.material];
-            for (const mat of mats) {
-                disposeMaterialResources(mat);
-            }
-        }
-    });
 }
 
 function parseGlbArrayBuffer(loader: GLTFLoader, buffer: ArrayBuffer): Promise<GLTF> {
@@ -157,15 +135,21 @@ function computeStatsFromGltfRoot(root: THREE.Object3D): {
     });
 
     const tinVol = Math.abs(signedVolSum6) / 6;
+    const roundedVol =
+        Number.isFinite(tinVol) && tinVol > 0
+            ? tinVol < 1.0
+                ? Math.round(tinVol * 1000) / 1000
+                : Math.round(tinVol * 100) / 100
+            : null;
     return {
         boundingBoxM: {
-            widthX: Number.isFinite(size.x) ? Math.round(size.x * 100) / 100 : 0,
-            heightY: Number.isFinite(size.y) ? Math.round(size.y * 100) / 100 : 0,
-            depthZ: Number.isFinite(size.z) ? Math.round(size.z * 100) / 100 : 0,
+            widthX: Number.isFinite(size.x) ? Math.round(size.x * 1000) / 1000 : 0,
+            heightY: Number.isFinite(size.y) ? Math.round(size.y * 1000) / 1000 : 0,
+            depthZ: Number.isFinite(size.z) ? Math.round(size.z * 1000) / 1000 : 0,
         },
         triangleCount,
         vertexCount,
-        tinVolumeM3: Number.isFinite(tinVol) && tinVol > 0 ? Math.round(tinVol * 100) / 100 : null,
+        tinVolumeM3: roundedVol,
         hasVertexColors,
     };
 }
@@ -192,9 +176,27 @@ function fitCameraToBox(
     controls.update();
 }
 
+function swapGeometryColorBuffer(
+    geometry: THREE.BufferGeometry,
+    sourceColors: Float32Array
+): void {
+    const existing = geometry.getAttribute('color');
+    if (
+        existing instanceof THREE.BufferAttribute &&
+        existing.array instanceof Float32Array &&
+        existing.array.length === sourceColors.length
+    ) {
+        existing.array.set(sourceColors);
+        existing.needsUpdate = true;
+    } else {
+        geometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(sourceColors), 3));
+    }
+}
+
 /**
- * Aplica estado visual wireframe / capa de confianza ANSI/ISA-101 (`COLOR_0`)
- * preservando color neutro (`0xffffff`) cuando el material posee textura fotográfica real (`mat.map`).
+ * Aplica estado visual wireframe / RGB fotográfico (`dem_grid_v2`) / capa de confianza ANSI/ISA-101 (`COLOR_0`),
+ * preservando color neutro (`0xffffff`) cuando el material posee textura fotográfica real (`mat.map`)
+ * o `photoColors` en `geometry.userData`.
  */
 export function applyStockpileVisualMaterialState(
     root: THREE.Object3D | null,
@@ -205,8 +207,25 @@ export function applyStockpileVisualMaterialState(
     root.traverse((obj) => {
         const mesh = obj as THREE.Mesh;
         if (!mesh.isMesh || !mesh.material) return;
+        const userData = mesh.geometry?.userData as Partial<DemGridGeometryUserData> | undefined;
+        const hasPhotoVertexColors = Boolean(
+            userData?.hasPhotoVertexColors && userData?.photoColors instanceof Float32Array
+        );
+        const hasConfidenceBuffer = userData?.confidenceColors instanceof Float32Array;
+
+        if (!wireframe && mesh.geometry) {
+            if (confidenceLayer && hasConfidenceBuffer) {
+                swapGeometryColorBuffer(mesh.geometry, userData!.confidenceColors!);
+            } else if (!confidenceLayer && hasPhotoVertexColors && userData?.photoColors) {
+                swapGeometryColorBuffer(mesh.geometry, userData.photoColors);
+            }
+        }
+
         const hasColorAttr = Boolean(mesh.geometry?.getAttribute('color'));
-        const useVertexColors = confidenceLayer && hasColorAttr && !wireframe;
+        const useVertexColors =
+            !wireframe &&
+            hasColorAttr &&
+            (confidenceLayer || hasPhotoVertexColors);
         const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
         for (const mat of mats) {
             if (mat instanceof THREE.MeshStandardMaterial) {
@@ -248,6 +267,11 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
     lifecycleStatus,
     copperDomain,
     tinVolumeM3,
+    dimensionsM,
+    volumeM3,
+    slopeAngleDeg,
+    footprintAreaM2,
+    showDimensionsDefault,
     casMetrics,
     meshSource,
     className = '',
@@ -257,6 +281,8 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
     const { t } = useTranslation();
     const viewportHostRef = useRef<HTMLDivElement | null>(null);
     const modelGroupRef = useRef<THREE.Object3D | null>(null);
+    const dimensionsGroupRef = useRef<THREE.Group | null>(null);
+    const meshBboxRef = useRef<UnifiedBoundingBoxM | null>(null);
     const sceneRef = useRef<THREE.Scene | null>(null);
     const gridRef = useRef<{
         helper: THREE.GridHelper | null;
@@ -268,6 +294,10 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
 
     const [isWireframe, setIsWireframe] = useState(false);
     const [showConfidenceLayer, setShowConfidenceLayer] = useState(false);
+    const [showDimensions, setShowDimensions] = useState<boolean>(
+        () => showDimensionsDefault ?? true
+    );
+    const [meshVersion, setMeshVersion] = useState(0);
     const [isLoading, setIsLoading] = useState(false);
     const [loadFailed, setLoadFailed] = useState(false);
     const [failureReason, setFailureReason] = useState<string | null>(null);
@@ -298,8 +328,11 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
 
     const demKey = useMemo(() => {
         if (!localPreviewMesh) return '';
-        return `${localPreviewMesh.nx}x${localPreviewMesh.nz}:${localPreviewMesh.cellSizeM}:${localPreviewMesh.sha256 || localPreviewMesh.heightsM.length}`;
+        return `${localPreviewMesh.format || 'dem_grid_v1'}:${localPreviewMesh.nx}x${localPreviewMesh.nz}:${localPreviewMesh.cellSizeM}:${localPreviewMesh.rgbB64?.length || 0}:${localPreviewMesh.sha256 || localPreviewMesh.heightsM.length}`;
     }, [localPreviewMesh]);
+
+    const defaultDemSourceLabel =
+        localPreviewMesh?.format === 'dem_grid_v2' ? 'IN_SITU_DEM_GRID_V2' : 'IN_SITU_DEM_GRID_V1';
 
     // Sincronizar tema Light/Dark sin reconstruir contexto WebGL
     useEffect(() => {
@@ -349,7 +382,7 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
                     typeof tinVolumeM3 === 'number'
                         ? tinVolumeM3
                         : localPreviewMesh?.volumeM3 ?? null,
-                sourceLabel: 'IN_SITU_DEM_GRID_V1',
+                sourceLabel: defaultDemSourceLabel,
                 tierTag: 'IN-SITU',
                 hasVertexColors: true,
             });
@@ -408,7 +441,7 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
                         typeof tinVolumeM3 === 'number'
                             ? tinVolumeM3
                             : localPreviewMesh?.volumeM3 ?? null,
-                    sourceLabel: 'IN_SITU_DEM_GRID_V1',
+                    sourceLabel: defaultDemSourceLabel,
                     tierTag: 'IN-SITU',
                     hasVertexColors: true,
                 });
@@ -500,7 +533,7 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
                         originalBytes: prev?.originalBytes ?? casMetrics?.originalBytes,
                         optimizedBytes: prev?.optimizedBytes ?? casMetrics?.optimizedBytes,
                         savingsPct: prev?.savingsPct ?? casMetrics?.savingsPct,
-                        sourceLabel: prev?.sourceLabel || meshSource || 'IN_SITU_DEM_GRID_V1',
+                        sourceLabel: prev?.sourceLabel || meshSource || defaultDemSourceLabel,
                         tierTag: 'IN-SITU',
                         hasVertexColors: builtDem.hasConfidenceColors,
                     }));
@@ -581,6 +614,7 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
             scene.add(gridHelper);
             scene.add(root);
             modelGroupRef.current = root;
+            meshBboxRef.current = computed.boundingBoxM;
 
             applyVisualMaterialState(
                 root,
@@ -596,6 +630,7 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
                     }
                 };
             }
+            setMeshVersion((prev) => prev + 1);
             requestRender();
 
             setTelemetry((prev) => ({
@@ -642,7 +677,7 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
                         hasVertexColors: builtDem.hasConfidenceColors,
                     },
                     'IN-SITU',
-                    'IN_SITU_DEM_GRID_V1'
+                    defaultDemSourceLabel
                 );
             } else {
                 setActiveRenderMode('NONE');
@@ -715,6 +750,8 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
             resetCameraFnRef.current = null;
             requestRenderRef.current = null;
             modelGroupRef.current = null;
+            dimensionsGroupRef.current = null;
+            meshBboxRef.current = null;
             sceneRef.current = null;
             gridRef.current = { helper: null, extent: 12, divisions: 12 };
             if (rafId) {
@@ -770,7 +807,63 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
     const effectiveTinVolume =
         typeof tinVolumeM3 === 'number' && Number.isFinite(tinVolumeM3)
             ? tinVolumeM3
-            : telemetry?.tinVolumeM3 ?? null;
+            : typeof volumeM3 === 'number' && Number.isFinite(volumeM3)
+              ? volumeM3
+              : telemetry?.tinVolumeM3 ?? null;
+
+    const effectiveOverlayVolume =
+        typeof volumeM3 === 'number' && Number.isFinite(volumeM3) && volumeM3 > 0
+            ? volumeM3
+            : effectiveTinVolume;
+
+    // Reconstruir overlay de Cotas 3D CAD con limpieza estricta GPU (`disposeObject3DTree`)
+    useEffect(() => {
+        const scene = sceneRef.current;
+        if (dimensionsGroupRef.current) {
+            scene?.remove(dimensionsGroupRef.current);
+            disposeObject3DTree(dimensionsGroupRef.current);
+            dimensionsGroupRef.current = null;
+        }
+        const activeBbox = meshBboxRef.current;
+        if (
+            showDimensions &&
+            scene &&
+            activeBbox &&
+            (activeBbox.widthX > 0 || activeBbox.depthZ > 0 || activeBbox.heightY > 0)
+        ) {
+            const overlay = buildTwin3DDimensionsOverlay({
+                boundingBoxM: activeBbox,
+                dimensionsM,
+                volumeM3: effectiveOverlayVolume,
+                slopeAngleDeg,
+                footprintAreaM2,
+                isDark,
+                compact,
+            });
+            scene.add(overlay);
+            dimensionsGroupRef.current = overlay;
+        }
+        requestRenderRef.current?.();
+
+        return () => {
+            if (dimensionsGroupRef.current) {
+                sceneRef.current?.remove(dimensionsGroupRef.current);
+                disposeObject3DTree(dimensionsGroupRef.current);
+                dimensionsGroupRef.current = null;
+            }
+        };
+    }, [
+        showDimensions,
+        isDark,
+        compact,
+        meshVersion,
+        dimensionsM?.a,
+        dimensionsM?.b,
+        dimensionsM?.h,
+        effectiveOverlayVolume,
+        slopeAngleDeg,
+        footprintAreaM2,
+    ]);
 
     const origBytes = casMetrics?.originalBytes ?? telemetry?.originalBytes;
     const optBytes = casMetrics?.optimizedBytes ?? telemetry?.optimizedBytes;
@@ -800,7 +893,9 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
             : UNDECLARED_VALUE;
     const compactDimensionsLabel =
         hasDimensions && bbox
-            ? `${bbox.widthX.toFixed(1)}×${bbox.depthZ.toFixed(1)}×${bbox.heightY.toFixed(1)}m`
+            ? bbox.widthX < 1 || bbox.depthZ < 1 || bbox.heightY < 1
+                ? `${bbox.widthX.toFixed(2)}×${bbox.depthZ.toFixed(2)}×${bbox.heightY.toFixed(2)}m`
+                : `${bbox.widthX.toFixed(1)}×${bbox.depthZ.toFixed(1)}×${bbox.heightY.toFixed(1)}m`
             : '--';
 
     const trianglesLabel =
@@ -810,7 +905,7 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
 
     const volumeLabel =
         effectiveTinVolume !== null && Number.isFinite(effectiveTinVolume)
-            ? `${effectiveTinVolume.toFixed(2)} m³`
+            ? `${formatTwin3DVolumeM3(effectiveTinVolume)} m³`
             : UNDECLARED_VALUE;
 
     const hasRenderableMesh = activeRenderMode !== 'NONE';
@@ -838,6 +933,22 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
                     )}
 
                     <div className="absolute top-fib-8 right-fib-8 z-10 flex items-center gap-fib-8">
+                        <button
+                            type="button"
+                            onClick={() => setShowDimensions((prev) => !prev)}
+                            title={t('twin3d.dimensions_toggle', 'COTAS 3D')}
+                            aria-label={t('twin3d.dimensions_toggle', 'COTAS 3D')}
+                            aria-pressed={showDimensions}
+                            disabled={!hasRenderableMesh || webglUnavailable}
+                            className={`${FLAT_ICON_BTN_CLASS} min-w-[48px] min-h-[48px] ${
+                                showDimensions ? 'text-[#00AEEF] dark:text-[#00AEEF]' : ''
+                            } disabled:opacity-40 disabled:cursor-not-allowed`}
+                        >
+                            <span className="material-symbols-outlined text-[20px]">
+                                straighten
+                            </span>
+                        </button>
+
                         {canToggleConfidence && (
                             <button
                                 type="button"
@@ -947,7 +1058,7 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
                         <span className="truncate">
                             {compactDimensionsLabel} ·{' '}
                             {effectiveTinVolume !== null
-                                ? `${effectiveTinVolume.toFixed(2)} m³`
+                                ? `${formatTwin3DVolumeM3(effectiveTinVolume)} m³`
                                 : '--'}{' '}
                             · {telemetry?.triangleCount ?? 0} TRI
                         </span>
@@ -989,6 +1100,20 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
                 </div>
 
                 <div className="flex items-center gap-fib-8 shrink-0">
+                    <button
+                        type="button"
+                        onClick={() => setShowDimensions((prev) => !prev)}
+                        title={t('twin3d.dimensions_toggle', 'COTAS 3D')}
+                        aria-label={t('twin3d.dimensions_toggle', 'COTAS 3D')}
+                        aria-pressed={showDimensions}
+                        disabled={!hasRenderableMesh || webglUnavailable}
+                        className={`${FLAT_ICON_BTN_CLASS} min-w-[48px] min-h-[48px] ${
+                            showDimensions ? 'text-[#00AEEF] dark:text-[#00AEEF]' : ''
+                        } disabled:opacity-40 disabled:cursor-not-allowed`}
+                    >
+                        <span className="material-symbols-outlined text-[20px]">straighten</span>
+                    </button>
+
                     {canToggleConfidence && (
                         <button
                             type="button"

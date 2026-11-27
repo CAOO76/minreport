@@ -40,6 +40,26 @@ interface SpatialMetrologyFields {
     coverage_pct?: number | null;
     depth_mode?: string | null;
     ground_slope_deg?: number | null;
+    footprint_area_m2?: number | null;
+}
+
+function resolveDossierDimensionsM(
+    meas: StockpileMeasurement | null,
+    asset: StockpileAsset
+): { a?: number | null; b?: number | null; h?: number | null } | null {
+    const dims = meas?.geometry?.dimensions;
+    const pickPos = (...vals: Array<number | undefined | null>): number | null => {
+        for (const v of vals) {
+            if (typeof v === 'number' && Number.isFinite(v) && v > 0) return v;
+        }
+        return null;
+    };
+    const bbox = meas?.mesh_bounding_box_m ?? asset.mesh_bounding_box_m;
+    const a = pickPos(dims?.a, dims?.d1, dims?.baseLengthM, dims?.base_length_m, dims?.lengthM, bbox?.widthX);
+    const b = pickPos(dims?.b, dims?.d2, dims?.baseWidthM, dims?.base_width_m, dims?.widthM, bbox?.depthZ);
+    const h = pickPos(dims?.h, dims?.heightM, dims?.height_m, dims?.heightAtWallM, bbox?.heightY);
+    if (a === null && b === null && h === null) return null;
+    return { a, b, h };
 }
 
 type PendingHitlAction = { kind: 'REOPEN_CYCLE'; diffs: HitlComparisonDiffItem[] };
@@ -368,6 +388,20 @@ export const StockpileDossierView: React.FC<StockpileDossierViewProps> = ({
     const latestCoveragePct =
         latestMeasSpatial?.coverage_pct ?? assetSpatial.coverage_pct ?? null;
     const latestDepthMode = latestMeasSpatial?.depth_mode ?? assetSpatial.depth_mode ?? null;
+    const latestFootprintAreaM2 =
+        typeof latestMeasSpatial?.footprint_area_m2 === 'number' &&
+        Number.isFinite(latestMeasSpatial.footprint_area_m2) &&
+        latestMeasSpatial.footprint_area_m2 > 0
+            ? latestMeasSpatial.footprint_area_m2
+            : typeof assetSpatial.footprint_area_m2 === 'number' &&
+                Number.isFinite(assetSpatial.footprint_area_m2) &&
+                assetSpatial.footprint_area_m2 > 0
+              ? assetSpatial.footprint_area_m2
+              : null;
+    const latestDimensionsM = useMemo(
+        () => resolveDossierDimensionsM(latestMeas, asset),
+        [latestMeas, asset]
+    );
 
     const canonicalFix = useMemo(() => resolveCanonicalFix(asset), [asset]);
     const summary = useMemo(() => computeAssetMetallurgySummary(asset), [asset]);
@@ -575,6 +609,13 @@ export const StockpileDossierView: React.FC<StockpileDossierViewProps> = ({
                         photoUrl={latestHeroPhoto}
                         boulderDetections={latestMeas?.boulder_detections ?? asset.boulder_detections}
                         slopeAngleDeg={slopeAngleDeg}
+                        dimensionsM={latestDimensionsM}
+                        volumeM3={
+                            summary.volumeM3 > 0
+                                ? summary.volumeM3
+                                : latestMeas?.volumen_m3 ?? null
+                        }
+                        footprintAreaM2={latestFootprintAreaM2}
                         meshUrl={latestMeshUrl}
                         localPreviewMesh={latestLocalPreviewMesh}
                         lifecycleStatus={latestLifecycleStatus}

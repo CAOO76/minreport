@@ -5,9 +5,10 @@ import { SecureImage } from '../../../components/common/SecureImage';
 import { useResolvedStockpileImageState } from '../core/services/StorageService';
 import type { BoulderDetectionBox2D } from '../core/types/GeolappTypes';
 import type {
-    DemGridV1,
     MeasurementLifecycleStatus,
 } from '../../../contracts/acopios.contracts';
+import type { DemGridInput } from '../core/utils/demGridGeometry';
+import { formatTwin3DVolumeM3 } from '../core/utils/twin3dDimensionsOverlay';
 import { isValidBox2D } from '../core/utils/rosinRammler';
 import { StockpileTwin3DLazy } from './StockpileTwin3DLazy';
 
@@ -21,8 +22,12 @@ export interface StockpileVisualStageProps {
     perimeterPhotoUrls?: string[];
     boulderDetections?: BoulderDetectionBox2D[];
     slopeAngleDeg?: number | null;
+    dimensionsM?: { a?: number | null; b?: number | null; h?: number | null } | null;
+    volumeM3?: number | null;
+    footprintAreaM2?: number | null;
+    showDimensionsDefault?: boolean;
     meshUrl?: string | null;
-    localPreviewMesh?: DemGridV1 | null;
+    localPreviewMesh?: DemGridInput | null;
     lifecycleStatus?: MeasurementLifecycleStatus | null;
     reconciliationDeltaPct?: number | null;
     copperDomain?: string;
@@ -79,6 +84,10 @@ export const StockpileVisualStage: React.FC<StockpileVisualStageProps> = ({
     photoUrl,
     boulderDetections,
     slopeAngleDeg,
+    dimensionsM,
+    volumeM3,
+    footprintAreaM2,
+    showDimensionsDefault,
     meshUrl,
     localPreviewMesh,
     lifecycleStatus,
@@ -327,6 +336,11 @@ export const StockpileVisualStage: React.FC<StockpileVisualStageProps> = ({
                         lifecycleStatus={lifecycleStatus ?? null}
                         copperDomain={copperDomain}
                         tinVolumeM3={tinVolumeM3}
+                        dimensionsM={dimensionsM}
+                        volumeM3={volumeM3}
+                        slopeAngleDeg={slopeAngleDeg}
+                        footprintAreaM2={footprintAreaM2}
+                        showDimensionsDefault={showDimensionsDefault}
                         casMetrics={casMetrics}
                         meshSource={meshSource}
                     />
@@ -466,7 +480,7 @@ export const StockpileVisualStage: React.FC<StockpileVisualStageProps> = ({
                     <div className="flex flex-wrap items-center gap-fib-13 min-w-0">
                         {hasTinVolume && (
                             <span className="font-bold text-[#0F172A] dark:text-[#F3F4F6]">
-                                V_TIN {(tinVolumeM3 as number).toFixed(2)} m³
+                                V_TIN {formatTwin3DVolumeM3(tinVolumeM3 as number)} m³
                             </span>
                         )}
                         {hasUncertainty && (

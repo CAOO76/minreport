@@ -535,6 +535,41 @@ export const DesktopStageWorkspace: React.FC<DesktopStageWorkspaceProps> = ({
     const effReconciliationDeltaPct = selectedMeas
         ? (selectedMeas.reconciliation_delta_pct ?? null)
         : (asset.reconciliation_delta_pct ?? null);
+    const effSlopeAngleDeg =
+        selectedMeas?.detected_slope_angle_deg ?? asset.detected_slope_angle_deg ?? null;
+    const effVolumeM3 =
+        selectedMeas &&
+        typeof selectedMeas.volumen_m3 === 'number' &&
+        Number.isFinite(selectedMeas.volumen_m3) &&
+        selectedMeas.volumen_m3 > 0
+            ? selectedMeas.volumen_m3
+            : summary.volumeM3 > 0
+              ? summary.volumeM3
+              : null;
+    const effFootprintAreaM2 = (() => {
+        const measFp = (selectedMeas as (StockpileMeasurement & { footprint_area_m2?: number | null }) | null)
+            ?.footprint_area_m2;
+        if (typeof measFp === 'number' && Number.isFinite(measFp) && measFp > 0) return measFp;
+        const assetFp = (asset as StockpileAsset & { footprint_area_m2?: number | null })
+            .footprint_area_m2;
+        if (typeof assetFp === 'number' && Number.isFinite(assetFp) && assetFp > 0) return assetFp;
+        return null;
+    })();
+    const effDimensionsM = (() => {
+        const dims = selectedMeas?.geometry?.dimensions;
+        const bbox = selectedMeas?.mesh_bounding_box_m ?? asset.mesh_bounding_box_m;
+        const pickPos = (...vals: Array<number | undefined | null>): number | null => {
+            for (const v of vals) {
+                if (typeof v === 'number' && Number.isFinite(v) && v > 0) return v;
+            }
+            return null;
+        };
+        const a = pickPos(dims?.a, dims?.d1, dims?.baseLengthM, dims?.base_length_m, dims?.lengthM, bbox?.widthX);
+        const b = pickPos(dims?.b, dims?.d2, dims?.baseWidthM, dims?.base_width_m, dims?.widthM, bbox?.depthZ);
+        const h = pickPos(dims?.h, dims?.heightM, dims?.height_m, dims?.heightAtWallM, bbox?.heightY);
+        if (a === null && b === null && h === null) return null;
+        return { a, b, h };
+    })();
 
     const stagePhotoUrl =
         selectedMeas?.photo_url ||
@@ -679,11 +714,10 @@ export const DesktopStageWorkspace: React.FC<DesktopStageWorkspaceProps> = ({
                                 boulderDetections={
                                     selectedMeas?.boulder_detections ?? asset.boulder_detections
                                 }
-                                slopeAngleDeg={
-                                    selectedMeas?.detected_slope_angle_deg ??
-                                    asset.detected_slope_angle_deg ??
-                                    null
-                                }
+                                slopeAngleDeg={effSlopeAngleDeg}
+                                dimensionsM={effDimensionsM}
+                                volumeM3={effVolumeM3}
+                                footprintAreaM2={effFootprintAreaM2}
                                 meshUrl={effMeshUrl}
                                 localPreviewMesh={effLocalPreviewMesh}
                                 lifecycleStatus={effLifecycleStatus}
@@ -775,6 +809,10 @@ export const DesktopStageWorkspace: React.FC<DesktopStageWorkspaceProps> = ({
                             lifecycleStatus={effLifecycleStatus}
                             copperDomain={asset.copper_domain}
                             tinVolumeM3={effTinVolumeM3}
+                            dimensionsM={effDimensionsM}
+                            volumeM3={effVolumeM3}
+                            slopeAngleDeg={effSlopeAngleDeg}
+                            footprintAreaM2={effFootprintAreaM2}
                             meshSource={effMeshSource}
                             casMetrics={effMeshCas}
                             heightPx={380}

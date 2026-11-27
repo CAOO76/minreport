@@ -613,6 +613,30 @@ const ISA101_COLOR_NEUTRAL: [number, number, number] = [0.2542, 0.2918, 0.3813];
 const ISA101_COLOR_CYAN_VERIFIED: [number, number, number] = [0.0, 0.4233, 0.8632]; // Cian (#00AEEF) >= 2 obs
 const ISA101_COLOR_COPPER_ALERT: [number, number, number] = [0.5647, 0.227, 0.0612]; // Cobre (#C68346) interpolado / talud > 38°
 
+const GRID_H_EPS_M = 0.015;
+const SPLIT_EDGE_COS_45 = Math.SQRT1_2;
+
+export type SpatialSurfaceGridInput = SpatialSurfaceGrid & {
+    /** Bytes RGB sRGB opcionales (`nx * nz * 3`) para emitir COLOR_0 fotográfico real en GLB */
+    rgbBytes?: Uint8Array | null;
+};
+
+function srgbByteToLinearGlb(byteVal: number): number {
+    const c = Math.max(0, Math.min(255, byteVal)) / 255;
+    return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+}
+
+function signedTriArea2DGlb(
+    ax: number,
+    az: number,
+    bx: number,
+    bz: number,
+    cx: number,
+    cz: number
+): number {
+    return 0.5 * ((bz - az) * (cx - ax) - (bx - ax) * (cz - az));
+}
+
 function packGlbBuffer(
     positions: number[],
     normals: number[],
@@ -1057,13 +1081,14 @@ export function inspectGlbBinaryMetrics(glbBuffer: Buffer): GlbSurfaceBuildResul
 /**
  * Construye de manera determinista un binario glTF 2.0 `.glb` watertight
  * desde la grilla espacial real (`SpatialSurfaceGrid`) calculada por `spatial-volume.engine.ts`:
- * - Base nivelada en `y = 0` (eliminando cuña flotante y discrepancia `bbox.heightY` vs `h`).
- * - Vértices de faldón separados con winding CCW exterior real (cero sangrado de normales).
- * - Atributo por vértice `COLOR_0` ANSI/ISA-101 (neutro, Cian `#00AEEF` verificado, Cobre `#C68346` ocluido/talud > 38°).
+ * - Dominio real por celda activa (elimina "carpa dentada" y expansión exterior `+2*cellSize`).
+ * - Suavizado 2D Taubin sin encogimiento del contorno perimetral + interpolación solo entre celdas activas.
+ * - Base nivelada en `y = 0` + faldones `emitSkirtEdgeCCW` con vértices y normales dedicados (split-edge > 45°).
+ * - Atributo por vértice `COLOR_0`: RGB fotográfico real si `rgbBytes` (`nx * nz * 3`) está presente, o ANSI/ISA-101.
  * - Soporte automático `Uint32` (`5125`) cuando `vertexCount > 65535`.
  */
 export function buildSpatialPointCloudGlbMesh(
-    surfaceGrid: SpatialSurfaceGrid
+    surfaceGrid: SpatialSurfaceGridInput
 ): GlbSurfaceBuildResult {
     const {
         originX,
@@ -1075,6 +1100,7 @@ export function buildSpatialPointCloudGlbMesh(
         observationCount,
         interpolatedMask,
         slopeDegGrid,
+        rgbBytes: rawRgbBytes,
     } = surfaceGrid;
     if (
         !Number.isFinite(cellSizeM) ||
@@ -1089,38 +1115,47 @@ export function buildSpatialPointCloudGlbMesh(
         throw new Error('Grilla espacial invalida para construir malla .glb watertight.');
     }
 
-    const quadRows = nz - 1;
-    const quadCols = nx - 1;
-    const activeQuad = new Uint8Array(quadRows * quadCols);
-    let activeQuadCount = 0;
+    const totalCells = nx * nz;
+    const activeCell = new Uint8Array(totalCells);
+    let activeCellCount = 0;
+    let minIx = nx;
+    let maxIx = -1;
+    let minIz = nz;
+    let maxIz = -1;
 
-    for (let iz = 0; iz < quadRows; iz++) {
-        for (let ix = 0; ix < quadCols; ix++) {
-            const hTL = heightsM[iz * nx + ix] || 0;
-            const hTR = heightsM[iz * nx + (ix + 1)] || 0;
-            const hBL = heightsM[(iz + 1) * nx + ix] || 0;
-            const hBR = heightsM[(iz + 1) * nx + (ix + 1)] || 0;
-            if (hTL > 0.02 || hTR > 0.02 || hBL > 0.02 || hBR > 0.02) {
-                activeQuad[iz * quadCols + ix] = 1;
-                activeQuadCount += 1;
+    for (let iz = 0; iz < nz; iz++) {
+        for (let ix = 0; ix < nx; ix++) {
+            const idx = iz * nx + ix;
+            const h = Math.max(0, heightsM[idx] || 0);
+            if (h > GRID_H_EPS_M) {
+                activeCell[idx] = 1;
+                activeCellCount += 1;
+                if (ix < minIx) minIx = ix;
+                if (ix > maxIx) maxIx = ix;
+                if (iz < minIz) minIz = iz;
+                if (iz > maxIz) maxIz = iz;
             }
         }
     }
 
-    if (activeQuadCount === 0) {
+    if (activeCellCount === 0) {
         throw new Error('No hay volumen espacial suficiente sobre el plano base para malla .glb.');
     }
 
-    const centerX = originX + ((nx - 1) * cellSizeM) * 0.5;
-    const centerZ = originZ + ((nz - 1) * cellSizeM) * 0.5;
+    const rgbBytes =
+        rawRgbBytes instanceof Uint8Array && rawRgbBytes.length === totalCells * 3
+            ? rawRgbBytes
+            : null;
 
-    const positions: number[] = [];
-    const colors: number[] = [];
-    const indices: number[] = [];
-    const topIndex = new Int32Array(nx * nz).fill(-1);
-    const botIndex = new Int32Array(nx * nz).fill(-1);
-
-    const resolveTopVertexColor = (vIdx: number): [number, number, number] => {
+    const resolveCellColor = (vIdx: number): [number, number, number] => {
+        if (rgbBytes) {
+            const o = vIdx * 3;
+            return [
+                srgbByteToLinearGlb(rgbBytes[o]),
+                srgbByteToLinearGlb(rgbBytes[o + 1]),
+                srgbByteToLinearGlb(rgbBytes[o + 2]),
+            ];
+        }
         const isInterpolated = interpolatedMask?.[vIdx] === 1;
         const localSlope = slopeDegGrid?.[vIdx] ?? 0;
         if (isInterpolated || localSlope > 38) {
@@ -1133,97 +1168,516 @@ export function buildSpatialPointCloudGlbMesh(
         return ISA101_COLOR_NEUTRAL;
     };
 
-    const ensureTopVertex = (vx: number, vz: number): number => {
-        const vIdx = vz * nx + vx;
-        if (topIndex[vIdx] >= 0) return topIndex[vIdx];
-        const wx = originX + vx * cellSizeM;
-        const wz = originZ + vz * cellSizeM;
-        const h = Math.max(0, heightsM[vIdx] || 0);
-        const idx = positions.length / 3;
-        positions.push(wx - centerX, h, wz - centerZ);
-        const c = resolveTopVertexColor(vIdx);
-        colors.push(c[0], c[1], c[2]);
-        topIndex[vIdx] = idx;
-        return idx;
-    };
+    const positions: number[] = [];
+    const colors: number[] = [];
+    const indices: number[] = [];
+    let customNormals: number[] | null = null;
 
-    const ensureBotVertex = (vx: number, vz: number): number => {
-        const vIdx = vz * nx + vx;
-        if (botIndex[vIdx] >= 0) return botIndex[vIdx];
-        const wx = originX + vx * cellSizeM;
-        const wz = originZ + vz * cellSizeM;
-        const idx = positions.length / 3;
-        // Base estrictamente nivelada en y = 0 (cero cuña flotante)
-        positions.push(wx - centerX, 0, wz - centerZ);
-        colors.push(ISA101_COLOR_NEUTRAL[0], ISA101_COLOR_NEUTRAL[1], ISA101_COLOR_NEUTRAL[2]);
-        botIndex[vIdx] = idx;
-        return idx;
-    };
+    if (activeCellCount === totalCells) {
+        // Prisma completo sin bordes inactivos: topología nodal exacta (nx-1) x (nz-1)
+        const quadRows = nz - 1;
+        const quadCols = nx - 1;
+        const centerX = originX + (nx - 1) * cellSizeM * 0.5;
+        const centerZ = originZ + (nz - 1) * cellSizeM * 0.5;
 
-    const isQuadActive = (ix: number, iz: number): boolean => {
-        if (ix < 0 || ix >= quadCols || iz < 0 || iz >= quadRows) return false;
-        return activeQuad[iz * quadCols + ix] === 1;
-    };
+        const topIndex = new Int32Array(totalCells).fill(-1);
+        const botIndex = new Int32Array(totalCells).fill(-1);
 
-    // Faldón perimetral con vértices dedicados (cero sangrado de normales con techo/base)
-    // y winding CCW exterior verificado: (pBot -> qBot -> qTop) y (pBot -> qTop -> pTop).
-    const emitSkirtEdge = (px: number, pz: number, qx: number, qz: number) => {
-        const hP = Math.max(0, heightsM[pz * nx + px] || 0);
-        const hQ = Math.max(0, heightsM[qz * nx + qx] || 0);
-        if (hP <= 1e-6 && hQ <= 1e-6) return;
+        const ensureTopVertex = (vx: number, vz: number): number => {
+            const vIdx = vz * nx + vx;
+            if (topIndex[vIdx] >= 0) return topIndex[vIdx];
+            const wx = originX + vx * cellSizeM;
+            const wz = originZ + vz * cellSizeM;
+            const h = Math.max(0, heightsM[vIdx] || 0);
+            const idx = positions.length / 3;
+            positions.push(wx - centerX, h, wz - centerZ);
+            const c = resolveCellColor(vIdx);
+            colors.push(c[0], c[1], c[2]);
+            topIndex[vIdx] = idx;
+            return idx;
+        };
 
-        const xP = originX + px * cellSizeM - centerX;
-        const zP = originZ + pz * cellSizeM - centerZ;
-        const xQ = originX + qx * cellSizeM - centerX;
-        const zQ = originZ + qz * cellSizeM - centerZ;
+        const ensureBotVertex = (vx: number, vz: number): number => {
+            const vIdx = vz * nx + vx;
+            if (botIndex[vIdx] >= 0) return botIndex[vIdx];
+            const wx = originX + vx * cellSizeM;
+            const wz = originZ + vz * cellSizeM;
+            const idx = positions.length / 3;
+            positions.push(wx - centerX, 0, wz - centerZ);
+            colors.push(
+                ISA101_COLOR_NEUTRAL[0],
+                ISA101_COLOR_NEUTRAL[1],
+                ISA101_COLOR_NEUTRAL[2]
+            );
+            botIndex[vIdx] = idx;
+            return idx;
+        };
 
-        const base = positions.length / 3;
-        // 0: pBot, 1: qBot, 2: qTop, 3: pTop
-        positions.push(xP, 0, zP, xQ, 0, zQ, xQ, hQ, zQ, xP, hP, zP);
-        for (let k = 0; k < 4; k++) {
-            colors.push(ISA101_COLOR_NEUTRAL[0], ISA101_COLOR_NEUTRAL[1], ISA101_COLOR_NEUTRAL[2]);
+        const emitSkirtEdgeCCW = (px: number, pz: number, qx: number, qz: number) => {
+            const pIdx = pz * nx + px;
+            const qIdx = qz * nx + qx;
+            const hP = Math.max(0, heightsM[pIdx] || 0);
+            const hQ = Math.max(0, heightsM[qIdx] || 0);
+            if (hP <= 1e-6 && hQ <= 1e-6) return;
+
+            const xP = originX + px * cellSizeM - centerX;
+            const zP = originZ + pz * cellSizeM - centerZ;
+            const xQ = originX + qx * cellSizeM - centerX;
+            const zQ = originZ + qz * cellSizeM - centerZ;
+
+            const base = positions.length / 3;
+            positions.push(xP, 0, zP, xQ, 0, zQ, xQ, hQ, zQ, xP, hP, zP);
+            if (rgbBytes) {
+                const cP = resolveCellColor(pIdx);
+                const cQ = resolveCellColor(qIdx);
+                colors.push(
+                    cP[0] * 0.88,
+                    cP[1] * 0.88,
+                    cP[2] * 0.88,
+                    cQ[0] * 0.88,
+                    cQ[1] * 0.88,
+                    cQ[2] * 0.88,
+                    cQ[0],
+                    cQ[1],
+                    cQ[2],
+                    cP[0],
+                    cP[1],
+                    cP[2]
+                );
+            } else {
+                for (let k = 0; k < 4; k++) {
+                    colors.push(
+                        ISA101_COLOR_NEUTRAL[0],
+                        ISA101_COLOR_NEUTRAL[1],
+                        ISA101_COLOR_NEUTRAL[2]
+                    );
+                }
+            }
+
+            if (hQ > 1e-6) pushTriangle(indices, base, base + 1, base + 2);
+            if (hP > 1e-6) pushTriangle(indices, base, base + 2, base + 3);
+        };
+
+        for (let iz = 0; iz < quadRows; iz++) {
+            for (let ix = 0; ix < quadCols; ix++) {
+                const tTL = ensureTopVertex(ix, iz);
+                const tBL = ensureTopVertex(ix, iz + 1);
+                const tBR = ensureTopVertex(ix + 1, iz + 1);
+                const tTR = ensureTopVertex(ix + 1, iz);
+                pushTriangle(indices, tTL, tBL, tBR);
+                pushTriangle(indices, tTL, tBR, tTR);
+
+                const bTL = ensureBotVertex(ix, iz);
+                const bBL = ensureBotVertex(ix, iz + 1);
+                const bBR = ensureBotVertex(ix + 1, iz + 1);
+                const bTR = ensureBotVertex(ix + 1, iz);
+                pushTriangle(indices, bTL, bBR, bBL);
+                pushTriangle(indices, bTL, bTR, bBR);
+
+                if (ix === 0) emitSkirtEdgeCCW(ix, iz, ix, iz + 1);
+                if (iz === quadRows - 1) emitSkirtEdgeCCW(ix, iz + 1, ix + 1, iz + 1);
+                if (ix === quadCols - 1) emitSkirtEdgeCCW(ix + 1, iz + 1, ix + 1, iz);
+                if (iz === 0) emitSkirtEdgeCCW(ix + 1, iz, ix, iz);
+            }
+        }
+    } else {
+        // Dominio dual por celda activa: cero "carpa dentada", suavizado Taubin 2D y normales split-edge > 45°
+        const rawMinX = originX + (minIx - 0.5) * cellSizeM;
+        const rawMaxX = originX + (maxIx + 0.5) * cellSizeM;
+        const rawMinZ = originZ + (minIz - 0.5) * cellSizeM;
+        const rawMaxZ = originZ + (maxIz + 0.5) * cellSizeM;
+        const centerX = (rawMinX + rawMaxX) * 0.5;
+        const centerZ = (rawMinZ + rawMaxZ) * 0.5;
+
+        const cnx = nx + 1;
+        const cnz = nz + 1;
+        const cornerTotal = cnx * cnz;
+
+        const origCX = new Float64Array(cornerTotal);
+        const origCZ = new Float64Array(cornerTotal);
+        const cx = new Float64Array(cornerTotal);
+        const cz = new Float64Array(cornerTotal);
+        const cornerH = new Float64Array(cornerTotal);
+        const cornerR = new Float32Array(cornerTotal);
+        const cornerG = new Float32Array(cornerTotal);
+        const cornerB = new Float32Array(cornerTotal);
+
+        const cellColors = new Float32Array(totalCells * 3);
+        for (let idx = 0; idx < totalCells; idx++) {
+            if (!activeCell[idx]) continue;
+            const c = resolveCellColor(idx);
+            cellColors[idx * 3] = c[0];
+            cellColors[idx * 3 + 1] = c[1];
+            cellColors[idx * 3 + 2] = c[2];
         }
 
-        if (hQ > 1e-6) {
-            pushTriangle(indices, base, base + 1, base + 2);
+        for (let gz = 0; gz < cnz; gz++) {
+            for (let gx = 0; gx < cnx; gx++) {
+                const cIdx = gz * cnx + gx;
+                const wx = originX + (gx - 0.5) * cellSizeM - centerX;
+                const wz = originZ + (gz - 0.5) * cellSizeM - centerZ;
+                origCX[cIdx] = wx;
+                origCZ[cIdx] = wz;
+                cx[cIdx] = wx;
+                cz[cIdx] = wz;
+
+                let hSum = 0;
+                let rSum = 0;
+                let gSum = 0;
+                let bSum = 0;
+                let count = 0;
+                const adj: Array<[number, number]> = [
+                    [gx - 1, gz - 1],
+                    [gx, gz - 1],
+                    [gx - 1, gz],
+                    [gx, gz],
+                ];
+                for (const [ax, az] of adj) {
+                    if (ax < 0 || ax >= nx || az < 0 || az >= nz) continue;
+                    const aIdx = az * nx + ax;
+                    if (!activeCell[aIdx]) continue;
+                    hSum += Math.max(0, heightsM[aIdx] || 0);
+                    rSum += cellColors[aIdx * 3];
+                    gSum += cellColors[aIdx * 3 + 1];
+                    bSum += cellColors[aIdx * 3 + 2];
+                    count++;
+                }
+                if (count > 0) {
+                    cornerH[cIdx] = hSum / count;
+                    cornerR[cIdx] = rSum / count;
+                    cornerG[cIdx] = gSum / count;
+                    cornerB[cIdx] = bSum / count;
+                }
+            }
         }
-        if (hP > 1e-6) {
-            pushTriangle(indices, base, base + 2, base + 3);
+
+        const isCellActive = (ix: number, iz: number): boolean =>
+            ix >= 0 && ix < nx && iz >= 0 && iz < nz && activeCell[iz * nx + ix] === 1;
+
+        interface GlbBoundaryEdge {
+            p: number;
+            q: number;
+            cellIdx: number;
+            nx: number;
+            nz: number;
         }
-    };
+        const boundaryEdges: GlbBoundaryEdge[] = [];
+        const outEdgeMap = new Map<number, number[]>();
+        const inEdgeMap = new Map<number, number[]>();
 
-    for (let iz = 0; iz < quadRows; iz++) {
-        for (let ix = 0; ix < quadCols; ix++) {
-            if (!isQuadActive(ix, iz)) continue;
+        const addEdge = (p: number, q: number, cellIdx: number) => {
+            const eIdx = boundaryEdges.length;
+            boundaryEdges.push({ p, q, cellIdx, nx: 0, nz: 0 });
+            const oL = outEdgeMap.get(p);
+            if (oL) oL.push(eIdx);
+            else outEdgeMap.set(p, [eIdx]);
+            const iL = inEdgeMap.get(q);
+            if (iL) iL.push(eIdx);
+            else inEdgeMap.set(q, [eIdx]);
+        };
 
-            // Superficie superior (+Y normal)
-            const tTL = ensureTopVertex(ix, iz);
-            const tBL = ensureTopVertex(ix, iz + 1);
-            const tBR = ensureTopVertex(ix + 1, iz + 1);
-            const tTR = ensureTopVertex(ix + 1, iz);
-            pushTriangle(indices, tTL, tBL, tBR);
-            pushTriangle(indices, tTL, tBR, tTR);
-
-            // Tapa inferior nivelada en y = 0 (-Y normal)
-            const bTL = ensureBotVertex(ix, iz);
-            const bBL = ensureBotVertex(ix, iz + 1);
-            const bBR = ensureBotVertex(ix + 1, iz + 1);
-            const bTR = ensureBotVertex(ix + 1, iz);
-            pushTriangle(indices, bTL, bBR, bBL);
-            pushTriangle(indices, bTL, bTR, bBR);
-
-            // Faldón perimetral cerrado CCW visto desde fuera en bordes sin vecino activo
-            if (!isQuadActive(ix - 1, iz)) emitSkirtEdge(ix, iz, ix, iz + 1);
-            if (!isQuadActive(ix, iz + 1)) emitSkirtEdge(ix, iz + 1, ix + 1, iz + 1);
-            if (!isQuadActive(ix + 1, iz)) emitSkirtEdge(ix + 1, iz + 1, ix + 1, iz);
-            if (!isQuadActive(ix, iz - 1)) emitSkirtEdge(ix + 1, iz, ix, iz);
+        for (let iz = 0; iz < nz; iz++) {
+            for (let ix = 0; ix < nx; ix++) {
+                const idx = iz * nx + ix;
+                if (!activeCell[idx]) continue;
+                const cTL = iz * cnx + ix;
+                const cBL = (iz + 1) * cnx + ix;
+                const cBR = (iz + 1) * cnx + (ix + 1);
+                const cTR = iz * cnx + (ix + 1);
+                if (!isCellActive(ix - 1, iz)) addEdge(cTL, cBL, idx);
+                if (!isCellActive(ix, iz + 1)) addEdge(cBL, cBR, idx);
+                if (!isCellActive(ix + 1, iz)) addEdge(cBR, cTR, idx);
+                if (!isCellActive(ix, iz - 1)) addEdge(cTR, cTL, idx);
+            }
         }
+
+        const manifoldVerts: Array<{ v: number; prev: number; next: number }> = [];
+        for (const [v, outList] of outEdgeMap.entries()) {
+            const inList = inEdgeMap.get(v);
+            if (outList.length === 1 && inList && inList.length === 1) {
+                const prev = boundaryEdges[inList[0]].p;
+                const next = boundaryEdges[outList[0]].q;
+                if (prev !== v && next !== v && prev !== next) {
+                    manifoldVerts.push({ v, prev, next });
+                }
+            }
+        }
+
+        const maxDisp = cellSizeM * 0.36;
+        const minTriArea = cellSizeM * cellSizeM * 0.04;
+        const taubinWeights = [0.5, -0.515, 0.5, -0.515, 0.35, -0.36];
+        const tmpX = new Float64Array(cornerTotal);
+        const tmpZ = new Float64Array(cornerTotal);
+
+        if (manifoldVerts.length >= 4) {
+            for (const w of taubinWeights) {
+                tmpX.set(cx);
+                tmpZ.set(cz);
+                for (const { v, prev, next } of manifoldVerts) {
+                    const midX = 0.5 * (cx[prev] + cx[next]);
+                    const midZ = 0.5 * (cz[prev] + cz[next]);
+                    let nxPos = cx[v] + w * (midX - cx[v]);
+                    let nzPos = cz[v] + w * (midZ - cz[v]);
+                    const dx0 = nxPos - origCX[v];
+                    const dz0 = nzPos - origCZ[v];
+                    const d0 = Math.hypot(dx0, dz0);
+                    if (d0 > maxDisp) {
+                        const s = maxDisp / d0;
+                        nxPos = origCX[v] + dx0 * s;
+                        nzPos = origCZ[v] + dz0 * s;
+                    }
+                    tmpX[v] = nxPos;
+                    tmpZ[v] = nzPos;
+                }
+                for (let iz = 0; iz < nz; iz++) {
+                    for (let ix = 0; ix < nx; ix++) {
+                        if (!activeCell[iz * nx + ix]) continue;
+                        const cellX = originX + ix * cellSizeM - centerX;
+                        const cellZ = originZ + iz * cellSizeM - centerZ;
+                        const cTL = iz * cnx + ix;
+                        const cBL = (iz + 1) * cnx + ix;
+                        const cBR = (iz + 1) * cnx + (ix + 1);
+                        const cTR = iz * cnx + (ix + 1);
+                        const a1 = signedTriArea2DGlb(cellX, cellZ, tmpX[cTL], tmpZ[cTL], tmpX[cBL], tmpZ[cBL]);
+                        const a2 = signedTriArea2DGlb(cellX, cellZ, tmpX[cBL], tmpZ[cBL], tmpX[cBR], tmpZ[cBR]);
+                        const a3 = signedTriArea2DGlb(cellX, cellZ, tmpX[cBR], tmpZ[cBR], tmpX[cTR], tmpZ[cTR]);
+                        const a4 = signedTriArea2DGlb(cellX, cellZ, tmpX[cTR], tmpZ[cTR], tmpX[cTL], tmpZ[cTL]);
+                        if (a1 < minTriArea || a2 < minTriArea || a3 < minTriArea || a4 < minTriArea) {
+                            tmpX[cTL] = cx[cTL];
+                            tmpZ[cTL] = cz[cTL];
+                            tmpX[cBL] = cx[cBL];
+                            tmpZ[cBL] = cz[cBL];
+                            tmpX[cBR] = cx[cBR];
+                            tmpZ[cBR] = cz[cBR];
+                            tmpX[cTR] = cx[cTR];
+                            tmpZ[cTR] = cz[cTR];
+                        }
+                    }
+                }
+                cx.set(tmpX);
+                cz.set(tmpZ);
+            }
+        }
+
+        const normals: number[] = [];
+        const topCornerVert = new Int32Array(cornerTotal).fill(-1);
+        const botCornerVert = new Int32Array(cornerTotal).fill(-1);
+
+        const ensureTopCorner = (cIdx: number): number => {
+            if (topCornerVert[cIdx] >= 0) return topCornerVert[cIdx];
+            const vIdx = positions.length / 3;
+            positions.push(cx[cIdx], cornerH[cIdx], cz[cIdx]);
+            normals.push(0, 0, 0);
+            colors.push(cornerR[cIdx], cornerG[cIdx], cornerB[cIdx]);
+            topCornerVert[cIdx] = vIdx;
+            return vIdx;
+        };
+
+        const ensureBotCorner = (cIdx: number): number => {
+            if (botCornerVert[cIdx] >= 0) return botCornerVert[cIdx];
+            const vIdx = positions.length / 3;
+            positions.push(cx[cIdx], 0, cz[cIdx]);
+            normals.push(0, -1, 0);
+            colors.push(
+                ISA101_COLOR_NEUTRAL[0],
+                ISA101_COLOR_NEUTRAL[1],
+                ISA101_COLOR_NEUTRAL[2]
+            );
+            botCornerVert[cIdx] = vIdx;
+            return vIdx;
+        };
+
+        // Superficie superior (+Y CCW)
+        const topTriStart = 0;
+        for (let iz = 0; iz < nz; iz++) {
+            for (let ix = 0; ix < nx; ix++) {
+                const idx = iz * nx + ix;
+                if (!activeCell[idx]) continue;
+                const vTL = ensureTopCorner(iz * cnx + ix);
+                const vBL = ensureTopCorner((iz + 1) * cnx + ix);
+                const vBR = ensureTopCorner((iz + 1) * cnx + (ix + 1));
+                const vTR = ensureTopCorner(iz * cnx + (ix + 1));
+
+                const cellX = originX + ix * cellSizeM - centerX;
+                const cellZ = originZ + iz * cellSizeM - centerZ;
+                const vCenter = positions.length / 3;
+                positions.push(cellX, Math.max(0, heightsM[idx] || 0), cellZ);
+                normals.push(0, 0, 0);
+                colors.push(
+                    cellColors[idx * 3],
+                    cellColors[idx * 3 + 1],
+                    cellColors[idx * 3 + 2]
+                );
+
+                pushTriangle(indices, vCenter, vTL, vBL);
+                pushTriangle(indices, vCenter, vBL, vBR);
+                pushTriangle(indices, vCenter, vBR, vTR);
+                pushTriangle(indices, vCenter, vTR, vTL);
+            }
+        }
+        const topTriEnd = indices.length;
+        const topVertEnd = positions.length / 3;
+
+        for (let t = topTriStart; t < topTriEnd; t += 3) {
+            const i0 = indices[t];
+            const i1 = indices[t + 1];
+            const i2 = indices[t + 2];
+            const ax = positions[i0 * 3],
+                ay = positions[i0 * 3 + 1],
+                az = positions[i0 * 3 + 2];
+            const ux = positions[i1 * 3] - ax,
+                uy = positions[i1 * 3 + 1] - ay,
+                uz = positions[i1 * 3 + 2] - az;
+            const vx = positions[i2 * 3] - ax,
+                vy = positions[i2 * 3 + 1] - ay,
+                vz = positions[i2 * 3 + 2] - az;
+            const nxT = uy * vz - uz * vy;
+            const nyT = uz * vx - ux * vz;
+            const nzT = ux * vy - uy * vx;
+            for (const vi of [i0, i1, i2]) {
+                normals[vi * 3] += nxT;
+                normals[vi * 3 + 1] += nyT;
+                normals[vi * 3 + 2] += nzT;
+            }
+        }
+        for (let v = 0; v < topVertEnd; v++) {
+            const len = Math.hypot(normals[v * 3], normals[v * 3 + 1], normals[v * 3 + 2]);
+            if (len > 1e-12) {
+                normals[v * 3] /= len;
+                normals[v * 3 + 1] /= len;
+                normals[v * 3 + 2] /= len;
+            } else {
+                normals[v * 3] = 0;
+                normals[v * 3 + 1] = 1;
+                normals[v * 3 + 2] = 0;
+            }
+        }
+
+        // Base cerrada en y = 0 (-Y CCW)
+        for (let iz = 0; iz < nz; iz++) {
+            for (let ix = 0; ix < nx; ix++) {
+                const idx = iz * nx + ix;
+                if (!activeCell[idx]) continue;
+                const bTL = ensureBotCorner(iz * cnx + ix);
+                const bBL = ensureBotCorner((iz + 1) * cnx + ix);
+                const bBR = ensureBotCorner((iz + 1) * cnx + (ix + 1));
+                const bTR = ensureBotCorner(iz * cnx + (ix + 1));
+
+                const cellX = originX + ix * cellSizeM - centerX;
+                const cellZ = originZ + iz * cellSizeM - centerZ;
+                const bCenter = positions.length / 3;
+                positions.push(cellX, 0, cellZ);
+                normals.push(0, -1, 0);
+                colors.push(
+                    ISA101_COLOR_NEUTRAL[0],
+                    ISA101_COLOR_NEUTRAL[1],
+                    ISA101_COLOR_NEUTRAL[2]
+                );
+
+                pushTriangle(indices, bCenter, bBL, bTL);
+                pushTriangle(indices, bCenter, bBR, bBL);
+                pushTriangle(indices, bCenter, bTR, bBR);
+                pushTriangle(indices, bCenter, bTL, bTR);
+            }
+        }
+
+        // Faldones perimetrales `emitSkirtEdgeCCW` con normales dedicadas split-edge > 45°
+        for (const edge of boundaryEdges) {
+            const dx = cx[edge.q] - cx[edge.p];
+            const dz = cz[edge.q] - cz[edge.p];
+            const len = Math.hypot(dx, dz) || 1;
+            edge.nx = -dz / len;
+            edge.nz = dx / len;
+        }
+
+        const resolveSeamNormal = (
+            edge: GlbBoundaryEdge,
+            cornerIdx: number,
+            isStart: boolean
+        ): [number, number] => {
+            const adjList = isStart ? inEdgeMap.get(cornerIdx) : outEdgeMap.get(cornerIdx);
+            if (!adjList || adjList.length !== 1) return [edge.nx, edge.nz];
+            const adjEdge = boundaryEdges[adjList[0]];
+            const dot = edge.nx * adjEdge.nx + edge.nz * adjEdge.nz;
+            if (dot < SPLIT_EDGE_COS_45) return [edge.nx, edge.nz];
+            const sx = edge.nx + adjEdge.nx;
+            const sz = edge.nz + adjEdge.nz;
+            const slen = Math.hypot(sx, sz);
+            return slen > 1e-8 ? [sx / slen, sz / slen] : [edge.nx, edge.nz];
+        };
+
+        const emitSkirtEdgeCCW = (edge: GlbBoundaryEdge) => {
+            const hP = Math.max(0, cornerH[edge.p]);
+            const hQ = Math.max(0, cornerH[edge.q]);
+            if (hP <= 1e-6 && hQ <= 1e-6) return;
+
+            const [nPx, nPz] = resolveSeamNormal(edge, edge.p, true);
+            const [nQx, nQz] = resolveSeamNormal(edge, edge.q, false);
+
+            const base = positions.length / 3;
+            positions.push(
+                cx[edge.p],
+                0,
+                cz[edge.p],
+                cx[edge.q],
+                0,
+                cz[edge.q],
+                cx[edge.q],
+                hQ,
+                cz[edge.q],
+                cx[edge.p],
+                hP,
+                cz[edge.p]
+            );
+            normals.push(nPx, 0, nPz, nQx, 0, nQz, nQx, 0, nQz, nPx, 0, nPz);
+
+            if (rgbBytes) {
+                const cOff = edge.cellIdx * 3;
+                const r = cellColors[cOff];
+                const g = cellColors[cOff + 1];
+                const b = cellColors[cOff + 2];
+                colors.push(
+                    r * 0.88,
+                    g * 0.88,
+                    b * 0.88,
+                    r * 0.88,
+                    g * 0.88,
+                    b * 0.88,
+                    r,
+                    g,
+                    b,
+                    r,
+                    g,
+                    b
+                );
+            } else {
+                for (let k = 0; k < 4; k++) {
+                    colors.push(
+                        ISA101_COLOR_NEUTRAL[0],
+                        ISA101_COLOR_NEUTRAL[1],
+                        ISA101_COLOR_NEUTRAL[2]
+                    );
+                }
+            }
+
+            if (hQ > 1e-6) pushTriangle(indices, base, base + 1, base + 2);
+            if (hP > 1e-6) pushTriangle(indices, base, base + 2, base + 3);
+        };
+
+        for (const edge of boundaryEdges) {
+            emitSkirtEdgeCCW(edge);
+        }
+        customNormals = normals;
     }
 
     const physics = computeMeshPhysicsAndNormals({ positions, indices });
+    const finalNormals =
+        customNormals && customNormals.length === positions.length
+            ? customNormals
+            : physics.normals;
     const glbBuffer = packGlbBuffer(
         positions,
-        physics.normals,
+        finalNormals,
         physics.indices,
         physics.boundingBoxM,
         colors
