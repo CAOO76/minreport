@@ -203,6 +203,7 @@ public final class OfflineVioMvsEngine {
 
     /**
      * Stage 1A + Stage 1B full offline in-situ solve (4-thread Census+ZNCC plane sweep + Walk-Ring Toe Solver).
+     * Backwards-compatible overload without TargetVolumeConstraint.
      */
     public EngineOutput solveFullOffline(
         final List<WalkRingToeSolver.WalkPose> walkPoses,
@@ -210,6 +211,27 @@ public final class OfflineVioMvsEngine {
         final List<float[]> extraVioPoints,
         final boolean hasScaleAnchor,
         final boolean thermalDegraded
+    ) {
+        return solveFullOffline(
+            walkPoses,
+            groundSamples,
+            extraVioPoints,
+            hasScaleAnchor,
+            thermalDegraded,
+            null
+        );
+    }
+
+    /**
+     * Stage 1A + Stage 1B full offline in-situ solve with optional TargetVolumeConstraint ROI cropping.
+     */
+    public EngineOutput solveFullOffline(
+        final List<WalkRingToeSolver.WalkPose> walkPoses,
+        final List<float[]> groundSamples,
+        final List<float[]> extraVioPoints,
+        final boolean hasScaleAnchor,
+        final boolean thermalDegraded,
+        final TargetVolumeConstraint targetConstraint
     ) {
         final long startMs = System.currentTimeMillis();
         final List<KeyframeFrame> kfSnapshot;
@@ -230,17 +252,20 @@ public final class OfflineVioMvsEngine {
             triangulatePair(kfSnapshot.get(0), kfSnapshot.get(kfSnapshot.size() - 1), sparsePoints);
         }
 
-        // Stage 1A: Fast initial Walk-Ring Toe + DEM on triangulated sparse points
-        final float[] centerXZ = WalkRingToeSolver.estimateAutoCenterXZ(walkPoses, sparsePoints);
+        // Stage 1A: Fast initial center (locked to active Target Anchor when user selected a target)
+        final float[] centerXZ = (targetConstraint != null && targetConstraint.active)
+            ? targetConstraint.getEffectiveCenterXZ()
+            : WalkRingToeSolver.estimateAutoCenterXZ(walkPoses, sparsePoints);
 
-        // Stage 1B: Multi-view dense plane-sweep (Census + ZNCC) on 4 threads inside Walk-Ring ROI
+        // Stage 1B: Multi-view dense plane-sweep (Census + ZNCC) on 4 threads inside Walk-Ring / Target ROI
         final List<float[]> denseMvsPoints = runDenseCensusZnccSweep(
             kfSnapshot,
             centerXZ[0],
             centerXZ[1],
             walkPoses,
             loopClosedForSweep,
-            thermalDegraded
+            thermalDegraded,
+            targetConstraint
         );
 
         final List<float[]> fusedCloud = new ArrayList<>(sparsePoints.size() + denseMvsPoints.size());
@@ -252,7 +277,8 @@ public final class OfflineVioMvsEngine {
             walkPoses,
             groundSamples,
             hasScaleAnchor,
-            -1.0
+            -1.0,
+            targetConstraint
         );
 
         final long elapsedMs = System.currentTimeMillis() - startMs;
@@ -537,6 +563,7 @@ public final class OfflineVioMvsEngine {
 
     /**
      * Stage 1B: 4-thread Plane-Sweep Census + ZNCC inside the Walk-Ring projected ROI mask.
+     * Backwards-compatible overload without TargetVolumeConstraint.
      */
     static List<float[]> runDenseCensusZnccSweep(
         final List<KeyframeFrame> keyframes,
@@ -545,6 +572,30 @@ public final class OfflineVioMvsEngine {
         final List<WalkRingToeSolver.WalkPose> walkPoses,
         final boolean loopClosed,
         final boolean thermalDegraded
+    ) {
+        return runDenseCensusZnccSweep(
+            keyframes,
+            centerX,
+            centerZ,
+            walkPoses,
+            loopClosed,
+            thermalDegraded,
+            null
+        );
+    }
+
+    /**
+     * Stage 1B: 4-thread Plane-Sweep Census + ZNCC inside the Walk-Ring ROI intersected with the
+     * projected 3D bounding box (1.25x toe margin) of TargetVolumeConstraint when active.
+     */
+    static List<float[]> runDenseCensusZnccSweep(
+        final List<KeyframeFrame> keyframes,
+        final float centerX,
+        final float centerZ,
+        final List<WalkRingToeSolver.WalkPose> walkPoses,
+        final boolean loopClosed,
+        final boolean thermalDegraded,
+        final TargetVolumeConstraint targetConstraint
     ) {
         final int totalKf = keyframes.size();
         if (totalKf < 3) {
@@ -556,7 +607,7 @@ public final class OfflineVioMvsEngine {
             ensureCensusAndStats(kf);
         }
 
-        // Select up to 16 evenly distributed reference keyframes around the walk ring
+        // Select up to 14 evenly distributed reference keyframes around the walk ring
         final int maxRef = thermalDegraded ? 8 : 14;
         final int refStep = Math.max(1, totalKf / maxRef);
         final int pixelStride = thermalDegraded ? 4 : 3;
@@ -572,7 +623,7 @@ public final class OfflineVioMvsEngine {
             Arrays.sort(ds);
             medDist = Math.max(1.2f, ds[ds.length / 2]);
         }
-        final float dMin = Math.max(0.6f, medDist * 0.25f);
+        final float dMin = Math.max(0.45f, medDist * 0.25f);
         final float dMax = Math.min(26.0f, medDist * 1.65f);
 
         final int threads = Math.min(4, Math.max(1, Runtime.getRuntime().availableProcessors()));
@@ -592,7 +643,7 @@ public final class OfflineVioMvsEngine {
                 nbPrev = prevIdx != idx ? keyframes.get(prevIdx) : null;
                 nbNext = nextIdx != idx ? keyframes.get(nextIdx) : null;
             }
-            tasks.add(() -> sweepReferenceFrame(ref, nbPrev, nbNext, dMin, dMax, depthSteps, pixelStride));
+            tasks.add(() -> sweepReferenceFrame(ref, nbPrev, nbNext, dMin, dMax, depthSteps, pixelStride, targetConstraint));
         }
 
         final List<float[]> denseOut = new ArrayList<>(4096);
@@ -615,6 +666,114 @@ public final class OfflineVioMvsEngine {
         return denseOut;
     }
 
+    /**
+     * Projects the 3D bounding box of an active TargetVolumeConstraint (with 1.25x horizontal margin
+     * to capture the toe) into reference keyframe pixel coordinates (u, v) and intersects it with
+     * the standard Walk-Ring ROI [10%, 90%] x [18%, 92%].
+     *
+     * Returns int[] { uStart, uEnd, vStart, vEnd } or null if the target box projects outside the ROI.
+     */
+    public static int[] computeTargetProjectedRoi(
+        final KeyframeFrame ref,
+        final TargetVolumeConstraint target,
+        final int pad
+    ) {
+        if (ref == null || ref.width <= pad * 2 || ref.height <= pad * 2) {
+            return null;
+        }
+        final int w = ref.width;
+        final int h = ref.height;
+        final int baseUStart = Math.max(pad, w / 10);
+        final int baseUEnd = Math.min(w - pad, (w * 9) / 10);
+        final int baseVStart = Math.max(pad, (h * 18) / 100);
+        final int baseVEnd = Math.min(h - pad, (h * 92) / 100);
+
+        if (target == null || !target.active) {
+            return new int[] { baseUStart, baseUEnd, baseVStart, baseVEnd };
+        }
+
+        final float effR = target.getEffectiveRadiusM();
+        final float maxAbove = Math.max(1.50f, effR * 1.35f);
+        final float[] box = target.getBoundingBox3D(1.25f, 0.35f, maxAbove);
+        final float[] xs = { box[0], box[3] };
+        final float[] ys = { box[1], box[4] };
+        final float[] zs = { box[2], box[5] };
+
+        final float[][] cornersCam = new float[8][3];
+        int idx = 0;
+        for (int ix = 0; ix < 2; ix++) {
+            for (int iy = 0; iy < 2; iy++) {
+                for (int iz = 0; iz < 2; iz++) {
+                    final float wx = xs[ix];
+                    final float wy = ys[iy];
+                    final float wz = zs[iz];
+                    cornersCam[idx][0] = ref.rCw[0] * wx + ref.rCw[1] * wy + ref.rCw[2] * wz + ref.tCw[0];
+                    cornersCam[idx][1] = ref.rCw[3] * wx + ref.rCw[4] * wy + ref.rCw[5] * wz + ref.tCw[1];
+                    cornersCam[idx][2] = ref.rCw[6] * wx + ref.rCw[7] * wy + ref.rCw[8] * wz + ref.tCw[2];
+                    idx++;
+                }
+            }
+        }
+
+        float minU = Float.MAX_VALUE;
+        float maxU = -Float.MAX_VALUE;
+        float minV = Float.MAX_VALUE;
+        float maxV = -Float.MAX_VALUE;
+        boolean anyFront = false;
+
+        // Project corners in front of the near plane
+        for (int i = 0; i < 8; i++) {
+            final float depth = -cornersCam[i][2];
+            if (depth >= MIN_DEPTH_M) {
+                final float u = (cornersCam[i][0] / depth) * ref.fx + ref.cx;
+                final float v = (-cornersCam[i][1] / depth) * ref.fy + ref.cy;
+                if (u < minU) minU = u;
+                if (u > maxU) maxU = u;
+                if (v < minV) minV = v;
+                if (v > maxV) maxV = v;
+                anyFront = true;
+            }
+        }
+
+        // Clip box edges crossing the near plane z = -MIN_DEPTH_M so close-up views keep exact ROI
+        final int[][] edges = {
+            { 0, 1 }, { 2, 3 }, { 4, 5 }, { 6, 7 },
+            { 0, 2 }, { 1, 3 }, { 4, 6 }, { 5, 7 },
+            { 0, 4 }, { 1, 5 }, { 2, 6 }, { 3, 7 }
+        };
+        for (int[] e : edges) {
+            final float[] a = cornersCam[e[0]];
+            final float[] b = cornersCam[e[1]];
+            final float da = -a[2];
+            final float db = -b[2];
+            if ((da < MIN_DEPTH_M && db >= MIN_DEPTH_M) || (db < MIN_DEPTH_M && da >= MIN_DEPTH_M)) {
+                final float t = (MIN_DEPTH_M - da) / (db - da);
+                final float cxClip = a[0] + t * (b[0] - a[0]);
+                final float cyClip = a[1] + t * (b[1] - a[1]);
+                final float u = (cxClip / MIN_DEPTH_M) * ref.fx + ref.cx;
+                final float v = (-cyClip / MIN_DEPTH_M) * ref.fy + ref.cy;
+                if (u < minU) minU = u;
+                if (u > maxU) maxU = u;
+                if (v < minV) minV = v;
+                if (v > maxV) maxV = v;
+                anyFront = true;
+            }
+        }
+
+        if (!anyFront) {
+            return null;
+        }
+
+        final int uStart = Math.max(baseUStart, (int) Math.floor(minU));
+        final int uEnd = Math.min(baseUEnd, (int) Math.ceil(maxU));
+        final int vStart = Math.max(baseVStart, (int) Math.floor(minV));
+        final int vEnd = Math.min(baseVEnd, (int) Math.ceil(maxV));
+        if (uStart >= uEnd || vStart >= vEnd) {
+            return null;
+        }
+        return new int[] { uStart, uEnd, vStart, vEnd };
+    }
+
     private static List<float[]> sweepReferenceFrame(
         final KeyframeFrame ref,
         final KeyframeFrame prev,
@@ -622,23 +781,43 @@ public final class OfflineVioMvsEngine {
         final float dMin,
         final float dMax,
         final int depthSteps,
-        final int stride
+        final int stride,
+        final TargetVolumeConstraint targetConstraint
     ) {
         final List<float[]> pts = new ArrayList<>(256);
         if (prev == null && next == null) {
             return pts;
         }
         final int w = ref.width;
-        final int h = ref.height;
         final int pad = 6;
-        // Skip upper 18% sky band and outer 10% lateral edges (Walk-Ring ROI mask)
-        final int uStart = Math.max(pad, w / 10);
-        final int uEnd = Math.min(w - pad, (w * 9) / 10);
-        final int vStart = Math.max(pad, (h * 18) / 100);
-        final int vEnd = Math.min(h - pad, (h * 92) / 100);
+        final int[] roi = computeTargetProjectedRoi(ref, targetConstraint, pad);
+        if (roi == null) {
+            return pts;
+        }
+        final int uStart = roi[0];
+        final int uEnd = roi[1];
+        final int vStart = roi[2];
+        final int vEnd = roi[3];
 
-        final float invDMin = 1.0f / dMin;
-        final float invDMax = 1.0f / dMax;
+        // Tighten depth range around target bounding sphere when TargetVolumeConstraint is active
+        float effDMin = dMin;
+        float effDMax = dMax;
+        if (targetConstraint != null && targetConstraint.active) {
+            final float camZAnchor =
+                ref.rCw[6] * targetConstraint.anchorX +
+                ref.rCw[7] * targetConstraint.anchorY +
+                ref.rCw[8] * targetConstraint.anchorZ +
+                ref.tCw[2];
+            final float anchorDepth = -camZAnchor;
+            final float marginR = targetConstraint.getEffectiveRadiusM() * 1.35f + 0.35f;
+            if (anchorDepth > MIN_DEPTH_M) {
+                effDMin = Math.max(MIN_DEPTH_M, anchorDepth - marginR);
+                effDMax = Math.min(MAX_DEPTH_M, Math.max(effDMin + 0.35f, anchorDepth + marginR));
+            }
+        }
+
+        final float invDMin = 1.0f / effDMin;
+        final float invDMax = 1.0f / effDMax;
         final float invStep = (invDMin - invDMax) / Math.max(1, depthSteps - 1);
 
         final float[] rRef = ref.rWc;

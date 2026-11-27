@@ -165,6 +165,14 @@ public class ArCoreCameraRenderer implements GLSurfaceView.Renderer {
         overlayRenderer.updateSnapshot(snapshot);
     }
 
+    public void updateTargetVolumeConstraint(final TargetVolumeConstraint constraint) {
+        overlayRenderer.updateTargetVolumeConstraint(constraint);
+    }
+
+    public void setCaptureActive(final boolean active) {
+        overlayRenderer.setCaptureActive(active);
+    }
+
     public void updateLivePointCloud(final float[] pointVertsXyz) {
         overlayRenderer.updateLivePointCloud(pointVertsXyz);
     }

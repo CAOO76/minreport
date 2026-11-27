@@ -2,6 +2,11 @@ package com.minreport.app;
 
 import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 /**
  * Pure-Java, unit-testable capture pipeline helpers for MINREPORT · ACOPIOS:
@@ -921,6 +926,123 @@ public final class CapturePipelineHelper {
             }
             final long refMs = Math.max(capturingStartedAtMs, lastCandidateAcceptedAtMs);
             return refMs > 0L && (nowMs - refMs) > DIAG_DISPLAY_DELAY_MS;
+        }
+    }
+
+    /**
+     * Per-cell trimmed-median ground aggregator (0.25 m cells) replacing biased min(y) retention.
+     * Prevents -3*sigma floor sink from downward ARCore plane noise while rejecting elevated outliers.
+     */
+    public static final class GroundCellAggregator {
+        public static final float DEFAULT_CELL_SIZE_M = 0.25f;
+        private static final int MAX_SAMPLES_PER_CELL = 15;
+
+        private static final class CellBucket {
+            final float[] xs = new float[MAX_SAMPLES_PER_CELL];
+            final float[] ys = new float[MAX_SAMPLES_PER_CELL];
+            final float[] zs = new float[MAX_SAMPLES_PER_CELL];
+            int count = 0;
+            int writeIdx = 0;
+
+            void add(final float x, final float y, final float z) {
+                xs[writeIdx] = x;
+                ys[writeIdx] = y;
+                zs[writeIdx] = z;
+                writeIdx = (writeIdx + 1) % MAX_SAMPLES_PER_CELL;
+                if (count < MAX_SAMPLES_PER_CELL) {
+                    count++;
+                }
+            }
+
+            float[] computeTrimmedMedianPoint() {
+                final int n = count;
+                if (n <= 0) {
+                    return null;
+                }
+                if (n == 1) {
+                    return new float[] { xs[0], ys[0], zs[0] };
+                }
+                final float[] sortedY = Arrays.copyOf(ys, n);
+                Arrays.sort(sortedY);
+                final int trim = n >= 5 ? Math.max(1, (int) Math.floor(n * 0.15)) : 0;
+                final int lo = Math.min(trim, (n - 1) / 2);
+                final int hi = Math.max(lo, n - 1 - lo);
+                final float yLo = sortedY[lo];
+                final float yHi = sortedY[hi];
+                final int mid = (lo + hi) / 2;
+                final float medY = ((hi - lo) % 2 == 1)
+                    ? 0.5f * (sortedY[mid] + sortedY[mid + 1])
+                    : sortedY[mid];
+
+                double sumX = 0.0;
+                double sumZ = 0.0;
+                int kept = 0;
+                for (int i = 0; i < n; i++) {
+                    if (ys[i] >= yLo - 1e-6f && ys[i] <= yHi + 1e-6f) {
+                        sumX += xs[i];
+                        sumZ += zs[i];
+                        kept++;
+                    }
+                }
+                if (kept <= 0) {
+                    return new float[] { xs[0], medY, zs[0] };
+                }
+                return new float[] { (float) (sumX / kept), medY, (float) (sumZ / kept) };
+            }
+        }
+
+        private final float cellSizeM;
+        private final int maxCells;
+        private final Map<Long, CellBucket> cells = new HashMap<>();
+
+        public GroundCellAggregator(final int maxCells) {
+            this(DEFAULT_CELL_SIZE_M, maxCells);
+        }
+
+        public GroundCellAggregator(final float cellSizeM, final int maxCells) {
+            this.cellSizeM = Math.max(0.05f, cellSizeM);
+            this.maxCells = Math.max(1, maxCells);
+        }
+
+        public void clear() {
+            cells.clear();
+        }
+
+        public int size() {
+            return cells.size();
+        }
+
+        public void addSample(final float[] pt, final float maxAllowedY) {
+            if (
+                pt == null || pt.length < 3 ||
+                !Float.isFinite(pt[0]) || !Float.isFinite(pt[1]) || !Float.isFinite(pt[2]) ||
+                pt[1] > maxAllowedY
+            ) {
+                return;
+            }
+            final int gx = (int) Math.floor(pt[0] / cellSizeM);
+            final int gz = (int) Math.floor(pt[2] / cellSizeM);
+            final long key = (((long) (gx & 0xFFFFFFFFL)) << 32) | ((long) (gz & 0xFFFFFFFFL));
+            CellBucket bucket = cells.get(key);
+            if (bucket == null) {
+                if (cells.size() >= maxCells) {
+                    return;
+                }
+                bucket = new CellBucket();
+                cells.put(key, bucket);
+            }
+            bucket.add(pt[0], pt[1], pt[2]);
+        }
+
+        public List<float[]> snapshotTrimmedMedians() {
+            final List<float[]> out = new ArrayList<>(cells.size());
+            for (CellBucket bucket : cells.values()) {
+                final float[] med = bucket.computeTrimmedMedianPoint();
+                if (med != null) {
+                    out.add(med);
+                }
+            }
+            return out;
         }
     }
 }

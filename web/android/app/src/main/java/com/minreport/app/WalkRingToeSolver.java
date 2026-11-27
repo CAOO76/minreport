@@ -3,23 +3,33 @@ package com.minreport.app;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.PriorityQueue;
 
 /**
- * Pure-Java Walk-Ring Toe Solver, Gravity-Regularized Ground Plane Estimator,
- * Crater-Free 2.5D DEM Integrator, Honest Uncertainty Engine, and Live 3D Overlay Builder.
+ * Pure-Java Walk-Ring Toe Solver, Gravity-Regularized Huber IRLS Ground Plane Estimator,
+ * Dual-Hysteresis + 3D Marker-Controlled Watershed Object Segmenter, Crater-Free 2.5D DEM Integrator,
+ * Strict Object-Flank Slope Estimator (up to 89.5 deg), Honest Uncertainty Engine, and Live 3D Overlay Builder.
  *
  * Zero Android framework dependencies so it executes both on-device and in JVM JUnit tests.
  */
 public final class WalkRingToeSolver {
 
     public static final int SECTOR_COUNT = 16;
+    public static final String SLOPE_PROFILE_NATURAL_REPOSE = "NATURAL_REPOSE";
+    public static final String SLOPE_PROFILE_STEEP_ALERT = "STEEP_ALERT";
+    public static final String SLOPE_PROFILE_VERTICAL_STRUCTURE = "VERTICAL_STRUCTURE";
+
     private static final int MAX_DEM_DIM = 64;
     private static final int PREVIEW_MAX_DIM = 32;
-    private static final float MIN_CELL_SIZE_M = 0.08f;
+    private static final float MIN_CELL_SIZE_M = 0.03f;
     private static final float MAX_CELL_SIZE_M = 0.75f;
     private static final float MAX_GRAVITY_MISMATCH_DEG = 3.5f;
     private static final float DEFAULT_FORWARD_PROJECTION_M = 3.0f;
     private static final float LOCAL_GROUND_CLEARANCE_M = 0.55f;
+    private static final float MIN_SIGMA_GROUND_M = 0.012f;
+    private static final float MAX_SIGMA_GROUND_M = 0.060f;
+    private static final double MIN_FLANK_SLOPE_DEG = 12.0;
+    private static final double MAX_SLOPE_CEILING_DEG = 89.5;
 
     private WalkRingToeSolver() {}
 
@@ -155,6 +165,8 @@ public final class WalkRingToeSolver {
         public final double dimH;
         public final double groundSlopeDeg;
         public final double slopeAngleAvgDeg;
+        public final String slopeProfile;
+        public final double sigmaGroundM;
         public final double toeScore;
         public final double occludedVolumePct;
         public final double loopDriftPct;
@@ -187,6 +199,8 @@ public final class WalkRingToeSolver {
             final double dimH,
             final double groundSlopeDeg,
             final double slopeAngleAvgDeg,
+            final String slopeProfile,
+            final double sigmaGroundM,
             final double toeScore,
             final double occludedVolumePct,
             final double loopDriftPct,
@@ -218,6 +232,8 @@ public final class WalkRingToeSolver {
             this.dimH = dimH;
             this.groundSlopeDeg = groundSlopeDeg;
             this.slopeAngleAvgDeg = slopeAngleAvgDeg;
+            this.slopeProfile = slopeProfile != null ? slopeProfile : classifySlopeProfile(slopeAngleAvgDeg);
+            this.sigmaGroundM = sigmaGroundM;
             this.toeScore = toeScore;
             this.occludedVolumePct = occludedVolumePct;
             this.loopDriftPct = loopDriftPct;
@@ -242,6 +258,16 @@ public final class WalkRingToeSolver {
             this.filteredGroundM = filteredGroundM;
             this.liveOverlay = liveOverlay;
         }
+    }
+
+    public static String classifySlopeProfile(final double slopeAngleAvgDeg) {
+        if (slopeAngleAvgDeg > 65.0) {
+            return SLOPE_PROFILE_VERTICAL_STRUCTURE;
+        }
+        if (slopeAngleAvgDeg > 38.0) {
+            return SLOPE_PROFILE_STEEP_ALERT;
+        }
+        return SLOPE_PROFILE_NATURAL_REPOSE;
     }
 
     /**
@@ -358,6 +384,9 @@ public final class WalkRingToeSolver {
         return new float[] { xs[valid / 2], zs[valid / 2] };
     }
 
+    /**
+     * Backwards-compatible solve overload without TargetVolumeConstraint.
+     */
     public static MetrologyResult solve(
         final List<float[]> rawPoints3D,
         final List<WalkPose> walkPoses,
@@ -365,15 +394,36 @@ public final class WalkRingToeSolver {
         final boolean hasScaleAnchor,
         final double explicitLoopDriftPct
     ) {
+        return solve(rawPoints3D, walkPoses, rawGroundSamples, hasScaleAnchor, explicitLoopDriftPct, null);
+    }
+
+    /**
+     * Full in-situ stockpile metrology solver with optional TargetVolumeConstraint:
+     * - Unbiased p50 + Huber IRLS ground plane with padReferenceY anchoring and empirical sigmaGround
+     * - Dual-hysteresis toe segmentation + 8-connected clustering + 3D marker-controlled Priority-Flood Watershed
+     * - Bounded geodesic toe expansion + interior-only crater-free hole filling (no global scanline bridges)
+     * - Strict object-flank slope angle via 16-sector radial Theil-Sen + gravity-corrected DEM gradient (up to 89.5 deg)
+     */
+    public static MetrologyResult solve(
+        final List<float[]> rawPoints3D,
+        final List<WalkPose> walkPoses,
+        final List<float[]> rawGroundSamples,
+        final boolean hasScaleAnchor,
+        final double explicitLoopDriftPct,
+        final TargetVolumeConstraint targetConstraint
+    ) {
         final List<float[]> points = rawPoints3D != null ? rawPoints3D : new ArrayList<>();
         final List<WalkPose> poses = walkPoses != null ? walkPoses : new ArrayList<>();
         final List<float[]> groundInput = rawGroundSamples != null ? rawGroundSamples : new ArrayList<>();
+        final boolean hasTarget = targetConstraint != null && targetConstraint.active;
 
         if (points.size() < 12) {
             return buildRejectedResult(points, groundInput, poses, explicitLoopDriftPct);
         }
 
-        final float[] centerXZ = estimateAutoCenterXZ(poses, points);
+        final float[] centerXZ = hasTarget
+            ? targetConstraint.getEffectiveCenterXZ()
+            : estimateAutoCenterXZ(poses, points);
         final float cx = centerXZ[0];
         final float cz = centerXZ[1];
 
@@ -419,14 +469,17 @@ public final class WalkRingToeSolver {
             }
         }
 
-        // 3. Soft radial envelope from walk ring (NEVER hard-truncates stockpile to 1 m!)
+        // 3. Soft radial envelope from walk ring or target constraint (never hard-truncates large piles)
         final float radialEnvelope;
-        if (hasWalkPoses && walkMedianRadius > 1.2f) {
+        if (hasTarget) {
+            radialEnvelope = Math.max(targetConstraint.getEffectiveRadiusM() * 1.35f, 0.50f);
+        } else if (hasWalkPoses && walkMedianRadius > 1.2f) {
             radialEnvelope = Math.max(walkMedianRadius * 1.15f, walkMinRadius + 0.5f);
         } else {
             radialEnvelope = estimatePointCloudP98Radius(points, cx, cz) * 1.05f;
         }
 
+        final List<float[]> allFinitePoints = new ArrayList<>(points.size());
         final List<float[]> inEnvelopePoints = new ArrayList<>(points.size());
         for (float[] p : points) {
             if (p == null || p.length < 3) {
@@ -435,39 +488,41 @@ public final class WalkRingToeSolver {
             if (!Float.isFinite(p[0]) || !Float.isFinite(p[1]) || !Float.isFinite(p[2])) {
                 continue;
             }
-            final float r = (float) Math.hypot(p[0] - cx, p[2] - cz);
-            if (r <= radialEnvelope) {
-                inEnvelopePoints.add(p);
-            }
-        }
-        if (inEnvelopePoints.size() < 12) {
-            inEnvelopePoints.clear();
-            for (float[] p : points) {
-                if (
-                    p != null && p.length >= 3 &&
-                    Float.isFinite(p[0]) && Float.isFinite(p[1]) && Float.isFinite(p[2])
-                ) {
+            allFinitePoints.add(p);
+            if (hasTarget) {
+                if (targetConstraint.containsXZ(p[0], p[2], 1.25f)) {
+                    inEnvelopePoints.add(p);
+                }
+            } else {
+                final float r = (float) Math.hypot(p[0] - cx, p[2] - cz);
+                if (r <= radialEnvelope) {
                     inEnvelopePoints.add(p);
                 }
             }
         }
+        if (inEnvelopePoints.size() < 12) {
+            inEnvelopePoints.clear();
+            inEnvelopePoints.addAll(allFinitePoints);
+        }
 
-        // 4. Gravity-Regularized Walk-Ring Toe Ground Plane Solver
+        // 4. Gravity-Regularized Unbiased Ground Plane Solver (p50 + Huber IRLS + padReferenceY + sigmaGround)
         final double walkRingSlopeDeg = estimateWalkRingSlopeDeg(poses);
-        final double[] groundCandidatesPlane = fitGravityRegularizedGroundPlane(
-            inEnvelopePoints,
+        final double[] groundPlaneOut = fitGravityRegularizedGroundPlane(
+            allFinitePoints,
             filteredGround,
             poses,
             cx,
             cz,
-            walkRingSlopeDeg
+            walkRingSlopeDeg,
+            targetConstraint
         );
-        final double planeA = groundCandidatesPlane[0];
-        final double planeB = groundCandidatesPlane[1];
-        final double planeD = groundCandidatesPlane[2];
+        final double planeA = groundPlaneOut[0];
+        final double planeB = groundPlaneOut[1];
+        final double planeD = groundPlaneOut[2];
+        final double groundRmsM = groundPlaneOut[3];
+        final double sigmaGround = clampDouble(groundPlaneOut[4], MIN_SIGMA_GROUND_M, MAX_SIGMA_GROUND_M);
         final double groundSlopeDeg = Math.toDegrees(Math.atan(Math.hypot(planeA, planeB)));
         final double planeMismatchDeg = Math.abs(groundSlopeDeg - walkRingSlopeDeg);
-        final double groundRmsM = groundCandidatesPlane[3];
 
         // 5. Detect wall confinement (SINGLE_WALL / BUNKER_3_WALLS) for partial arcs
         final String wallConfinement = detectWallConfinement(
@@ -478,24 +533,51 @@ public final class WalkRingToeSolver {
             planeD
         );
 
-        // 6. Compute adaptive 2.5D DEM grid (cellSizeM in [0.08, 0.75], nx/nz <= 64)
+        // 6. Estimate peak height & dual-hysteresis thresholds BEFORE building DEM so small targets get crisp resolution
+        final float[] posHeightsTmp = new float[inEnvelopePoints.size()];
+        int posCount = 0;
+        for (float[] p : inEnvelopePoints) {
+            if (hasTarget && !targetConstraint.containsXZ(p[0], p[2], 1.05f)) {
+                continue;
+            }
+            final float h = (float) (p[1] - (planeA * p[0] + planeB * p[2] + planeD));
+            if (h > 0.0f) {
+                posHeightsTmp[posCount++] = h;
+            }
+        }
+        if (posCount < 8) {
+            return buildRejectedResult(inEnvelopePoints, filteredGround, poses, loopDriftPct);
+        }
+        Arrays.sort(posHeightsTmp, 0, posCount);
+        final float hPeakInitial = posHeightsTmp[Math.min(posCount - 1, (int) Math.floor(posCount * 0.995))];
+        if (hPeakInitial < 0.05f) {
+            return buildRejectedResult(inEnvelopePoints, filteredGround, poses, loopDriftPct);
+        }
+
+        final float hSeed = (float) Math.max(0.08, Math.max(3.5 * sigmaGround, 0.15 * hPeakInitial));
+        final float hToe = (float) Math.max(0.03, Math.max(2.0 * sigmaGround, 0.04 * hPeakInitial));
+
+        // Compute tight DEM bounds from points >= hToe (prevents noisy patio from coarsening small-object grid)
         float minX = Float.MAX_VALUE;
         float maxX = -Float.MAX_VALUE;
         float minZ = Float.MAX_VALUE;
         float maxZ = -Float.MAX_VALUE;
-        int aboveCount = 0;
+        int aboveToeCount = 0;
         for (float[] p : inEnvelopePoints) {
+            if (hasTarget && targetConstraint.hasValidPolygon() && !targetConstraint.containsXZ(p[0], p[2], 1.02f)) {
+                continue;
+            }
             final double gy = planeA * p[0] + planeB * p[2] + planeD;
             final double h = p[1] - gy;
-            if (h >= 0.02) {
+            if (h >= hToe) {
                 if (p[0] < minX) minX = p[0];
                 if (p[0] > maxX) maxX = p[0];
                 if (p[2] < minZ) minZ = p[2];
                 if (p[2] > maxZ) maxZ = p[2];
-                aboveCount++;
+                aboveToeCount++;
             }
         }
-        if (aboveCount < 8 || maxX <= minX || maxZ <= minZ) {
+        if (aboveToeCount < 6 || maxX <= minX || maxZ <= minZ) {
             return buildRejectedResult(inEnvelopePoints, filteredGround, poses, loopDriftPct);
         }
 
@@ -504,11 +586,12 @@ public final class WalkRingToeSolver {
         final float maxSpan = Math.max(spanX, spanZ);
         final float cellSizeM = clamp((float) (maxSpan / 56.0), MIN_CELL_SIZE_M, MAX_CELL_SIZE_M);
 
-        // Add 1-cell border padding
-        final float originX = minX - cellSizeM;
-        final float originZ = minZ - cellSizeM;
-        final int cols = Math.min(MAX_DEM_DIM, Math.max(4, (int) Math.ceil((spanX + 2.0f * cellSizeM) / cellSizeM)));
-        final int rows = Math.min(MAX_DEM_DIM, Math.max(4, (int) Math.ceil((spanZ + 2.0f * cellSizeM) / cellSizeM)));
+        // Add 2-cell border padding so exterior flood-fill always surrounds the object cleanly
+        final float padM = 2.0f * cellSizeM;
+        final float originX = minX - padM;
+        final float originZ = minZ - padM;
+        final int cols = Math.min(MAX_DEM_DIM, Math.max(6, (int) Math.ceil((spanX + 2.0f * padM) / cellSizeM)));
+        final int rows = Math.min(MAX_DEM_DIM, Math.max(6, (int) Math.ceil((spanZ + 2.0f * padM) / cellSizeM)));
         final int cellCount = cols * rows;
 
         // Bucket heights per cell to compute robust p50 median + obs count
@@ -518,7 +601,7 @@ public final class WalkRingToeSolver {
         for (float[] p : inEnvelopePoints) {
             final double gy = planeA * p[0] + planeB * p[2] + planeD;
             final float h = (float) (p[1] - gy);
-            if (h < 0.0f) {
+            if (h < -0.10f) {
                 continue;
             }
             final int col = (int) Math.floor((p[0] - originX) / cellSizeM);
@@ -530,35 +613,82 @@ public final class WalkRingToeSolver {
             if (buckets[idx] == null) {
                 buckets[idx] = new ArrayList<>(4);
             }
-            buckets[idx].add(h);
+            buckets[idx].add(Math.max(0.0f, h));
             obsCount[idx] += (p.length >= 4 && p[3] >= 1.0f) ? Math.round(p[3]) : 1;
         }
 
         final float[] rawHeights = new float[cellCount];
-        final byte[] observedMask = new byte[cellCount];
-        int observedCells = 0;
-        for (int i = 0; i < cellCount; i++) {
-            final ArrayList<Float> list = buckets[i];
-            if (list != null && !list.isEmpty()) {
-                final float[] arr = new float[list.size()];
-                for (int k = 0; k < list.size(); k++) {
-                    arr[k] = list.get(k);
+        final byte[] rawObserved = new byte[cellCount];
+        final boolean[] inAllowedRegion = new boolean[cellCount];
+        for (int r = 0; r < rows; r++) {
+            final float wz = originZ + (r + 0.5f) * cellSizeM;
+            for (int c = 0; c < cols; c++) {
+                final int idx = r * cols + c;
+                final float wx = originX + (c + 0.5f) * cellSizeM;
+                if (hasTarget) {
+                    inAllowedRegion[idx] = targetConstraint.hasValidPolygon()
+                        ? targetConstraint.containsXZ(wx, wz, 1.0f)
+                        : targetConstraint.containsXZ(wx, wz, 1.15f);
+                } else {
+                    inAllowedRegion[idx] = true;
                 }
-                Arrays.sort(arr);
-                final float med = arr[arr.length / 2];
-                if (med >= 0.02f) {
-                    rawHeights[i] = med;
-                    observedMask[i] = 1;
-                    observedCells++;
+                final ArrayList<Float> list = buckets[idx];
+                if (list != null && !list.isEmpty()) {
+                    final float[] arr = new float[list.size()];
+                    for (int k = 0; k < list.size(); k++) {
+                        arr[k] = list.get(k);
+                    }
+                    Arrays.sort(arr);
+                    final float med = arr[arr.length / 2];
+                    if (med > 0.0f) {
+                        rawHeights[idx] = med;
+                        rawObserved[idx] = 1;
+                    }
                 }
             }
         }
 
-        // 7. Build contiguous footprint mask by scanline + radial convex hull closure
-        final byte[] footprintMask = buildFootprintMask(observedMask, cols, rows);
+        // 7. Dual-Hysteresis + 8-Connected Clustering + 3D Marker-Controlled Watershed + Bounded Toe Expansion
+        final byte[] objectMask = segmentTargetObjectMask(
+            rawHeights,
+            rawObserved,
+            inAllowedRegion,
+            originX,
+            originZ,
+            cellSizeM,
+            cols,
+            rows,
+            hSeed,
+            hToe,
+            (float) sigmaGround,
+            hasTarget ? targetConstraint : null
+        );
+
+        // Restrict observedMask strictly to objectMask cells above hToe, then fill ONLY enclosed interior holes
+        final byte[] observedMask = new byte[cellCount];
+        int observedCells = 0;
+        for (int i = 0; i < cellCount; i++) {
+            if (objectMask[i] != 0 && rawObserved[i] != 0 && rawHeights[i] >= hToe) {
+                observedMask[i] = 1;
+                observedCells++;
+            } else if (objectMask[i] == 0) {
+                rawHeights[i] = 0.0f;
+            }
+        }
+        if (observedCells == 0) {
+            return buildRejectedResult(inEnvelopePoints, filteredGround, poses, loopDriftPct);
+        }
+
+        // Interior-only hole filling via exterior flood-fill (eliminates global H/V scanline bridges)
+        final byte[] footprintMask = fillEnclosedInteriorHolesOnly(objectMask, cols, rows);
 
         // 8. Crater-Free Multiscale / Harmonic IDW interpolation (guarantees zeroCellsInside == 0)
         final float[] heights = Arrays.copyOf(rawHeights, cellCount);
+        for (int i = 0; i < cellCount; i++) {
+            if (footprintMask[i] == 0) {
+                heights[i] = 0.0f;
+            }
+        }
         fillInteriorHolesCraterFree(heights, observedMask, footprintMask, cols, rows);
 
         // Verify zeroCellsInside and compute volume, occludedVolumePct, and p99 height
@@ -569,14 +699,20 @@ public final class WalkRingToeSolver {
         int zeroCellsInside = 0;
         final float[] fpHeights = new float[cellCount];
         int fpCount = 0;
+        double objCenterSumX = 0.0;
+        double objCenterSumZ = 0.0;
 
         for (int r = 0; r < rows; r++) {
+            final float wz = originZ + (r + 0.5f) * cellSizeM;
             for (int c = 0; c < cols; c++) {
                 final int idx = r * cols + c;
                 if (footprintMask[idx] == 0) {
                     continue;
                 }
                 totalFootprintCells++;
+                final float wx = originX + (c + 0.5f) * cellSizeM;
+                objCenterSumX += wx;
+                objCenterSumZ += wz;
                 final float h = heights[idx];
                 if (h <= 1e-4f) {
                     zeroCellsInside++;
@@ -594,6 +730,8 @@ public final class WalkRingToeSolver {
             return buildRejectedResult(inEnvelopePoints, filteredGround, poses, loopDriftPct);
         }
 
+        final float objCx = (float) (objCenterSumX / totalFootprintCells);
+        final float objCz = (float) (objCenterSumZ / totalFootprintCells);
         Arrays.sort(fpHeights, 0, fpCount);
         final double dimH = fpHeights[Math.min(fpCount - 1, (int) Math.floor(fpCount * 0.99))];
         final double occludedVolumePct = totalVol > 0.0 ? (occludedVol / totalVol) * 100.0 : 0.0;
@@ -603,25 +741,36 @@ public final class WalkRingToeSolver {
         final double dimA = dimsAB[0];
         final double dimB = dimsAB[1];
 
-        // 10. Slope angle strictly on contiguous observed cells relative to +Y gravity
-        final double slopeAngleAvgDeg = computeObservedSlopeAngleDeg(
+        // 10. Strict object-flank slope angle relative to +Y gravity (Theil-Sen radial + gravity-corrected DEM up to 89.5 deg)
+        final double slopeAngleAvgDeg = computeStrictObjectSlopeAngleDeg(
             heights,
             observedMask,
+            footprintMask,
+            originX,
+            originZ,
             cols,
             rows,
             cellSizeM,
-            (float) dimH
+            (float) dimH,
+            hToe,
+            (float) sigmaGround,
+            planeA,
+            planeB,
+            objCx,
+            objCz
         );
+        final String slopeProfile = classifySlopeProfile(slopeAngleAvgDeg);
 
         // 11. Toe coverage score across 16 sectors + honest uncertainty formula
         final boolean[] toeSectorAnchored = computeToeSectorAnchored(
             filteredGround,
-            inEnvelopePoints,
-            cx,
-            cz,
+            allFinitePoints,
+            objCx,
+            objCz,
             planeA,
             planeB,
-            planeD
+            planeD,
+            hasTarget && targetConstraint.hasPadReferenceY
         );
         int anchoredSectors = 0;
         for (boolean anchored : toeSectorAnchored) {
@@ -663,8 +812,10 @@ public final class WalkRingToeSolver {
             metrologyGrade = "VALID_IN_SITU";
         }
 
-        final float anchorY = (float) (planeA * cx + planeB * cz + planeD);
-        final float effectiveRadiusM = (float) Math.max(0.35, Math.max(dimA, dimB) * 0.5);
+        final float anchorOutX = hasTarget ? targetConstraint.anchorX : objCx;
+        final float anchorOutZ = hasTarget ? targetConstraint.anchorZ : objCz;
+        final float anchorY = (float) (planeA * anchorOutX + planeB * anchorOutZ + planeD);
+        final float effectiveRadiusM = (float) Math.max(0.15, Math.max(dimA, dimB) * 0.5);
         final double footprintAreaM2 = totalFootprintCells * (double) cellArea;
 
         // 12. Build compact < 60 KB localPreviewMesh (<= 32x32)
@@ -685,7 +836,7 @@ public final class WalkRingToeSolver {
             (float) dimH
         );
 
-        // 13. Build stratified output cloud (uniformly sampled across DEM + raw high-confidence points)
+        // 13. Build stratified output cloud (strictly segmented to object footprint)
         final List<float[]> stratifiedPoints = buildStratifiedCloud(
             originX,
             originZ,
@@ -715,9 +866,9 @@ public final class WalkRingToeSolver {
             planeB,
             planeD,
             toeSectorAnchored,
-            cx,
+            objCx,
             anchorY,
-            cz,
+            objCz,
             (float) Math.max(dimA, dimB),
             (float) dimH,
             (float) totalVol
@@ -731,6 +882,8 @@ public final class WalkRingToeSolver {
             dimH,
             groundSlopeDeg,
             slopeAngleAvgDeg,
+            slopeProfile,
+            sigmaGround,
             toeScore,
             occludedVolumePct,
             loopDriftPct,
@@ -743,9 +896,9 @@ public final class WalkRingToeSolver {
             loopClosed,
             metrologyGrade,
             wallConfinement,
-            cx,
+            anchorOutX,
             anchorY,
-            cz,
+            anchorOutZ,
             effectiveRadiusM,
             planeA,
             planeB,
@@ -769,8 +922,8 @@ public final class WalkRingToeSolver {
             0.0, 0.0, 0.0, 0.0f, 0.0f, 0.0f
         );
         return new MetrologyResult(
-            0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 100.0,
-            Math.max(0.0, driftPct), 0.0, 45.0, 0, 0, 0, points.size(),
+            0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, SLOPE_PROFILE_NATURAL_REPOSE, MIN_SIGMA_GROUND_M,
+            0.0, 100.0, Math.max(0.0, driftPct), 0.0, 45.0, 0, 0, 0, points.size(),
             false, "REJECTED", "NONE",
             c[0], 0.0f, c[1], 1.0f,
             0.0, 0.0, 0.0,
@@ -778,66 +931,95 @@ public final class WalkRingToeSolver {
         );
     }
 
+    /**
+     * Fits gravity-regularized ground plane y = a*x + b*z + d using deterministic RANSAC + Huber IRLS
+     * + unbiased p50 median offset (eliminating -3*sigma p15 bias), anchoring to explicit padReferenceY
+     * when provided, and returning { a, b, d, rms, sigmaGround }.
+     */
     private static double[] fitGravityRegularizedGroundPlane(
         final List<float[]> points,
         final List<float[]> groundSamples,
         final List<WalkPose> walkPoses,
         final float cx,
         final float cz,
-        final double walkRingSlopeDeg
+        final double walkRingSlopeDeg,
+        final TargetVolumeConstraint targetConstraint
     ) {
-        final List<float[]> candidates = new ArrayList<>();
-        candidates.addAll(groundSamples);
+        final boolean hasPadRef = targetConstraint != null && targetConstraint.active && targetConstraint.hasPadReferenceY;
+        final double padRefY = hasPadRef ? targetConstraint.padReferenceY : 0.0;
 
-        // Add lower-quantile (p10) outer perimeter points per 16 angular sectors
-        @SuppressWarnings("unchecked")
-        final ArrayList<float[]>[] sectorPts = new ArrayList[SECTOR_COUNT];
-        final float[] sectorMaxR = new float[SECTOR_COUNT];
-        for (float[] p : points) {
-            final double dx = p[0] - cx;
-            final double dz = p[2] - cz;
-            final float r = (float) Math.hypot(dx, dz);
-            double deg = Math.toDegrees(Math.atan2(dz, dx));
-            if (deg < 0.0) deg += 360.0;
-            final int s = Math.min(SECTOR_COUNT - 1, Math.max(0, (int) Math.floor(deg / (360.0 / SECTOR_COUNT))));
-            if (sectorPts[s] == null) {
-                sectorPts[s] = new ArrayList<>();
+        final List<float[]> candidates = new ArrayList<>();
+        if (hasPadRef) {
+            // Keep ground samples consistent with the operator's explicit patio tap (within +/- 0.18 m)
+            for (float[] g : groundSamples) {
+                if (Math.abs(g[1] - padRefY) <= 0.18) {
+                    candidates.add(g);
+                }
             }
-            sectorPts[s].add(p);
-            if (r > sectorMaxR[s]) {
-                sectorMaxR[s] = r;
+        } else {
+            candidates.addAll(groundSamples);
+        }
+
+        // Supplement with outer-band floor points ONLY when explicit ARCore ground samples are sparse
+        if (candidates.size() < 16) {
+            @SuppressWarnings("unchecked")
+            final ArrayList<float[]>[] sectorPts = new ArrayList[SECTOR_COUNT];
+            final float[] sectorMaxR = new float[SECTOR_COUNT];
+            for (float[] p : points) {
+                final double dx = p[0] - cx;
+                final double dz = p[2] - cz;
+                final float r = (float) Math.hypot(dx, dz);
+                final int s = sectorOf(dx, dz);
+                if (sectorPts[s] == null) {
+                    sectorPts[s] = new ArrayList<>();
+                }
+                sectorPts[s].add(p);
+                if (r > sectorMaxR[s]) {
+                    sectorMaxR[s] = r;
+                }
+            }
+
+            for (int s = 0; s < SECTOR_COUNT; s++) {
+                final ArrayList<float[]> list = sectorPts[s];
+                if (list == null || list.isEmpty()) {
+                    continue;
+                }
+                final float minOuterR = sectorMaxR[s] * 0.65f;
+                final ArrayList<float[]> outer = new ArrayList<>();
+                for (float[] p : list) {
+                    final float r = (float) Math.hypot(p[0] - cx, p[2] - cz);
+                    if (r >= minOuterR) {
+                        outer.add(p);
+                    }
+                }
+                if (outer.isEmpty()) {
+                    continue;
+                }
+                outer.sort((p1, p2) -> Float.compare(p1[1], p2[1]));
+                final float refBandY = hasPadRef
+                    ? (float) padRefY
+                    : outer.get(Math.min(outer.size() - 1, (int) Math.floor(outer.size() * 0.15)))[1];
+                int added = 0;
+                for (float[] p : outer) {
+                    if (Math.abs(p[1] - refBandY) <= 0.10f) {
+                        candidates.add(p);
+                        added++;
+                        if (added >= 12) {
+                            break;
+                        }
+                    }
+                }
             }
         }
 
-        for (int s = 0; s < SECTOR_COUNT; s++) {
-            final ArrayList<float[]> list = sectorPts[s];
-            if (list == null || list.isEmpty()) {
-                continue;
-            }
-            final float minOuterR = sectorMaxR[s] * 0.65f;
-            final ArrayList<float[]> outer = new ArrayList<>();
-            for (float[] p : list) {
-                final float r = (float) Math.hypot(p[0] - cx, p[2] - cz);
-                if (r >= minOuterR) {
-                    outer.add(p);
-                }
-            }
-            if (outer.isEmpty()) {
-                continue;
-            }
-            outer.sort((p1, p2) -> Float.compare(p1[1], p2[1]));
-            final int take = Math.max(1, Math.min(4, outer.size() / 6 + 1));
-            for (int k = 0; k < take; k++) {
-                candidates.add(outer.get(k));
-            }
+        if (hasPadRef && candidates.size() < 6) {
+            // Confined pile with explicit patio tap and sparse floor samples: lock horizontal plane at padReferenceY
+            return new double[] { 0.0, 0.0, padRefY, 0.015, MIN_SIGMA_GROUND_M };
         }
 
         if (candidates.size() < 3) {
-            float minY = Float.MAX_VALUE;
-            for (float[] p : points) {
-                if (p[1] < minY) minY = p[1];
-            }
-            return new double[] { 0.0, 0.0, minY == Float.MAX_VALUE ? 0.0 : minY, 0.05 };
+            final double fallbackY = hasPadRef ? padRefY : (!points.isEmpty() ? medianY(points) : 0.0);
+            return new double[] { 0.0, 0.0, fallbackY, 0.03, 0.025 };
         }
 
         // Deterministic RANSAC over candidate triplets
@@ -845,10 +1027,10 @@ public final class WalkRingToeSolver {
         double bestScore = -Double.MAX_VALUE;
         double bestA = 0.0;
         double bestB = 0.0;
-        double bestD = medianY(candidates);
+        double bestD = hasPadRef ? padRefY : medianY(candidates);
         final double maxSlopeTan = Math.tan(Math.toRadians(Math.min(14.0, walkRingSlopeDeg + MAX_GRAVITY_MISMATCH_DEG + 4.0)));
 
-        final int trials = Math.min(120, Math.max(20, n * 2));
+        final int trials = Math.min(120, Math.max(24, n * 2));
         long rng = 0x5DEECE66DL;
         for (int t = 0; t < trials; t++) {
             rng = (rng * 25214903917L + 11L) & ((1L << 48) - 1L);
@@ -860,10 +1042,7 @@ public final class WalkRingToeSolver {
             if (i0 == i1 || i1 == i2 || i0 == i2) {
                 continue;
             }
-            final float[] p0 = candidates.get(i0);
-            final float[] p1 = candidates.get(i1);
-            final float[] p2 = candidates.get(i2);
-            final double[] plane = fitPlane3Points(p0, p1, p2);
+            final double[] plane = fitPlane3Points(candidates.get(i0), candidates.get(i1), candidates.get(i2));
             if (plane == null) {
                 continue;
             }
@@ -877,18 +1056,21 @@ public final class WalkRingToeSolver {
 
             final double invNorm = 1.0 / Math.sqrt(1.0 + a * a + b * b);
             int inliers = 0;
-            int deepBelow = 0;
+            int outliers = 0;
             for (float[] c : candidates) {
                 final double err = (c[1] - (a * c[0] + b * c[2] + d)) * invNorm;
                 if (Math.abs(err) <= 0.06) {
                     inliers++;
-                } else if (err < -0.06) {
-                    deepBelow++;
+                } else {
+                    outliers++;
                 }
             }
             final double slopeDeg = Math.toDegrees(Math.atan(slopeTan));
             final double gravityPenalty = Math.max(0.0, Math.abs(slopeDeg - walkRingSlopeDeg) - 1.5) * 1.5;
-            final double score = inliers - deepBelow * 1.5 - gravityPenalty;
+            final double padPenalty = hasPadRef
+                ? Math.abs((a * cx + b * cz + d) - padRefY) * 25.0
+                : 0.0;
+            final double score = inliers - outliers * 0.25 - gravityPenalty - padPenalty;
             if (score > bestScore) {
                 bestScore = score;
                 bestA = a;
@@ -897,22 +1079,21 @@ public final class WalkRingToeSolver {
             }
         }
 
-        // Refine via OLS on inliers
+        // Collect inliers around RANSAC plane and refine with Huber IRLS (unbiased symmetric M-estimator)
         final double invBestNorm = 1.0 / Math.sqrt(1.0 + bestA * bestA + bestB * bestB);
         final List<float[]> inliers = new ArrayList<>();
         for (float[] c : candidates) {
             final double err = (c[1] - (bestA * c[0] + bestB * c[2] + bestD)) * invBestNorm;
-            if (Math.abs(err) <= 0.08) {
+            if (Math.abs(err) <= 0.10) {
                 inliers.add(c);
             }
         }
-        if (inliers.size() >= 3) {
-            final double[] ols = fitPlaneOLS(inliers);
-            if (ols != null) {
-                bestA = ols[0];
-                bestB = ols[1];
-                bestD = ols[2];
-            }
+        final List<float[]> fitList = inliers.size() >= 3 ? inliers : candidates;
+        final double[] huber = fitPlaneHuberIRLS(fitList, bestA, bestB, bestD, 0.035, 6);
+        if (huber != null) {
+            bestA = huber[0];
+            bestB = huber[1];
+            bestD = huber[2];
         }
 
         // Strict gravity regularization: clamp |slope - walkRingSlope| <= 3.5 deg
@@ -931,83 +1112,553 @@ public final class WalkRingToeSolver {
                     bestB *= scale;
                 }
             }
-            // Refit d at p15 of ground candidates
-            final List<float[]> refList = inliers.size() >= 3 ? inliers : candidates;
-            final double[] offsets = new double[refList.size()];
-            for (int i = 0; i < refList.size(); i++) {
-                final float[] p = refList.get(i);
+            // Refit d at unbiased p50 median of ground offsets (replaces legacy biased p15!)
+            final double[] offsets = new double[fitList.size()];
+            for (int i = 0; i < fitList.size(); i++) {
+                final float[] p = fitList.get(i);
                 offsets[i] = p[1] - (bestA * p[0] + bestB * p[2]);
             }
-            Arrays.sort(offsets);
-            bestD = offsets[Math.max(0, (int) Math.floor(offsets.length * 0.15))];
+            bestD = medianDouble(offsets, offsets.length);
         }
 
-        // Compute RMS on ground inliers
-        double sumSq = 0.0;
-        final List<float[]> rmsPts = !inliers.isEmpty() ? inliers : candidates;
+        // If operator explicitly tapped patio floor elevation (padReferenceY), anchor plane offset to padReferenceY
+        if (hasPadRef) {
+            bestD = padRefY - (bestA * cx + bestB * cz);
+        }
+
+        // Compute RMS and empirical ground noise sigmaGround = clamp(1.4826 * MAD, 0.012, 0.06)
+        final int m = fitList.size();
+        final double[] residuals = new double[m];
         final double norm = 1.0 / Math.sqrt(1.0 + bestA * bestA + bestB * bestB);
-        for (float[] p : rmsPts) {
+        double sumSq = 0.0;
+        for (int i = 0; i < m; i++) {
+            final float[] p = fitList.get(i);
             final double err = (p[1] - (bestA * p[0] + bestB * p[2] + bestD)) * norm;
+            residuals[i] = err;
             sumSq += err * err;
         }
-        final double rms = Math.sqrt(sumSq / Math.max(1, rmsPts.size()));
-        return new double[] { bestA, bestB, bestD, rms };
+        final double rms = Math.sqrt(sumSq / Math.max(1, m));
+        final double medRes = medianDouble(residuals, m);
+        final double[] absDev = new double[m];
+        for (int i = 0; i < m; i++) {
+            absDev[i] = Math.abs(residuals[i] - medRes);
+        }
+        final double mad = medianDouble(absDev, m);
+        final double sigmaGround = clampDouble(1.4826 * mad, MIN_SIGMA_GROUND_M, MAX_SIGMA_GROUND_M);
+
+        return new double[] { bestA, bestB, bestD, rms, sigmaGround };
     }
 
-    private static byte[] buildFootprintMask(final byte[] observedMask, final int cols, final int rows) {
-        final byte[] mask = Arrays.copyOf(observedMask, cols * rows);
+    /**
+     * Iteratively Reweighted Least Squares (Huber M-estimator) for plane y = a*x + b*z + d.
+     */
+    private static double[] fitPlaneHuberIRLS(
+        final List<float[]> pts,
+        final double initA,
+        final double initB,
+        final double initD,
+        final double huberDelta,
+        final int iterations
+    ) {
+        final int n = pts.size();
+        if (n < 3) {
+            return null;
+        }
+        double a = initA;
+        double b = initB;
+        double d = initD;
+        for (int iter = 0; iter < iterations; iter++) {
+            double sXX = 0, sXZ = 0, sX = 0, sZZ = 0, sZ = 0, sW = 0, sXY = 0, sZY = 0, sY = 0;
+            for (int i = 0; i < n; i++) {
+                final float[] p = pts.get(i);
+                final double x = p[0];
+                final double y = p[1];
+                final double z = p[2];
+                final double r = Math.abs(y - (a * x + b * z + d));
+                final double w = r <= huberDelta ? 1.0 : (huberDelta / Math.max(1e-6, r));
+                sXX += w * x * x;
+                sXZ += w * x * z;
+                sX += w * x;
+                sZZ += w * z * z;
+                sZ += w * z;
+                sW += w;
+                sXY += w * x * y;
+                sZY += w * z * y;
+                sY += w * y;
+            }
+            final double[] sol = solve3x3(
+                new double[][] {
+                    { sXX, sXZ, sX },
+                    { sXZ, sZZ, sZ },
+                    { sX, sZ, sW }
+                },
+                new double[] { sXY, sZY, sY }
+            );
+            if (sol == null) {
+                break;
+            }
+            a = sol[0];
+            b = sol[1];
+            d = sol[2];
+        }
+        return new double[] { a, b, d };
+    }
 
-        // 1. Horizontal scanline fill between leftmost and rightmost observed cell per row
+    /**
+     * Dual-hysteresis toe segmentation + 8-connected component selection + 3D Marker-Controlled
+     * Priority-Flood Watershed on -h(x, z) + bounded geodesic toe expansion.
+     */
+    private static byte[] segmentTargetObjectMask(
+        final float[] rawHeights,
+        final byte[] rawObserved,
+        final boolean[] inAllowedRegion,
+        final float originX,
+        final float originZ,
+        final float cellSizeM,
+        final int cols,
+        final int rows,
+        final float hSeed,
+        final float hToe,
+        final float sigmaGround,
+        final TargetVolumeConstraint targetConstraint
+    ) {
+        final int n = cols * rows;
+        final boolean hasTarget = targetConstraint != null && targetConstraint.active;
+
+        // 1. Seed mask: observed cells inside allowed region with h >= hSeed
+        final byte[] seedMask = new byte[n];
+        int seedCount = 0;
+        for (int i = 0; i < n; i++) {
+            if (inAllowedRegion[i] && rawObserved[i] != 0 && rawHeights[i] >= hSeed) {
+                seedMask[i] = 1;
+                seedCount++;
+            }
+        }
+        if (seedCount == 0) {
+            return new byte[n];
+        }
+
+        // 2. 8-connected component labeling on seedMask
+        final int[] compId = new int[n];
+        final int[] queue = new int[n];
+        final List<Integer> compSizes = new ArrayList<>();
+        final List<Double> compVols = new ArrayList<>();
+        final List<Double> compMinAnchorDistSq = new ArrayList<>();
+        int nextComp = 0;
+
+        for (int i = 0; i < n; i++) {
+            if (seedMask[i] == 0 || compId[i] != 0) {
+                continue;
+            }
+            nextComp++;
+            int head = 0;
+            int tail = 0;
+            compId[i] = nextComp;
+            queue[tail++] = i;
+            int sz = 0;
+            double vol = 0.0;
+            double bestDistSq = Double.MAX_VALUE;
+
+            while (head < tail) {
+                final int cur = queue[head++];
+                sz++;
+                vol += rawHeights[cur];
+                final int cr = cur / cols;
+                final int cc = cur % cols;
+                if (hasTarget) {
+                    final double wx = originX + (cc + 0.5) * cellSizeM;
+                    final double wz = originZ + (cr + 0.5) * cellSizeM;
+                    final double dSq =
+                        (wx - targetConstraint.anchorX) * (wx - targetConstraint.anchorX) +
+                        (wz - targetConstraint.anchorZ) * (wz - targetConstraint.anchorZ);
+                    if (dSq < bestDistSq) {
+                        bestDistSq = dSq;
+                    }
+                }
+                for (int dr = -1; dr <= 1; dr++) {
+                    final int nr = cr + dr;
+                    if (nr < 0 || nr >= rows) continue;
+                    for (int dc = -1; dc <= 1; dc++) {
+                        if (dr == 0 && dc == 0) continue;
+                        final int nc = cc + dc;
+                        if (nc < 0 || nc >= cols) continue;
+                        final int ni = nr * cols + nc;
+                        if (seedMask[ni] != 0 && compId[ni] == 0) {
+                            compId[ni] = nextComp;
+                            queue[tail++] = ni;
+                        }
+                    }
+                }
+            }
+            compSizes.add(sz);
+            compVols.add(vol);
+            compMinAnchorDistSq.add(bestDistSq);
+        }
+
+        // Pick target component: closest to Anchor if active (preferring components >= 2 cells), else dominant volume
+        int chosenComp = 1;
+        if (hasTarget) {
+            double bestDistSq = Double.MAX_VALUE;
+            int bestAnyComp = 1;
+            double bestAnyDistSq = Double.MAX_VALUE;
+            for (int c = 1; c <= nextComp; c++) {
+                final double dSq = compMinAnchorDistSq.get(c - 1);
+                if (dSq < bestAnyDistSq) {
+                    bestAnyDistSq = dSq;
+                    bestAnyComp = c;
+                }
+                if (compSizes.get(c - 1) >= 2 && dSq < bestDistSq) {
+                    bestDistSq = dSq;
+                    chosenComp = c;
+                }
+            }
+            if (bestDistSq == Double.MAX_VALUE) {
+                chosenComp = bestAnyComp;
+            }
+        } else {
+            double bestVol = -1.0;
+            for (int c = 1; c <= nextComp; c++) {
+                final double v = compVols.get(c - 1);
+                if (v > bestVol) {
+                    bestVol = v;
+                    chosenComp = c;
+                }
+            }
+        }
+
+        // 3. Build 3x3 lightly smoothed height field for marker-controlled 3D Watershed
+        final float[] smoothH = new float[n];
         for (int r = 0; r < rows; r++) {
-            int first = -1;
-            int last = -1;
             for (int c = 0; c < cols; c++) {
-                if (observedMask[r * cols + c] != 0) {
-                    if (first < 0) first = c;
-                    last = c;
+                final int idx = r * cols + c;
+                if (!inAllowedRegion[idx] || rawObserved[idx] == 0) {
+                    continue;
                 }
+                float sum = rawHeights[idx] * 2.0f;
+                float wSum = 2.0f;
+                for (int dr = -1; dr <= 1; dr++) {
+                    final int nr = r + dr;
+                    if (nr < 0 || nr >= rows) continue;
+                    for (int dc = -1; dc <= 1; dc++) {
+                        if (dr == 0 && dc == 0) continue;
+                        final int nc = c + dc;
+                        if (nc < 0 || nc >= cols) continue;
+                        final int ni = nr * cols + nc;
+                        if (inAllowedRegion[ni] && rawObserved[ni] != 0) {
+                            sum += rawHeights[ni];
+                            wSum += 1.0f;
+                        }
+                    }
+                }
+                smoothH[idx] = sum / wSum;
             }
-            if (first >= 0 && last > first) {
-                for (int c = first; c <= last; c++) {
-                    mask[r * cols + c] = 1;
+        }
+
+        // 4. Marker-Controlled Priority-Flood Watershed on -h(x, z) when a real competitor peak exists
+        final int[] watershedLabel = runMarkerControlledWatershed(
+            rawHeights,
+            smoothH,
+            rawObserved,
+            inAllowedRegion,
+            compId,
+            chosenComp,
+            originX,
+            originZ,
+            cellSizeM,
+            cols,
+            rows,
+            hToe,
+            sigmaGround,
+            targetConstraint
+        );
+
+        // 5. Core mask = chosen seed component (intersected with watershed target label 1 if watershed ran)
+        final byte[] objectMask = new byte[n];
+        final int[] distCells = new int[n];
+        Arrays.fill(distCells, Integer.MAX_VALUE);
+        int qHead = 0;
+        int qTail = 0;
+        int coreCount = 0;
+
+        for (int i = 0; i < n; i++) {
+            if (compId[i] == chosenComp && (watershedLabel == null || watershedLabel[i] == 1)) {
+                objectMask[i] = 1;
+                distCells[i] = 0;
+                queue[qTail++] = i;
+                coreCount++;
+            }
+        }
+        if (coreCount == 0) {
+            // Fallback: keep chosenComp without watershed cut if marker missed
+            for (int i = 0; i < n; i++) {
+                if (compId[i] == chosenComp) {
+                    objectMask[i] = 1;
+                    distCells[i] = 0;
+                    queue[qTail++] = i;
+                    coreCount++;
                 }
             }
         }
 
-        // 2. Vertical scanline fill intersected with morphological hull to close vertical concavities
-        final byte[] vMask = Arrays.copyOf(observedMask, cols * rows);
-        for (int c = 0; c < cols; c++) {
-            int first = -1;
-            int last = -1;
-            for (int r = 0; r < rows; r++) {
-                if (observedMask[r * cols + c] != 0) {
-                    if (first < 0) first = r;
-                    last = r;
-                }
+        // 6. Bounded geodesic expansion from core down to hToe along contiguous border
+        //    maxExpand <= max(2 cells, ceil(0.25 * rCore / cellSizeM))
+        final double rCoreM = Math.sqrt((coreCount * (double) cellSizeM * (double) cellSizeM) / Math.PI);
+        final int maxExpandCells = Math.max(2, (int) Math.ceil((0.25 * rCoreM) / cellSizeM));
+
+        while (qHead < qTail) {
+            final int cur = queue[qHead++];
+            final int curDist = distCells[cur];
+            if (curDist >= maxExpandCells) {
+                continue;
             }
-            if (first >= 0 && last > first) {
-                for (int r = first; r <= last; r++) {
-                    vMask[r * cols + c] = 1;
+            final int cr = cur / cols;
+            final int cc = cur % cols;
+            for (int dr = -1; dr <= 1; dr++) {
+                final int nr = cr + dr;
+                if (nr < 0 || nr >= rows) continue;
+                for (int dc = -1; dc <= 1; dc++) {
+                    if (dr == 0 && dc == 0) continue;
+                    final int nc = cc + dc;
+                    if (nc < 0 || nc >= cols) continue;
+                    final int ni = nr * cols + nc;
+                    if (
+                        objectMask[ni] == 0 &&
+                        inAllowedRegion[ni] &&
+                        rawObserved[ni] != 0 &&
+                        rawHeights[ni] >= hToe &&
+                        (watershedLabel == null || watershedLabel[ni] == 1)
+                    ) {
+                        objectMask[ni] = 1;
+                        distCells[ni] = curDist + 1;
+                        queue[qTail++] = ni;
+                    }
                 }
             }
         }
 
-        // Intersection of H-scanline and V-scanline closes interior holes without inflating exterior corners
-        for (int i = 0; i < mask.length; i++) {
-            if (observedMask[i] != 0 || (mask[i] != 0 && vMask[i] != 0)) {
-                mask[i] = 1;
-            } else {
-                mask[i] = 0;
+        return objectMask;
+    }
+
+    /**
+     * Detects target peak vs genuine competitor peaks (>= max(0.20, 0.25 * hTarget) separated by a real
+     * valley/saddle) and runs Priority-Flood Watershed on -h(x, z) to cut cleanly along the valley line.
+     * Returns label array (1 = target, >= 2 = competitor) or null if no competitor peak exists.
+     */
+    private static int[] runMarkerControlledWatershed(
+        final float[] rawHeights,
+        final float[] smoothH,
+        final byte[] rawObserved,
+        final boolean[] inAllowedRegion,
+        final int[] compId,
+        final int chosenComp,
+        final float originX,
+        final float originZ,
+        final float cellSizeM,
+        final int cols,
+        final int rows,
+        final float hToe,
+        final float sigmaGround,
+        final TargetVolumeConstraint targetConstraint
+    ) {
+        final int n = cols * rows;
+        final boolean hasTarget = targetConstraint != null && targetConstraint.active;
+        final int peakRadiusCells = Math.max(2, (int) Math.round(0.30f / cellSizeM));
+
+        // Candidate peaks: local maxima within peakRadiusCells on smoothH inside allowed region
+        final List<Integer> localPeaks = new ArrayList<>();
+        for (int r = 1; r < rows - 1; r++) {
+            for (int c = 1; c < cols - 1; c++) {
+                final int idx = r * cols + c;
+                if (!inAllowedRegion[idx] || rawObserved[idx] == 0 || smoothH[idx] < Math.max(0.15f, hToe)) {
+                    continue;
+                }
+                final float val = smoothH[idx];
+                boolean isMax = true;
+                for (int dr = -peakRadiusCells; dr <= peakRadiusCells && isMax; dr++) {
+                    final int nr = r + dr;
+                    if (nr < 0 || nr >= rows) continue;
+                    for (int dc = -peakRadiusCells; dc <= peakRadiusCells; dc++) {
+                        if (dr == 0 && dc == 0) continue;
+                        final int nc = c + dc;
+                        if (nc < 0 || nc >= cols) continue;
+                        final int ni = nr * cols + nc;
+                        if (smoothH[ni] > val || (smoothH[ni] == val && ni < idx)) {
+                            isMax = false;
+                            break;
+                        }
+                    }
+                }
+                if (isMax) {
+                    localPeaks.add(idx);
+                }
+            }
+        }
+        if (localPeaks.size() < 2) {
+            return null;
+        }
+
+        // Select target peak: closest to Anchor (or steepest ascent from Anchor), else highest peak in chosenComp
+        int targetPeak = -1;
+        if (hasTarget) {
+            final int anchorCol = Math.max(0, Math.min(cols - 1, (int) Math.floor((targetConstraint.anchorX - originX) / cellSizeM)));
+            final int anchorRow = Math.max(0, Math.min(rows - 1, (int) Math.floor((targetConstraint.anchorZ - originZ) / cellSizeM)));
+            // Follow steepest ascent on smoothH from anchor neighborhood to find the exact peak owning Anchor
+            int cur = anchorRow * cols + anchorCol;
+            if (smoothH[cur] < hToe) {
+                // Snap to closest seed cell in chosenComp
+                double bestD = Double.MAX_VALUE;
+                for (int i = 0; i < n; i++) {
+                    if (compId[i] != chosenComp) continue;
+                    final double d = Math.hypot((i % cols) - anchorCol, (i / cols) - anchorRow);
+                    if (d < bestD) {
+                        bestD = d;
+                        cur = i;
+                    }
+                }
+            }
+            for (int step = 0; step < Math.max(cols, rows); step++) {
+                final int cr = cur / cols;
+                final int cc = cur % cols;
+                int bestNb = cur;
+                float bestVal = smoothH[cur];
+                for (int dr = -1; dr <= 1; dr++) {
+                    final int nr = cr + dr;
+                    if (nr < 0 || nr >= rows) continue;
+                    for (int dc = -1; dc <= 1; dc++) {
+                        final int nc = cc + dc;
+                        if (nc < 0 || nc >= cols) continue;
+                        final int ni = nr * cols + nc;
+                        if (smoothH[ni] > bestVal) {
+                            bestVal = smoothH[ni];
+                            bestNb = ni;
+                        }
+                    }
+                }
+                if (bestNb == cur) break;
+                cur = bestNb;
+            }
+            // Match climbed summit to nearest local peak
+            double bestPeakDist = Double.MAX_VALUE;
+            final int cr = cur / cols;
+            final int cc = cur % cols;
+            for (int pIdx : localPeaks) {
+                final double d = Math.hypot((pIdx % cols) - cc, (pIdx / cols) - cr);
+                if (d < bestPeakDist) {
+                    bestPeakDist = d;
+                    targetPeak = pIdx;
+                }
+            }
+        } else {
+            float bestH = -1.0f;
+            for (int pIdx : localPeaks) {
+                if (compId[pIdx] == chosenComp && smoothH[pIdx] > bestH) {
+                    bestH = smoothH[pIdx];
+                    targetPeak = pIdx;
+                }
+            }
+        }
+        if (targetPeak < 0) {
+            return null;
+        }
+
+        final float hTarget = smoothH[targetPeak];
+        final float minCompH = Math.max(0.20f, 0.25f * hTarget);
+        final float minSepM = Math.max(3.0f * cellSizeM, 0.45f);
+        final float minValleyDrop = Math.max(0.08f, 2.5f * sigmaGround);
+
+        // Filter genuine competitor peaks (sufficient height, separation, and valley dip along connecting line)
+        final List<Integer> competitors = new ArrayList<>();
+        final int tr = targetPeak / cols;
+        final int tc = targetPeak % cols;
+        for (int pIdx : localPeaks) {
+            if (pIdx == targetPeak || smoothH[pIdx] < minCompH) {
+                continue;
+            }
+            final int pr = pIdx / cols;
+            final int pc = pIdx % cols;
+            final float distM = (float) Math.hypot((pc - tc) * cellSizeM, (pr - tr) * cellSizeM);
+            if (distM < minSepM) {
+                continue;
+            }
+            // Check minimum height along the straight segment between targetPeak and competitor peak
+            final int steps = Math.max(4, (int) Math.ceil(Math.hypot(pc - tc, pr - tr) * 2.0));
+            float minLineH = Float.MAX_VALUE;
+            for (int s = 1; s < steps; s++) {
+                final float t = s / (float) steps;
+                final int sr = Math.max(0, Math.min(rows - 1, Math.round(tr + t * (pr - tr))));
+                final int sc = Math.max(0, Math.min(cols - 1, Math.round(tc + t * (pc - tc))));
+                final float sh = smoothH[sr * cols + sc];
+                if (sh < minLineH) {
+                    minLineH = sh;
+                }
+            }
+            final float lowerPeak = Math.min(hTarget, smoothH[pIdx]);
+            if ((lowerPeak - minLineH) >= minValleyDrop) {
+                competitors.add(pIdx);
+            }
+        }
+        if (competitors.isEmpty()) {
+            return null;
+        }
+
+        // Priority-Flood Watershed on -h(x, z): max-heap ordered by descending smoothH
+        final int[] labels = new int[n];
+        final PriorityQueue<Integer> pq = new PriorityQueue<>(
+            Math.max(16, n / 4),
+            (a, b) -> Float.compare(smoothH[b], smoothH[a])
+        );
+        labels[targetPeak] = 1;
+        pq.offer(targetPeak);
+        int compLabel = 2;
+        for (int pIdx : competitors) {
+            if (labels[pIdx] == 0) {
+                labels[pIdx] = compLabel++;
+                pq.offer(pIdx);
             }
         }
 
-        // Close any remaining 1-cell interior gaps (flood-fill exterior from border)
-        final byte[] exterior = new byte[cols * rows];
-        final int[] queue = new int[cols * rows];
+        while (!pq.isEmpty()) {
+            final int cur = pq.poll();
+            final int lbl = labels[cur];
+            final int cr = cur / cols;
+            final int cc = cur % cols;
+            for (int dr = -1; dr <= 1; dr++) {
+                final int nr = cr + dr;
+                if (nr < 0 || nr >= rows) continue;
+                for (int dc = -1; dc <= 1; dc++) {
+                    if (dr == 0 && dc == 0) continue;
+                    final int nc = cc + dc;
+                    if (nc < 0 || nc >= cols) continue;
+                    final int ni = nr * cols + nc;
+                    if (
+                        labels[ni] == 0 &&
+                        inAllowedRegion[ni] &&
+                        rawObserved[ni] != 0 &&
+                        (rawHeights[ni] >= hToe || smoothH[ni] >= hToe * 0.5f)
+                    ) {
+                        labels[ni] = lbl;
+                        pq.offer(ni);
+                    }
+                }
+            }
+        }
+        return labels;
+    }
+
+    /**
+     * Fills strictly enclosed interior holes via 4-connected exterior flood-fill from grid borders.
+     * Eliminates global H/V scanline bridges that previously absorbed detached ground cells.
+     */
+    private static byte[] fillEnclosedInteriorHolesOnly(final byte[] objectMask, final int cols, final int rows) {
+        final int n = cols * rows;
+        final byte[] mask = Arrays.copyOf(objectMask, n);
+        final byte[] exterior = new byte[n];
+        final int[] queue = new int[n];
         int head = 0;
         int tail = 0;
+
         for (int c = 0; c < cols; c++) {
-            if (mask[c] == 0) {
+            if (mask[c] == 0 && exterior[c] == 0) {
                 exterior[c] = 1;
                 queue[tail++] = c;
             }
@@ -1029,6 +1680,7 @@ public final class WalkRingToeSolver {
                 queue[tail++] = right;
             }
         }
+
         while (head < tail) {
             final int cur = queue[head++];
             final int cr = cur / cols;
@@ -1050,7 +1702,8 @@ public final class WalkRingToeSolver {
                 if (mask[ni] == 0 && exterior[ni] == 0) { exterior[ni] = 1; queue[tail++] = ni; }
             }
         }
-        for (int i = 0; i < mask.length; i++) {
+
+        for (int i = 0; i < n; i++) {
             if (exterior[i] == 0) {
                 mask[i] = 1;
             }
@@ -1070,7 +1723,6 @@ public final class WalkRingToeSolver {
         final int rows
     ) {
         final int n = cols * rows;
-        // Collect observed indices for fast IDW fallback seeding
         final int[] obsIdx = new int[n];
         int obsCount = 0;
         for (int i = 0; i < n; i++) {
@@ -1105,7 +1757,6 @@ public final class WalkRingToeSolver {
                 if (sumW > 0.0) {
                     heights[idx] = (float) (sumWH / sumW);
                 } else {
-                    // Nearest observed cell
                     int bestDistSq = Integer.MAX_VALUE;
                     float bestH = 0.05f;
                     for (int k = 0; k < obsCount; k++) {
@@ -1220,53 +1871,280 @@ public final class WalkRingToeSolver {
         return new double[] { Math.max(spanU, spanV), Math.min(spanU, spanV) };
     }
 
-    private static double computeObservedSlopeAngleDeg(
+    /**
+     * Strict object-flank slope estimator relative to +Y gravity (ceiling 89.5 deg, discards plateaus < 12 deg):
+     * - Primary: 16-sector radial profile h(d_edge) Theil-Sen median(atan2(|dh|, |dd_edge|)) on observed
+     *   flank cells h in [max(0.18*H, hToe + 2*sigmaGround), 0.82*H] (plus vertical rim cliff cells bordering exterior).
+     * - Secondary / Gravity-Corrected DEM Gradient: dh/dx + planeA, dh/dz + planeB including unilateral border
+     *   differences at the objectMask boundary.
+     */
+    private static double computeStrictObjectSlopeAngleDeg(
         final float[] heights,
         final byte[] observedMask,
+        final byte[] objectMask,
+        final float originX,
+        final float originZ,
         final int cols,
         final int rows,
         final float cellSizeM,
-        final float dimH
+        final float dimH,
+        final float hToe,
+        final float sigmaGround,
+        final double planeA,
+        final double planeB,
+        final float objCx,
+        final float objCz
     ) {
-        if (dimH < 0.15f) {
+        if (dimH < 0.12f) {
             return 0.0;
         }
-        final float minH = dimH * 0.15f;
-        final float maxH = dimH * 0.85f;
-        final float[] slopes = new float[cols * rows];
-        int count = 0;
+        final int n = cols * rows;
+        final float hLo = Math.max(0.18f * dimH, hToe + 2.0f * sigmaGround);
+        final float hHi = 0.82f * dimH;
 
+        // 1. Exact Euclidean distance transform d_edge (meters) from every object cell to nearest exterior cell
+        final float[] dEdgeM = computeDistanceToExteriorM(objectMask, cols, rows, cellSizeM);
+
+        // Identify rim cells directly bordering exterior (captures vertical structures/cylinders where h jumps to H)
+        final boolean[] isRimCell = new boolean[n];
+        int interiorFlankCount = 0;
         for (int r = 1; r < rows - 1; r++) {
             for (int c = 1; c < cols - 1; c++) {
                 final int idx = r * cols + c;
-                if (observedMask[idx] == 0) {
+                if (objectMask[idx] == 0 || observedMask[idx] == 0) {
                     continue;
                 }
-                final float h = heights[idx];
-                if (h < minH || h > maxH) {
-                    continue;
-                }
-                if (
-                    observedMask[idx - 1] == 0 ||
-                    observedMask[idx + 1] == 0 ||
-                    observedMask[idx - cols] == 0 ||
-                    observedMask[idx + cols] == 0
-                ) {
-                    continue;
-                }
-                final float dhdx = (heights[idx + 1] - heights[idx - 1]) / (2.0f * cellSizeM);
-                final float dhdz = (heights[idx + cols] - heights[idx - cols]) / (2.0f * cellSizeM);
-                final float grad = (float) Math.hypot(dhdx, dhdz);
-                if (grad > 0.15f && grad < 3.5f) {
-                    slopes[count++] = (float) Math.toDegrees(Math.atan(grad));
+                final boolean bordersExt =
+                    objectMask[idx - 1] == 0 ||
+                    objectMask[idx + 1] == 0 ||
+                    objectMask[idx - cols] == 0 ||
+                    objectMask[idx + cols] == 0;
+                isRimCell[idx] = bordersExt;
+                if (heights[idx] >= hLo && heights[idx] <= hHi) {
+                    interiorFlankCount++;
                 }
             }
         }
-        if (count == 0) {
-            return 0.0;
+
+        // 2. Primary: 16-sector radial profile h(d_edge) Theil-Sen
+        @SuppressWarnings("unchecked")
+        final ArrayList<float[]>[] sectorSamples = new ArrayList[SECTOR_COUNT];
+        for (int r = 1; r < rows - 1; r++) {
+            final float wz = originZ + (r + 0.5f) * cellSizeM;
+            for (int c = 1; c < cols - 1; c++) {
+                final int idx = r * cols + c;
+                if (objectMask[idx] == 0 || observedMask[idx] == 0) {
+                    continue;
+                }
+                final float h = heights[idx];
+                final boolean inBelt = (h >= hLo && h <= hHi);
+                final boolean isVerticalCliffRim = isRimCell[idx] && h >= hLo;
+                if (!inBelt && !isVerticalCliffRim) {
+                    continue;
+                }
+                final int s = sectorOf(originX + (c + 0.5f) * cellSizeM - objCx, wz - objCz);
+                if (sectorSamples[s] == null) {
+                    sectorSamples[s] = new ArrayList<>(16);
+                }
+                sectorSamples[s].add(new float[] { dEdgeM[idx], h });
+            }
         }
-        Arrays.sort(slopes, 0, count);
-        return slopes[count / 2];
+
+        final double[] sectorTheilSenDeg = new double[SECTOR_COUNT];
+        int validSectors = 0;
+        for (int s = 0; s < SECTOR_COUNT; s++) {
+            final ArrayList<float[]> list = sectorSamples[s];
+            if (list == null || list.isEmpty()) {
+                continue;
+            }
+            // Radial inward unit direction for sector s -> gravity plane slope component along radius
+            final double secAng = Math.toRadians((s + 0.5) * (360.0 / SECTOR_COUNT));
+            final double radialPlaneSlope = -(planeA * Math.cos(secAng) + planeB * Math.sin(secAng));
+
+            final ArrayList<Double> pairSlopes = new ArrayList<>(64);
+            final int m = list.size();
+            // Include pairwise slopes within flank belt
+            final int maxPairs = 120;
+            final int step = m > 18 ? Math.max(1, m / 16) : 1;
+            for (int i = 0; i < m && pairSlopes.size() < maxPairs; i += step) {
+                final float di = list.get(i)[0];
+                final float hi = list.get(i)[1];
+                // Anchor to exterior toe (d_edge = 0, h = 0) when cell is a rim cliff or few interior samples exist
+                if (interiorFlankCount < 10 || di <= cellSizeM * 1.6f) {
+                    final double dEff = Math.max(0.5 * cellSizeM, di);
+                    final double slopeVal = Math.abs((hi / dEff) + radialPlaneSlope);
+                    final double deg = Math.min(MAX_SLOPE_CEILING_DEG, Math.toDegrees(Math.atan(slopeVal)));
+                    if (deg >= MIN_FLANK_SLOPE_DEG) {
+                        pairSlopes.add(deg);
+                    }
+                }
+                for (int j = i + step; j < m && pairSlopes.size() < maxPairs; j += step) {
+                    final double dd = list.get(j)[0] - di;
+                    if (Math.abs(dd) < cellSizeM * 0.5) {
+                        continue;
+                    }
+                    final double dh = list.get(j)[1] - hi;
+                    final double deg = Math.min(
+                        MAX_SLOPE_CEILING_DEG,
+                        Math.toDegrees(Math.atan(Math.abs((dh / dd) + radialPlaneSlope)))
+                    );
+                    if (deg >= MIN_FLANK_SLOPE_DEG) {
+                        pairSlopes.add(deg);
+                    }
+                }
+            }
+            if (!pairSlopes.isEmpty()) {
+                final double[] arr = new double[pairSlopes.size()];
+                for (int k = 0; k < arr.length; k++) {
+                    arr[k] = pairSlopes.get(k);
+                }
+                sectorTheilSenDeg[validSectors++] = medianDouble(arr, arr.length);
+            }
+        }
+
+        final double radialSlopeDeg = validSectors >= 4
+            ? medianDouble(sectorTheilSenDeg, validSectors)
+            : -1.0;
+
+        // 3. Secondary: Gravity-corrected DEM gradient (+planeA, +planeB) with unilateral border differences
+        final double[] demSlopes = new double[n];
+        int demCount = 0;
+        for (int r = 1; r < rows - 1; r++) {
+            for (int c = 1; c < cols - 1; c++) {
+                final int idx = r * cols + c;
+                if (objectMask[idx] == 0 || observedMask[idx] == 0) {
+                    continue;
+                }
+                final float h = heights[idx];
+                final boolean inBelt = (h >= hLo && h <= hHi);
+                final boolean isVerticalCliffRim = isRimCell[idx] && h >= hLo;
+                if (!inBelt && !isVerticalCliffRim) {
+                    continue;
+                }
+
+                // Compute dh/dx using central diff when both inside, else unilateral diff (including exterior h=0)
+                final double dhdx;
+                final boolean hasLeft = objectMask[idx - 1] != 0 && observedMask[idx - 1] != 0;
+                final boolean hasRight = objectMask[idx + 1] != 0 && observedMask[idx + 1] != 0;
+                if (hasLeft && hasRight) {
+                    dhdx = (heights[idx + 1] - heights[idx - 1]) / (2.0 * cellSizeM);
+                } else if (objectMask[idx - 1] == 0 && !hasRight) {
+                    dhdx = h / cellSizeM;
+                } else if (objectMask[idx + 1] == 0 && !hasLeft) {
+                    dhdx = -h / cellSizeM;
+                } else if (objectMask[idx - 1] == 0) {
+                    final double cliffX = h / cellSizeM;
+                    final double inX = (heights[idx + 1] - h) / cellSizeM;
+                    dhdx = Math.abs(cliffX) >= Math.abs(inX) ? cliffX : inX;
+                } else if (objectMask[idx + 1] == 0) {
+                    final double cliffX = -h / cellSizeM;
+                    final double inX = (h - heights[idx - 1]) / cellSizeM;
+                    dhdx = Math.abs(cliffX) >= Math.abs(inX) ? cliffX : inX;
+                } else if (hasRight) {
+                    dhdx = (heights[idx + 1] - h) / cellSizeM;
+                } else if (hasLeft) {
+                    dhdx = (h - heights[idx - 1]) / cellSizeM;
+                } else {
+                    dhdx = 0.0;
+                }
+
+                final double dhdz;
+                final boolean hasUp = objectMask[idx - cols] != 0 && observedMask[idx - cols] != 0;
+                final boolean hasDn = objectMask[idx + cols] != 0 && observedMask[idx + cols] != 0;
+                if (hasUp && hasDn) {
+                    dhdz = (heights[idx + cols] - heights[idx - cols]) / (2.0 * cellSizeM);
+                } else if (objectMask[idx - cols] == 0 && !hasDn) {
+                    dhdz = h / cellSizeM;
+                } else if (objectMask[idx + cols] == 0 && !hasUp) {
+                    dhdz = -h / cellSizeM;
+                } else if (objectMask[idx - cols] == 0) {
+                    final double cliffZ = h / cellSizeM;
+                    final double inZ = (heights[idx + cols] - h) / cellSizeM;
+                    dhdz = Math.abs(cliffZ) >= Math.abs(inZ) ? cliffZ : inZ;
+                } else if (objectMask[idx + cols] == 0) {
+                    final double cliffZ = -h / cellSizeM;
+                    final double inZ = (h - heights[idx - cols]) / cellSizeM;
+                    dhdz = Math.abs(cliffZ) >= Math.abs(inZ) ? cliffZ : inZ;
+                } else if (hasDn) {
+                    dhdz = (heights[idx + cols] - h) / cellSizeM;
+                } else if (hasUp) {
+                    dhdz = (h - heights[idx - cols]) / cellSizeM;
+                } else {
+                    dhdz = 0.0;
+                }
+
+                // True world gradient relative to +Y gravity: add ground plane slopes +planeA, +planeB
+                final double grad = Math.hypot(dhdx + planeA, dhdz + planeB);
+                final double deg = Math.min(MAX_SLOPE_CEILING_DEG, Math.toDegrees(Math.atan(grad)));
+                if (deg >= MIN_FLANK_SLOPE_DEG) {
+                    demSlopes[demCount++] = deg;
+                }
+            }
+        }
+        final double demSlopeDeg = demCount > 0 ? medianDouble(demSlopes, demCount) : -1.0;
+
+        if (radialSlopeDeg > 0.0 && demSlopeDeg > 0.0) {
+            // Primary radial Theil-Sen; if object is a sheer vertical rim with few interior flank cells, honor steeper rim
+            if (interiorFlankCount < 10) {
+                return Math.min(MAX_SLOPE_CEILING_DEG, Math.max(radialSlopeDeg, demSlopeDeg));
+            }
+            return Math.min(MAX_SLOPE_CEILING_DEG, radialSlopeDeg);
+        }
+        if (radialSlopeDeg > 0.0) {
+            return Math.min(MAX_SLOPE_CEILING_DEG, radialSlopeDeg);
+        }
+        if (demSlopeDeg > 0.0) {
+            return Math.min(MAX_SLOPE_CEILING_DEG, demSlopeDeg);
+        }
+        return 0.0;
+    }
+
+    /**
+     * Exact Euclidean distance (meters) from each interior object cell to the nearest exterior cell
+     * using two-pass Chamfer-3-4 / exact boundary-seeded transform (fast on <= 64x64 grid).
+     */
+    private static float[] computeDistanceToExteriorM(
+        final byte[] objectMask,
+        final int cols,
+        final int rows,
+        final float cellSizeM
+    ) {
+        final int n = cols * rows;
+        final float[] dist = new float[n];
+        final float inf = 1e6f;
+        for (int i = 0; i < n; i++) {
+            dist[i] = objectMask[i] == 0 ? 0.0f : inf;
+        }
+        final float dOrtho = cellSizeM;
+        final float dDiag = cellSizeM * 1.4142135f;
+
+        // Forward pass
+        for (int r = 0; r < rows; r++) {
+            for (int c = 0; c < cols; c++) {
+                final int idx = r * cols + c;
+                float best = dist[idx];
+                if (best == 0.0f) continue;
+                if (r > 0) best = Math.min(best, dist[idx - cols] + dOrtho);
+                if (c > 0) best = Math.min(best, dist[idx - 1] + dOrtho);
+                if (r > 0 && c > 0) best = Math.min(best, dist[idx - cols - 1] + dDiag);
+                if (r > 0 && c + 1 < cols) best = Math.min(best, dist[idx - cols + 1] + dDiag);
+                dist[idx] = best;
+            }
+        }
+        // Backward pass
+        for (int r = rows - 1; r >= 0; r--) {
+            for (int c = cols - 1; c >= 0; c--) {
+                final int idx = r * cols + c;
+                float best = dist[idx];
+                if (best == 0.0f) continue;
+                if (r + 1 < rows) best = Math.min(best, dist[idx + cols] + dOrtho);
+                if (c + 1 < cols) best = Math.min(best, dist[idx + 1] + dOrtho);
+                if (r + 1 < rows && c + 1 < cols) best = Math.min(best, dist[idx + cols + 1] + dDiag);
+                if (r + 1 < rows && c > 0) best = Math.min(best, dist[idx + cols - 1] + dDiag);
+                dist[idx] = best;
+            }
+        }
+        return dist;
     }
 
     private static boolean[] computeToeSectorAnchored(
@@ -1276,9 +2154,14 @@ public final class WalkRingToeSolver {
         final float cz,
         final double planeA,
         final double planeB,
-        final double planeD
+        final double planeD,
+        final boolean hasExplicitPadRef
     ) {
         final boolean[] anchored = new boolean[SECTOR_COUNT];
+        if (hasExplicitPadRef) {
+            Arrays.fill(anchored, true);
+            return anchored;
+        }
         for (float[] g : groundSamples) {
             final int s = sectorOf(g[0] - cx, g[2] - cz);
             anchored[s] = true;
@@ -1303,7 +2186,6 @@ public final class WalkRingToeSolver {
         if (arcSpanDeg >= 260.0 || points.size() < 40) {
             return "NONE";
         }
-        // Check if points > 0.5m above ground form a strong vertical plane (|ny| < 0.15)
         final List<float[]> highPts = new ArrayList<>();
         for (float[] p : points) {
             final double h = p[1] - (planeA * p[0] + planeB * p[2] + planeD);
@@ -1449,13 +2331,17 @@ public final class WalkRingToeSolver {
                 out.add(new float[] { wx, wy, wz });
             }
         }
-        // Supplement with evenly strided raw points if grid < 3500
+        // Supplement strictly with raw points falling inside the segmented object footprint
         if (out.size() < 3500 && !rawPoints.isEmpty()) {
             final int budget = 4000 - out.size();
             final int step = Math.max(1, rawPoints.size() / Math.max(1, budget));
             for (int i = 0; i < rawPoints.size() && out.size() < 4000; i += step) {
                 final float[] p = rawPoints.get(i);
-                out.add(new float[] { p[0], p[1], p[2] });
+                final int col = (int) Math.floor((p[0] - originX) / cellSizeM);
+                final int row = (int) Math.floor((p[2] - originZ) / cellSizeM);
+                if (col >= 0 && col < cols && row >= 0 && row < rows && footprintMask[row * cols + col] != 0) {
+                    out.add(new float[] { p[0], p[1], p[2] });
+                }
             }
         }
         return out;
@@ -1463,7 +2349,7 @@ public final class WalkRingToeSolver {
 
     /**
      * Builds GLES 2.0 vertex arrays (capped <= 4096 vertices) for the real-time 3D HUD overlay:
-     * verified surface triangles (#00AEEF 12%), gap wireframes (#C68346), 0.5 m contour lines,
+     * verified surface triangles (#00AEEF 19%), gap wireframes (#C68346), 0.5 m contour lines,
      * and anchored vs open perimeter toe segments.
      */
     private static LiveOverlaySnapshot buildLiveOverlaySnapshot(
@@ -1528,7 +2414,6 @@ public final class WalkRingToeSolver {
                     (obsCount[i00] + obsCount[i10] + obsCount[i01] + obsCount[i11]) >= 4;
 
                 if (verified && triVerts.size() < 9000) {
-                    // 2 CCW triangles
                     addPt(triVerts, x0, y00, z0);
                     addPt(triVerts, x0, y01, z1);
                     addPt(triVerts, x1, y10, z0);
@@ -1543,7 +2428,6 @@ public final class WalkRingToeSolver {
                     addPt(gapLines, x0, y01, z1);
                 }
 
-                // Elevation contour crossings every 0.5m
                 if (contourLines.size() < 2400) {
                     final int b00 = (int) Math.floor(heights[i00] / 0.5f);
                     final int b10 = (int) Math.floor(heights[i10] / 0.5f);
@@ -1560,7 +2444,6 @@ public final class WalkRingToeSolver {
             }
         }
 
-        // Toe perimeter loop across 16 sectors
         final float[] sectorToeX = new float[SECTOR_COUNT];
         final float[] sectorToeZ = new float[SECTOR_COUNT];
         final float[] sectorMaxDist = new float[SECTOR_COUNT];
@@ -1582,7 +2465,7 @@ public final class WalkRingToeSolver {
 
         final ArrayList<Float> toeAnchored = new ArrayList<>(128);
         final ArrayList<Float> toeOpen = new ArrayList<>(128);
-        final float fallbackR = Math.max(0.5f, estDiameterM * 0.5f);
+        final float fallbackR = Math.max(0.20f, estDiameterM * 0.5f);
         for (int s = 0; s < SECTOR_COUNT; s++) {
             if (sectorMaxDist[s] <= 0.01f) {
                 final double ang = Math.toRadians((s + 0.5) * (360.0 / SECTOR_COUNT));
@@ -1724,7 +2607,6 @@ public final class WalkRingToeSolver {
         if (!loopClosed) {
             return 2.2;
         }
-        // Vertical (gravity-aligned Y) return closure discrepancy is an honest measure of VIO drift
         final double dy = Math.abs(poses.get(poses.size() - 1).y - poses.get(0).y);
         return clamp((float) ((dy / perimeter) * 100.0), 0.2f, 10.0f);
     }
@@ -1751,6 +2633,16 @@ public final class WalkRingToeSolver {
         }
         Arrays.sort(ys);
         return ys[ys.length / 2];
+    }
+
+    private static double medianDouble(final double[] values, final int len) {
+        if (values == null || len <= 0) {
+            return 0.0;
+        }
+        final double[] copy = Arrays.copyOf(values, len);
+        Arrays.sort(copy);
+        final int mid = len / 2;
+        return (len % 2 == 0) ? 0.5 * (copy[mid - 1] + copy[mid]) : copy[mid];
     }
 
     private static double[] fitPlane3Points(final float[] p0, final float[] p1, final float[] p2) {
@@ -1830,6 +2722,10 @@ public final class WalkRingToeSolver {
     }
 
     private static float clamp(final float v, final float min, final float max) {
+        return Math.max(min, Math.min(max, v));
+    }
+
+    private static double clampDouble(final double v, final double min, final double max) {
         return Math.max(min, Math.min(max, v));
     }
 }

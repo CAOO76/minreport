@@ -37,6 +37,7 @@ import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.HapticFeedbackConstants;
 import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
@@ -55,6 +56,7 @@ import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
+import com.google.ar.core.Anchor;
 import com.google.ar.core.ArCoreApk;
 import com.google.ar.core.Camera;
 import com.google.ar.core.CameraIntrinsics;
@@ -80,10 +82,8 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -112,7 +112,8 @@ public class MinreportSpatialScannerActivity
     public static final String PREFS_CALIBRATION_NAME = "minreport_spatial_calibration";
 
     private static final String TAG = "MinreportSpatialScanner";
-    private static final String SCANNER_ENGINE_VERSION = "2.0.4-vio-mvs-java";
+    private static final String SCANNER_ENGINE_VERSION = "2.1.0-vio-mvs-java";
+    private static final String HUD_APP_VERSION = "2.1.0";
     private static final int KEYCODE_XCOVER_KEY = 1015;
     private static final int KEYCODE_XCOVER_TOP_KEY = 1079;
 
@@ -166,6 +167,12 @@ public class MinreportSpatialScannerActivity
         CAL_START,
         CAL_END,
         CAL_RANGE_ERROR
+    }
+
+    private enum TargetEditMode {
+        ANCHOR,
+        POLYGON,
+        PAD_REF
     }
 
     private static final class KeyframeRecord {
@@ -454,6 +461,13 @@ public class MinreportSpatialScannerActivity
     private View toeBorderLine;
     private ImageView toeGuardIcon;
     private View captureFlashBorderView;
+    private LinearLayout targetEditToolbar;
+    private ImageButton targetRadiusMinusBtn;
+    private TextView targetRadiusValueText;
+    private ImageButton targetRadiusPlusBtn;
+    private ImageButton targetPolylineBtn;
+    private ImageButton targetPadRefBtn;
+    private ImageButton targetClearBtn;
     private final Runnable hideCaptureFlashRunnable = () -> {
         if (captureFlashBorderView != null) {
             captureFlashBorderView.setVisibility(View.GONE);
@@ -492,10 +506,24 @@ public class MinreportSpatialScannerActivity
     private final OfflineVioMvsEngine offlineEngine = new OfflineVioMvsEngine();
     private final List<WalkRingToeSolver.WalkPose> walkRingPoses = new ArrayList<>(256);
     private final List<KeyframeRecord> savedKeyframes = new ArrayList<>(MAX_KEYFRAME_PHOTOS);
-    private final Map<Long, float[]> groundSampleGrid = new HashMap<>();
+    private final CapturePipelineHelper.GroundCellAggregator groundCellAggregator =
+        new CapturePipelineHelper.GroundCellAggregator(MAX_GROUND_SAMPLES);
     private final List<float[]> extraVioCloud = new ArrayList<>(1024);
     private final CapturePipelineHelper.LivePointCloudAccumulator livePointAccumulator =
         new CapturePipelineHelper.LivePointCloudAccumulator(Live3DOverlayRenderer.MAX_LIVE_POINTS);
+
+    // Pre-capture Target Object Selector state (READY_TRACKING only -> MBUX Zero-Layer hidden on PLAY)
+    private Anchor targetAnchor = null;
+    private TargetVolumeConstraint targetConstraint = TargetVolumeConstraint.inactive();
+    private TargetEditMode targetEditMode = TargetEditMode.ANCHOR;
+    private final List<float[]> targetPolygonVerticesXZ = new ArrayList<>(TargetVolumeConstraint.MAX_POLYGON_VERTICES);
+    private boolean hasPendingPadReferenceY = false;
+    private float pendingPadReferenceY = 0.0f;
+    private volatile boolean pendingViewportTap = false;
+    private volatile float pendingTapX = 0.0f;
+    private volatile float pendingTapY = 0.0f;
+    private volatile boolean centerSurfaceDetected = false;
+    private long lastCenterHitProbeAtMs = 0L;
 
     private volatile long arFrameCounter = 0L;
     private volatile String lastRenderErrorCode = null;
@@ -678,6 +706,15 @@ public class MinreportSpatialScannerActivity
         if (glSurfaceView != null && renderer != null) {
             glSurfaceView.queueEvent(() -> renderer.releaseGlResources());
         }
+        synchronized (stateLock) {
+            if (targetAnchor != null) {
+                try {
+                    targetAnchor.detach();
+                } catch (Exception ignored) {
+                }
+                targetAnchor = null;
+            }
+        }
         if (session != null) {
             try {
                 session.close();
@@ -790,6 +827,7 @@ public class MinreportSpatialScannerActivity
         // BLOCKING 30 Hz camera-synced rendering (eliminates redundant 60 fps thermal spin)
         config.setUpdateMode(Config.UpdateMode.BLOCKING);
         config.setPlaneFindingMode(Config.PlaneFindingMode.HORIZONTAL);
+        config.setInstantPlacementMode(Config.InstantPlacementMode.LOCAL_Y_UP);
 
         // Per Red-Team verdict: DepthMode.DISABLED on non-ToF/LiDAR hardware (XCover 7)
         if (hasHardwareDepthSensor && targetSession.isDepthModeSupported(Config.DepthMode.AUTOMATIC)) {
@@ -822,6 +860,25 @@ public class MinreportSpatialScannerActivity
         this.cameraContainer.setBackgroundColor(COLOR_BG);
 
         this.glSurfaceView = new GLSurfaceView(this);
+        this.glSurfaceView.setOnTouchListener((v, event) -> {
+            if (event == null || !MODE_SCAN.equals(mode)) {
+                return false;
+            }
+            if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+                return true;
+            }
+            if (event.getActionMasked() == MotionEvent.ACTION_UP) {
+                synchronized (stateLock) {
+                    if (currentStep == FlowStep.READY_TRACKING && !finishing) {
+                        pendingTapX = event.getX();
+                        pendingTapY = event.getY();
+                        pendingViewportTap = true;
+                        return true;
+                    }
+                }
+            }
+            return false;
+        });
         this.cameraContainer.addView(
             this.glSurfaceView,
             new FrameLayout.LayoutParams(
@@ -840,9 +897,10 @@ public class MinreportSpatialScannerActivity
         );
 
         this.calCrosshairView = new CrosshairOverlayView(this);
-        final FrameLayout.LayoutParams crossParams = new FrameLayout.LayoutParams(dp(72), dp(72));
+        final FrameLayout.LayoutParams crossParams = new FrameLayout.LayoutParams(dp(56), dp(56));
         crossParams.gravity = Gravity.CENTER;
-        this.calCrosshairView.setVisibility(MODE_CALIBRATE.equals(mode) ? View.VISIBLE : View.GONE);
+        this.calCrosshairView.setAccentColor(COLOR_SECONDARY);
+        this.calCrosshairView.setVisibility(View.VISIBLE);
         this.cameraContainer.addView(this.calCrosshairView, crossParams);
 
         // Crown Guard (top 3px copper line + upward arrow icon, invisible in nominal)
@@ -897,6 +955,60 @@ public class MinreportSpatialScannerActivity
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
         );
+
+        // Pre-capture Target Object Selector toolbar (READY_TRACKING only, MBUX Zero-Layer hidden on PLAY)
+        // Flat >= 48dp icon controls, rounded-none 0px, #CC000000 + 1px #12151C border, zero prose.
+        this.targetEditToolbar = new LinearLayout(this);
+        this.targetEditToolbar.setOrientation(LinearLayout.HORIZONTAL);
+        this.targetEditToolbar.setGravity(Gravity.CENTER_VERTICAL);
+        final GradientDrawable toolbarBg = new GradientDrawable();
+        toolbarBg.setShape(GradientDrawable.RECTANGLE);
+        toolbarBg.setCornerRadius(0.0f);
+        toolbarBg.setColor(0xCC000000);
+        toolbarBg.setStroke(dp(1), COLOR_BORDER);
+        this.targetEditToolbar.setBackground(toolbarBg);
+
+        this.targetRadiusMinusBtn = createFlatTargetButton(R.drawable.ic_ms_remove, "RADIUS_DEC", v -> onTargetRadiusAdjust(false));
+        this.targetEditToolbar.addView(this.targetRadiusMinusBtn, new LinearLayout.LayoutParams(dp(48), dp(48)));
+
+        this.targetRadiusValueText = new TextView(this);
+        this.targetRadiusValueText.setTypeface(fontMonoBold);
+        this.targetRadiusValueText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        this.targetRadiusValueText.setTextColor(COLOR_SECONDARY);
+        this.targetRadiusValueText.setGravity(Gravity.CENTER);
+        this.targetRadiusValueText.setMaxLines(1);
+        this.targetRadiusValueText.setSingleLine(true);
+        this.targetRadiusValueText.setPadding(dp(4), 0, dp(4), 0);
+        this.targetRadiusValueText.setText("1.2m");
+        this.targetEditToolbar.addView(
+            this.targetRadiusValueText,
+            new LinearLayout.LayoutParams(dp(48), dp(48))
+        );
+
+        this.targetRadiusPlusBtn = createFlatTargetButton(R.drawable.ic_ms_add, "RADIUS_INC", v -> onTargetRadiusAdjust(true));
+        this.targetEditToolbar.addView(this.targetRadiusPlusBtn, new LinearLayout.LayoutParams(dp(48), dp(48)));
+
+        final View sep1 = new View(this);
+        sep1.setBackgroundColor(COLOR_BORDER);
+        this.targetEditToolbar.addView(sep1, new LinearLayout.LayoutParams(dp(1), dp(32)));
+
+        this.targetPolylineBtn = createFlatTargetButton(R.drawable.ic_ms_polyline, "VALLEY_POLYGON", v -> onTogglePolylineMode());
+        this.targetEditToolbar.addView(this.targetPolylineBtn, new LinearLayout.LayoutParams(dp(48), dp(48)));
+
+        this.targetPadRefBtn = createFlatTargetButton(R.drawable.ic_ms_vertical_align_bottom, "PAD_REFERENCE_Y", v -> onTogglePadRefMode());
+        this.targetEditToolbar.addView(this.targetPadRefBtn, new LinearLayout.LayoutParams(dp(48), dp(48)));
+
+        this.targetClearBtn = createFlatTargetButton(R.drawable.ic_ms_restart_alt, "CLEAR_TARGET", v -> onClearTargetSelection());
+        this.targetEditToolbar.addView(this.targetClearBtn, new LinearLayout.LayoutParams(dp(48), dp(48)));
+
+        final FrameLayout.LayoutParams toolbarParams = new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            dp(48)
+        );
+        toolbarParams.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
+        toolbarParams.bottomMargin = dp(8);
+        this.targetEditToolbar.setVisibility(MODE_SCAN.equals(mode) ? View.VISIBLE : View.GONE);
+        this.cameraContainer.addView(this.targetEditToolbar, toolbarParams);
 
         root.addView(
             this.cameraContainer,
@@ -1031,7 +1143,7 @@ public class MinreportSpatialScannerActivity
         this.hudBuildHeartbeatText.setSingleLine(true);
         this.hudBuildHeartbeatText.setEllipsize(TextUtils.TruncateAt.END);
         this.hudBuildHeartbeatText.setPadding(0, dp(1), 0, 0);
-        this.hudBuildHeartbeatText.setText("2.0.4 · 0 PTS");
+        this.hudBuildHeartbeatText.setText(HUD_APP_VERSION + " · 0 PTS");
         centerBlock.addView(
             this.hudBuildHeartbeatText,
             new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
@@ -1102,6 +1214,112 @@ public class MinreportSpatialScannerActivity
         iv.setScaleType(ImageView.ScaleType.FIT_CENTER);
         iv.setPadding(padPx, padPx, padPx, padPx);
         return iv;
+    }
+
+    private ImageButton createFlatTargetButton(
+        final int resId,
+        final String contentDesc,
+        final View.OnClickListener listener
+    ) {
+        final ImageButton btn = new ImageButton(this);
+        btn.setImageResource(resId);
+        btn.setColorFilter(COLOR_SECONDARY);
+        btn.setBackgroundColor(Color.TRANSPARENT);
+        btn.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        btn.setPadding(dp(12), dp(12), dp(12), dp(12));
+        btn.setStateListAnimator(null);
+        btn.setElevation(0.0f);
+        btn.setMinimumWidth(dp(48));
+        btn.setMinimumHeight(dp(48));
+        btn.setContentDescription(contentDesc);
+        btn.setOnClickListener(listener);
+        return btn;
+    }
+
+    private void onTargetRadiusAdjust(final boolean increase) {
+        boolean updated = false;
+        synchronized (stateLock) {
+            if (currentStep != FlowStep.READY_TRACKING || finishing || !targetConstraint.active || targetConstraint.hasValidPolygon()) {
+                return;
+            }
+            final float step = TargetVolumeConstraint.radiusStepFor(targetConstraint.radiusM, increase);
+            final float nextR = TargetVolumeConstraint.clampRadius(targetConstraint.radiusM + step);
+            if (Math.abs(nextR - targetConstraint.radiusM) > 1e-4f) {
+                targetConstraint = targetConstraint.withRadius(nextR);
+                if (renderer != null) {
+                    renderer.updateTargetVolumeConstraint(targetConstraint);
+                }
+                updated = true;
+            }
+        }
+        if (updated) {
+            triggerShortHaptic();
+            updateHudFromState(true);
+        } else {
+            triggerRejectHaptic();
+        }
+    }
+
+    private void onTogglePolylineMode() {
+        synchronized (stateLock) {
+            if (currentStep != FlowStep.READY_TRACKING || finishing) {
+                return;
+            }
+            if (targetEditMode == TargetEditMode.POLYGON) {
+                targetEditMode = TargetEditMode.ANCHOR;
+            } else {
+                targetEditMode = TargetEditMode.POLYGON;
+                if (targetPolygonVerticesXZ.size() >= TargetVolumeConstraint.MAX_POLYGON_VERTICES) {
+                    targetPolygonVerticesXZ.clear();
+                    if (targetConstraint.active) {
+                        targetConstraint = targetConstraint.withPolygon(new float[0]);
+                        if (renderer != null) {
+                            renderer.updateTargetVolumeConstraint(targetConstraint);
+                        }
+                    }
+                }
+            }
+        }
+        triggerShortHaptic();
+        updateHudFromState(true);
+    }
+
+    private void onTogglePadRefMode() {
+        synchronized (stateLock) {
+            if (currentStep != FlowStep.READY_TRACKING || finishing) {
+                return;
+            }
+            targetEditMode = (targetEditMode == TargetEditMode.PAD_REF)
+                ? TargetEditMode.ANCHOR
+                : TargetEditMode.PAD_REF;
+        }
+        triggerShortHaptic();
+        updateHudFromState(true);
+    }
+
+    private void onClearTargetSelection() {
+        synchronized (stateLock) {
+            if (currentStep != FlowStep.READY_TRACKING || finishing) {
+                return;
+            }
+            if (targetAnchor != null) {
+                try {
+                    targetAnchor.detach();
+                } catch (Exception ignored) {
+                }
+                targetAnchor = null;
+            }
+            targetPolygonVerticesXZ.clear();
+            hasPendingPadReferenceY = false;
+            pendingPadReferenceY = 0.0f;
+            targetEditMode = TargetEditMode.ANCHOR;
+            targetConstraint = TargetVolumeConstraint.inactive();
+            if (renderer != null) {
+                renderer.updateTargetVolumeConstraint(targetConstraint);
+            }
+        }
+        triggerShortHaptic();
+        updateHudFromState(true);
     }
 
     private void onPrimaryActionClick() {
@@ -1214,12 +1432,14 @@ public class MinreportSpatialScannerActivity
         offlineEngine.reset();
         walkRingPoses.clear();
         savedKeyframes.clear();
-        groundSampleGrid.clear();
+        groundCellAggregator.clear();
         extraVioCloud.clear();
         Arrays.fill(sectorStates, 0);
         Arrays.fill(sectorKfCounts, 0);
         sectorsCovered = 0;
-        lastSectorCenterXZ = null;
+        lastSectorCenterXZ = targetConstraint.active ? targetConstraint.getEffectiveCenterXZ() : null;
+        targetEditMode = TargetEditMode.ANCHOR;
+        pendingViewportTap = false;
         liveEstDiameterM = 0.0f;
         liveEstHeightM = 0.0f;
         liveEstVolumeM3 = 0.0f;
@@ -1240,6 +1460,8 @@ public class MinreportSpatialScannerActivity
         if (renderer != null) {
             renderer.clearLiveOverlay();
             renderer.clearGlFallbackRequest();
+            renderer.setCaptureActive(true);
+            renderer.updateTargetVolumeConstraint(targetConstraint);
         }
     }
 
@@ -1321,8 +1543,28 @@ public class MinreportSpatialScannerActivity
 
             // Immediate 3D visual feedback from Frame 1 (both READY_TRACKING & CAPTURING_WALK, even at 0 KF)
             if (currentStep == FlowStep.READY_TRACKING || currentStep == FlowStep.CAPTURING_WALK) {
+                syncTargetAnchorPoseLocked();
                 updateLivePointCloudAndVioLocked(frame, nowMs, currentStep == FlowStep.CAPTURING_WALK);
                 updateLivePlaneOutlines(activeSession);
+            }
+
+            if (currentStep == FlowStep.READY_TRACKING) {
+                if (renderer != null) {
+                    renderer.setCaptureActive(false);
+                }
+                if ((nowMs - lastCenterHitProbeAtMs) >= 150L) {
+                    lastCenterHitProbeAtMs = nowMs;
+                    centerSurfaceDetected = probeCenterSurfaceHit(frame);
+                }
+                if (pendingViewportTap) {
+                    pendingViewportTap = false;
+                    final float tx = pendingTapX;
+                    final float ty = pendingTapY;
+                    if (handleTargetViewportTapLocked(activeSession, frame, tx, ty)) {
+                        fireShortPulse = true;
+                        forceHud = true;
+                    }
+                }
             }
 
             if (currentStep == FlowStep.CAL_FLOOR) {
@@ -1372,8 +1614,10 @@ public class MinreportSpatialScannerActivity
                     collectFilteredGroundPlanes(activeSession, camPos[1] - LOCAL_GROUND_CLEARANCE_M);
                 }
 
-                // 3. Update live heading & recompute sector coverage whenever Auto-ROI center converges
-                final float[] autoCenter = WalkRingToeSolver.estimateAutoCenterXZ(walkRingPoses, extraVioCloud);
+                // 3. Update live heading & recompute sector coverage (locked to Target Anchor when active)
+                final float[] autoCenter = targetConstraint.active
+                    ? targetConstraint.getEffectiveCenterXZ()
+                    : WalkRingToeSolver.estimateAutoCenterXZ(walkRingPoses, extraVioCloud);
                 if (
                     !savedKeyframes.isEmpty() &&
                     (lastSectorCenterXZ == null ||
@@ -1450,6 +1694,226 @@ public class MinreportSpatialScannerActivity
             mainHandler.post(() -> updateHudFromState(true));
         } else {
             updateHudThrottled(false);
+        }
+    }
+
+    private boolean probeCenterSurfaceHit(final Frame frame) {
+        final int vw = renderer != null ? renderer.getViewportWidth() : 0;
+        final int vh = renderer != null ? renderer.getViewportHeight() : 0;
+        if (vw <= 0 || vh <= 0) {
+            return false;
+        }
+        try {
+            final List<HitResult> hits = frame.hitTest(vw * 0.5f, vh * 0.5f);
+            for (HitResult hit : hits) {
+                final Trackable t = hit.getTrackable();
+                final float dist = hit.getDistance();
+                if (dist < MIN_DEPTH_M || dist > MAX_DEPTH_M) {
+                    continue;
+                }
+                if (t instanceof Point || t instanceof DepthPoint) {
+                    return true;
+                }
+                if (t instanceof Plane && ((Plane) t).isPoseInPolygon(hit.getHitPose())) {
+                    return true;
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return false;
+    }
+
+    /**
+     * Resolves a user viewport tap in READY_TRACKING with strict hitTest priority:
+     * 1) Point / DepthPoint -> 2) Plane -> 3) hitTestInstantPlacement(x, y, 2.0f).
+     */
+    private Pose resolveTargetTapPose(final Frame frame, final float tapX, final float tapY) {
+        try {
+            final List<HitResult> hits = frame.hitTest(tapX, tapY);
+            // Priority 1: Feature Point / DepthPoint (surface of target object)
+            for (HitResult hit : hits) {
+                final Trackable t = hit.getTrackable();
+                final float dist = hit.getDistance();
+                if (dist >= MIN_DEPTH_M && dist <= MAX_DEPTH_M && (t instanceof Point || t instanceof DepthPoint)) {
+                    return hit.getHitPose();
+                }
+            }
+            // Priority 2: Tracked Plane (preferring hit inside polygon)
+            HitResult fallbackPlaneHit = null;
+            for (HitResult hit : hits) {
+                final Trackable t = hit.getTrackable();
+                final float dist = hit.getDistance();
+                if (dist >= MIN_DEPTH_M && dist <= MAX_DEPTH_M && t instanceof Plane) {
+                    if (((Plane) t).isPoseInPolygon(hit.getHitPose())) {
+                        return hit.getHitPose();
+                    }
+                    if (fallbackPlaneHit == null) {
+                        fallbackPlaneHit = hit;
+                    }
+                }
+            }
+            if (fallbackPlaneHit != null) {
+                return fallbackPlaneHit.getHitPose();
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "Primary hitTest failed on target tap", t);
+        }
+
+        // Priority 3: Instant Placement at 2.0 m approximate distance
+        try {
+            final List<HitResult> instantHits = frame.hitTestInstantPlacement(tapX, tapY, 2.0f);
+            if (instantHits != null && !instantHits.isEmpty()) {
+                return instantHits.get(0).getHitPose();
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "InstantPlacement hitTest unavailable on target tap", t);
+        }
+        return null;
+    }
+
+    private boolean handleTargetViewportTapLocked(
+        final Session activeSession,
+        final Frame frame,
+        final float tapX,
+        final float tapY
+    ) {
+        final Pose hitPose = resolveTargetTapPose(frame, tapX, tapY);
+        if (hitPose == null) {
+            return false;
+        }
+        final float[] tr = hitPose.getTranslation();
+        if (
+            tr == null || tr.length < 3 ||
+            !Float.isFinite(tr[0]) || !Float.isFinite(tr[1]) || !Float.isFinite(tr[2])
+        ) {
+            return false;
+        }
+
+        if (targetEditMode == TargetEditMode.PAD_REF) {
+            hasPendingPadReferenceY = true;
+            pendingPadReferenceY = tr[1];
+            targetEditMode = TargetEditMode.ANCHOR;
+            if (targetConstraint.active) {
+                targetConstraint = targetConstraint.withPadReferenceY(tr[1]);
+                if (renderer != null) {
+                    renderer.updateTargetVolumeConstraint(targetConstraint);
+                }
+            }
+            return true;
+        }
+
+        if (targetEditMode == TargetEditMode.POLYGON) {
+            if (targetPolygonVerticesXZ.size() < TargetVolumeConstraint.MAX_POLYGON_VERTICES) {
+                targetPolygonVerticesXZ.add(new float[] { tr[0], tr[2] });
+            }
+            if (targetPolygonVerticesXZ.size() >= TargetVolumeConstraint.MIN_POLYGON_VERTICES) {
+                final float[] poly = new float[targetPolygonVerticesXZ.size() * 2];
+                for (int i = 0; i < targetPolygonVerticesXZ.size(); i++) {
+                    poly[i * 2] = targetPolygonVerticesXZ.get(i)[0];
+                    poly[i * 2 + 1] = targetPolygonVerticesXZ.get(i)[1];
+                }
+                final float[] centroid = TargetVolumeConstraint.computePolygonCentroidXZ(poly);
+                if (!targetConstraint.active) {
+                    replaceTargetAnchorLocked(activeSession, hitPose);
+                    targetConstraint = TargetVolumeConstraint.fromAnchorWithPolygon(
+                        centroid[0],
+                        tr[1],
+                        centroid[1],
+                        targetConstraint.radiusM,
+                        poly,
+                        hasPendingPadReferenceY,
+                        pendingPadReferenceY
+                    );
+                } else {
+                    targetConstraint = targetConstraint.withPolygon(poly);
+                }
+                if (renderer != null) {
+                    renderer.updateTargetVolumeConstraint(targetConstraint);
+                }
+            } else if (!targetConstraint.active) {
+                // Anchor immediately on first vertex tap so user sees target lock right away
+                replaceTargetAnchorLocked(activeSession, hitPose);
+                targetConstraint = new TargetVolumeConstraint(
+                    true,
+                    tr[0],
+                    tr[1],
+                    tr[2],
+                    targetConstraint.radiusM,
+                    new float[0],
+                    hasPendingPadReferenceY,
+                    pendingPadReferenceY
+                );
+                if (renderer != null) {
+                    renderer.updateTargetVolumeConstraint(targetConstraint);
+                }
+            }
+            return true;
+        }
+
+        // Default ANCHOR mode: create ARCore Anchor at hitPose & activate TargetVolumeConstraint
+        replaceTargetAnchorLocked(activeSession, hitPose);
+        targetPolygonVerticesXZ.clear();
+        final float prevRadius = targetConstraint.active
+            ? targetConstraint.radiusM
+            : TargetVolumeConstraint.DEFAULT_RADIUS_M;
+        final boolean keepPad = targetConstraint.hasPadReferenceY || hasPendingPadReferenceY;
+        final float padY = targetConstraint.hasPadReferenceY ? targetConstraint.padReferenceY : pendingPadReferenceY;
+        targetConstraint = new TargetVolumeConstraint(
+            true,
+            tr[0],
+            tr[1],
+            tr[2],
+            prevRadius,
+            new float[0],
+            keepPad,
+            padY
+        );
+        if (renderer != null) {
+            renderer.updateTargetVolumeConstraint(targetConstraint);
+        }
+        return true;
+    }
+
+    private void replaceTargetAnchorLocked(final Session activeSession, final Pose hitPose) {
+        if (targetAnchor != null) {
+            try {
+                targetAnchor.detach();
+            } catch (Exception ignored) {
+            }
+            targetAnchor = null;
+        }
+        try {
+            targetAnchor = activeSession.createAnchor(hitPose);
+        } catch (Throwable t) {
+            Log.w(TAG, "Failed to create ARCore Anchor for target object; keeping world-pose fallback", t);
+            targetAnchor = null;
+        }
+    }
+
+    private void syncTargetAnchorPoseLocked() {
+        if (targetAnchor == null || !targetConstraint.active) {
+            return;
+        }
+        try {
+            if (targetAnchor.getTrackingState() != TrackingState.TRACKING) {
+                return;
+            }
+            final float[] tr = targetAnchor.getPose().getTranslation();
+            if (
+                tr != null && tr.length >= 3 &&
+                Float.isFinite(tr[0]) && Float.isFinite(tr[1]) && Float.isFinite(tr[2])
+            ) {
+                final float dx = tr[0] - targetConstraint.anchorX;
+                final float dy = tr[1] - targetConstraint.anchorY;
+                final float dz = tr[2] - targetConstraint.anchorZ;
+                if ((dx * dx + dy * dy + dz * dz) > 0.0001f) {
+                    targetConstraint = targetConstraint.withAnchorPosition(tr[0], tr[1], tr[2]);
+                    if (renderer != null) {
+                        renderer.updateTargetVolumeConstraint(targetConstraint);
+                    }
+                }
+            }
+        } catch (Throwable ignored) {
         }
     }
 
@@ -1923,8 +2387,9 @@ public class MinreportSpatialScannerActivity
         }
         lastLiveOverlaySolveAtMs = nowMs;
         final List<WalkRingToeSolver.WalkPose> walkSnap = new ArrayList<>(walkRingPoses);
-        final List<float[]> groundSnap = new ArrayList<>(groundSampleGrid.values());
+        final List<float[]> groundSnap = groundCellAggregator.snapshotTrimmedMedians();
         final List<float[]> extraSnap = new ArrayList<>(extraVioCloud);
+        final TargetVolumeConstraint targetSnap = targetConstraint;
 
         if (visionExecutor != null && !visionExecutor.isShutdown()) {
             visionExecutor.execute(() -> {
@@ -1933,7 +2398,7 @@ public class MinreportSpatialScannerActivity
                     pts.addAll(extraSnap);
                     if (pts.size() >= 20) {
                         final WalkRingToeSolver.MetrologyResult liveRes = WalkRingToeSolver.solve(
-                            pts, walkSnap, groundSnap, hasScaleAnchor, -1.0
+                            pts, walkSnap, groundSnap, hasScaleAnchor, -1.0, targetSnap
                         );
                         if (liveRes.liveOverlay != null && renderer != null) {
                             renderer.updateLiveOverlay(liveRes.liveOverlay);
@@ -1956,7 +2421,7 @@ public class MinreportSpatialScannerActivity
     }
 
     private void collectFilteredGroundPlanes(final Session activeSession, final float maxAllowedY) {
-        if (activeSession == null || groundSampleGrid.size() >= MAX_GROUND_SAMPLES) {
+        if (activeSession == null) {
             return;
         }
         try {
@@ -1978,7 +2443,7 @@ public class MinreportSpatialScannerActivity
 
                 final FloatBuffer poly = plane.getPolygon();
                 final int limit = poly != null ? poly.limit() : 0;
-                for (int i = 0; i + 1 < limit && groundSampleGrid.size() < MAX_GROUND_SAMPLES; i += 2) {
+                for (int i = 0; i + 1 < limit; i += 2) {
                     localPt[0] = poly.get(i);
                     localPt[1] = 0.0f;
                     localPt[2] = poly.get(i + 1);
@@ -1992,27 +2457,11 @@ public class MinreportSpatialScannerActivity
     }
 
     /**
-     * Enforces y <= y_cam - 0.80f AND always retains the minimum Y per 0.25m 2D cell
-     * (never freezes an elevated plateau plane above the true pad).
+     * Enforces y <= y_cam - 0.55f and aggregates per 0.25 m cell using a trimmed median
+     * (replaces legacy biased min(y) retention that caused -3*sigma floor sinking).
      */
     private void addFilteredGroundSample(final float[] pt, final float maxAllowedY) {
-        if (pt[1] > maxAllowedY) {
-            return;
-        }
-        final float cell = 0.25f;
-        final int gx = (int) Math.floor(pt[0] / cell);
-        final int gz = (int) Math.floor(pt[2] / cell);
-        final long key = (((long) (gx & 0xFFFFFFFFL)) << 32) | ((long) (gz & 0xFFFFFFFFL));
-        final float[] existing = groundSampleGrid.get(key);
-        if (existing == null) {
-            if (groundSampleGrid.size() < MAX_GROUND_SAMPLES) {
-                groundSampleGrid.put(key, new float[] { pt[0], pt[1], pt[2] });
-            }
-        } else if (pt[1] < existing[1]) {
-            existing[0] = pt[0];
-            existing[1] = pt[1];
-            existing[2] = pt[2];
-        }
+        groundCellAggregator.addSample(pt, maxAllowedY);
     }
 
     private void finalizeAndReturnScanAsync() {
@@ -2033,14 +2482,16 @@ public class MinreportSpatialScannerActivity
                 final List<float[]> groundSnap;
                 final List<float[]> extraSnap;
                 final List<KeyframeRecord> kfSnap;
+                final TargetVolumeConstraint targetSnap;
                 final int coveredSnap;
                 final int blurSnap;
                 final boolean anchorSnap;
                 synchronized (stateLock) {
                     walkSnap = new ArrayList<>(walkRingPoses);
-                    groundSnap = new ArrayList<>(groundSampleGrid.values());
+                    groundSnap = groundCellAggregator.snapshotTrimmedMedians();
                     extraSnap = new ArrayList<>(extraVioCloud);
                     kfSnap = new ArrayList<>(savedKeyframes);
+                    targetSnap = targetConstraint;
                     coveredSnap = sectorsCovered;
                     blurSnap = rejectedBlurCount;
                     anchorSnap = hasScaleAnchor;
@@ -2052,7 +2503,8 @@ public class MinreportSpatialScannerActivity
                     groundSnap,
                     extraSnap,
                     anchorSnap,
-                    thermalDegraded
+                    thermalDegraded,
+                    targetSnap
                 );
 
                 final JSONObject payload = buildScanResultJsonV2(
@@ -2060,7 +2512,8 @@ public class MinreportSpatialScannerActivity
                     walkSnap,
                     kfSnap,
                     coveredSnap,
-                    blurSnap
+                    blurSnap,
+                    targetSnap
                 );
 
                 final File resultFile = new File(getCacheDir(), scanId + "_result.json");
@@ -2103,7 +2556,8 @@ public class MinreportSpatialScannerActivity
         final List<WalkRingToeSolver.WalkPose> walkSnap,
         final List<KeyframeRecord> kfSnap,
         final int covered,
-        final int blurRejected
+        final int blurRejected,
+        final TargetVolumeConstraint targetSnap
     ) throws Exception {
         final WalkRingToeSolver.MetrologyResult m = engineOut.metrology;
         final JSONObject root = new JSONObject();
@@ -2259,6 +2713,8 @@ public class MinreportSpatialScannerActivity
         metGroundPlane.put("toeScore", round1(m.toeScore));
         metObj.put("groundPlane", metGroundPlane);
         metObj.put("slopeAngleAvgDeg", round2(m.slopeAngleAvgDeg));
+        metObj.put("slopeProfile", m.slopeProfile);
+        metObj.put("sigmaGroundM", round4(m.sigmaGroundM));
         metObj.put("toeScore", round1(m.toeScore));
         metObj.put("coveragePct", coveragePct);
         metObj.put("sectorsCovered", covered);
@@ -2279,6 +2735,22 @@ public class MinreportSpatialScannerActivity
         metObj.put("computeMs", engineOut.computeMs);
         metObj.put("thermalDegraded", engineOut.thermalDegraded);
         root.put("inSituMetrology", metObj);
+        root.put("slopeProfile", m.slopeProfile);
+
+        if (targetSnap != null && targetSnap.active) {
+            final JSONObject tgtObj = new JSONObject();
+            tgtObj.put("active", true);
+            tgtObj.put("anchorX", round3(targetSnap.anchorX));
+            tgtObj.put("anchorY", round3(targetSnap.anchorY));
+            tgtObj.put("anchorZ", round3(targetSnap.anchorZ));
+            tgtObj.put("radiusM", round2(targetSnap.radiusM));
+            tgtObj.put("polygonVertexCount", targetSnap.getPolygonVertexCount());
+            tgtObj.put("hasPadReferenceY", targetSnap.hasPadReferenceY);
+            if (targetSnap.hasPadReferenceY) {
+                tgtObj.put("padReferenceY", round3(targetSnap.padReferenceY));
+            }
+            root.put("targetConstraint", tgtObj);
+        }
 
         // V2 Compact Local Preview Mesh (< 60 KB dem_grid_v1)
         if (m.previewMesh != null) {
@@ -2377,6 +2849,11 @@ public class MinreportSpatialScannerActivity
         final float distM;
         final int livePtsCount;
         final long frameCount;
+        final TargetVolumeConstraint tgtSnap;
+        final TargetEditMode editModeSnap;
+        final int polyVertCount;
+        final boolean hasPadSnap;
+        final boolean centerSurfaceSnap = centerSurfaceDetected;
         final long nowMs = SystemClock.elapsedRealtime();
 
         synchronized (stateLock) {
@@ -2410,6 +2887,10 @@ public class MinreportSpatialScannerActivity
             distM = walkDistanceM;
             livePtsCount = livePointAccumulator.size();
             frameCount = arFrameCounter;
+            tgtSnap = targetConstraint;
+            editModeSnap = targetEditMode;
+            polyVertCount = targetPolygonVerticesXZ.size();
+            hasPadSnap = tgtSnap.hasPadReferenceY || hasPendingPadReferenceY;
         }
 
         imuHorizonView.updateImu(liveImuPitchDeg, liveImuRollDeg);
@@ -2450,12 +2931,44 @@ public class MinreportSpatialScannerActivity
             finalizingBar.setVisibility(View.GONE);
             perimeterRingView.setVisibility(View.VISIBLE);
             perimeterRingView.updateState(statesSnap, heading, false, 0, false, "--");
+
+            // Center reticle: neutral gray #8A93A6, turns Cyan #00AEEF when ARCore surface detected
+            calCrosshairView.setVisibility(View.VISIBLE);
+            calCrosshairView.setAccentColor((isTracking && centerSurfaceSnap) ? COLOR_CYAN : COLOR_SECONDARY);
+
+            // MBUX Zero-Layer: target controls shown EXCLUSIVELY in READY_TRACKING (SCAN mode)
+            targetEditToolbar.setVisibility(MODE_SCAN.equals(mode) ? View.VISIBLE : View.GONE);
+            final boolean radiusAdjustable = tgtSnap.active && !tgtSnap.hasValidPolygon();
+            targetRadiusMinusBtn.setEnabled(radiusAdjustable);
+            targetRadiusPlusBtn.setEnabled(radiusAdjustable);
+            targetRadiusMinusBtn.setColorFilter(radiusAdjustable ? COLOR_PRIMARY : COLOR_DISABLED);
+            targetRadiusPlusBtn.setColorFilter(radiusAdjustable ? COLOR_PRIMARY : COLOR_DISABLED);
+            if (tgtSnap.hasValidPolygon()) {
+                targetRadiusValueText.setText(String.format(Locale.US, "P%d", tgtSnap.getPolygonVertexCount()));
+                targetRadiusValueText.setTextColor(COLOR_CYAN);
+            } else if (polyVertCount > 0 && editModeSnap == TargetEditMode.POLYGON) {
+                targetRadiusValueText.setText(String.format(Locale.US, "P%d", polyVertCount));
+                targetRadiusValueText.setTextColor(COLOR_CYAN);
+            } else {
+                targetRadiusValueText.setText(String.format(Locale.US, "%.1fm", tgtSnap.radiusM));
+                targetRadiusValueText.setTextColor(tgtSnap.active ? COLOR_CYAN : COLOR_DISABLED);
+            }
+            targetPolylineBtn.setColorFilter(
+                (editModeSnap == TargetEditMode.POLYGON || tgtSnap.hasValidPolygon()) ? COLOR_CYAN : COLOR_SECONDARY
+            );
+            targetPadRefBtn.setColorFilter(
+                (editModeSnap == TargetEditMode.PAD_REF || hasPadSnap) ? COLOR_CYAN : COLOR_SECONDARY
+            );
+            final boolean hasAnyTargetEdit = tgtSnap.active || polyVertCount > 0 || hasPadSnap;
+            targetClearBtn.setEnabled(hasAnyTargetEdit);
+            targetClearBtn.setColorFilter(hasAnyTargetEdit ? COLOR_COPPER : COLOR_DISABLED);
+
             liveVolumeText.setText("--.- m³");
             liveVolumeText.setTextColor(COLOR_DISABLED);
             liveDimsText.setText("Ø --.- m · H --.- m");
             liveKfCountText.setText("0 KF");
             liveKfCountText.setTextColor(COLOR_DISABLED);
-            hudBuildHeartbeatText.setText(String.format(Locale.US, "2.0.4 · %d PTS", livePtsCount));
+            hudBuildHeartbeatText.setText(String.format(Locale.US, "%s · %d PTS", HUD_APP_VERSION, livePtsCount));
             hudBuildHeartbeatText.setVisibility(View.VISIBLE);
 
             // Always clickable in READY_TRACKING so operator can arm pendingStartCapture before TRACKING locks
@@ -2468,6 +2981,9 @@ public class MinreportSpatialScannerActivity
                 applyPrimaryButtonStyle(COLOR_BTN_WAITING_BG, COLOR_DISABLED, 1, R.drawable.ic_ms_play_arrow, COLOR_SECONDARY);
             }
         } else if (step == FlowStep.CAPTURING_WALK) {
+            // MBUX Zero-Layer: hide all target edit controls and center reticle immediately on PLAY
+            targetEditToolbar.setVisibility(View.GONE);
+            calCrosshairView.setVisibility(View.GONE);
             finalizingBar.setVisibility(View.GONE);
             final int pctInt = (int) Math.round((covered / (double) SECTOR_COUNT) * 100.0);
             final boolean optimalReady = pctInt >= 75 && kfCount >= 12;
@@ -2492,7 +3008,9 @@ public class MinreportSpatialScannerActivity
             }
             liveKfCountText.setText(String.format(Locale.US, "%d KF · %.1f m", kfCount, distM));
             liveKfCountText.setTextColor(kfCount > 0 ? COLOR_PRIMARY : COLOR_COPPER);
-            hudBuildHeartbeatText.setText(String.format(Locale.US, "2.0.4 · %d PTS · F%d", livePtsCount, frameCount));
+            hudBuildHeartbeatText.setText(
+                String.format(Locale.US, "%s · %d PTS · F%d", HUD_APP_VERSION, livePtsCount, frameCount)
+            );
             hudBuildHeartbeatText.setVisibility(View.VISIBLE);
 
             primaryActionButton.setEnabled(true);
@@ -2502,11 +3020,14 @@ public class MinreportSpatialScannerActivity
                 applyPrimaryButtonStyle(COLOR_BTN_RECORDING_BG, COLOR_COPPER, 2, R.drawable.ic_ms_stop, COLOR_COPPER);
             }
         } else if (step == FlowStep.FINALIZING) {
+            targetEditToolbar.setVisibility(View.GONE);
+            calCrosshairView.setVisibility(View.GONE);
             finalizingBar.setVisibility(View.VISIBLE);
             primaryActionButton.setEnabled(false);
             applyPrimaryButtonStyle(COLOR_BTN_WAITING_BG, COLOR_DISABLED, 1, R.drawable.ic_ms_check, COLOR_SECONDARY);
         } else {
             // Optional diagnostic calibration mode (2.00 m)
+            targetEditToolbar.setVisibility(View.GONE);
             perimeterRingView.setVisibility(View.GONE);
             calCrosshairView.setVisibility(View.VISIBLE);
             calCrosshairView.setAccentColor(hasCalHit ? COLOR_CYAN : COLOR_COPPER);
