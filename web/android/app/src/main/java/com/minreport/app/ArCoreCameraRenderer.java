@@ -39,11 +39,34 @@ public class ArCoreCameraRenderer implements GLSurfaceView.Renderer {
         public final byte[] rgbaBytes;
         public final int width;
         public final int height;
+        public final int viewportWidth;
+        public final int viewportHeight;
+        public final int cropLeftPx;
+        public final int cropTopPx;
+        public final boolean fromDefaultFbo;
 
         public GlFallbackFrame(final byte[] rgbaBytes, final int width, final int height) {
+            this(rgbaBytes, width, height, width, height, 0, 0, false);
+        }
+
+        public GlFallbackFrame(
+            final byte[] rgbaBytes,
+            final int width,
+            final int height,
+            final int viewportWidth,
+            final int viewportHeight,
+            final int cropLeftPx,
+            final int cropTopPx,
+            final boolean fromDefaultFbo
+        ) {
             this.rgbaBytes = rgbaBytes;
             this.width = width;
             this.height = height;
+            this.viewportWidth = viewportWidth;
+            this.viewportHeight = viewportHeight;
+            this.cropLeftPx = cropLeftPx;
+            this.cropTopPx = cropTopPx;
+            this.fromDefaultFbo = fromDefaultFbo;
         }
     }
 
@@ -159,6 +182,104 @@ public class ArCoreCameraRenderer implements GLSurfaceView.Renderer {
 
     public int getDisplayRotationDegrees() {
         return displayRotationHelper.getDisplayRotationDegrees();
+    }
+
+    public boolean getDisplayProjectionMatrix(final float[] out16) {
+        if (out16 == null || out16.length < 16) {
+            return false;
+        }
+        synchronized (projectionMatrix) {
+            if (projectionMatrix[0] == 0.0f && projectionMatrix[5] == 0.0f) {
+                return false;
+            }
+            System.arraycopy(projectionMatrix, 0, out16, 0, 16);
+            return true;
+        }
+    }
+
+    /**
+     * Derives exact pinhole intrinsics [fx, fy, cx, cy] in top-down pixel coordinates (width x height)
+     * directly from ARCore's column-major OpenGL projection matrix P:
+     *   fx = P[0] * W / 2
+     *   fy = P[5] * H / 2
+     *   cx = (1 - P[8]) * W / 2
+     *   cy = (1 + P[9]) * H / 2
+     */
+    public static float[] deriveIntrinsicsFromProjectionMatrix(
+        final float[] projMatrix16,
+        final int width,
+        final int height
+    ) {
+        if (projMatrix16 == null || projMatrix16.length < 16 || width <= 0 || height <= 0) {
+            return null;
+        }
+        final float p0 = projMatrix16[0];
+        final float p5 = projMatrix16[5];
+        final float p8 = projMatrix16[8];
+        final float p9 = projMatrix16[9];
+        if (!Float.isFinite(p0) || !Float.isFinite(p5) || !Float.isFinite(p8) || !Float.isFinite(p9)) {
+            return null;
+        }
+        final float fx = Math.abs(p0) * (width * 0.5f);
+        final float fy = Math.abs(p5) * (height * 0.5f);
+        if (!Float.isFinite(fx) || !Float.isFinite(fy) || fx <= 1.0f || fy <= 1.0f) {
+            return null;
+        }
+        final float cx = (1.0f - p8) * (width * 0.5f);
+        final float cy = (1.0f + p9) * (height * 0.5f);
+        return new float[] { fx, fy, cx, cy };
+    }
+
+    /**
+     * Derives exact display-cropped pinhole intrinsics [fx, fy, cx, cy] from camera.getProjectionMatrix
+     * matching the exact FOV and aspect ratio of the rendered GL camera quad.
+     */
+    public static float[] deriveIntrinsicsFromCamera(
+        final Camera camera,
+        final int width,
+        final int height
+    ) {
+        if (camera == null || width <= 0 || height <= 0) {
+            return null;
+        }
+        try {
+            final float[] p = new float[16];
+            camera.getProjectionMatrix(p, 0, 0.1f, 50.0f);
+            return deriveIntrinsicsFromProjectionMatrix(p, width, height);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    /**
+     * Derives exact pinhole intrinsics [fx, fy, cx, cy] for a GlFallbackFrame, handling both:
+     * - Offscreen FBO readback (full display viewport scaled to width x height)
+     * - Default FBO centered sub-rectangle readback (unscaled crop at cropLeftPx, cropTopPx)
+     */
+    public static float[] deriveIntrinsicsForGlFallback(
+        final Camera camera,
+        final GlFallbackFrame glFallback
+    ) {
+        if (camera == null || glFallback == null || glFallback.width <= 0 || glFallback.height <= 0) {
+            return null;
+        }
+        if (glFallback.fromDefaultFbo && glFallback.viewportWidth > 0 && glFallback.viewportHeight > 0) {
+            final float[] vpIntr = deriveIntrinsicsFromCamera(
+                camera,
+                glFallback.viewportWidth,
+                glFallback.viewportHeight
+            );
+            if (vpIntr == null) {
+                return null;
+            }
+            return new float[] {
+                vpIntr[0],
+                vpIntr[1],
+                vpIntr[2] - glFallback.cropLeftPx,
+                vpIntr[3] - glFallback.cropTopPx
+            };
+        }
+        return deriveIntrinsicsFromCamera(camera, glFallback.width, glFallback.height);
     }
 
     public void updateLiveOverlay(final WalkRingToeSolver.LiveOverlaySnapshot snapshot) {
@@ -366,7 +487,9 @@ public class ArCoreCameraRenderer implements GLSurfaceView.Renderer {
             // Draw 3D overlay AFTER onArFrame() so live points/planes/mesh appear on the same frame
             if (frameTimestamp != 0L && camera.getTrackingState() == TrackingState.TRACKING) {
                 camera.getViewMatrix(viewMatrix, 0);
-                camera.getProjectionMatrix(projectionMatrix, 0, 0.1f, 60.0f);
+                synchronized (projectionMatrix) {
+                    camera.getProjectionMatrix(projectionMatrix, 0, 0.1f, 60.0f);
+                }
                 lastFramingStatus = overlayRenderer.draw(viewMatrix, projectionMatrix);
             } else {
                 lastFramingStatus = new Live3DOverlayRenderer.FramingStatus(false, false);
@@ -453,7 +576,7 @@ public class ArCoreCameraRenderer implements GLSurfaceView.Renderer {
                     fallbackReadBuffer.position(0);
                     fallbackReadBuffer.get(out);
                     if (hasNonBlackRgbSample(out, targetW, targetH)) {
-                        return new GlFallbackFrame(out, targetW, targetH);
+                        return new GlFallbackFrame(out, targetW, targetH, vw, vh, 0, 0, false);
                     }
                     Log.w(TAG, "Offscreen FBO readback returned black pixels; falling back to default FBO");
                 } else {
@@ -493,7 +616,8 @@ public class ArCoreCameraRenderer implements GLSurfaceView.Renderer {
             final byte[] out = new byte[bytesNeeded];
             fallbackReadBuffer.position(0);
             fallbackReadBuffer.get(out);
-            return new GlFallbackFrame(out, readW, readH);
+            final int cropTopPx = Math.max(0, vh - (y0 + readH));
+            return new GlFallbackFrame(out, readW, readH, vw, vh, x0, cropTopPx, true);
         } catch (Throwable t) {
             Log.w(TAG, "Default FBO glReadPixels fallback failed", t);
             return null;

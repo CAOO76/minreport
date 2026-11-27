@@ -31,6 +31,7 @@ import android.os.Looper;
 import android.os.PowerManager;
 import android.os.SystemClock;
 import android.text.TextUtils;
+import android.util.Base64;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.util.TypedValue;
@@ -115,8 +116,8 @@ public class MinreportSpatialScannerActivity
     public static final String PREFS_CALIBRATION_NAME = "minreport_spatial_calibration";
 
     private static final String TAG = "MinreportSpatialScanner";
-    private static final String SCANNER_ENGINE_VERSION = "2.2.0-trimodal-hull-java";
-    private static final String HUD_APP_VERSION = "2.2.0";
+    private static final String SCANNER_ENGINE_VERSION = "2.3.0-trimodal-hull-java";
+    private static final String HUD_APP_VERSION = "2.3.0";
     private static final int KEYCODE_XCOVER_KEY = 1015;
     private static final int KEYCODE_XCOVER_TOP_KEY = 1079;
 
@@ -127,6 +128,7 @@ public class MinreportSpatialScannerActivity
     private static final int TARGET_SEG_BITMAP_MAX_W = 512;
     private static final float PRE_PLAY_REFRESH_MIN_POS_M = 0.45f;
     private static final float PRE_PLAY_REFRESH_MIN_YAW_DEG = 20.0f;
+    private static final long WALK_SEG_REFRESH_INTERVAL_MS = 650L;
     private static final int MAX_PHOTO_DIMENSION_PX = 1280;
     private static final int WEBP_QUALITY = 76;
     private static final int MVS_LUMA_W = 320;
@@ -140,7 +142,7 @@ public class MinreportSpatialScannerActivity
     private static final float GYRO_EMA_ALPHA = 0.25f;
     private static final float SPEED_ALERT_GYRO_RAD_S = 0.75f;
     private static final float MAX_CAPTURE_GYRO_RAD_S = 1.85f;
-    private static final float LIVE_VISUAL_POINT_MIN_CONF = 0.1f;
+    private static final float LIVE_VISUAL_POINT_MIN_CONF = 0.55f;
     private static final int LIVE_VISUAL_POINTS_PER_FRAME = 180;
     private static final long CAPTURE_FLASH_DURATION_MS = 120L;
     private static final float LOCAL_GROUND_CLEARANCE_M = 0.55f;
@@ -558,8 +560,24 @@ public class MinreportSpatialScannerActivity
 
     // Pre-capture Target Object Selector state (READY_TRACKING only -> MBUX Zero-Layer hidden on PLAY)
     private Anchor targetAnchor = null;
+    private boolean hasLastAnchorPose = false;
+    private float lastAnchorPoseX = 0.0f;
+    private float lastAnchorPoseY = 0.0f;
+    private float lastAnchorPoseZ = 0.0f;
     private final List<Anchor> pendingDetachAnchors = new ArrayList<>(4);
     private TargetVolumeConstraint targetConstraint = TargetVolumeConstraint.inactive();
+    private boolean targetBoundsRefinedFromSeg = false;
+    private float[] latestHullCentroid = null; // { cx, cy, cz } from VisualHullCarver.VisualHullResult
+    private long lastWalkSegRefreshAtMs = 0L;
+    private boolean pendingSegGlFallback = false;
+    private boolean pendingSegIsDirectTap = false;
+    private float pendingSegViewTapX = -1.0f;
+    private float pendingSegViewTapY = -1.0f;
+    private int pendingSegGen = 0;
+    private int pendingSegGlWaitFrames = 0;
+    private int consecutiveSegAcquireFails = 0;
+    private String lastSegDiagCode = null;
+    private long lastSegDiagAtMs = 0L;
     private TargetEditMode targetEditMode = TargetEditMode.ANCHOR;
     private final List<float[]> targetPolygonVerticesXZ = new ArrayList<>(TargetVolumeConstraint.MAX_POLYGON_VERTICES);
     private boolean hasPendingPadReferenceY = false;
@@ -1390,6 +1408,12 @@ public class MinreportSpatialScannerActivity
                 pendingDetachAnchors.add(targetAnchor);
                 targetAnchor = null;
             }
+            hasLastAnchorPose = false;
+            targetBoundsRefinedFromSeg = false;
+            latestHullCentroid = null;
+            pendingSegGlFallback = false;
+            consecutiveSegAcquireFails = 0;
+            lastSegDiagCode = null;
             targetPolygonVerticesXZ.clear();
             hasPendingPadReferenceY = false;
             pendingPadReferenceY = 0.0f;
@@ -1543,7 +1567,10 @@ public class MinreportSpatialScannerActivity
         lastDepthTimestampNs = 0L;
         lastPrePlayDepthCamPos = null;
         lastPrePlayDepthCamFwdXZ = null;
-        targetSegGeneration.incrementAndGet();
+        latestHullCentroid = null;
+        lastWalkSegRefreshAtMs = 0L;
+        consecutiveSegAcquireFails = 0;
+        // Preserve in-flight targetSegGeneration from READY_TRACKING tap so pressing PLAY during warmUp() never drops the first mask!
         hasScaleAnchor = hasActiveCalibration || Math.abs(calibrationScaleFactor - 1.0f) > 1e-4f;
         Arrays.fill(sectorStates, 0);
         Arrays.fill(sectorKfCounts, 0);
@@ -1570,7 +1597,9 @@ public class MinreportSpatialScannerActivity
         burstState.resetAll(nowMs);
         if (renderer != null) {
             renderer.clearLiveOverlay();
-            renderer.clearGlFallbackRequest();
+            if (!pendingSegGlFallback) {
+                renderer.clearGlFallbackRequest();
+            }
             renderer.setCaptureActive(true);
             renderer.updateTargetVolumeConstraint(targetConstraint);
         }
@@ -1653,6 +1682,10 @@ public class MinreportSpatialScannerActivity
                 forceHud = true;
             }
 
+            // Consume any GL fallback frame once per onArFrame so MagicTouch & burst never contend for it
+            final ArCoreCameraRenderer.GlFallbackFrame frameGlFallback =
+                renderer != null ? renderer.consumeGlFallbackFrame() : null;
+
             // Immediate 3D visual feedback from Frame 1 (both READY_TRACKING & CAPTURING_WALK, even at 0 KF)
             if (currentStep == FlowStep.READY_TRACKING || currentStep == FlowStep.CAPTURING_WALK) {
                 syncTargetAnchorPoseLocked();
@@ -1667,6 +1700,9 @@ public class MinreportSpatialScannerActivity
                 }
                 updateLivePointCloudAndVioLocked(frame, nowMs, currentStep == FlowStep.CAPTURING_WALK);
                 updateLivePlaneOutlines(activeSession);
+                if (pendingSegGlFallback) {
+                    handlePendingSegGlFallbackLocked(activeSession, frame, camera, frameGlFallback, nowMs);
+                }
             }
 
             if (currentStep == FlowStep.READY_TRACKING) {
@@ -1769,7 +1805,7 @@ public class MinreportSpatialScannerActivity
 
                 if (savedKeyframes.size() < MAX_KEYFRAME_PHOTOS && (kfTriggered || burstState.isActive())) {
                     burstState.beginBurstIfNeeded(nowMs);
-                    evaluateBurstCandidateLocked(frame, camera, camPose, nowMs);
+                    evaluateBurstCandidateLocked(frame, camera, camPose, frameGlFallback, nowMs);
 
                     if (burstState.shouldRequestGlFallback() && renderer != null) {
                         burstState.markGlFallbackRequested(nowMs);
@@ -1792,6 +1828,11 @@ public class MinreportSpatialScannerActivity
                             maybeScheduleLiveOverlayRefreshLocked(nowMs);
                         }
                     }
+                }
+
+                // 4b. Keep blue target silhouette live & pose-accurate during CAPTURING_WALK (~650 ms)
+                if (targetConstraint.active && !targetConstraint.hasValidPolygon()) {
+                    maybeScheduleWalkTargetRefreshLocked(activeSession, frame, camera, nowMs);
                 }
 
                 // 5. Periodic 3D DEM + Visual Hull overlay refresh every 650 ms even on textureless objects
@@ -1986,6 +2027,11 @@ public class MinreportSpatialScannerActivity
         // Default ANCHOR mode: create ARCore Anchor at hitPose & run real MagicTouch + Depth fusion off-thread
         replaceTargetAnchorLocked(activeSession, hitPose);
         targetPolygonVerticesXZ.clear();
+        targetBoundsRefinedFromSeg = false;
+        latestHullCentroid = null;
+        pendingSegGlFallback = false;
+        consecutiveSegAcquireFails = 0;
+        lastSegDiagCode = null;
         final float prevRadius = targetConstraint.active
             ? targetConstraint.radiusM
             : TargetVolumeConstraint.DEFAULT_RADIUS_M;
@@ -2010,8 +2056,14 @@ public class MinreportSpatialScannerActivity
 
         // Convert viewport tap coordinates to unrotated CPU camera IMAGE_NORMALIZED [0..1] (handles ROTATION_90/270)
         final float[] tapImgNorm = resolveTapImageNormalized(frame, tapX, tapY);
-        scheduleTargetSegmentationLocked(activeSession, frame, tapImgNorm[0], tapImgNorm[1], true);
+        scheduleTargetSegmentationLocked(activeSession, frame, tapImgNorm[0], tapImgNorm[1], tapX, tapY, true, null);
         return true;
+    }
+
+    private boolean isCpuImageRotated180() {
+        final int displayRotDeg = renderer != null ? renderer.getDisplayRotationDegrees() : 90;
+        final int relDeg = (rearSensorOrientation - displayRotDeg + 360) % 360;
+        return relDeg == 180;
     }
 
     private float[] resolveTapImageNormalized(final Frame frame, final float tapX, final float tapY) {
@@ -2030,11 +2082,58 @@ public class MinreportSpatialScannerActivity
                 return tapImgNorm;
             }
         } catch (Throwable t) {
-            Log.w(TAG, "transformCoordinates2d VIEW->IMAGE_NORMALIZED failed; using viewport fallback", t);
+            Log.w(TAG, "transformCoordinates2d VIEW->IMAGE_NORMALIZED failed; using orientation-aware fallback", t);
         }
         final int vw = Math.max(1, renderer != null ? renderer.getViewportWidth() : 1);
         final int vh = Math.max(1, renderer != null ? renderer.getViewportHeight() : 1);
-        return new float[] { clamp(tapX / vw, 0.01f, 0.99f), clamp(tapY / vh, 0.01f, 0.99f) };
+        float nx = clamp(tapX / vw, 0.01f, 0.99f);
+        float ny = clamp(tapY / vh, 0.01f, 0.99f);
+        if (isCpuImageRotated180()) {
+            nx = 1.0f - nx;
+            ny = 1.0f - ny;
+        }
+        return new float[] { nx, ny };
+    }
+
+    private float[] resolveTargetPromptWorld3DLocked(final float estGroundY) {
+        if (
+            latestHullCentroid != null &&
+            latestHullCentroid.length >= 3 &&
+            Float.isFinite(latestHullCentroid[0]) &&
+            Float.isFinite(latestHullCentroid[1]) &&
+            Float.isFinite(latestHullCentroid[2])
+        ) {
+            return new float[] { latestHullCentroid[0], latestHullCentroid[1], latestHullCentroid[2] };
+        }
+        final float midY = estGroundY + 0.5f * Math.max(targetConstraint.heightEstM, 0.30f);
+        return new float[] { targetConstraint.anchorX, midY, targetConstraint.anchorZ };
+    }
+
+    private float[] projectWorldPointToViewportPx(final Camera camera, final float wx, final float wy, final float wz) {
+        final int vw = renderer != null ? renderer.getViewportWidth() : 0;
+        final int vh = renderer != null ? renderer.getViewportHeight() : 0;
+        if (camera == null || vw <= 0 || vh <= 0) {
+            return null;
+        }
+        final float[] vpIntr = ArCoreCameraRenderer.deriveIntrinsicsFromCamera(camera, vw, vh);
+        if (vpIntr == null) {
+            return null;
+        }
+        final Pose dispPose = camera.getDisplayOrientedPose() != null
+            ? camera.getDisplayOrientedPose()
+            : camera.getPose();
+        final float[] worldToDispCam16 = new float[16];
+        dispPose.inverse().toMatrix(worldToDispCam16, 0);
+        final float[] norm = projectWorldPointToNormalizedImage(
+            wx, wy, wz,
+            worldToDispCam16,
+            vpIntr[0], vpIntr[1], vpIntr[2], vpIntr[3],
+            vw, vh
+        );
+        if (norm == null) {
+            return null;
+        }
+        return new float[] { norm[0] * vw, norm[1] * vh };
     }
 
     private void maybeSchedulePrePlayTargetRefreshLocked(
@@ -2042,7 +2141,7 @@ public class MinreportSpatialScannerActivity
         final Frame frame,
         final Camera camera
     ) {
-        if (isThermallyThrottled() || prePlaySegBusy.get() || objectSegmenter == null) {
+        if (isThermallyThrottled() || prePlaySegBusy.get() || pendingSegGlFallback || objectSegmenter == null) {
             return;
         }
         final Pose camPose = camera.getPose();
@@ -2074,14 +2173,14 @@ public class MinreportSpatialScannerActivity
         }
 
         final float estGroundY = estimateCurrentGroundYLocked(activeSession, camPos[1]);
-        final float midY = estGroundY + 0.5f * Math.max(targetConstraint.heightEstM, 0.30f);
+        final float[] targetW3 = resolveTargetPromptWorld3DLocked(estGroundY);
         final float[] worldToCam16 = new float[16];
         camPose.inverse().toMatrix(worldToCam16, 0);
         final float[] intr = resolveCameraIntrinsicsLocked(camera, TARGET_SEG_BITMAP_MAX_W, 384, false);
         final float[] normPt = projectWorldPointToNormalizedImage(
-            targetConstraint.anchorX,
-            midY,
-            targetConstraint.anchorZ,
+            targetW3[0],
+            targetW3[1],
+            targetW3[2],
             worldToCam16,
             intr[0],
             intr[1],
@@ -2093,18 +2192,104 @@ public class MinreportSpatialScannerActivity
         if (normPt == null) {
             return;
         }
-        scheduleTargetSegmentationLocked(activeSession, frame, normPt[0], normPt[1], false);
+        final float[] vpPx = projectWorldPointToViewportPx(camera, targetW3[0], targetW3[1], targetW3[2]);
+        final float vx = vpPx != null ? vpPx[0] : -1.0f;
+        final float vy = vpPx != null ? vpPx[1] : -1.0f;
+        scheduleTargetSegmentationLocked(activeSession, frame, normPt[0], normPt[1], vx, vy, false, null);
+    }
+
+    private void maybeScheduleWalkTargetRefreshLocked(
+        final Session activeSession,
+        final Frame frame,
+        final Camera camera,
+        final long nowMs
+    ) {
+        if (
+            (nowMs - lastWalkSegRefreshAtMs) < WALK_SEG_REFRESH_INTERVAL_MS ||
+            isThermallyThrottled() ||
+            prePlaySegBusy.get() ||
+            pendingSegGlFallback ||
+            objectSegmenter == null
+        ) {
+            return;
+        }
+        final Pose camPose = camera.getPose();
+        final float[] camPos = camPose.getTranslation();
+        final float estGroundY = estimateCurrentGroundYLocked(activeSession, camPos[1]);
+        final float[] targetW3 = resolveTargetPromptWorld3DLocked(estGroundY);
+        final float[] worldToCam16 = new float[16];
+        camPose.inverse().toMatrix(worldToCam16, 0);
+        final float[] intr = resolveCameraIntrinsicsLocked(camera, TARGET_SEG_BITMAP_MAX_W, 384, false);
+        final float[] normPt = projectWorldPointToNormalizedImage(
+            targetW3[0],
+            targetW3[1],
+            targetW3[2],
+            worldToCam16,
+            intr[0],
+            intr[1],
+            intr[2],
+            intr[3],
+            TARGET_SEG_BITMAP_MAX_W,
+            384
+        );
+        if (normPt == null) {
+            return;
+        }
+        lastWalkSegRefreshAtMs = nowMs;
+        final float[] vpPx = projectWorldPointToViewportPx(camera, targetW3[0], targetW3[1], targetW3[2]);
+        final float vx = vpPx != null ? vpPx[0] : -1.0f;
+        final float vy = vpPx != null ? vpPx[1] : -1.0f;
+        scheduleTargetSegmentationLocked(activeSession, frame, normPt[0], normPt[1], vx, vy, false, null);
+    }
+
+    private void handlePendingSegGlFallbackLocked(
+        final Session activeSession,
+        final Frame frame,
+        final Camera camera,
+        final ArCoreCameraRenderer.GlFallbackFrame glFallback,
+        final long nowMs
+    ) {
+        if (!pendingSegGlFallback) {
+            return;
+        }
+        if (glFallback != null && glFallback.rgbaBytes != null && glFallback.width > 0 && glFallback.height > 0) {
+            final boolean isDirect = pendingSegIsDirectTap;
+            final float vx = pendingSegViewTapX;
+            final float vy = pendingSegViewTapY;
+            pendingSegGlFallback = false;
+            pendingSegGlWaitFrames = 0;
+            scheduleTargetSegmentationLocked(activeSession, frame, 0.5f, 0.5f, vx, vy, isDirect, glFallback);
+            return;
+        }
+        pendingSegGlWaitFrames++;
+        if (pendingSegGlWaitFrames >= 3) {
+            final boolean wasDirect = pendingSegIsDirectTap;
+            pendingSegGlFallback = false;
+            pendingSegGlWaitFrames = 0;
+            if (wasDirect) {
+                lastSegDiagCode = "SEG · NYA";
+                lastSegDiagAtMs = nowMs;
+                if (overlayRenderer != null) {
+                    overlayRenderer.setTargetSegmenting(false);
+                }
+            }
+        } else if (renderer != null) {
+            renderer.requestGlFallbackFrame();
+        }
     }
 
     private void scheduleTargetSegmentationLocked(
         final Session activeSession,
         final Frame frame,
-        final float tapNormX,
-        final float tapNormY,
-        final boolean isDirectTap
+        final float tapImgNormX,
+        final float tapImgNormY,
+        final float viewTapX,
+        final float viewTapY,
+        final boolean isDirectTap,
+        final ArCoreCameraRenderer.GlFallbackFrame glFallbackOverride
     ) {
         if (visionExecutor == null || visionExecutor.isShutdown() || objectSegmenter == null) {
-            if (overlayRenderer != null) {
+            if (isDirectTap && overlayRenderer != null) {
                 overlayRenderer.setTargetSegmenting(false);
             }
             return;
@@ -2113,29 +2298,99 @@ public class MinreportSpatialScannerActivity
             return;
         }
 
-        Bitmap snapBmp = null;
-        try (Image camImg = frame.acquireCameraImage()) {
-            snapBmp = InteractiveObjectSegmenter.yuv420ToScaledRgbBitmap(camImg, TARGET_SEG_BITMAP_MAX_W);
-        } catch (NotYetAvailableException ignored) {
-            snapBmp = null;
-        } catch (Throwable t) {
-            Log.w(TAG, "Failed to acquire camera snapshot for MagicTouch", t);
-            snapBmp = null;
+        final Camera camera = frame.getCamera();
+        final boolean fromGlFallback =
+            glFallbackOverride != null &&
+            glFallbackOverride.rgbaBytes != null &&
+            glFallbackOverride.width > 0 &&
+            glFallbackOverride.height > 0;
+
+        byte[] nv21Snap = null;
+        byte[] glRgbaSnap = null;
+        int srcW = 0;
+        int srcH = 0;
+        boolean acquireWasNya = false;
+
+        if (fromGlFallback) {
+            glRgbaSnap = glFallbackOverride.rgbaBytes;
+            srcW = glFallbackOverride.width;
+            srcH = glFallbackOverride.height;
+            consecutiveSegAcquireFails = 0;
+        } else {
+            try (Image camImg = frame.acquireCameraImage()) {
+                if (camImg.getFormat() == ImageFormat.YUV_420_888) {
+                    final int w = camImg.getWidth();
+                    final int h = camImg.getHeight();
+                    final Image.Plane[] planes = camImg.getPlanes();
+                    if (
+                        w >= 4 && h >= 4 &&
+                        planes != null && planes.length >= 3 &&
+                        planes[0] != null && planes[1] != null && planes[2] != null
+                    ) {
+                        final byte[] bulkNv21 = CapturePipelineHelper.extractNv21FromPlanes(
+                            planes[0].getBuffer(),
+                            planes[0].getRowStride(),
+                            planes[0].getPixelStride(),
+                            planes[1].getBuffer(),
+                            planes[1].getRowStride(),
+                            planes[1].getPixelStride(),
+                            planes[2].getBuffer(),
+                            planes[2].getRowStride(),
+                            planes[2].getPixelStride(),
+                            w,
+                            h
+                        );
+                        if (bulkNv21 != null && bulkNv21.length >= w * h + (w * h) / 2) {
+                            nv21Snap = bulkNv21;
+                            srcW = w;
+                            srcH = h;
+                            consecutiveSegAcquireFails = 0;
+                        }
+                    }
+                }
+            } catch (NotYetAvailableException ignored) {
+                acquireWasNya = true;
+            } catch (Throwable t) {
+                Log.w(TAG, "Failed to acquire camera snapshot for MagicTouch", t);
+            }
         }
-        if (snapBmp == null) {
+
+        if (!fromGlFallback && nv21Snap == null) {
+            consecutiveSegAcquireFails++;
+            if (renderer != null && (isDirectTap || consecutiveSegAcquireFails >= 2)) {
+                final int genForFallback = isDirectTap
+                    ? targetSegGeneration.incrementAndGet()
+                    : targetSegGeneration.get();
+                pendingSegGlFallback = true;
+                pendingSegIsDirectTap = isDirectTap;
+                pendingSegViewTapX = viewTapX;
+                pendingSegViewTapY = viewTapY;
+                pendingSegGen = genForFallback;
+                pendingSegGlWaitFrames = 0;
+                renderer.requestGlFallbackFrame();
+                if (!isDirectTap) {
+                    prePlaySegBusy.set(false);
+                }
+                return;
+            }
             if (!isDirectTap) {
                 prePlaySegBusy.set(false);
             }
-            if (isDirectTap && overlayRenderer != null) {
-                overlayRenderer.setTargetSegmenting(false);
+            if (isDirectTap) {
+                lastSegDiagCode = acquireWasNya ? "SEG · NYA" : "SEG · ERR";
+                lastSegDiagAtMs = SystemClock.elapsedRealtime();
+                if (overlayRenderer != null) {
+                    overlayRenderer.setTargetSegmenting(false);
+                }
             }
             return;
         }
 
-        final Camera camera = frame.getCamera();
-        final Pose camPose = camera.getPose();
-        final float[] camPos = camPose.getTranslation();
-        final float[] zAxis = camPose.getZAxis();
+        final Pose effectivePose = fromGlFallback && camera.getDisplayOrientedPose() != null
+            ? camera.getDisplayOrientedPose()
+            : camera.getPose();
+        final float[] camPos = effectivePose.getTranslation();
+        final float[] zAxis = effectivePose.getZAxis();
         final float fxDir = -zAxis[0];
         final float fzDir = -zAxis[2];
         final float fLen = (float) Math.hypot(fxDir, fzDir);
@@ -2145,52 +2400,141 @@ public class MinreportSpatialScannerActivity
             : new float[] { 0.0f, -1.0f };
 
         final float[] camToWorld16 = new float[16];
-        camPose.toMatrix(camToWorld16, 0);
-        final int bmpW = snapBmp.getWidth();
-        final int bmpH = snapBmp.getHeight();
-        final float[] bmpIntr = resolveCameraIntrinsicsLocked(camera, bmpW, bmpH, false);
+        effectivePose.toMatrix(camToWorld16, 0);
         final float estGroundY = estimateCurrentGroundYLocked(activeSession, camPos[1]);
 
-        // On-demand ARCore Depth snapshot (smooth Depth preferred on tap; fallback to raw Depth if unavailable)
-        DepthSnapshot depthSnap = acquireDepthSnapshotOnDemand(frame, false, isDirectTap);
-        if (depthSnap == null) {
-            depthSnap = acquireDepthSnapshotOnDemand(frame, true, isDirectTap);
+        final float[] srcIntr;
+        if (fromGlFallback) {
+            final float[] projIntr = ArCoreCameraRenderer.deriveIntrinsicsForGlFallback(camera, glFallbackOverride);
+            srcIntr = projIntr != null ? projIntr : resolveCameraIntrinsicsLocked(camera, srcW, srcH, true);
+        } else {
+            srcIntr = resolveCameraIntrinsicsLocked(camera, srcW, srcH, false);
+        }
+
+        // Resolve exact normalized prompt (promptNormX, promptNormY) in the snapshot coordinate space
+        float resolvedPromptX = tapImgNormX;
+        float resolvedPromptY = tapImgNormY;
+        if (fromGlFallback) {
+            if (viewTapX >= 0.0f && viewTapY >= 0.0f) {
+                if (glFallbackOverride.fromDefaultFbo) {
+                    resolvedPromptX = clamp(
+                        (viewTapX - glFallbackOverride.cropLeftPx) / Math.max(1.0f, (float) srcW),
+                        0.01f, 0.99f
+                    );
+                    resolvedPromptY = clamp(
+                        (viewTapY - glFallbackOverride.cropTopPx) / Math.max(1.0f, (float) srcH),
+                        0.01f, 0.99f
+                    );
+                } else {
+                    final float vpW = Math.max(1.0f, (float) glFallbackOverride.viewportWidth);
+                    final float vpH = Math.max(1.0f, (float) glFallbackOverride.viewportHeight);
+                    resolvedPromptX = clamp(viewTapX / vpW, 0.01f, 0.99f);
+                    resolvedPromptY = clamp(viewTapY / vpH, 0.01f, 0.99f);
+                }
+            } else {
+                final float[] targetW3 = resolveTargetPromptWorld3DLocked(estGroundY);
+                final float[] worldToCam16 = new float[16];
+                effectivePose.inverse().toMatrix(worldToCam16, 0);
+                final float[] projPt = projectWorldPointToNormalizedImage(
+                    targetW3[0], targetW3[1], targetW3[2],
+                    worldToCam16,
+                    srcIntr[0], srcIntr[1], srcIntr[2], srcIntr[3],
+                    srcW, srcH
+                );
+                if (projPt != null) {
+                    resolvedPromptX = projPt[0];
+                    resolvedPromptY = projPt[1];
+                }
+            }
+        }
+
+        // On-demand ARCore Depth snapshot (skipped when fromGlFallback uses display-cropped FOV)
+        DepthSnapshot depthSnap = null;
+        if (!fromGlFallback) {
+            depthSnap = acquireDepthSnapshotOnDemand(frame, false, isDirectTap);
+            if (depthSnap == null) {
+                depthSnap = acquireDepthSnapshotOnDemand(frame, true, isDirectTap);
+            }
         }
 
         final TargetVolumeConstraint existingSnap = targetConstraint;
+        final float[] hullCentroidSnap = latestHullCentroid != null ? Arrays.copyOf(latestHullCentroid, 3) : null;
         final float anchorX = existingSnap.anchorX;
         final float anchorY = existingSnap.anchorY;
         final float anchorZ = existingSnap.anchorZ;
-        final int gen = isDirectTap ? targetSegGeneration.incrementAndGet() : targetSegGeneration.get();
-        final Bitmap bmpForBg = snapBmp;
+        final int gen = fromGlFallback
+            ? pendingSegGen
+            : (isDirectTap ? targetSegGeneration.incrementAndGet() : targetSegGeneration.get());
+        final boolean rotate180ForInference = !fromGlFallback && isCpuImageRotated180();
+        final byte[] nv21ForBg = nv21Snap;
+        final byte[] rgbaForBg = glRgbaSnap;
+        final int imgSrcW = srcW;
+        final int imgSrcH = srcH;
+        final float promptNormX = resolvedPromptX;
+        final float promptNormY = resolvedPromptY;
         final DepthSnapshot depthForBg = depthSnap;
 
         visionExecutor.execute(() -> {
+            Bitmap bmpForBg = null;
             try {
                 final InteractiveObjectSegmenter seg = objectSegmenter;
                 if (seg == null) {
                     return;
                 }
-                final InteractiveObjectSegmenter.ObjectMask mask =
-                    seg.segmentAtNormalizedPoint(bmpForBg, tapNormX, tapNormY);
-                if (!mask.valid) {
-                    if (isDirectTap && overlayRenderer != null && gen == targetSegGeneration.get()) {
-                        overlayRenderer.setTargetSegmenting(false);
+                if (fromGlFallback) {
+                    bmpForBg = InteractiveObjectSegmenter.rgbaBottomUpToScaledRgbBitmap(
+                        rgbaForBg, imgSrcW, imgSrcH, TARGET_SEG_BITMAP_MAX_W
+                    );
+                } else {
+                    bmpForBg = InteractiveObjectSegmenter.nv21ToScaledRgbBitmapRotated(
+                        nv21ForBg, imgSrcW, imgSrcH, TARGET_SEG_BITMAP_MAX_W, rotate180ForInference
+                    );
+                }
+                if (bmpForBg == null) {
+                    if (isDirectTap && gen == targetSegGeneration.get()) {
+                        synchronized (stateLock) {
+                            lastSegDiagCode = "SEG · ERR";
+                            lastSegDiagAtMs = SystemClock.elapsedRealtime();
+                        }
+                        if (overlayRenderer != null) {
+                            overlayRenderer.setTargetSegmenting(false);
+                        }
                     }
                     return;
                 }
 
-                final float sx = mask.width / (float) Math.max(1, bmpW);
-                final float sy = mask.height / (float) Math.max(1, bmpH);
-                final float fxM = bmpIntr[0] * sx;
-                final float fyM = bmpIntr[1] * sy;
-                final float cxM = bmpIntr[2] * sx;
-                final float cyM = bmpIntr[3] * sy;
+                final float inferTapX = rotate180ForInference ? (1.0f - promptNormX) : promptNormX;
+                final float inferTapY = rotate180ForInference ? (1.0f - promptNormY) : promptNormY;
+                final InteractiveObjectSegmenter.ObjectMask rawMask =
+                    seg.segmentAtNormalizedPoint(bmpForBg, inferTapX, inferTapY);
+                if (!rawMask.valid) {
+                    if (isDirectTap && gen == targetSegGeneration.get()) {
+                        synchronized (stateLock) {
+                            lastSegDiagCode = "SEG · ERR";
+                            lastSegDiagAtMs = SystemClock.elapsedRealtime();
+                        }
+                        if (overlayRenderer != null) {
+                            overlayRenderer.setTargetSegmenting(false);
+                        }
+                    }
+                    return;
+                }
+
+                final byte[] alignedMaskConf = rotate180ForInference
+                    ? InteractiveObjectSegmenter.rotateMask180(rawMask.conf, rawMask.width, rawMask.height)
+                    : rawMask.conf;
+
+                final float sx = rawMask.width / (float) Math.max(1, imgSrcW);
+                final float sy = rawMask.height / (float) Math.max(1, imgSrcH);
+                final float fxM = srcIntr[0] * sx;
+                final float fyM = srcIntr[1] * sy;
+                final float cxM = srcIntr[2] * sx;
+                final float cyM = srcIntr[3] * sy;
 
                 final DepthMaskFuser.FusedTargetSurface fused = DepthMaskFuser.fuse(
-                    mask.conf,
-                    mask.width,
-                    mask.height,
+                    alignedMaskConf,
+                    rawMask.width,
+                    rawMask.height,
                     depthForBg != null ? depthForBg.depthMm : null,
                     depthForBg != null ? depthForBg.depthConf : null,
                     depthForBg != null ? depthForBg.width : 0,
@@ -2204,56 +2548,88 @@ public class MinreportSpatialScannerActivity
                     anchorX,
                     anchorY,
                     anchorZ,
-                    tapNormX,
-                    tapNormY,
+                    promptNormX,
+                    promptNormY,
                     existingSnap
                 );
                 if (fused == null || fused.constraint == null) {
-                    if (isDirectTap && overlayRenderer != null && gen == targetSegGeneration.get()) {
-                        overlayRenderer.setTargetSegmenting(false);
+                    if (isDirectTap && gen == targetSegGeneration.get()) {
+                        synchronized (stateLock) {
+                            lastSegDiagCode = "SEG · ERR";
+                            lastSegDiagAtMs = SystemClock.elapsedRealtime();
+                        }
+                        if (overlayRenderer != null) {
+                            overlayRenderer.setTargetSegmenting(false);
+                        }
                     }
                     return;
                 }
 
                 boolean applied = false;
                 synchronized (stateLock) {
+                    final boolean validStep =
+                        currentStep == FlowStep.READY_TRACKING || currentStep == FlowStep.CAPTURING_WALK;
                     if (
                         gen == targetSegGeneration.get() &&
                         !finishing &&
-                        currentStep == FlowStep.READY_TRACKING &&
+                        validStep &&
                         targetConstraint.active &&
                         !targetConstraint.hasValidPolygon()
                     ) {
-                        targetConstraint = fused.constraint;
+                        lastSegDiagCode = null;
+                        // Apply refined target bounds in READY_TRACKING OR on first in-flight tap finishing after PLAY
+                        if (currentStep == FlowStep.READY_TRACKING || !targetBoundsRefinedFromSeg) {
+                            targetConstraint = fused.constraint;
+                            targetBoundsRefinedFromSeg = true;
+                            if (currentStep == FlowStep.CAPTURING_WALK) {
+                                lastSectorCenterXZ = targetConstraint.getEffectiveCenterXZ();
+                            }
+                            if (renderer != null) {
+                                renderer.updateTargetVolumeConstraint(targetConstraint);
+                            }
+                        }
                         if (overlayRenderer != null) {
                             overlayRenderer.setGroundY(estGroundY);
                             if (fused.usedDepth && fused.triVerticesXyz != null && fused.triVerticesXyz.length >= 9) {
-                                overlayRenderer.setFusedTargetSurface(fused.triVerticesXyz, fused.contourLoopXyz);
+                                overlayRenderer.setFusedTargetSurface(fused.triVerticesXyz, fused.contourSegmentsXyz);
                             } else {
-                                final float anchorDistM = clamp(
-                                    (float) Math.sqrt(
-                                        (fused.constraint.anchorX - camToWorld16[12]) * (fused.constraint.anchorX - camToWorld16[12]) +
-                                        (fused.constraint.anchorY - camToWorld16[13]) * (fused.constraint.anchorY - camToWorld16[13]) +
-                                        (fused.constraint.anchorZ - camToWorld16[14]) * (fused.constraint.anchorZ - camToWorld16[14])
-                                    ),
-                                    0.35f,
-                                    15.0f
+                                // Use optical depth -zc along camera forward axis (not Euclidean distance)
+                                final float refX = hullCentroidSnap != null ? hullCentroidSnap[0] : fused.constraint.anchorX;
+                                final float refY = hullCentroidSnap != null ? hullCentroidSnap[1] : fused.constraint.anchorY;
+                                final float refZ = hullCentroidSnap != null ? hullCentroidSnap[2] : fused.constraint.anchorZ;
+                                final float relX = refX - camToWorld16[12];
+                                final float relY = refY - camToWorld16[13];
+                                final float relZ = refZ - camToWorld16[14];
+                                final float opticalDepthM = -(
+                                    camToWorld16[8] * relX +
+                                    camToWorld16[9] * relY +
+                                    camToWorld16[10] * relZ
                                 );
+                                final float fallbackDepthM =
+                                    (Float.isFinite(opticalDepthM) && opticalDepthM > 0.25f)
+                                        ? clamp(opticalDepthM, 0.35f, 15.0f)
+                                        : clamp(
+                                            (float) Math.sqrt(relX * relX + relY * relY + relZ * relZ),
+                                            0.35f,
+                                            15.0f
+                                        );
                                 final float[] quadWorld12 = computeFallbackMaskQuadCornersWorld(
                                     camToWorld16,
                                     fxM,
                                     fyM,
                                     cxM,
                                     cyM,
-                                    mask.width,
-                                    mask.height,
-                                    anchorDistM
+                                    rawMask.width,
+                                    rawMask.height,
+                                    fallbackDepthM
                                 );
-                                overlayRenderer.setFallbackMaskQuad(mask.conf, mask.width, mask.height, quadWorld12);
+                                overlayRenderer.setFallbackMaskQuad(
+                                    alignedMaskConf,
+                                    rawMask.width,
+                                    rawMask.height,
+                                    quadWorld12
+                                );
                             }
-                        }
-                        if (renderer != null) {
-                            renderer.updateTargetVolumeConstraint(targetConstraint);
                         }
                         applied = true;
                     }
@@ -2263,11 +2639,17 @@ public class MinreportSpatialScannerActivity
                 }
             } catch (Throwable t) {
                 Log.w(TAG, "Background MagicTouch + DepthMaskFuser failed", t);
-                if (isDirectTap && overlayRenderer != null && gen == targetSegGeneration.get()) {
-                    overlayRenderer.setTargetSegmenting(false);
+                if (isDirectTap && gen == targetSegGeneration.get()) {
+                    synchronized (stateLock) {
+                        lastSegDiagCode = "SEG · ERR";
+                        lastSegDiagAtMs = SystemClock.elapsedRealtime();
+                    }
+                    if (overlayRenderer != null) {
+                        overlayRenderer.setTargetSegmenting(false);
+                    }
                 }
             } finally {
-                if (!bmpForBg.isRecycled()) {
+                if (bmpForBg != null && !bmpForBg.isRecycled()) {
                     bmpForBg.recycle();
                 }
                 if (!isDirectTap) {
@@ -2359,23 +2741,24 @@ public class MinreportSpatialScannerActivity
     }
 
     private float estimateCurrentGroundYLocked(final Session activeSession, final float camY) {
+        // Priority 1: Explicit operator-tapped patio floor elevation
         if (targetConstraint != null && targetConstraint.hasPadReferenceY) {
             return targetConstraint.padReferenceY;
         }
         if (hasPendingPadReferenceY) {
             return pendingPadReferenceY;
         }
-        final List<float[]> medGround = groundCellAggregator.snapshotTrimmedMedians();
-        if (!medGround.isEmpty()) {
-            final float[] ys = new float[medGround.size()];
-            for (int i = 0; i < medGround.size(); i++) {
-                ys[i] = medGround.get(i)[1];
-            }
-            Arrays.sort(ys);
-            return ys[ys.length / 2];
-        }
+        final boolean hasActiveAnchorY =
+            targetConstraint != null && targetConstraint.active && Float.isFinite(targetConstraint.anchorY);
+        final float maxAllowedFloorY = hasActiveAnchorY
+            ? (targetConstraint.anchorY - 0.05f)
+            : (Float.isFinite(camY) ? (camY - 0.35f) : Float.POSITIVE_INFINITY);
+
+        // Priority 2a: Nearest tracked horizontal upward Plane strictly below anchorY - 0.05 m
         if (activeSession != null) {
             try {
+                float nearestPlaneY = Float.NaN;
+                float nearestDistSq = Float.POSITIVE_INFINITY;
                 final List<Float> planeYs = new ArrayList<>(8);
                 for (Plane plane : activeSession.getAllTrackables(Plane.class)) {
                     if (
@@ -2385,12 +2768,29 @@ public class MinreportSpatialScannerActivity
                     ) {
                         final Pose cp = plane.getCenterPose();
                         if (cp != null) {
-                            final float py = cp.getTranslation()[1];
-                            if (Float.isFinite(py) && (!Float.isFinite(camY) || py <= camY - 0.35f)) {
+                            final float[] pTr = cp.getTranslation();
+                            final float py = pTr[1];
+                            if (
+                                Float.isFinite(py) &&
+                                py <= maxAllowedFloorY &&
+                                (!Float.isFinite(camY) || py <= camY - 0.25f)
+                            ) {
                                 planeYs.add(py);
+                                if (hasActiveAnchorY) {
+                                    final float dx = pTr[0] - targetConstraint.anchorX;
+                                    final float dz = pTr[2] - targetConstraint.anchorZ;
+                                    final float d2 = dx * dx + dz * dz;
+                                    if (d2 < nearestDistSq) {
+                                        nearestDistSq = d2;
+                                        nearestPlaneY = py;
+                                    }
+                                }
                             }
                         }
                     }
+                }
+                if (hasActiveAnchorY && Float.isFinite(nearestPlaneY)) {
+                    return nearestPlaneY;
                 }
                 if (!planeYs.isEmpty()) {
                     final float[] arr = new float[planeYs.size()];
@@ -2403,8 +2803,28 @@ public class MinreportSpatialScannerActivity
             } catch (Throwable ignored) {
             }
         }
-        if (targetConstraint != null && targetConstraint.active && Float.isFinite(targetConstraint.anchorY)) {
-            return targetConstraint.anchorY;
+
+        // Priority 2b: Aggregated trimmed-median ground cells strictly below anchorY - 0.05 m
+        final List<float[]> medGround = groundCellAggregator.snapshotTrimmedMedians();
+        if (!medGround.isEmpty()) {
+            final float[] ys = new float[medGround.size()];
+            int count = 0;
+            for (int i = 0; i < medGround.size(); i++) {
+                final float gy = medGround.get(i)[1];
+                if (Float.isFinite(gy) && gy <= maxAllowedFloorY) {
+                    ys[count++] = gy;
+                }
+            }
+            if (count > 0) {
+                Arrays.sort(ys, 0, count);
+                return ys[count / 2];
+            }
+        }
+
+        // Priority 3: NEVER return targetConstraint.anchorY as floor (tap may hit mid-height/crown)
+        if (hasActiveAnchorY) {
+            final float belowAnchor = targetConstraint.anchorY - 0.25f;
+            return Float.isFinite(camY) ? Math.min(belowAnchor, camY - 1.15f) : belowAnchor;
         }
         return Float.isFinite(camY) ? (camY - 1.15f) : 0.0f;
     }
@@ -2499,11 +2919,25 @@ public class MinreportSpatialScannerActivity
             }
             targetAnchor = null;
         }
+        hasLastAnchorPose = false;
         try {
             targetAnchor = activeSession.createAnchor(hitPose);
+            final float[] tr = targetAnchor != null && targetAnchor.getPose() != null
+                ? targetAnchor.getPose().getTranslation()
+                : (hitPose != null ? hitPose.getTranslation() : null);
+            if (
+                tr != null && tr.length >= 3 &&
+                Float.isFinite(tr[0]) && Float.isFinite(tr[1]) && Float.isFinite(tr[2])
+            ) {
+                lastAnchorPoseX = tr[0];
+                lastAnchorPoseY = tr[1];
+                lastAnchorPoseZ = tr[2];
+                hasLastAnchorPose = true;
+            }
         } catch (Throwable t) {
             Log.w(TAG, "Failed to create ARCore Anchor for target object; keeping world-pose fallback", t);
             targetAnchor = null;
+            hasLastAnchorPose = false;
         }
     }
 
@@ -2520,11 +2954,22 @@ public class MinreportSpatialScannerActivity
                 tr != null && tr.length >= 3 &&
                 Float.isFinite(tr[0]) && Float.isFinite(tr[1]) && Float.isFinite(tr[2])
             ) {
-                final float dx = tr[0] - targetConstraint.anchorX;
-                final float dy = tr[1] - targetConstraint.anchorY;
-                final float dz = tr[2] - targetConstraint.anchorZ;
+                if (!hasLastAnchorPose) {
+                    lastAnchorPoseX = tr[0];
+                    lastAnchorPoseY = tr[1];
+                    lastAnchorPoseZ = tr[2];
+                    hasLastAnchorPose = true;
+                    return;
+                }
+                final float dx = tr[0] - lastAnchorPoseX;
+                final float dy = tr[1] - lastAnchorPoseY;
+                final float dz = tr[2] - lastAnchorPoseZ;
                 if ((dx * dx + dy * dy + dz * dz) > 0.0001f) {
-                    targetConstraint = targetConstraint.withAnchorPosition(tr[0], tr[1], tr[2]);
+                    lastAnchorPoseX = tr[0];
+                    lastAnchorPoseY = tr[1];
+                    lastAnchorPoseZ = tr[2];
+                    // Apply ONLY the VIO anchor drift delta — NEVER overwrite refined volumetric centroid!
+                    targetConstraint = targetConstraint.translateByDelta(dx, dy, dz);
                     if (renderer != null) {
                         renderer.updateTargetVolumeConstraint(targetConstraint);
                     }
@@ -2704,11 +3149,9 @@ public class MinreportSpatialScannerActivity
         final Frame frame,
         final Camera camera,
         final Pose camPose,
+        final ArCoreCameraRenderer.GlFallbackFrame glFallback,
         final long nowMs
     ) {
-        final ArCoreCameraRenderer.GlFallbackFrame glFallback =
-            renderer != null ? renderer.consumeGlFallbackFrame() : null;
-
         if (
             liveGyroNormRadS > MAX_CAPTURE_GYRO_RAD_S &&
             !burstState.shouldBypassGyroForDeadlock(nowMs, 450L)
@@ -2834,7 +3277,10 @@ public class MinreportSpatialScannerActivity
                         final Pose glPose = rawGlPose != null ? rawGlPose : camPose;
                         final float[] rWc = poseToRowMajorRotation3x3(glPose);
                         final float[] tWc = glPose.getTranslation();
-                        final float[] intr = resolveCameraIntrinsicsLocked(camera, w, h, true);
+                        final float[] projIntr = ArCoreCameraRenderer.deriveIntrinsicsForGlFallback(camera, glFallback);
+                        final float[] intr = projIntr != null
+                            ? projIntr
+                            : resolveCameraIntrinsicsLocked(camera, w, h, true);
                         return new CapturePipelineHelper.BurstCandidate(
                             blurScore,
                             nv21,
@@ -2991,6 +3437,8 @@ public class MinreportSpatialScannerActivity
             depthMatchesWinnerFrame = false;
         }
         final TargetVolumeConstraint targetSnap = targetConstraint;
+        final float[] hullCentroidSnap = latestHullCentroid != null ? Arrays.copyOf(latestHullCentroid, 3) : null;
+        final boolean rotate180ForKfSeg = (displayRotDeg == 180);
         final float estGroundY = estimateCurrentGroundYLocked(activeSession, winner.tWc[1]);
         final float[] worldToCam16 = buildWorldToCamColMajor16(winner.rWc, winner.tWc);
         final float[] winnerIntr = Arrays.copyOf(winner.intr, 4);
@@ -3022,12 +3470,17 @@ public class MinreportSpatialScannerActivity
                 // Auto-prompting MagicTouch for Visual Hull + Raw Depth extraction on target object
                 try {
                     InteractiveObjectSegmenter.ObjectMask kfMask = null;
+                    byte[] alignedKfMaskConf = null;
                     if (targetSnap != null && targetSnap.active && objectSegmenter != null) {
-                        final float targetMidY = estGroundY + 0.5f * Math.max(targetSnap.heightEstM, 0.30f);
+                        final float promptWx = hullCentroidSnap != null ? hullCentroidSnap[0] : targetSnap.anchorX;
+                        final float promptWy = hullCentroidSnap != null
+                            ? hullCentroidSnap[1]
+                            : (estGroundY + 0.5f * Math.max(targetSnap.heightEstM, 0.30f));
+                        final float promptWz = hullCentroidSnap != null ? hullCentroidSnap[2] : targetSnap.anchorZ;
                         final float[] promptNorm = projectWorldPointToNormalizedImage(
-                            targetSnap.anchorX,
-                            targetMidY,
-                            targetSnap.anchorZ,
+                            promptWx,
+                            promptWy,
+                            promptWz,
                             worldToCam16,
                             winnerIntr[0],
                             winnerIntr[1],
@@ -3037,18 +3490,21 @@ public class MinreportSpatialScannerActivity
                             srcH
                         );
                         if (promptNorm != null) {
-                            final Bitmap kfBmp = InteractiveObjectSegmenter.nv21ToScaledRgbBitmap(
+                            final Bitmap kfBmp = InteractiveObjectSegmenter.nv21ToScaledRgbBitmapRotated(
                                 nv21Copy,
                                 srcW,
                                 srcH,
-                                TARGET_SEG_BITMAP_MAX_W
+                                TARGET_SEG_BITMAP_MAX_W,
+                                rotate180ForKfSeg
                             );
                             if (kfBmp != null) {
                                 try {
+                                    final float inferX = rotate180ForKfSeg ? (1.0f - promptNorm[0]) : promptNorm[0];
+                                    final float inferY = rotate180ForKfSeg ? (1.0f - promptNorm[1]) : promptNorm[1];
                                     kfMask = objectSegmenter.segmentAtNormalizedPoint(
                                         kfBmp,
-                                        promptNorm[0],
-                                        promptNorm[1]
+                                        inferX,
+                                        inferY
                                     );
                                 } finally {
                                     if (!kfBmp.isRecycled()) {
@@ -3060,12 +3516,15 @@ public class MinreportSpatialScannerActivity
                     }
 
                     if (kfMask != null && kfMask.valid) {
+                        alignedKfMaskConf = rotate180ForKfSeg
+                            ? InteractiveObjectSegmenter.rotateMask180(kfMask.conf, kfMask.width, kfMask.height)
+                            : kfMask.conf;
                         final float fxM = winnerIntr[0] * (kfMask.width / (float) Math.max(1, srcW));
                         final float fyM = winnerIntr[1] * (kfMask.height / (float) Math.max(1, srcH));
                         final float cxM = winnerIntr[2] * (kfMask.width / (float) Math.max(1, srcW));
                         final float cyM = winnerIntr[3] * (kfMask.height / (float) Math.max(1, srcH));
                         final VisualHullCarver.SegmentedView segView = new VisualHullCarver.SegmentedView(
-                            kfMask.conf,
+                            alignedKfMaskConf,
                             kfMask.width,
                             kfMask.height,
                             fxM,
@@ -3083,13 +3542,14 @@ public class MinreportSpatialScannerActivity
                     }
 
                     if (rawDepthSnap != null && depthIntr != null) {
-                        final boolean useKfMaskForDepth = depthMatchesWinnerFrame && kfMask != null && kfMask.valid;
+                        final boolean useKfMaskForDepth =
+                            depthMatchesWinnerFrame && kfMask != null && kfMask.valid && alignedKfMaskConf != null;
                         final int maskW = useKfMaskForDepth ? kfMask.width : 0;
                         final int maskH = useKfMaskForDepth ? kfMask.height : 0;
                         final boolean targetActive = targetSnap != null && targetSnap.active;
                         // extractFilteredDepthPoints expects intrinsics strictly in depthW x depthH coordinates
                         final List<float[]> depthPts = DepthMaskFuser.extractFilteredDepthPoints(
-                            useKfMaskForDepth ? kfMask.conf : null,
+                            useKfMaskForDepth ? alignedKfMaskConf : null,
                             maskW,
                             maskH,
                             rawDepthSnap.depthMm,
@@ -3153,6 +3613,21 @@ public class MinreportSpatialScannerActivity
                     VisualHullCarver.VisualHullResult liveHull = null;
                     if (targetSnap != null && targetSnap.active && viewsSnap.size() >= 2) {
                         liveHull = VisualHullCarver.carve(viewsSnap, targetSnap, estGroundY, hullGridRes);
+                        if (
+                            liveHull != null &&
+                            liveHull.isValid() &&
+                            Float.isFinite(liveHull.centroidX) &&
+                            Float.isFinite(liveHull.centroidY) &&
+                            Float.isFinite(liveHull.centroidZ)
+                        ) {
+                            synchronized (stateLock) {
+                                latestHullCentroid = new float[] {
+                                    liveHull.centroidX,
+                                    liveHull.centroidY,
+                                    liveHull.centroidZ
+                                };
+                            }
+                        }
                     }
 
                     if (pts.size() >= 20 || (liveHull != null && liveHull.isValid())) {
@@ -3302,10 +3777,10 @@ public class MinreportSpatialScannerActivity
                         );
                     }
                     if (!Float.isFinite(estGroundY)) {
-                        estGroundY = targetSnap.anchorY;
+                        estGroundY = targetSnap.anchorY - 0.25f;
                     }
 
-                    final int gridRes = thermalDegraded ? 40 : 48;
+                    final int gridRes = thermalDegraded ? 48 : 64;
                     final VisualHullCarver.VisualHullResult finalHull = VisualHullCarver.carve(
                         viewsSnap,
                         targetSnap,
@@ -3314,11 +3789,10 @@ public class MinreportSpatialScannerActivity
                     );
                     if (finalHull != null && finalHull.isValid()) {
                         visualHullViewsUsed = finalHull.viewsUsed;
+                        // Pass ONLY clean raw observations (incremental VIO + extra VIO + filtered Depth) —
+                        // NEVER re-inject engineOut.metrology.stratifiedPointsM (avoids poisoned double-pass)!
                         final List<float[]> triModalPts = offlineEngine.getIncrementalPointsSnapshot();
                         triModalPts.addAll(extraPlusDepth);
-                        if (engineOut.metrology != null && engineOut.metrology.stratifiedPointsM != null) {
-                            triModalPts.addAll(engineOut.metrology.stratifiedPointsM);
-                        }
                         final WalkRingToeSolver.MetrologyResult triModalRes = WalkRingToeSolver.solve(
                             triModalPts,
                             walkSnap,
@@ -3342,6 +3816,11 @@ public class MinreportSpatialScannerActivity
                     }
                 }
 
+                // Sample 3x3 median RGB per active cell of previewMesh from the most frontal keyframe (dem_grid_v2)
+                final String previewRgbB64 = (engineOut.metrology != null && engineOut.metrology.previewMesh != null)
+                    ? samplePreviewMeshRgbB64(engineOut.metrology.previewMesh, kfSnap)
+                    : null;
+
                 final JSONObject payload = buildScanResultJsonV2(
                     engineOut,
                     walkSnap,
@@ -3350,7 +3829,8 @@ public class MinreportSpatialScannerActivity
                     blurSnap,
                     targetSnap,
                     visualHullViewsUsed,
-                    depthCountSnap
+                    depthCountSnap,
+                    previewRgbB64
                 );
 
                 final File resultFile = new File(getCacheDir(), scanId + "_result.json");
@@ -3396,7 +3876,8 @@ public class MinreportSpatialScannerActivity
         final int blurRejected,
         final TargetVolumeConstraint targetSnap,
         final int visualHullViews,
-        final int depthSamplesCount
+        final int depthSamplesCount,
+        final String previewRgbB64
     ) throws Exception {
         final WalkRingToeSolver.MetrologyResult m = engineOut.metrology;
         final JSONObject root = new JSONObject();
@@ -3596,9 +4077,12 @@ public class MinreportSpatialScannerActivity
             root.put("targetConstraint", tgtObj);
         }
 
-        // V2 Compact Local Preview Mesh (< 60 KB dem_grid_v1)
+        // V2 Compact Local Preview Mesh (< 60 KB dem_grid_v1 or photorealistic dem_grid_v2 with rgbB64)
         if (m.previewMesh != null) {
-            final WalkRingToeSolver.LocalPreviewMesh pm = m.previewMesh;
+            final WalkRingToeSolver.LocalPreviewMesh pm =
+                (previewRgbB64 != null && !previewRgbB64.isEmpty())
+                    ? m.previewMesh.withRgbB64(previewRgbB64)
+                    : m.previewMesh;
             final JSONObject meshObj = new JSONObject();
             meshObj.put("format", pm.format);
             meshObj.put("originX", round3(pm.originX));
@@ -3629,10 +4113,235 @@ public class MinreportSpatialScannerActivity
             for (byte cv : pm.confidenceMask) confArr.put(cv & 0xFF);
             meshObj.put("confidenceMask", confArr);
 
+            if (pm.rgbB64 != null && !pm.rgbB64.isEmpty()) {
+                meshObj.put("rgbB64", pm.rgbB64);
+            }
+
             root.put("localPreviewMesh", meshObj);
         }
 
         return root;
+    }
+
+    /**
+     * Samples the 3x3 median RGB color for each active cell of previewMesh by projecting
+     * (wx, planeY + h, wz) onto the most frontal saved keyframe in kfSnap, returning raw Base64
+     * (NO_WRAP, no data: prefix) of cols * rows * 3 RGB bytes for dem_grid_v2 vertex coloring.
+     */
+    private static String samplePreviewMeshRgbB64(
+        final WalkRingToeSolver.LocalPreviewMesh pm,
+        final List<KeyframeRecord> kfSnap
+    ) {
+        if (
+            pm == null ||
+            pm.cols <= 0 ||
+            pm.rows <= 0 ||
+            pm.heightsM == null ||
+            pm.heightsM.length < pm.cols * pm.rows ||
+            kfSnap == null ||
+            kfSnap.isEmpty()
+        ) {
+            return null;
+        }
+
+        final int maxLoadedKfs = 16;
+        final int kfCount = kfSnap.size();
+        final int kfStep = Math.max(1, (kfCount + maxLoadedKfs - 1) / maxLoadedKfs);
+
+        final List<Bitmap> decodedBitmaps = new ArrayList<>(maxLoadedKfs);
+        final List<int[]> kfPixels = new ArrayList<>(maxLoadedKfs);
+        final List<int[]> kfDims = new ArrayList<>(maxLoadedKfs);
+        final List<float[]> kfIntr = new ArrayList<>(maxLoadedKfs);
+        final List<float[]> kfW2C = new ArrayList<>(maxLoadedKfs);
+        final List<float[]> kfCamPos = new ArrayList<>(maxLoadedKfs);
+
+        try {
+            for (int i = 0; i < kfCount; i += kfStep) {
+                final KeyframeRecord rec = kfSnap.get(i);
+                if (rec == null || rec.photoPath == null || rec.imgWidth <= 0 || rec.imgHeight <= 0) {
+                    continue;
+                }
+                final File f = new File(rec.photoPath);
+                if (!f.exists() || f.length() <= 0L) {
+                    continue;
+                }
+                final BitmapFactory.Options boundsOpts = new BitmapFactory.Options();
+                boundsOpts.inJustDecodeBounds = true;
+                BitmapFactory.decodeFile(rec.photoPath, boundsOpts);
+                if (boundsOpts.outWidth <= 0 || boundsOpts.outHeight <= 0) {
+                    continue;
+                }
+                int sampleSize = 1;
+                while ((boundsOpts.outWidth / sampleSize) > 360) {
+                    sampleSize *= 2;
+                }
+                final BitmapFactory.Options decodeOpts = new BitmapFactory.Options();
+                decodeOpts.inSampleSize = sampleSize;
+                decodeOpts.inPreferredConfig = Bitmap.Config.ARGB_8888;
+                final Bitmap bmp = BitmapFactory.decodeFile(rec.photoPath, decodeOpts);
+                if (bmp == null) {
+                    continue;
+                }
+                final int bw = bmp.getWidth();
+                final int bh = bmp.getHeight();
+                if (bw < 6 || bh < 6) {
+                    bmp.recycle();
+                    continue;
+                }
+                final int[] px = new int[bw * bh];
+                bmp.getPixels(px, 0, bw, 0, 0, bw, bh);
+                decodedBitmaps.add(bmp);
+                kfPixels.add(px);
+                kfDims.add(new int[] { bw, bh });
+
+                final float sx = bw / (float) rec.imgWidth;
+                final float sy = bh / (float) rec.imgHeight;
+                kfIntr.add(new float[] { rec.fx * sx, rec.fy * sy, rec.cx * sx, rec.cy * sy });
+                kfW2C.add(buildWorldToCamColMajor16(rec.rWc, rec.tWc));
+                kfCamPos.add(rec.tWc);
+            }
+
+            final int loadedCount = kfPixels.size();
+            if (loadedCount == 0) {
+                return null;
+            }
+
+            final int cols = pm.cols;
+            final int rows = pm.rows;
+            final int nCells = cols * rows;
+            final byte[] rgbBytes = new byte[nCells * 3];
+            final int[] rs = new int[9];
+            final int[] gs = new int[9];
+            final int[] bs = new int[9];
+            final float twoCell = 2.0f * Math.max(0.01f, pm.cellSizeM);
+            int sampledActive = 0;
+
+            for (int r = 0; r < rows; r++) {
+                final float wz = pm.originZ + (r + 0.5f) * pm.cellSizeM;
+                final int rowOff = r * cols;
+                for (int c = 0; c < cols; c++) {
+                    final int idx = rowOff + c;
+                    final float h = pm.heightsM[idx];
+                    final boolean active =
+                        (Float.isFinite(h) && h > 0.005f) ||
+                        (pm.observedMask != null && idx < pm.observedMask.length && pm.observedMask[idx] != 0);
+                    if (!active) {
+                        continue;
+                    }
+
+                    final float wx = pm.originX + (c + 0.5f) * pm.cellSizeM;
+                    final float planeY = (float) (pm.planeA * wx + pm.planeB * wz + pm.planeD);
+                    final float wy = planeY + Math.max(0.0f, Float.isFinite(h) ? h : 0.0f);
+
+                    // Estimate local surface normal from DEM neighbors for frontality selection
+                    final float hL = (c > 0 && Float.isFinite(pm.heightsM[idx - 1])) ? Math.max(0.0f, pm.heightsM[idx - 1]) : 0.0f;
+                    final float hR = (c + 1 < cols && Float.isFinite(pm.heightsM[idx + 1])) ? Math.max(0.0f, pm.heightsM[idx + 1]) : 0.0f;
+                    final float hU = (r > 0 && Float.isFinite(pm.heightsM[idx - cols])) ? Math.max(0.0f, pm.heightsM[idx - cols]) : 0.0f;
+                    final float hD = (r + 1 < rows && Float.isFinite(pm.heightsM[idx + cols])) ? Math.max(0.0f, pm.heightsM[idx + cols]) : 0.0f;
+                    float nx = -(hR - hL) / twoCell;
+                    float ny = 1.0f;
+                    float nz = -(hD - hU) / twoCell;
+                    final float nLen = (float) Math.sqrt(nx * nx + ny * ny + nz * nz);
+                    if (nLen > 1e-4f) {
+                        nx /= nLen;
+                        ny /= nLen;
+                        nz /= nLen;
+                    }
+
+                    int bestKf = -1;
+                    int bestU = 0;
+                    int bestV = 0;
+                    float bestScore = -1.0f;
+
+                    for (int k = 0; k < loadedCount; k++) {
+                        final float[] w2c = kfW2C.get(k);
+                        final float xc = w2c[0] * wx + w2c[4] * wy + w2c[8] * wz + w2c[12];
+                        final float yc = w2c[1] * wx + w2c[5] * wy + w2c[9] * wz + w2c[13];
+                        final float zc = w2c[2] * wx + w2c[6] * wy + w2c[10] * wz + w2c[14];
+                        if (!Float.isFinite(zc) || zc >= -0.20f) {
+                            continue;
+                        }
+                        final float[] intr = kfIntr.get(k);
+                        final int[] dims = kfDims.get(k);
+                        final float invNegZ = 1.0f / (-zc);
+                        final float u = intr[0] * (xc * invNegZ) + intr[2];
+                        final float v = intr[3] - intr[1] * (yc * invNegZ);
+                        final int ui = Math.round(u);
+                        final int vi = Math.round(v);
+                        if (ui < 1 || ui >= dims[0] - 1 || vi < 1 || vi >= dims[1] - 1) {
+                            continue;
+                        }
+
+                        final float[] cPos = kfCamPos.get(k);
+                        final float vx = cPos[0] - wx;
+                        final float vy = cPos[1] - wy;
+                        final float vz = cPos[2] - wz;
+                        final float dist = (float) Math.sqrt(vx * vx + vy * vy + vz * vz);
+                        if (dist < 0.20f) {
+                            continue;
+                        }
+                        final float cosN = (vx * nx + vy * ny + vz * nz) / dist;
+                        final float dxNorm = (u - intr[2]) / Math.max(1.0f, dims[0] * 0.5f);
+                        final float dyNorm = (v - intr[3]) / Math.max(1.0f, dims[1] * 0.5f);
+                        final float centerWeight = Math.max(
+                            0.25f,
+                            1.0f - 0.35f * (float) Math.hypot(dxNorm, dyNorm)
+                        );
+                        final float score = Math.max(0.05f, cosN) * centerWeight / Math.max(0.35f, dist);
+                        if (score > bestScore) {
+                            bestScore = score;
+                            bestKf = k;
+                            bestU = ui;
+                            bestV = vi;
+                        }
+                    }
+
+                    final int outOff = idx * 3;
+                    if (bestKf >= 0) {
+                        final int[] px = kfPixels.get(bestKf);
+                        final int bw = kfDims.get(bestKf)[0];
+                        int pCount = 0;
+                        for (int dy = -1; dy <= 1; dy++) {
+                            final int rowBase = (bestV + dy) * bw;
+                            for (int dx = -1; dx <= 1; dx++) {
+                                final int argb = px[rowBase + (bestU + dx)];
+                                rs[pCount] = (argb >> 16) & 0xFF;
+                                gs[pCount] = (argb >> 8) & 0xFF;
+                                bs[pCount] = argb & 0xFF;
+                                pCount++;
+                            }
+                        }
+                        Arrays.sort(rs, 0, pCount);
+                        Arrays.sort(gs, 0, pCount);
+                        Arrays.sort(bs, 0, pCount);
+                        final int mid = pCount / 2;
+                        rgbBytes[outOff] = (byte) rs[mid];
+                        rgbBytes[outOff + 1] = (byte) gs[mid];
+                        rgbBytes[outOff + 2] = (byte) bs[mid];
+                        sampledActive++;
+                    } else {
+                        // Neutral fallback for unprojected active cell (never solid black)
+                        rgbBytes[outOff] = (byte) 140;
+                        rgbBytes[outOff + 1] = (byte) 146;
+                        rgbBytes[outOff + 2] = (byte) 156;
+                    }
+                }
+            }
+
+            if (sampledActive <= 0) {
+                return null;
+            }
+            return Base64.encodeToString(rgbBytes, Base64.NO_WRAP);
+        } catch (Throwable t) {
+            Log.w(TAG, "Failed to sample dem_grid_v2 RGB texture from keyframes", t);
+            return null;
+        } finally {
+            for (Bitmap b : decodedBitmaps) {
+                if (b != null && !b.isRecycled()) {
+                    b.recycle();
+                }
+            }
+        }
     }
 
     private void updateHudThrottled(final boolean force) {
@@ -3688,6 +4397,7 @@ public class MinreportSpatialScannerActivity
         final float calDist;
         final boolean hasCalHit;
         final String captureDiagCode;
+        final String segDiagCode;
         final String renderErrCode;
         final boolean showMinKfHint;
         final float distM;
@@ -3722,6 +4432,9 @@ public class MinreportSpatialScannerActivity
             captureDiagCode = (step == FlowStep.CAPTURING_WALK && burstState.shouldShowDiagCode(nowMs))
                 ? burstState.getLastDiagCode()
                 : null;
+            segDiagCode = (lastSegDiagCode != null && (nowMs - lastSegDiagAtMs) < 2500L)
+                ? lastSegDiagCode
+                : null;
             renderErrCode = (lastRenderErrorCode != null && (nowMs - lastRenderErrorAtMs) < 4000L)
                 ? lastRenderErrorCode
                 : null;
@@ -3753,6 +4466,10 @@ public class MinreportSpatialScannerActivity
             trackingCodeText.setVisibility(View.VISIBLE);
         } else if (captureDiagCode != null) {
             trackingCodeText.setText(captureDiagCode);
+            trackingCodeText.setTextColor(COLOR_COPPER);
+            trackingCodeText.setVisibility(View.VISIBLE);
+        } else if (segDiagCode != null) {
+            trackingCodeText.setText(segDiagCode);
             trackingCodeText.setTextColor(COLOR_COPPER);
             trackingCodeText.setVisibility(View.VISIBLE);
         } else {

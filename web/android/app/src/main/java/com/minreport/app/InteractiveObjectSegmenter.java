@@ -175,35 +175,78 @@ public final class InteractiveObjectSegmenter {
                 return ObjectMask.invalid();
             }
 
-            // MagicTouch outputs [background, foreground] (2 channels) or single foreground channel
-            final MPImage fgMask = masks.size() >= 2 ? masks.get(1) : masks.get(0);
-            if (fgMask == null) {
+            // Verify polarity across all confidence mask channels by sampling a 5x5 patch at (clampedX, clampedY).
+            // Choose the channel with highest mean probability at the tapped point.
+            FloatBuffer bestFloatBuf = null;
+            int bestMw = 0;
+            int bestMh = 0;
+            float bestTapMean = -1.0f;
+
+            for (int cIdx = 0; cIdx < masks.size(); cIdx++) {
+                final MPImage cand = masks.get(cIdx);
+                if (cand == null) {
+                    continue;
+                }
+                final int cw = cand.getWidth();
+                final int ch = cand.getHeight();
+                final int cTotal = cw * ch;
+                if (cw <= 0 || ch <= 0 || cTotal <= 0) {
+                    continue;
+                }
+                final ByteBuffer rawBytes = ByteBufferExtractor.extract(cand);
+                if (rawBytes == null) {
+                    continue;
+                }
+                final ByteBuffer dupBytes = rawBytes.duplicate();
+                dupBytes.rewind();
+                final FloatBuffer fb = dupBytes
+                    .order(ByteOrder.nativeOrder())
+                    .asFloatBuffer();
+                if (fb.remaining() < cTotal) {
+                    continue;
+                }
+
+                final int cxPx = Math.max(0, Math.min(cw - 1, Math.round(clampedX * (cw - 1))));
+                final int cyPx = Math.max(0, Math.min(ch - 1, Math.round(clampedY * (ch - 1))));
+                float patchSum = 0.0f;
+                int patchCnt = 0;
+                for (int dy = -2; dy <= 2; dy++) {
+                    final int py = cyPx + dy;
+                    if (py < 0 || py >= ch) {
+                        continue;
+                    }
+                    final int rowOff = py * cw;
+                    for (int dx = -2; dx <= 2; dx++) {
+                        final int px = cxPx + dx;
+                        if (px < 0 || px >= cw) {
+                            continue;
+                        }
+                        final float p = fb.get(rowOff + px);
+                        final float safeP = Float.isFinite(p) ? Math.max(0.0f, Math.min(1.0f, p)) : 0.0f;
+                        patchSum += safeP;
+                        patchCnt++;
+                    }
+                }
+                final float candTapMean = patchCnt > 0 ? (patchSum / patchCnt) : 0.0f;
+                if (bestFloatBuf == null || candTapMean > bestTapMean) {
+                    bestFloatBuf = fb;
+                    bestMw = cw;
+                    bestMh = ch;
+                    bestTapMean = candTapMean;
+                }
+            }
+
+            if (bestFloatBuf == null || bestMw <= 0 || bestMh <= 0) {
                 return ObjectMask.invalid();
             }
 
-            final int mw = fgMask.getWidth();
-            final int mh = fgMask.getHeight();
+            final int mw = bestMw;
+            final int mh = bestMh;
             final int totalPx = mw * mh;
-            if (mw <= 0 || mh <= 0 || totalPx <= 0) {
-                return ObjectMask.invalid();
-            }
-
-            final ByteBuffer rawBytes = ByteBufferExtractor.extract(fgMask);
-            if (rawBytes == null) {
-                return ObjectMask.invalid();
-            }
-            final FloatBuffer floatBuf = rawBytes
-                .duplicate()
-                .order(ByteOrder.nativeOrder())
-                .asFloatBuffer();
-            if (floatBuf.remaining() < totalPx) {
-                return ObjectMask.invalid();
-            }
-
             final byte[] conf = new byte[totalPx];
             int fgCount = 0;
             for (int i = 0; i < totalPx; i++) {
-                final float p = floatBuf.get(i);
+                final float p = bestFloatBuf.get(i);
                 final float safeP = Float.isFinite(p) ? Math.max(0.0f, Math.min(1.0f, p)) : 0.0f;
                 final int q = Math.max(0, Math.min(255, Math.round(safeP * 255.0f)));
                 conf[i] = (byte) q;
@@ -212,8 +255,25 @@ public final class InteractiveObjectSegmenter {
                 }
             }
 
-            final float fgRatio = fgCount / (float) totalPx;
-            final boolean valid = fgCount >= 12 && fgRatio > 0.0005f && fgRatio < 0.98f;
+            float fgRatio = fgCount / (float) totalPx;
+            float tapMean = bestTapMean;
+
+            // Single-channel inverted-polarity guard (background emitted as 1.0, foreground as 0.0)
+            if (masks.size() == 1 && tapMean < 0.35f && fgRatio > 0.65f) {
+                int invFgCount = 0;
+                for (int i = 0; i < totalPx; i++) {
+                    final int q = 255 - (conf[i] & 0xFF);
+                    conf[i] = (byte) q;
+                    if (q >= 128) {
+                        invFgCount++;
+                    }
+                }
+                fgCount = invFgCount;
+                fgRatio = fgCount / (float) totalPx;
+                tapMean = 1.0f - tapMean;
+            }
+
+            final boolean valid = fgCount >= 12 && tapMean >= 0.45f && fgRatio > 0.0005f && fgRatio < 0.82f;
             return new ObjectMask(conf, mw, mh, fgRatio, valid);
         } catch (Throwable t) {
             Log.w(TAG, "InteractiveSegmenter inference failed: " + t.getMessage());
@@ -312,6 +372,20 @@ public final class InteractiveObjectSegmenter {
         final int srcH,
         final int maxWidth
     ) {
+        return nv21ToScaledRgbBitmapRotated(nv21, srcW, srcH, maxWidth, false);
+    }
+
+    /**
+     * Fast zero-JPEG conversion from NV21 byte buffer to scaled ARGB_8888 Bitmap (<= 512x384)
+     * with optional 180-degree rotation (for Surface.ROTATION_270 upright inference off GLThread).
+     */
+    public static Bitmap nv21ToScaledRgbBitmapRotated(
+        final byte[] nv21,
+        final int srcW,
+        final int srcH,
+        final int maxWidth,
+        final boolean rotate180
+    ) {
         if (nv21 == null || srcW < 4 || srcH < 4) {
             return null;
         }
@@ -327,11 +401,13 @@ public final class InteractiveObjectSegmenter {
         final int[] argb = new int[dstW * dstH];
         int outIdx = 0;
         for (int dy = 0; dy < dstH; dy++) {
-            final int sy = Math.min(srcH - 1, (dy * srcH) / dstH);
+            final int sampleY = rotate180 ? (dstH - 1 - dy) : dy;
+            final int sy = Math.min(srcH - 1, (sampleY * srcH) / dstH);
             final int yRowOff = sy * srcW;
             final int uvRowOff = frameSize + (sy >> 1) * srcW;
             for (int dx = 0; dx < dstW; dx++) {
-                final int sx = Math.min(srcW - 1, (dx * srcW) / dstW);
+                final int sampleX = rotate180 ? (dstW - 1 - dx) : dx;
+                final int sx = Math.min(srcW - 1, (sampleX * srcW) / dstW);
                 final int yVal = nv21[yRowOff + sx] & 0xFF;
                 final int uvIdx = uvRowOff + (sx & ~1);
                 final int vVal = (uvIdx < nv21.length ? (nv21[uvIdx] & 0xFF) : 128) - 128;
@@ -340,6 +416,62 @@ public final class InteractiveObjectSegmenter {
             }
         }
         return Bitmap.createBitmap(argb, dstW, dstH, Bitmap.Config.ARGB_8888);
+    }
+
+    /**
+     * Converts OpenGL bottom-up RGBA bytes (from glReadPixels) directly into a top-down scaled
+     * ARGB_8888 Bitmap (<= 512x384) off the GLThread for lossless GL-fallback MagicTouch inference.
+     */
+    public static Bitmap rgbaBottomUpToScaledRgbBitmap(
+        final byte[] rgba,
+        final int srcW,
+        final int srcH,
+        final int maxWidth
+    ) {
+        if (rgba == null || srcW < 4 || srcH < 4 || rgba.length < srcW * srcH * 4) {
+            return null;
+        }
+        final int capW = Math.max(32, Math.min(maxWidth, MAX_SCALED_WIDTH));
+        final float scale = Math.min(1.0f, Math.min(capW / (float) srcW, MAX_SCALED_HEIGHT / (float) srcH));
+        final int dstW = Math.max(16, Math.round(srcW * scale));
+        final int dstH = Math.max(16, Math.round(srcH * scale));
+
+        final int[] argb = new int[dstW * dstH];
+        int outIdx = 0;
+        for (int dy = 0; dy < dstH; dy++) {
+            final int syTopDown = Math.min(srcH - 1, (dy * srcH) / dstH);
+            final int syGl = (srcH - 1) - syTopDown;
+            final int rowOff = syGl * srcW * 4;
+            for (int dx = 0; dx < dstW; dx++) {
+                final int sx = Math.min(srcW - 1, (dx * srcW) / dstW);
+                final int off = rowOff + (sx * 4);
+                final int r = rgba[off] & 0xFF;
+                final int g = rgba[off + 1] & 0xFF;
+                final int b = rgba[off + 2] & 0xFF;
+                argb[outIdx++] = 0xFF000000 | (r << 16) | (g << 8) | b;
+            }
+        }
+        return Bitmap.createBitmap(argb, dstW, dstH, Bitmap.Config.ARGB_8888);
+    }
+
+    /**
+     * Rotates a single-channel confidence mask 180 degrees to re-align an upright ROTATION_270
+     * MagicTouch mask back onto unrotated ARCore sensor coordinates.
+     */
+    public static byte[] rotateMask180(final byte[] conf, final int w, final int h) {
+        if (conf == null || w <= 0 || h <= 0) {
+            return conf;
+        }
+        final int total = w * h;
+        if (conf.length < total) {
+            return conf;
+        }
+        final byte[] out = new byte[total];
+        final int last = total - 1;
+        for (int i = 0; i < total; i++) {
+            out[i] = conf[last - i];
+        }
+        return out;
     }
 
     private static int yuvToArgb(final int y, final int u, final int v) {

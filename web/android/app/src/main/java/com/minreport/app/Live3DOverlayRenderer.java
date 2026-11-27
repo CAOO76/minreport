@@ -39,8 +39,9 @@ public final class Live3DOverlayRenderer {
     private static final int TARGET_RING_SEGMENTS = 24;
     private static final float ANCHOR_RETICLE_RADIUS_M = 0.08f;
 
-    private static final float POINT_SIZE_TARGET_PX = 10.0f;
+    private static final float POINT_SIZE_TARGET_PX = 5.0f;
     private static final float POINT_SIZE_ENV_PX = 5.0f;
+    private static final int MIN_DENSE_VERIFIED_MESH_VERTS = 36; // 12 real triangles
 
     private static final String VERT_SHADER =
         "uniform mat4 u_MvpMatrix;\n" +
@@ -54,7 +55,14 @@ public final class Live3DOverlayRenderer {
     private static final String FRAG_SHADER =
         "precision mediump float;\n" +
         "uniform vec4 u_Color;\n" +
+        "uniform float u_IsPoint;\n" +
         "void main() {\n" +
+        "    if (u_IsPoint > 0.5) {\n" +
+        "        vec2 p = gl_PointCoord - vec2(0.5, 0.5);\n" +
+        "        if (dot(p, p) > 0.25) {\n" +
+        "            discard;\n" +
+        "        }\n" +
+        "    }\n" +
         "    gl_FragColor = u_Color;\n" +
         "}\n";
 
@@ -75,25 +83,27 @@ public final class Live3DOverlayRenderer {
         "uniform vec2 u_TexelSize;\n" +
         "varying vec2 v_TexCoord;\n" +
         "void main() {\n" +
-        "    float c = texture2D(u_MaskTex, v_TexCoord).a;\n" +
-        "    if (c < 0.5) {\n" +
+        "    float a = texture2D(u_MaskTex, v_TexCoord).a;\n" +
+        "    float mask = smoothstep(0.42, 0.58, a);\n" +
+        "    if (mask <= 0.005) {\n" +
         "        discard;\n" +
         "    }\n" +
-        "    float l = texture2D(u_MaskTex, v_TexCoord - vec2(u_TexelSize.x, 0.0)).a;\n" +
-        "    float r = texture2D(u_MaskTex, v_TexCoord + vec2(u_TexelSize.x, 0.0)).a;\n" +
-        "    float u = texture2D(u_MaskTex, v_TexCoord - vec2(0.0, u_TexelSize.y)).a;\n" +
-        "    float d = texture2D(u_MaskTex, v_TexCoord + vec2(0.0, u_TexelSize.y)).a;\n" +
+        "    float l = smoothstep(0.42, 0.58, texture2D(u_MaskTex, v_TexCoord - vec2(u_TexelSize.x * 1.5, 0.0)).a);\n" +
+        "    float r = smoothstep(0.42, 0.58, texture2D(u_MaskTex, v_TexCoord + vec2(u_TexelSize.x * 1.5, 0.0)).a);\n" +
+        "    float u = smoothstep(0.42, 0.58, texture2D(u_MaskTex, v_TexCoord - vec2(0.0, u_TexelSize.y * 1.5)).a);\n" +
+        "    float d = smoothstep(0.42, 0.58, texture2D(u_MaskTex, v_TexCoord + vec2(0.0, u_TexelSize.y * 1.5)).a);\n" +
         "    float minN = min(min(l, r), min(u, d));\n" +
-        "    float alpha = (minN < 0.5) ? 0.85 : 0.24;\n" +
+        "    float edge = clamp(mask - minN, 0.0, 1.0);\n" +
+        "    float alpha = mix(0.38 * mask, 0.95, edge);\n" +
         "    gl_FragColor = vec4(u_Color, alpha);\n" +
         "}\n";
 
-    // ANSI/ISA-101 MINREPORT palette
-    private static final float[] COLOR_CYAN_MESH = { 0.0f, 0.682f, 0.937f, 0.19f };          // #00AEEF 19%
-    private static final float[] COLOR_CYAN_FUSED_FILL = { 0.0f, 0.682f, 0.937f, 0.24f };    // #00AEEF 24%
-    private static final float[] COLOR_CYAN_FUSED_CONTOUR = { 0.0f, 0.682f, 0.937f, 0.85f }; // #00AEEF 85%
-    private static final float[] COLOR_CYAN_TARGET_FILL = { 0.0f, 0.682f, 0.937f, 0.20f };   // #00AEEF 20%
-    private static final float[] COLOR_CYAN_TARGET_RING = { 0.0f, 0.682f, 0.937f, 0.72f };   // #00AEEF 72%
+    // ANSI/ISA-101 MINREPORT palette (crisp #00AEEF 38% fill + 95% contour readable on white surfaces)
+    private static final float[] COLOR_CYAN_MESH = { 0.0f, 0.682f, 0.937f, 0.38f };          // #00AEEF 38%
+    private static final float[] COLOR_CYAN_FUSED_FILL = { 0.0f, 0.682f, 0.937f, 0.38f };    // #00AEEF 38%
+    private static final float[] COLOR_CYAN_FUSED_CONTOUR = { 0.0f, 0.682f, 0.937f, 0.95f }; // #00AEEF 95%
+    private static final float[] COLOR_CYAN_TARGET_FILL = { 0.0f, 0.682f, 0.937f, 0.38f };   // #00AEEF 38%
+    private static final float[] COLOR_CYAN_TARGET_RING = { 0.0f, 0.682f, 0.937f, 0.95f };   // #00AEEF 95%
     private static final float[] COLOR_CYAN_CONTOUR = { 0.0f, 0.682f, 0.937f, 0.72f };       // #00AEEF 72%
     private static final float[] COLOR_CYAN_TOE = { 0.0f, 0.682f, 0.937f, 0.95f };           // #00AEEF 95%
     private static final float[] COLOR_CYAN_TARGET_POINTS = { 0.0f, 0.682f, 0.937f, 0.90f }; // #00AEEF 90%
@@ -164,6 +174,7 @@ public final class Live3DOverlayRenderer {
     private int mvpUniform = -1;
     private int pointSizeUniform = -1;
     private int colorUniform = -1;
+    private int isPointUniform = -1;
     private int posAttrib = -1;
 
     // Fallback GL_ALPHA silhouette quad shader
@@ -250,6 +261,7 @@ public final class Live3DOverlayRenderer {
         mvpUniform = GLES20.glGetUniformLocation(programId, "u_MvpMatrix");
         pointSizeUniform = GLES20.glGetUniformLocation(programId, "u_PointSize");
         colorUniform = GLES20.glGetUniformLocation(programId, "u_Color");
+        isPointUniform = GLES20.glGetUniformLocation(programId, "u_IsPoint");
         posAttrib = GLES20.glGetAttribLocation(programId, "a_Position");
 
         initMaskQuadPipeline();
@@ -413,15 +425,23 @@ public final class Live3DOverlayRenderer {
     }
 
     /**
-     * Uploads real 3D target surface triangles + 3D perimeter contour loop fused from Depth + MagicTouch.
+     * Uploads real 3D target surface triangles + filtered 3D contour segments (GL_LINES pairs,
+     * never GL_LINE_LOOP) fused from Depth + MagicTouch. Accepts null contourSegmentsXyz cleanly.
      */
-    public void setFusedTargetSurface(final float[] triVerticesXyz, final float[] contourLoopXyz) {
+    public void setFusedTargetSurface(final float[] triVerticesXyz, final float[] contourSegmentsXyz) {
         final float[] triCopy = (triVerticesXyz != null && triVerticesXyz.length >= FLOATS_PER_VERTEX * 3)
             ? Arrays.copyOf(triVerticesXyz, Math.min(triVerticesXyz.length, MAX_VERTICES_PER_BUFFER * FLOATS_PER_VERTEX))
             : null;
-        final float[] contourCopy = (contourLoopXyz != null && contourLoopXyz.length >= FLOATS_PER_VERTEX * 3)
-            ? Arrays.copyOf(contourLoopXyz, Math.min(contourLoopXyz.length, MAX_VERTICES_PER_BUFFER * FLOATS_PER_VERTEX))
-            : null;
+        final float[] contourCopy;
+        if (contourSegmentsXyz != null && contourSegmentsXyz.length >= FLOATS_PER_VERTEX * 2) {
+            final int maxLen = Math.min(contourSegmentsXyz.length, MAX_VERTICES_PER_BUFFER * FLOATS_PER_VERTEX);
+            final int pairAligned = maxLen - (maxLen % (FLOATS_PER_VERTEX * 2));
+            contourCopy = pairAligned >= FLOATS_PER_VERTEX * 2
+                ? Arrays.copyOf(contourSegmentsXyz, pairAligned)
+                : null;
+        } else {
+            contourCopy = null;
+        }
         synchronized (snapshotLock) {
             this.targetSegmenting = false;
             this.pendingFusedTriVerts = triCopy;
@@ -919,20 +939,28 @@ public final class Live3DOverlayRenderer {
 
         GLES20.glEnable(GLES20.GL_BLEND);
         GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA);
-        GLES20.glDisable(GLES20.GL_DEPTH_TEST);
+        GLES20.glDepthMask(true);
+        GLES20.glClear(GLES20.GL_DEPTH_BUFFER_BIT);
+        GLES20.glEnable(GLES20.GL_DEPTH_TEST);
+        GLES20.glDepthFunc(GLES20.GL_LEQUAL);
         GLES20.glDepthMask(false);
 
-        // 0. Fallback anchored GL_ALPHA silhouette quad (when usedDepth == false & no verified mesh yet)
-        final boolean showPreCaptureTarget = !isCapturing || vboVertCounts[0] == 0;
+        // Keep real blue silhouette alive during CAPTURING_WALK until dense verified mesh (>= 36 verts = 12 tris) exists
+        final boolean hasDenseVerifiedMesh = vboVertCounts[0] >= MIN_DENSE_VERIFIED_MESH_VERTS;
+        final boolean showTargetSilhouette = !isCapturing || !hasDenseVerifiedMesh;
+
+        // 0. Fallback anchored GL_ALPHA silhouette quad (when usedDepth == false & no dense verified mesh yet)
         if (
             hasActiveTarget &&
             !hasPolygonTarget &&
-            showPreCaptureTarget &&
+            showTargetSilhouette &&
             vboVertCounts[10] == 0 &&
             fallbackQuadActiveGl &&
             vboVertCounts[12] == 4
         ) {
+            GLES20.glDisable(GLES20.GL_DEPTH_TEST);
             drawFallbackMaskQuad();
+            GLES20.glEnable(GLES20.GL_DEPTH_TEST);
         }
 
         GLES20.glUseProgram(programId);
@@ -944,46 +972,46 @@ public final class Live3DOverlayRenderer {
             drawVbo(6, GLES20.GL_LINES, COLOR_GROUND_PLANE, 1.5f, POINT_SIZE_ENV_PX);
         }
 
-        // 2. Active Target Representation (NO giant blind cone by default):
-        //    - Manual POLYGON mode -> translucent valley polygon prism + base ring
-        //    - Real 3D Fused Target Surface (Depth + MagicTouch) -> #00AEEF 24% mesh + 85% contour loop
+        // 2. Active Target Representation with GL_DEPTH_TEST Z-prepass (zero X-ray self-overdraw):
+        //    - Manual POLYGON mode -> translucent valley polygon prism (#00AEEF 38%) + crisp base ring
+        //    - Real 3D Fused Target Surface -> #00AEEF 38% solid mesh + 95% filtered GL_LINES contour
         //    - Otherwise (0-300 ms MagicTouch reticle or manual radius ring) -> crisp lines only
-        if (hasActiveTarget && showPreCaptureTarget) {
+        if (hasActiveTarget && showTargetSilhouette) {
             if (hasPolygonTarget) {
-                drawVbo(8, GLES20.GL_TRIANGLES, COLOR_CYAN_TARGET_FILL, 1.0f, POINT_SIZE_TARGET_PX);
+                drawSolidMeshWithDepthPrepass(8, COLOR_CYAN_TARGET_FILL);
                 drawVbo(9, GLES20.GL_LINES, COLOR_CYAN_TARGET_RING, 3.0f, POINT_SIZE_TARGET_PX);
             } else if (vboVertCounts[10] > 0) {
-                drawVbo(10, GLES20.GL_TRIANGLES, COLOR_CYAN_FUSED_FILL, 1.0f, POINT_SIZE_TARGET_PX);
-                drawVbo(11, GLES20.GL_LINE_LOOP, COLOR_CYAN_FUSED_CONTOUR, 3.0f, POINT_SIZE_TARGET_PX);
+                drawSolidMeshWithDepthPrepass(10, COLOR_CYAN_FUSED_FILL);
+                drawVbo(11, GLES20.GL_LINES, COLOR_CYAN_FUSED_CONTOUR, 3.0f, POINT_SIZE_TARGET_PX);
             } else if (!fallbackQuadActiveGl) {
                 drawVbo(9, GLES20.GL_LINES, COLOR_CYAN_TARGET_RING, 2.5f, POINT_SIZE_TARGET_PX);
             }
-        } else if (hasActiveTarget) {
-            // During CAPTURING_WALK once verified mesh is present, keep subtle perimeter contour/ring locked
-            if (vboVertCounts[11] > 0) {
-                drawVbo(11, GLES20.GL_LINE_LOOP, COLOR_CYAN_TARGET_RING, 2.0f, POINT_SIZE_TARGET_PX);
-            } else {
-                drawVbo(9, GLES20.GL_LINES, COLOR_CYAN_TARGET_RING, 2.0f, POINT_SIZE_TARGET_PX);
+        } else if (hasDenseVerifiedMesh) {
+            // 3. Dense verified 3D surface mesh (#00AEEF 38%) with GL_DEPTH_TEST (zero X-ray!)
+            drawSolidMeshWithDepthPrepass(0, COLOR_CYAN_MESH);
+            // 4. Clean perimeter Toe anchored (#00AEEF) and open (#C68346); omit distorted gapLines/contourLines
+            drawVbo(3, GLES20.GL_LINES, COLOR_CYAN_TOE, 3.0f, POINT_SIZE_TARGET_PX);
+            drawVbo(4, GLES20.GL_LINES, COLOR_COPPER_TOE, 3.0f, POINT_SIZE_TARGET_PX);
+            if (hasActiveTarget && vboVertCounts[3] == 0 && vboVertCounts[4] == 0 && vboVertCounts[11] > 0) {
+                drawVbo(11, GLES20.GL_LINES, COLOR_CYAN_FUSED_CONTOUR, 2.5f, POINT_SIZE_TARGET_PX);
             }
         }
 
-        // 3. Progressive translucent verified surface mesh (#00AEEF 19%)
-        drawVbo(0, GLES20.GL_TRIANGLES, COLOR_CYAN_MESH, 1.0f, POINT_SIZE_TARGET_PX);
-        // 4. Gap wireframe (#C68346 65%)
-        drawVbo(1, GLES20.GL_LINES, COLOR_COPPER_GAP, 1.5f, POINT_SIZE_TARGET_PX);
-        // 5. 0.5m elevation contour lines (#00AEEF 72%)
-        drawVbo(2, GLES20.GL_LINES, COLOR_CYAN_CONTOUR, 1.8f, POINT_SIZE_TARGET_PX);
-        // 6. Perimeter Toe anchored (#00AEEF) and open (#C68346)
-        drawVbo(3, GLES20.GL_LINES, COLOR_CYAN_TOE, 3.0f, POINT_SIZE_TARGET_PX);
-        drawVbo(4, GLES20.GL_LINES, COLOR_COPPER_TOE, 3.0f, POINT_SIZE_TARGET_PX);
-
-        // 7. Dual-color ISA-101 point cloud: floor/env first (#8A93A6 18%, 5px), then target (#00AEEF 90%, 10px)
-        drawVbo(7, GLES20.GL_POINTS, COLOR_GRAY_ENV_POINTS, 1.0f, POINT_SIZE_ENV_PX);
-        drawVbo(5, GLES20.GL_POINTS, COLOR_CYAN_TARGET_POINTS, 1.0f, POINT_SIZE_TARGET_PX);
+        // 5. High-confidence circular target points (5px) ONLY when no blue silhouette/mesh is active
+        //    (envLivePoints vbo[7], gapLines vbo[1], contourLines vbo[2] intentionally omitted for zero visual noise)
+        final boolean hasActiveBlueSurface =
+            hasDenseVerifiedMesh ||
+            (hasActiveTarget && (vboVertCounts[10] > 0 || (fallbackQuadActiveGl && vboVertCounts[12] == 4)));
+        if (!hasActiveBlueSurface) {
+            drawVbo(5, GLES20.GL_POINTS, COLOR_CYAN_TARGET_POINTS, 1.0f, POINT_SIZE_TARGET_PX);
+        }
 
         GLES20.glDisableVertexAttribArray(posAttrib);
         GLES20.glBindBuffer(GLES20.GL_ARRAY_BUFFER, 0);
+        GLES20.glColorMask(true, true, true, true);
         GLES20.glDepthMask(true);
+        GLES20.glDepthFunc(GLES20.GL_LESS);
+        GLES20.glDisable(GLES20.GL_POLYGON_OFFSET_FILL);
         GLES20.glDisable(GLES20.GL_BLEND);
 
         return evaluateFramingGuard(activeSnapshot, vpMatrix);
@@ -1102,6 +1130,34 @@ public final class Live3DOverlayRenderer {
         vboVertCounts[slot] = alignedLen / FLOATS_PER_VERTEX;
     }
 
+    /**
+     * Two-pass Z-prepass solid translucent draw: populates the depth buffer with the closest front
+     * surface (glColorMask=false, glDepthMask=true) then blends only the front-most fragments
+     * (glDepthFunc=GL_LEQUAL, glDepthMask=false), completely eliminating X-ray self-overdraw.
+     */
+    private void drawSolidMeshWithDepthPrepass(final int slot, final float[] rgba) {
+        if (vboVertCounts[slot] <= 0) {
+            return;
+        }
+        GLES20.glEnable(GLES20.GL_DEPTH_TEST);
+        GLES20.glEnable(GLES20.GL_POLYGON_OFFSET_FILL);
+        GLES20.glPolygonOffset(1.0f, 1.0f);
+
+        // Pass 1: Depth pre-pass
+        GLES20.glColorMask(false, false, false, false);
+        GLES20.glDepthMask(true);
+        GLES20.glDepthFunc(GLES20.GL_LESS);
+        drawVbo(slot, GLES20.GL_TRIANGLES, rgba, 1.0f, POINT_SIZE_TARGET_PX);
+
+        // Pass 2: Uniform translucent color pass on closest surface
+        GLES20.glColorMask(true, true, true, true);
+        GLES20.glDepthMask(false);
+        GLES20.glDepthFunc(GLES20.GL_LEQUAL);
+        drawVbo(slot, GLES20.GL_TRIANGLES, rgba, 1.0f, POINT_SIZE_TARGET_PX);
+
+        GLES20.glDisable(GLES20.GL_POLYGON_OFFSET_FILL);
+    }
+
     private void drawVbo(
         final int slot,
         final int mode,
@@ -1118,6 +1174,9 @@ public final class Live3DOverlayRenderer {
         }
         if (pointSizeUniform >= 0) {
             GLES20.glUniform1f(pointSizeUniform, pointSizePx);
+        }
+        if (isPointUniform >= 0) {
+            GLES20.glUniform1f(isPointUniform, mode == GLES20.GL_POINTS ? 1.0f : 0.0f);
         }
         GLES20.glUniform4fv(colorUniform, 1, rgba, 0);
         GLES20.glBindBuffer(GLES20.GL_ARRAY_BUFFER, vboIds[slot]);
