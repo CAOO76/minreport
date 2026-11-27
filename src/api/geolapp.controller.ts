@@ -39,10 +39,19 @@ import {
     AcopiosReconciliationStatusSchema,
     CaptureSessionPackageV2Schema,
     evaluateStockpileReconciliation,
+    MeasurementGroundTruthInputSchema,
     WalkRingPoseSchema,
     WallConfinementModeSchema,
     type AcopiosMetrologyGrade,
+    type GroundTruthRecord,
+    type GroundTruthReferenceMethod,
 } from '../contracts/acopios.contracts';
+import {
+    CalibrationInsufficientSamplesError,
+    computeDeviationMetrics,
+    generateSovereignAiCalibrationDiagnosis,
+    recomputeCalibrationProfileLOOCV,
+} from '../modules/geolapp/calibration-learning.service';
 import {
     generateAndStoreStaticSatelliteMap,
     isValidStaticMapCoordinatePair,
@@ -199,6 +208,7 @@ const HitlPatchSchema = z.object({
         .nullable()
         .optional(),
     tin_volume_m3: z.number().finite().nonnegative().nullable().optional(),
+    footprint_area_m2: z.number().finite().nonnegative().nullable().optional(),
     lifecycle_status: AcopiosLifecycleStatusSchema.optional(),
     metrology_grade: AcopiosMetrologyGradeSchema.optional(),
     reconciliation_status: AcopiosReconciliationStatusSchema.optional(),
@@ -1479,6 +1489,15 @@ const SpatialAnalyzeBodySchema = z.object({
     sectorsCovered: z.number().int().min(0).max(32),
     sectorsTotal: z.number().int().min(1).max(32).optional(),
     roiRadiusM: z.number().finite().positive().max(100).optional(),
+    targetConstraint: z
+        .object({
+            anchorXZ: z.tuple([z.number().finite(), z.number().finite()]).optional(),
+            radiusM: z.number().finite().positive().max(200).optional(),
+            polygonXZ: z.array(z.tuple([z.number().finite(), z.number().finite()])).max(256).optional(),
+            padReferenceY: z.number().finite().optional(),
+        })
+        .nullable()
+        .optional(),
     deviceModel: z.string().trim().max(120).optional(),
     scannerEngineVersion: z.string().trim().max(64).optional(),
     calibrationScaleFactor: z.number().finite().min(0.85).max(1.15).optional(),
@@ -1550,6 +1569,7 @@ async function runSpatialStockpileAnalyze(params: {
         sectorsCovered: body.sectorsCovered,
         sectorsTotal: body.sectorsTotal,
         roiRadiusM: body.roiRadiusM,
+        targetConstraint: body.targetConstraint ?? undefined,
         calibrationScaleFactor: body.calibrationScaleFactor,
         calibrationId: body.calibrationId,
         calibrationPlaneNoiseRmsM: body.calibrationPlaneNoiseRmsM,
@@ -1674,6 +1694,7 @@ async function runSpatialStockpileAnalyze(params: {
             slopeAngleAvgDeg: spatial.slopeAngleAvgDeg,
             slopeWarning: spatial.slopeWarning,
             dimensionsM: spatial.dimensionsM,
+            footprintAreaM2: spatial.footprintAreaM2,
             meshUrl: descriptor.downloadUrl,
             meshSha256: descriptor.sha256,
             meshSource,
@@ -1976,6 +1997,7 @@ router.post(
                 mesh_vertex_count: persistence.meshResult.vertexCount,
                 mesh_triangle_count: persistence.meshResult.triangleCount,
                 mesh_surface_area_m2: persistence.meshResult.surfaceAreaM2,
+                footprint_area_m2: persistence.spatial.footprintAreaM2,
                 mesh_bounding_box_m: persistence.meshResult.boundingBoxM,
                 mesh_reconstructed_at: now,
             };
@@ -2225,6 +2247,8 @@ router.post(
                 plane_mismatch_deg: body.inSituMetrology.planeMismatchDeg,
                 slope_angle_avg_deg: body.inSituMetrology.slopeAngleAvgDeg ?? null,
                 dimensions_m: body.inSituMetrology.dimensionsM,
+                footprint_area_m2:
+                    body.footprint_area_m2 ?? body.inSituMetrology.footprintAreaM2 ?? null,
                 metrology_grade: body.inSituMetrology.metrologyGrade,
                 metrology_reasons: body.inSituMetrology.metrologyReasons || [],
                 coverage_pct: body.inSituMetrology.coveragePct,
@@ -2319,6 +2343,8 @@ router.post(
             let cloudSlopeRightDeg = body.inSituMetrology.slopeAngleRightDeg ?? null;
             let cloudSlopeWarning: string | null = null;
             let cloudDimensionsM = body.inSituMetrology.dimensionsM;
+            let cloudFootprintAreaM2: number | null =
+                body.footprint_area_m2 ?? body.inSituMetrology.footprintAreaM2 ?? null;
             let cloudMetrologyGrade: AcopiosMetrologyGrade = body.inSituMetrology.metrologyGrade;
 
             const configuredGpuUrl = String(process.env.GEOLAPP_MAST3R_GPU_URL || '').trim();
@@ -2375,8 +2401,46 @@ router.post(
             }
 
             // Respaldo CPU determinista soberano (NUNCA cono paramétrico sintético)
+            // Preserva grilla/volumen 2.2.0+ validado cuando visualHullViews >= 4 y viene localPreviewMesh
+            const validatedVisualHullViews =
+                body.visualHullViews ?? body.inSituMetrology.visualHullViews ?? 0;
+            const hasValidatedVisualHullGrid = Boolean(
+                body.localPreviewMesh && validatedVisualHullViews >= 4
+            );
+
             if (!meshResult) {
-                if (Array.isArray(body.pointsM) && body.pointsM.length >= 20) {
+                if (hasValidatedVisualHullGrid && body.localPreviewMesh) {
+                    const previewGrid: SpatialSurfaceGrid = {
+                        originX: body.localPreviewMesh.originX,
+                        originZ: body.localPreviewMesh.originZ,
+                        cellSizeM: body.localPreviewMesh.cellSizeM,
+                        nx: body.localPreviewMesh.nx,
+                        nz: body.localPreviewMesh.nz,
+                        heightsM: body.localPreviewMesh.heightsM,
+                        interpolatedMask: body.localPreviewMesh.interpolatedMask,
+                        observationCount: body.localPreviewMesh.observationCount,
+                        slopeDegGrid: body.localPreviewMesh.slopeDegGrid,
+                        groundPlane: body.localPreviewMesh.groundPlane,
+                    };
+                    meshResult = buildSpatialPointCloudGlbMesh(previewGrid);
+                    meshSource = 'SOVEREIGN_VISUAL_HULL_DEM_SOUTH_AMERICA_WEST1';
+                    cloudVolumeM3 =
+                        body.inSituMetrology.volumeM3 > 0
+                            ? Number(body.inSituMetrology.volumeM3.toFixed(4))
+                            : Number(meshResult.tinVolumeM3.toFixed(4));
+                    if (cloudFootprintAreaM2 === null) {
+                        const activeCells = body.localPreviewMesh.heightsM.filter(
+                            (h) => h > 0.015
+                        ).length;
+                        cloudFootprintAreaM2 = Number(
+                            (
+                                activeCells *
+                                body.localPreviewMesh.cellSizeM *
+                                body.localPreviewMesh.cellSizeM
+                            ).toFixed(3)
+                        );
+                    }
+                } else if (Array.isArray(body.pointsM) && body.pointsM.length >= 20) {
                     const spatial = computeSpatialStockpileVolume({
                         pointsM: body.pointsM,
                         groundSamplesM: body.groundSamplesM,
@@ -2384,6 +2448,7 @@ router.post(
                         wallConfinement: body.wallConfinement,
                         anchorCenter: body.anchorCenter,
                         roiRadiusM: body.roiRadiusM,
+                        targetConstraint: body.targetConstraint ?? undefined,
                         calibrationScaleFactor: body.calibrationScaleFactor,
                         coveragePct: body.inSituMetrology.coveragePct,
                         sectorsCovered: body.inSituMetrology.sectorsCovered,
@@ -2406,6 +2471,7 @@ router.post(
                     cloudSlopeRightDeg = spatial.slopeAngleRightDeg;
                     cloudSlopeWarning = spatial.slopeWarning;
                     cloudDimensionsM = spatial.dimensionsM;
+                    cloudFootprintAreaM2 = spatial.footprintAreaM2;
                     cloudMetrologyGrade = spatial.metrologyGrade;
                 } else if (body.localPreviewMesh) {
                     const previewGrid: SpatialSurfaceGrid = {
@@ -2511,6 +2577,7 @@ router.post(
                 mesh_vertex_count: meshResult.vertexCount,
                 mesh_triangle_count: meshResult.triangleCount,
                 mesh_surface_area_m2: meshResult.surfaceAreaM2,
+                ...(cloudFootprintAreaM2 !== null ? { footprint_area_m2: cloudFootprintAreaM2 } : {}),
                 mesh_bounding_box_m: meshResult.boundingBoxM,
                 mesh_reconstructed_at: now,
             };
@@ -2525,6 +2592,7 @@ router.post(
                 ground_slope_deg: cloudGroundSlopeDeg,
                 slope_angle_avg_deg: cloudSlopeAvgDeg,
                 dimensions_m: cloudDimensionsM,
+                footprint_area_m2: cloudFootprintAreaM2,
                 mesh_url: descriptor.downloadUrl,
                 mesh_sha256: descriptor.sha256,
                 mesh_source: meshSource,
@@ -2778,6 +2846,585 @@ router.get(
         } catch (error) {
             console.error('[MINREPORT-ACOPIOS] Error en GET capture-sessions/:sessionId:', error);
             return res.status(500).json({ error: 'Error consultando sesión de captura V2.' });
+        }
+    }
+);
+
+// ─── SPRINT 3: GROUND-TRUTH REAL, DESVIACIONES, CALIBRACIÓN LOOCV & IA SOBERANA ───
+
+const RecomputeCalibrationBodySchema = z.object({
+    tenantId: z.string().trim().max(128).optional(),
+    deviceModel: z.string().trim().max(120).optional(),
+});
+
+const ActivateCalibrationBodySchema = z.object({
+    hitlConfirmation: z.literal('ACTUALIZAR'),
+    tenantId: z.string().trim().max(128).optional(),
+});
+
+function extractEstimatedFromMeasurementDoc(
+    measData: Record<string, any>,
+    assetData: Record<string, any>
+) {
+    const dims = (measData.geometry?.dimensions || {}) as Record<string, unknown>;
+    const bbox = (measData.mesh_bounding_box_m || assetData.mesh_bounding_box_m || {}) as Record<
+        string,
+        unknown
+    >;
+    const pickPos = (...vals: unknown[]): number | undefined => {
+        for (const v of vals) {
+            if (typeof v === 'number' && Number.isFinite(v) && v > 0) return v;
+        }
+        return undefined;
+    };
+
+    const baseLengthM = pickPos(dims.a, dims.d1, dims.baseLengthM, dims.lengthM, bbox.widthX, bbox.lengthM);
+    const baseWidthM = pickPos(dims.b, dims.d2, dims.baseWidthM, dims.widthFromWallM, bbox.depthZ, bbox.widthM);
+    const heightM = pickPos(dims.h, dims.heightM, dims.heightAtWallM, bbox.heightY, bbox.heightM);
+    const diameterM =
+        baseLengthM !== undefined && baseWidthM !== undefined
+            ? Number(((baseLengthM + baseWidthM) / 2).toFixed(3))
+            : baseLengthM ?? baseWidthM;
+    const volumeM3 = pickPos(measData.volumen_m3, measData.offline_in_situ_m3, measData.tin_volume_m3);
+    const slopeRaw = measData.detected_slope_angle_deg ?? assetData.detected_slope_angle_deg;
+    const slopeAngleDeg =
+        typeof slopeRaw === 'number' && Number.isFinite(slopeRaw) && slopeRaw >= 0 && slopeRaw <= 90
+            ? slopeRaw
+            : undefined;
+    const footprintAreaM2 = pickPos(measData.footprint_area_m2, assetData.footprint_area_m2);
+
+    return {
+        ...(heightM !== undefined ? { heightM } : {}),
+        ...(baseLengthM !== undefined ? { baseLengthM } : {}),
+        ...(baseWidthM !== undefined ? { baseWidthM } : {}),
+        ...(diameterM !== undefined ? { diameterM } : {}),
+        ...(volumeM3 !== undefined ? { volumeM3 } : {}),
+        ...(slopeAngleDeg !== undefined ? { slopeAngleDeg } : {}),
+        ...(footprintAreaM2 !== undefined ? { footprintAreaM2 } : {}),
+    };
+}
+
+function summarizeGroundTruthRecords(records: ReadonlyArray<GroundTruthRecord>) {
+    const count = records.length;
+    const alertCount = records.filter((r) => r.deviations.statusBand === 'ALERT').length;
+    const deltas: number[] = [];
+    for (const r of records) {
+        const d =
+            r.deviations.deltaVolumePct ??
+            r.deviations.deltaHeightPct ??
+            r.deviations.deltaDiameterPct ??
+            r.deviations.deltaLengthPct ??
+            r.deviations.deltaWidthPct;
+        if (typeof d === 'number' && Number.isFinite(d)) deltas.push(d);
+    }
+    if (deltas.length === 0) {
+        return { count, mapePct: null, rmsePct: null, biasPct: null, alertCount };
+    }
+    const mapePct = Number((deltas.reduce((a, b) => a + Math.abs(b), 0) / deltas.length).toFixed(2));
+    const rmsePct = Number(
+        Math.sqrt(deltas.reduce((a, b) => a + b * b, 0) / deltas.length).toFixed(2)
+    );
+    const biasPct = Number((deltas.reduce((a, b) => a + b, 0) / deltas.length).toFixed(2));
+    return { count, mapePct, rmsePct, biasPct, alertCount };
+}
+
+/**
+ * POST /api/geolapp/stockpiles/:id/measurements/:measId/ground-truth
+ * Registra contraste de medidas reales (Ground-Truth) bajo confirmación HITL `"ACTUALIZAR"`.
+ * NUNCA muta `volumen_m3` comercial de la medición; persiste en `stockpile_ground_truth` + `AuditLedger`.
+ */
+router.post(
+    '/stockpiles/:id/measurements/:measId/ground-truth',
+    requireAuth,
+    mutationRateLimiter,
+    async (req: AuthRequest, res: Response) => {
+        try {
+            const stockpileId = String(req.params.id || '').trim();
+            const measId = String(req.params.measId || '').trim();
+            if (
+                !stockpileId ||
+                !STOCKPILE_ID_REGEX.test(stockpileId) ||
+                !measId ||
+                !STOCKPILE_ID_REGEX.test(measId)
+            ) {
+                return res.status(400).json({ error: 'Identificador de acopio o medición inválido.' });
+            }
+
+            const parsedBody = MeasurementGroundTruthInputSchema.safeParse(req.body || {});
+            if (!parsedBody.success) {
+                return res.status(400).json({
+                    error: 'Payload Ground-Truth inválido o falta confirmación HITL "ACTUALIZAR".',
+                    details: parsedBody.error.flatten(),
+                });
+            }
+
+            const stockpileRef = db.collection('stockpiles').doc(stockpileId);
+            const stockpileSnap = await stockpileRef.get();
+            if (!stockpileSnap.exists) {
+                return res.status(404).json({ error: 'Acopio no encontrado.' });
+            }
+
+            const stockpileData = (stockpileSnap.data() || {}) as Record<string, any>;
+            const docTenantId = String(
+                stockpileData.tenantId || stockpileData.accountId || ''
+            ).trim();
+            const authz = await authorizeStockpileTenantMutation(req, docTenantId);
+            if (!authz.authorized) {
+                return res.status(authz.status).json({ error: authz.error || 'TENANT_ACCESS_DENIED' });
+            }
+
+            const measSnap = await stockpileRef.collection('measurements').doc(measId).get();
+            if (!measSnap.exists) {
+                return res.status(404).json({ error: 'Medición no encontrada para este acopio.' });
+            }
+
+            const measData = (measSnap.data() || {}) as Record<string, any>;
+            if (measData.tenantId && measData.tenantId !== docTenantId) {
+                return res.status(403).json({ error: 'TENANT_ACCESS_DENIED' });
+            }
+
+            const input = parsedBody.data;
+            const estimated = extractEstimatedFromMeasurementDoc(measData, stockpileData);
+            const deviations = computeDeviationMetrics(estimated, input);
+            const now = Date.now();
+            const gtDocRef = db.collection('stockpile_ground_truth').doc();
+
+            const isEduSandbox = Boolean(
+                stockpileData.isEduSandbox ||
+                    measData.isEduSandbox ||
+                    docTenantId.toLowerCase().startsWith('edu-') ||
+                    (req.user as Record<string, any> | undefined)?.isEduSandbox === true
+            );
+            const deviceModel = String(
+                measData.device_model || stockpileData.device_model || ''
+            ).trim();
+
+            const record: GroundTruthRecord = {
+                id: gtDocRef.id,
+                tenantId: docTenantId,
+                assetId: stockpileId,
+                ...(typeof stockpileData.name === 'string' && stockpileData.name
+                    ? { assetName: stockpileData.name.slice(0, 160) }
+                    : {}),
+                measurementId: measId,
+                ...(deviceModel ? { deviceModel: deviceModel.slice(0, 120) } : {}),
+                isEduSandbox,
+                referenceMethod: input.referenceMethod,
+                ...(input.fieldNotes ? { fieldNotes: input.fieldNotes } : {}),
+                estimated,
+                real: {
+                    ...(input.realHeightM !== undefined ? { realHeightM: input.realHeightM } : {}),
+                    ...(input.realBaseLengthM !== undefined
+                        ? { realBaseLengthM: input.realBaseLengthM }
+                        : {}),
+                    ...(input.realBaseWidthM !== undefined
+                        ? { realBaseWidthM: input.realBaseWidthM }
+                        : {}),
+                    ...(input.realDiameterM !== undefined
+                        ? { realDiameterM: input.realDiameterM }
+                        : {}),
+                    ...(input.realVolumeM3 !== undefined
+                        ? { realVolumeM3: input.realVolumeM3 }
+                        : {}),
+                    ...(input.realSlopeAngleDeg !== undefined
+                        ? { realSlopeAngleDeg: input.realSlopeAngleDeg }
+                        : {}),
+                },
+                deviations,
+                createdAt: now,
+                createdBy: authz.uid,
+                region: 'southamerica-west1',
+            };
+
+            await gtDocRef.set({
+                ...record,
+                accountId: docTenantId,
+            });
+
+            await AuditLedger.record({
+                tenantId: docTenantId,
+                actorUid: authz.uid,
+                actorEmail: authz.emailLower || authz.uid,
+                action: 'STOCKPILE_GROUND_TRUTH_RECORDED',
+                module: 'stockpile',
+                targetEntity: `${stockpileId}/measurements/${measId}`,
+                details: {
+                    groundTruthId: record.id,
+                    referenceMethod: record.referenceMethod,
+                    maxAbsDeltaPct: record.deviations.maxAbsDeltaPct,
+                    statusBand: record.deviations.statusBand,
+                    deltaVolumePct: record.deviations.deltaVolumePct ?? null,
+                    deviceModel: record.deviceModel || null,
+                    isEduSandbox: record.isEduSandbox,
+                },
+                ipAddress: extractClientIp(req),
+            }).catch(() => {});
+
+            return res.status(201).json({
+                success: true,
+                record,
+            });
+        } catch (error) {
+            console.error('[MINREPORT-ACOPIOS] Error en POST ground-truth:', error);
+            return res.status(500).json({ error: 'Error registrando contraste Ground-Truth.' });
+        }
+    }
+);
+
+/**
+ * GET /api/geolapp/ground-truth
+ * Lista contrastes de medidas reales del tenant ordenados por `createdAt desc`.
+ */
+router.get('/ground-truth', requireAuth, async (req: AuthRequest, res: Response) => {
+    try {
+        const queryTenant =
+            typeof req.query?.tenantId === 'string' ? req.query.tenantId : undefined;
+        const headerTenant = resolveScopedTenantId(req, queryTenant);
+        const authz = await authorizeStockpileTenantMutation(req, headerTenant);
+        if (!authz.authorized) {
+            return res.status(authz.status).json({ error: authz.error || 'TENANT_ACCESS_DENIED' });
+        }
+
+        const assetIdFilter =
+            typeof req.query?.assetId === 'string' ? req.query.assetId.trim() : '';
+        const measurementIdFilter =
+            typeof req.query?.measurementId === 'string' ? req.query.measurementId.trim() : '';
+        const deviceModelFilter =
+            typeof req.query?.deviceModel === 'string'
+                ? req.query.deviceModel.trim().toLowerCase()
+                : '';
+
+        const snap = await db
+            .collection('stockpile_ground_truth')
+            .where('tenantId', '==', headerTenant)
+            .limit(200)
+            .get();
+
+        const records: GroundTruthRecord[] = (snap?.docs || [])
+            .map((docSnap) => {
+                const d = (typeof docSnap.data === 'function' ? docSnap.data() : {}) || {};
+                return {
+                    ...(d as GroundTruthRecord),
+                    id: String(d.id || docSnap.id),
+                    tenantId: String(d.tenantId || headerTenant),
+                    region: String(d.region || 'southamerica-west1'),
+                };
+            })
+            .filter((r) => {
+                if (r.tenantId !== headerTenant) return false;
+                if (assetIdFilter && r.assetId !== assetIdFilter) return false;
+                if (measurementIdFilter && r.measurementId !== measurementIdFilter) return false;
+                if (
+                    deviceModelFilter &&
+                    String(r.deviceModel || '')
+                        .trim()
+                        .toLowerCase() !== deviceModelFilter
+                ) {
+                    return false;
+                }
+                return true;
+            })
+            .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0));
+
+        return res.status(200).json({
+            success: true,
+            records,
+            summary: summarizeGroundTruthRecords(records),
+        });
+    } catch (error) {
+        console.error('[MINREPORT-ACOPIOS] Error en GET ground-truth:', error);
+        return res.status(500).json({ error: 'Error consultando contrastes Ground-Truth.' });
+    }
+});
+
+/**
+ * GET /api/geolapp/calibration-profiles
+ * Lista perfiles de calibración LOOCV del tenant (`southamerica-west1`).
+ */
+router.get('/calibration-profiles', requireAuth, async (req: AuthRequest, res: Response) => {
+    try {
+        const queryTenant =
+            typeof req.query?.tenantId === 'string' ? req.query.tenantId : undefined;
+        const headerTenant = resolveScopedTenantId(req, queryTenant);
+        const authz = await authorizeStockpileTenantMutation(req, headerTenant);
+        if (!authz.authorized) {
+            return res.status(authz.status).json({ error: authz.error || 'TENANT_ACCESS_DENIED' });
+        }
+
+        const snap = await db
+            .collection('stockpile_calibration_profiles')
+            .where('tenantId', '==', headerTenant)
+            .limit(100)
+            .get();
+
+        const profiles = (snap?.docs || [])
+            .map((docSnap) => {
+                const d = (typeof docSnap.data === 'function' ? docSnap.data() : {}) || {};
+                return {
+                    ...d,
+                    profileId: String(d.profileId || docSnap.id),
+                    tenantId: String(d.tenantId || headerTenant),
+                    region: String(d.region || 'southamerica-west1'),
+                };
+            })
+            .filter((p) => p.tenantId === headerTenant)
+            .sort((a: any, b: any) => Number(b.createdAt || 0) - Number(a.createdAt || 0));
+
+        return res.status(200).json({
+            success: true,
+            profiles,
+        });
+    } catch (error) {
+        console.error('[MINREPORT-ACOPIOS] Error en GET calibration-profiles:', error);
+        return res.status(500).json({ error: 'Error consultando perfiles de calibración.' });
+    }
+});
+
+/**
+ * POST /api/geolapp/calibration-profiles/recompute
+ * Ejecuta LOOCV determinista + diagnóstico IA soberano (solo ratios anónimos) y guarda perfil `'DRAFT'`.
+ */
+router.post(
+    '/calibration-profiles/recompute',
+    requireAuth,
+    aiRateLimiter,
+    async (req: AuthRequest, res: Response) => {
+        try {
+            const parsedBody = RecomputeCalibrationBodySchema.safeParse(req.body || {});
+            if (!parsedBody.success) {
+                return res.status(400).json({
+                    error: 'Parámetros inválidos para recomputar calibración LOOCV.',
+                    details: parsedBody.error.flatten(),
+                });
+            }
+
+            const headerTenant = resolveScopedTenantId(req, parsedBody.data.tenantId);
+            const authz = await authorizeStockpileTenantMutation(req, headerTenant);
+            if (!authz.authorized) {
+                return res.status(authz.status).json({ error: authz.error || 'TENANT_ACCESS_DENIED' });
+            }
+
+            const gtSnap = await db
+                .collection('stockpile_ground_truth')
+                .where('tenantId', '==', headerTenant)
+                .limit(200)
+                .get();
+
+            const gtRecords: GroundTruthRecord[] = (gtSnap?.docs || [])
+                .map((docSnap) => {
+                    const d = (typeof docSnap.data === 'function' ? docSnap.data() : {}) || {};
+                    return {
+                        ...(d as GroundTruthRecord),
+                        id: String(d.id || docSnap.id),
+                        tenantId: String(d.tenantId || headerTenant),
+                    };
+                })
+                .filter((r) => r.tenantId === headerTenant);
+
+            const draftProfile = recomputeCalibrationProfileLOOCV(gtRecords, {
+                tenantId: headerTenant,
+                deviceModel: parsedBody.data.deviceModel,
+                includeEduSandbox: false,
+            });
+
+            const methodCounts: Partial<Record<GroundTruthReferenceMethod, number>> = {};
+            for (const r of gtRecords) {
+                if (r.isEduSandbox) continue;
+                methodCounts[r.referenceMethod] = (methodCounts[r.referenceMethod] || 0) + 1;
+            }
+
+            const aiDiagnosis = await generateSovereignAiCalibrationDiagnosis({
+                tenantId: headerTenant,
+                deviceModel: draftProfile.deviceModel,
+                sampleCount: draftProfile.sampleCount,
+                outliersExcluded: draftProfile.outliersExcluded ?? 0,
+                volumeScaleFactor: draftProfile.volumeScaleFactor,
+                heightScaleFactor: draftProfile.heightScaleFactor,
+                baseScaleFactor: draftProfile.baseScaleFactor,
+                rawMapePct: draftProfile.loocvMetrics.rawMapePct,
+                calibratedMapePct: draftProfile.loocvMetrics.calibratedMapePct,
+                rmsePct: draftProfile.loocvMetrics.rmsePct,
+                biasPct: draftProfile.loocvMetrics.biasPct,
+                improved: draftProfile.loocvMetrics.improved,
+                referenceMethodCounts: methodCounts,
+            });
+
+            const persistedProfile = {
+                ...draftProfile,
+                aiDiagnosis,
+                accountId: headerTenant,
+                createdBy: authz.uid,
+            };
+
+            await db
+                .collection('stockpile_calibration_profiles')
+                .doc(draftProfile.profileId)
+                .set(persistedProfile);
+
+            await AuditLedger.record({
+                tenantId: headerTenant,
+                actorUid: authz.uid,
+                actorEmail: authz.emailLower || authz.uid,
+                action: 'STOCKPILE_CALIBRATION_PROFILE_RECOMPUTED',
+                module: 'stockpile',
+                targetEntity: draftProfile.profileId,
+                details: {
+                    deviceModel: draftProfile.deviceModel,
+                    status: 'DRAFT',
+                    sampleCount: draftProfile.sampleCount,
+                    outliersExcluded: draftProfile.outliersExcluded ?? 0,
+                    volumeScaleFactor: draftProfile.volumeScaleFactor,
+                    heightScaleFactor: draftProfile.heightScaleFactor,
+                    baseScaleFactor: draftProfile.baseScaleFactor,
+                    loocvMetrics: draftProfile.loocvMetrics,
+                    recommendedAction: aiDiagnosis.recommendedAction,
+                },
+                ipAddress: extractClientIp(req),
+            }).catch(() => {});
+
+            return res.status(201).json({
+                success: true,
+                profile: persistedProfile,
+            });
+        } catch (error) {
+            if (error instanceof CalibrationInsufficientSamplesError) {
+                return res.status(422).json({
+                    error: error.code,
+                    message: error.message,
+                    validCount: error.validCount,
+                    requiredCount: error.requiredCount,
+                    outliersExcluded: error.outliersExcluded,
+                });
+            }
+            console.error('[MINREPORT-ACOPIOS] Error en POST calibration-profiles/recompute:', error);
+            return res.status(500).json({ error: 'Error recomputando perfil de calibración LOOCV.' });
+        }
+    }
+);
+
+/**
+ * POST /api/geolapp/calibration-profiles/:profileId/activate
+ * Promueve un perfil `'DRAFT'` a `'ACTIVE'` bajo confirmación HITL `'ACTUALIZAR'`
+ * y marca cualquier perfil `'ACTIVE'` previo del mismo `(tenantId, deviceModel)` como `'SUPERSEDED'`.
+ */
+router.post(
+    '/calibration-profiles/:profileId/activate',
+    requireAuth,
+    mutationRateLimiter,
+    async (req: AuthRequest, res: Response) => {
+        try {
+            const profileId = String(req.params.profileId || '').trim();
+            if (!profileId || !STOCKPILE_ID_REGEX.test(profileId)) {
+                return res.status(400).json({ error: 'Identificador de perfil inválido.' });
+            }
+
+            const parsedBody = ActivateCalibrationBodySchema.safeParse(req.body || {});
+            if (!parsedBody.success) {
+                return res.status(400).json({
+                    error: 'Confirmación HITL obligatoria: escriba exactamente "ACTUALIZAR".',
+                    details: parsedBody.error.flatten(),
+                });
+            }
+
+            const profileRef = db.collection('stockpile_calibration_profiles').doc(profileId);
+            const profileSnap = await profileRef.get();
+            if (!profileSnap.exists) {
+                return res.status(404).json({ error: 'Perfil de calibración no encontrado.' });
+            }
+
+            const profileData = (profileSnap.data() || {}) as Record<string, any>;
+            const docTenantId = String(profileData.tenantId || profileData.accountId || '').trim();
+            const authz = await authorizeStockpileTenantMutation(req, docTenantId);
+            if (!authz.authorized) {
+                return res.status(authz.status).json({ error: authz.error || 'TENANT_ACCESS_DENIED' });
+            }
+
+            if (profileData.status === 'SUPERSEDED') {
+                return res.status(409).json({
+                    error: 'PROFILE_SUPERSEDED',
+                    message: 'Un perfil reemplazado (SUPERSEDED) no puede reactivarse.',
+                });
+            }
+
+            if (profileData.loocvMetrics && profileData.loocvMetrics.improved !== true) {
+                return res.status(422).json({
+                    error: 'CALIBRATION_NOT_IMPROVED',
+                    message:
+                        'Guardrail LOOCV: calibratedMapePct debe ser estrictamente menor que rawMapePct para activar.',
+                });
+            }
+
+            const now = Date.now();
+            const prevActiveSnap = await db
+                .collection('stockpile_calibration_profiles')
+                .where('tenantId', '==', docTenantId)
+                .limit(100)
+                .get();
+
+            const supersededIds: string[] = [];
+            for (const otherDoc of prevActiveSnap?.docs || []) {
+                if (otherDoc.id === profileId) continue;
+                const od = (typeof otherDoc.data === 'function' ? otherDoc.data() : {}) || {};
+                if (
+                    od.status === 'ACTIVE' &&
+                    String(od.deviceModel || '') === String(profileData.deviceModel || '')
+                ) {
+                    await otherDoc.ref.set(
+                        {
+                            status: 'SUPERSEDED',
+                            supersededAt: now,
+                            supersededByProfileId: profileId,
+                        },
+                        { merge: true }
+                    );
+                    supersededIds.push(otherDoc.id);
+                }
+            }
+
+            const activatedProfile = {
+                ...profileData,
+                profileId,
+                tenantId: docTenantId,
+                status: 'ACTIVE' as const,
+                activatedAt: now,
+                activatedBy: authz.uid,
+            };
+
+            await profileRef.set(
+                {
+                    status: 'ACTIVE',
+                    activatedAt: now,
+                    activatedBy: authz.uid,
+                },
+                { merge: true }
+            );
+
+            await AuditLedger.record({
+                tenantId: docTenantId,
+                actorUid: authz.uid,
+                actorEmail: authz.emailLower || authz.uid,
+                action: 'STOCKPILE_CALIBRATION_PROFILE_ACTIVATED',
+                module: 'stockpile',
+                targetEntity: profileId,
+                details: {
+                    deviceModel: profileData.deviceModel || 'ALL_DEVICES',
+                    volumeScaleFactor: profileData.volumeScaleFactor,
+                    heightScaleFactor: profileData.heightScaleFactor,
+                    baseScaleFactor: profileData.baseScaleFactor,
+                    loocvMetrics: profileData.loocvMetrics || null,
+                    supersededIds,
+                },
+                ipAddress: extractClientIp(req),
+            }).catch(() => {});
+
+            return res.status(200).json({
+                success: true,
+                profile: activatedProfile,
+                supersededIds,
+            });
+        } catch (error) {
+            console.error('[MINREPORT-ACOPIOS] Error en POST calibration-profiles/:id/activate:', error);
+            return res.status(500).json({ error: 'Error activando perfil de calibración.' });
         }
     }
 );

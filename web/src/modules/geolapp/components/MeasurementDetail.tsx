@@ -1,6 +1,10 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Capacitor } from '@capacitor/core';
+import type {
+    GroundTruthRecord,
+    GroundTruthReferenceMethod,
+} from '../../../contracts/acopios.contracts';
 import {
     BoulderDetectionBox2D,
     RosinRammlerProfile,
@@ -9,6 +13,13 @@ import {
 } from '../core/types/GeolappTypes';
 import { calculationEngine } from '../core/services/calculation-engine';
 import { dataService } from '../core/services/DataService';
+import {
+    computeClientDeviationMetrics,
+    extractEstimatedSnapshotFromMeasurement,
+    fetchGroundTruthRecords,
+    REFERENCE_METHODS,
+    submitMeasurementGroundTruth,
+} from '../core/services/groundTruthService';
 import { formatStockpileVolumeM3 } from '../core/services/spatialScannerService';
 import { useResolvedStockpileImage } from '../core/services/StorageService';
 import { downloadGeolappVectorPdf } from '../core/utils/vectorPdfGenerator';
@@ -44,6 +55,30 @@ interface SpatialMetrologyFields {
     coverage_pct?: number | null;
     depth_mode?: string | null;
     ground_slope_deg?: number | null;
+    footprint_area_m2?: number | null;
+}
+
+/** Contrato compartido de cotas 3D con StockpileTwin3D / StockpileVisualStage (Bloque C). */
+interface Twin3DDimensionsContract {
+    dimensionsM?: { a?: number | null; b?: number | null; h?: number | null } | null;
+    volumeM3?: number | null;
+    slopeAngleDeg?: number | null;
+    footprintAreaM2?: number | null;
+    showDimensionsDefault?: boolean;
+}
+
+function parseOptionalPositiveNum(raw: string): number | undefined {
+    const cleaned = raw.trim().replace(',', '.');
+    if (!cleaned) return undefined;
+    const n = Number(cleaned);
+    return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+function parseOptionalNonNegNum(raw: string): number | undefined {
+    const cleaned = raw.trim().replace(',', '.');
+    if (!cleaned) return undefined;
+    const n = Number(cleaned);
+    return Number.isFinite(n) && n >= 0 ? n : undefined;
 }
 
 function formatSpatialDepthMode(depthMode?: string | null): string | null {
@@ -101,6 +136,74 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
         type: 'success' | 'error' | 'info';
         text: string;
     } | null>(null);
+
+    // Panel Ground-Truth (móvil únicamente): Modo Informe -> Edición Quirúrgica + HITL "ACTUALIZAR"
+    const [showGroundTruthPanel, setShowGroundTruthPanel] = useState(false);
+    const [gtEditMode, setGtEditMode] = useState(false);
+    const [gtRecords, setGtRecords] = useState<GroundTruthRecord[]>([]);
+    const [gtLoading, setGtLoading] = useState(false);
+    const [gtMethod, setGtMethod] = useState<GroundTruthReferenceMethod>('TAPE_MEASURE');
+    const [gtHeightInput, setGtHeightInput] = useState('');
+    const [gtLengthInput, setGtLengthInput] = useState('');
+    const [gtWidthInput, setGtWidthInput] = useState('');
+    const [gtDiameterInput, setGtDiameterInput] = useState('');
+    const [gtVolumeInput, setGtVolumeInput] = useState('');
+    const [gtSlopeInput, setGtSlopeInput] = useState('');
+    const [gtNotesInput, setGtNotesInput] = useState('');
+    const [gtValidationError, setGtValidationError] = useState<string | null>(null);
+    const [gtHitlOpen, setGtHitlOpen] = useState(false);
+    const [gtSaving, setGtSaving] = useState(false);
+
+    const estimatedSnapshot = useMemo(
+        () => extractEstimatedSnapshotFromMeasurement(measurement, asset),
+        [measurement, asset]
+    );
+
+    const parsedRealInputs = useMemo(
+        () => ({
+            realHeightM: parseOptionalPositiveNum(gtHeightInput),
+            realBaseLengthM: parseOptionalPositiveNum(gtLengthInput),
+            realBaseWidthM: parseOptionalPositiveNum(gtWidthInput),
+            realDiameterM: parseOptionalPositiveNum(gtDiameterInput),
+            realVolumeM3: parseOptionalPositiveNum(gtVolumeInput),
+            realSlopeAngleDeg: parseOptionalNonNegNum(gtSlopeInput),
+        }),
+        [gtHeightInput, gtLengthInput, gtWidthInput, gtDiameterInput, gtVolumeInput, gtSlopeInput]
+    );
+
+    const hasAnyRealInput = Boolean(
+        parsedRealInputs.realHeightM !== undefined ||
+            parsedRealInputs.realBaseLengthM !== undefined ||
+            parsedRealInputs.realBaseWidthM !== undefined ||
+            parsedRealInputs.realDiameterM !== undefined ||
+            parsedRealInputs.realVolumeM3 !== undefined ||
+            parsedRealInputs.realSlopeAngleDeg !== undefined
+    );
+
+    const liveGtDeviations = useMemo(
+        () => (hasAnyRealInput ? computeClientDeviationMetrics(estimatedSnapshot, parsedRealInputs) : null),
+        [hasAnyRealInput, estimatedSnapshot, parsedRealInputs]
+    );
+
+    useEffect(() => {
+        if (!isMobile || !showGroundTruthPanel) return;
+        let active = true;
+        setGtLoading(true);
+        void fetchGroundTruthRecords({
+            tenantId: measurement.tenantId || asset?.tenantId || dataService.getTenantId() || undefined,
+            assetId: measurement.assetId,
+            measurementId: measurement.id,
+        })
+            .then(({ records }) => {
+                if (active) setGtRecords(records);
+            })
+            .finally(() => {
+                if (active) setGtLoading(false);
+            });
+        return () => {
+            active = false;
+        };
+    }, [isMobile, showGroundTruthPanel, measurement.tenantId, measurement.assetId, measurement.id, asset?.tenantId]);
 
     const deltaVolumeDisplay = formatSignedDeltaValue(
         measurement.delta_volumen,
@@ -290,6 +393,13 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
     const effCoveragePct = mSpatial.coverage_pct ?? aSpatial?.coverage_pct ?? null;
     const effDepthMode = mSpatial.depth_mode ?? aSpatial?.depth_mode ?? null;
     const effGroundSlopeDeg = mSpatial.ground_slope_deg ?? aSpatial?.ground_slope_deg ?? null;
+    const effFootprintAreaM2 =
+        typeof mSpatial.footprint_area_m2 === 'number' && Number.isFinite(mSpatial.footprint_area_m2)
+            ? mSpatial.footprint_area_m2
+            : typeof aSpatial?.footprint_area_m2 === 'number' &&
+                Number.isFinite(aSpatial.footprint_area_m2)
+              ? aSpatial.footprint_area_m2
+              : null;
     const effDepthModeDisplay = formatSpatialDepthMode(effDepthMode);
 
     const slopeDeg =
@@ -297,6 +407,33 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
             Number.isFinite(measurement.detected_slope_angle_deg)
             ? measurement.detected_slope_angle_deg
             : null;
+
+    const twin3dDimensionsM = useMemo(() => {
+        const a = estimatedSnapshot.baseLengthM ?? null;
+        const b = estimatedSnapshot.baseWidthM ?? null;
+        const h = estimatedSnapshot.heightM ?? null;
+        if (a === null && b === null && h === null) return null;
+        return { a, b, h };
+    }, [estimatedSnapshot]);
+
+    const twin3dContractProps = useMemo<Twin3DDimensionsContract>(
+        () => ({
+            dimensionsM: twin3dDimensionsM,
+            volumeM3:
+                typeof measurement.volumen_m3 === 'number' && Number.isFinite(measurement.volumen_m3)
+                    ? measurement.volumen_m3
+                    : null,
+            slopeAngleDeg:
+                slopeDeg ??
+                (typeof asset?.detected_slope_angle_deg === 'number' &&
+                Number.isFinite(asset.detected_slope_angle_deg)
+                    ? asset.detected_slope_angle_deg
+                    : null),
+            footprintAreaM2: effFootprintAreaM2,
+            showDimensionsDefault: true,
+        }),
+        [twin3dDimensionsM, measurement.volumen_m3, slopeDeg, asset?.detected_slope_angle_deg, effFootprintAreaM2]
+    );
     const isSlopeWarn =
         (slopeDeg != null && slopeDeg > 38) || Boolean(measurement.slope_warning);
 
@@ -430,6 +567,23 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
                         )}
                         <button
                             type="button"
+                            onClick={() => {
+                                void triggerFieldImpact('LIGHT');
+                                setShowGroundTruthPanel((prev) => !prev);
+                            }}
+                            title={t('ground_truth.open_panel_aria', 'Contraste con medidas reales')}
+                            aria-label={t('ground_truth.open_panel_aria', 'Contraste con medidas reales')}
+                            aria-pressed={showGroundTruthPanel}
+                            className={`min-w-[48px] min-h-[48px] bg-transparent border-0 border-b-2 outline-none cursor-pointer rounded-none flex items-center justify-center ${
+                                showGroundTruthPanel
+                                    ? 'border-[#C68346] text-[#C68346]'
+                                    : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#00AEEF]'
+                            }`}
+                        >
+                            <span className="material-symbols-outlined text-[24px]">straighten</span>
+                        </button>
+                        <button
+                            type="button"
                             onClick={() => void handleExportPdf()}
                             disabled={isExportingPdf}
                             title={t('pdf.export_button', 'EXPORTAR PDF VECTORIAL')}
@@ -522,6 +676,7 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
                                           }
                                         : undefined
                                 }
+                                {...(twin3dContractProps as Record<string, unknown>)}
                             />
                         </section>
                     ) : (
@@ -596,6 +751,371 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
                                         </span>
                                     </button>
                                 </div>
+                            )}
+                        </section>
+                    )}
+
+                    {/* Panel Ground-Truth Móvil: Modo Informe -> Edición Quirúrgica + HITL "ACTUALIZAR" */}
+                    {showGroundTruthPanel && (
+                        <section
+                            aria-label={t('ground_truth.panel_title', 'CONTRASTE REAL (GROUND-TRUTH)')}
+                            className="px-fib-21 py-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C] border-l-[3px] border-l-[#00AEEF] bg-[#FFFFFF] dark:bg-[#000000] space-y-fib-13 font-mono tabular-nums"
+                        >
+                            <div className="flex items-center justify-between gap-fib-8">
+                                <div className="flex items-center gap-fib-8 min-w-0">
+                                    <span className="material-symbols-outlined text-[20px] text-[#00AEEF]">
+                                        straighten
+                                    </span>
+                                    <span className="text-microcopy font-bold uppercase tracking-widest truncate">
+                                        {gtEditMode
+                                            ? t('ground_truth.edit_mode', 'INGRESO MEDIDAS REALES')
+                                            : t('ground_truth.report_mode', 'INFORME DE CONTRASTE')}
+                                    </span>
+                                </div>
+                                <div className="flex items-center gap-1 shrink-0">
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            void triggerFieldImpact('LIGHT');
+                                            setGtValidationError(null);
+                                            setGtEditMode((prev) => !prev);
+                                        }}
+                                        aria-label={
+                                            gtEditMode
+                                                ? t('hitl.cancel_edit', 'CANCELAR EDICIÓN')
+                                                : t('hitl.edit_block', 'EDITAR BLOQUE')
+                                        }
+                                        title={
+                                            gtEditMode
+                                                ? t('hitl.cancel_edit', 'CANCELAR EDICIÓN')
+                                                : t('hitl.edit_block', 'EDITAR BLOQUE')
+                                        }
+                                        className="min-w-[48px] min-h-[48px] bg-transparent border-0 outline-none text-[#475569] dark:text-[#8A93A6] hover:text-[#C68346] flex items-center justify-center cursor-pointer rounded-none"
+                                    >
+                                        <span className="material-symbols-outlined text-[22px]">
+                                            {gtEditMode ? 'close' : 'edit'}
+                                        </span>
+                                    </button>
+                                </div>
+                            </div>
+
+                            {gtLoading && (
+                                <M3LinearProgress
+                                    indeterminate
+                                    ariaLabel={t('common.loading', 'CARGANDO...')}
+                                />
+                            )}
+
+                            {!gtEditMode ? (
+                                <div className="space-y-fib-8">
+                                    {gtRecords.length === 0 ? (
+                                        <div className="text-data-dense text-[#5A6072] dark:text-[#94A3B8]">
+                                            {t(
+                                                'ground_truth.empty_list',
+                                                '[Sin contrastes reales registrados]'
+                                            )}
+                                        </div>
+                                    ) : (
+                                        <div className="divide-y divide-[#E2E8F0] dark:divide-[#12151C]">
+                                            {gtRecords.slice(0, 5).map((rec) => {
+                                                const isAlert = rec.deviations.statusBand === 'ALERT';
+                                                return (
+                                                    <div
+                                                        key={rec.id}
+                                                        className={`py-fib-8 pl-fib-8 border-l-[3px] ${
+                                                            isAlert
+                                                                ? 'border-l-[#C68346]'
+                                                                : 'border-l-[#00AEEF]'
+                                                        }`}
+                                                    >
+                                                        <div className="flex items-center justify-between gap-fib-8 text-data-dense">
+                                                            <span className="font-bold">
+                                                                {t(
+                                                                    `ground_truth.method_${rec.referenceMethod}`,
+                                                                    rec.referenceMethod
+                                                                )}
+                                                            </span>
+                                                            <span
+                                                                className={`font-bold ${
+                                                                    isAlert
+                                                                        ? 'text-[#C68346]'
+                                                                        : 'text-[#00AEEF]'
+                                                                }`}
+                                                            >
+                                                                MAX Δ {rec.deviations.maxAbsDeltaPct.toFixed(1)}%
+                                                            </span>
+                                                        </div>
+                                                        <div className="mt-1 flex flex-wrap gap-fib-13 text-microcopy text-[#475569] dark:text-[#8A93A6]">
+                                                            {rec.deviations.deltaVolumePct !== undefined && (
+                                                                <span>
+                                                                    V {rec.deviations.deltaVolumePct > 0 ? '+' : ''}
+                                                                    {rec.deviations.deltaVolumePct.toFixed(1)}%
+                                                                </span>
+                                                            )}
+                                                            {rec.deviations.deltaHeightPct !== undefined && (
+                                                                <span>
+                                                                    H {rec.deviations.deltaHeightPct > 0 ? '+' : ''}
+                                                                    {rec.deviations.deltaHeightPct.toFixed(1)}%
+                                                                </span>
+                                                            )}
+                                                            {rec.deviations.deltaDiameterPct !== undefined && (
+                                                                <span>
+                                                                    Ø {rec.deviations.deltaDiameterPct > 0 ? '+' : ''}
+                                                                    {rec.deviations.deltaDiameterPct.toFixed(1)}%
+                                                                </span>
+                                                            )}
+                                                            {rec.deviations.deltaLengthPct !== undefined && (
+                                                                <span>
+                                                                    L {rec.deviations.deltaLengthPct > 0 ? '+' : ''}
+                                                                    {rec.deviations.deltaLengthPct.toFixed(1)}%
+                                                                </span>
+                                                            )}
+                                                            {rec.deviations.deltaWidthPct !== undefined && (
+                                                                <span>
+                                                                    A {rec.deviations.deltaWidthPct > 0 ? '+' : ''}
+                                                                    {rec.deviations.deltaWidthPct.toFixed(1)}%
+                                                                </span>
+                                                            )}
+                                                            {rec.deviations.deltaSlopeDeg !== undefined && (
+                                                                <span>
+                                                                    α {rec.deviations.deltaSlopeDeg > 0 ? '+' : ''}
+                                                                    {rec.deviations.deltaSlopeDeg.toFixed(1)}°
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
+                                </div>
+                            ) : (
+                                <form
+                                    autoComplete="off"
+                                    spellCheck={false}
+                                    onSubmit={(e) => {
+                                        e.preventDefault();
+                                        if (!hasAnyRealInput) {
+                                            setGtValidationError(
+                                                t(
+                                                    'ground_truth.require_one_measure',
+                                                    'Ingrese al menos una medida real (> 0).'
+                                                )
+                                            );
+                                            return;
+                                        }
+                                        setGtValidationError(null);
+                                        setGtHitlOpen(true);
+                                    }}
+                                    className="space-y-fib-13"
+                                >
+                                    <div className="grid grid-cols-[1.1fr_0.9fr_1fr_0.8fr] gap-fib-8 text-microcopy uppercase text-[#475569] dark:text-[#8A93A6] border-b border-[#E2E8F0] dark:border-[#12151C] pb-1">
+                                        <span>EJE</span>
+                                        <span>{t('ground_truth.col_app', 'APP')}</span>
+                                        <span>{t('ground_truth.col_real', 'REAL')}</span>
+                                        <span className="text-right">
+                                            {t('ground_truth.col_delta', 'Δ%')}
+                                        </span>
+                                    </div>
+
+                                    {[
+                                        {
+                                            key: 'H',
+                                            label: t('ground_truth.field_height', 'ALTURA H (m)'),
+                                            appVal:
+                                                estimatedSnapshot.heightM !== undefined
+                                                    ? `${estimatedSnapshot.heightM.toFixed(2)} m`
+                                                    : '--',
+                                            val: gtHeightInput,
+                                            setVal: setGtHeightInput,
+                                            delta: liveGtDeviations?.deltaHeightPct,
+                                            suffix: '%',
+                                        },
+                                        {
+                                            key: 'L',
+                                            label: t('ground_truth.field_length', 'LARGO L (m)'),
+                                            appVal:
+                                                estimatedSnapshot.baseLengthM !== undefined
+                                                    ? `${estimatedSnapshot.baseLengthM.toFixed(2)} m`
+                                                    : '--',
+                                            val: gtLengthInput,
+                                            setVal: setGtLengthInput,
+                                            delta: liveGtDeviations?.deltaLengthPct,
+                                            suffix: '%',
+                                        },
+                                        {
+                                            key: 'A',
+                                            label: t('ground_truth.field_width', 'ANCHO A (m)'),
+                                            appVal:
+                                                estimatedSnapshot.baseWidthM !== undefined
+                                                    ? `${estimatedSnapshot.baseWidthM.toFixed(2)} m`
+                                                    : '--',
+                                            val: gtWidthInput,
+                                            setVal: setGtWidthInput,
+                                            delta: liveGtDeviations?.deltaWidthPct,
+                                            suffix: '%',
+                                        },
+                                        {
+                                            key: 'D',
+                                            label: t('ground_truth.field_diameter', 'DIÁMETRO Ø (m)'),
+                                            appVal:
+                                                estimatedSnapshot.diameterM !== undefined
+                                                    ? `${estimatedSnapshot.diameterM.toFixed(2)} m`
+                                                    : '--',
+                                            val: gtDiameterInput,
+                                            setVal: setGtDiameterInput,
+                                            delta: liveGtDeviations?.deltaDiameterPct,
+                                            suffix: '%',
+                                        },
+                                        {
+                                            key: 'V',
+                                            label: t('ground_truth.field_volume', 'VOLUMEN V (m³)'),
+                                            appVal:
+                                                estimatedSnapshot.volumeM3 !== undefined
+                                                    ? `${formatStockpileVolumeM3(estimatedSnapshot.volumeM3)}`
+                                                    : '--',
+                                            val: gtVolumeInput,
+                                            setVal: setGtVolumeInput,
+                                            delta: liveGtDeviations?.deltaVolumePct,
+                                            suffix: '%',
+                                        },
+                                        {
+                                            key: 'S',
+                                            label: t('ground_truth.field_slope', 'TALUD α (°)'),
+                                            appVal:
+                                                estimatedSnapshot.slopeAngleDeg !== undefined
+                                                    ? `${estimatedSnapshot.slopeAngleDeg.toFixed(1)}°`
+                                                    : '--',
+                                            val: gtSlopeInput,
+                                            setVal: setGtSlopeInput,
+                                            delta: liveGtDeviations?.deltaSlopeDeg,
+                                            suffix: '°',
+                                        },
+                                    ].map((row) => (
+                                        <div
+                                            key={row.key}
+                                            className="grid grid-cols-[1.1fr_0.9fr_1fr_0.8fr] gap-fib-8 items-center"
+                                        >
+                                            <label
+                                                htmlFor={`gt-field-${row.key}`}
+                                                className="text-microcopy uppercase text-[#475569] dark:text-[#8A93A6] truncate"
+                                            >
+                                                {row.label}
+                                            </label>
+                                            <span className="text-data-dense text-[#0F172A] dark:text-[#F3F4F6]">
+                                                {row.appVal}
+                                            </span>
+                                            <input
+                                                id={`gt-field-${row.key}`}
+                                                type="number"
+                                                inputMode="decimal"
+                                                step="any"
+                                                min="0"
+                                                autoComplete="off"
+                                                spellCheck={false}
+                                                value={row.val}
+                                                onChange={(e) => row.setVal(e.target.value)}
+                                                placeholder="0.00"
+                                                className="h-[44px] w-full px-2 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] text-data-dense text-[#0F172A] dark:text-[#F3F4F6] focus:outline-none focus:border-[#00AEEF] rounded-none shadow-none select-text"
+                                            />
+                                            <span
+                                                className={`text-data-dense font-bold text-right ${
+                                                    row.delta === undefined
+                                                        ? 'text-[#94A3B8] dark:text-[#5A6072]'
+                                                        : Math.abs(row.delta) > 8
+                                                          ? 'text-[#C68346]'
+                                                          : 'text-[#00AEEF]'
+                                                }`}
+                                            >
+                                                {row.delta !== undefined
+                                                    ? `${row.delta > 0 ? '+' : ''}${row.delta.toFixed(1)}${row.suffix}`
+                                                    : '--'}
+                                            </span>
+                                        </div>
+                                    ))}
+
+                                    <div className="space-y-fib-8 pt-1">
+                                        <label
+                                            htmlFor="gt-method-select"
+                                            className="block text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]"
+                                        >
+                                            {t('ground_truth.method_label', 'MÉTODO DE REFERENCIA')}
+                                        </label>
+                                        <select
+                                            id="gt-method-select"
+                                            value={gtMethod}
+                                            onChange={(e) =>
+                                                setGtMethod(e.target.value as GroundTruthReferenceMethod)
+                                            }
+                                            className="h-[48px] w-full px-fib-13 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] text-data-dense text-[#0F172A] dark:text-[#F3F4F6] focus:outline-none focus:border-[#00AEEF] rounded-none shadow-none"
+                                        >
+                                            {REFERENCE_METHODS.map((m) => (
+                                                <option key={m} value={m}>
+                                                    {t(`ground_truth.method_${m}`, m)}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </div>
+
+                                    <div className="space-y-fib-8">
+                                        <label
+                                            htmlFor="gt-notes-input"
+                                            className="block text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]"
+                                        >
+                                            {t('ground_truth.notes_label', 'NOTAS DE TERRENO (OPCIONAL)')}
+                                        </label>
+                                        <input
+                                            id="gt-notes-input"
+                                            type="text"
+                                            maxLength={300}
+                                            autoComplete="off"
+                                            spellCheck={false}
+                                            value={gtNotesInput}
+                                            onChange={(e) => setGtNotesInput(e.target.value)}
+                                            placeholder={t(
+                                                'ground_truth.notes_placeholder',
+                                                'Ej: Probeta verificada con huincha'
+                                            )}
+                                            className="h-[48px] w-full px-fib-13 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] text-data-dense text-[#0F172A] dark:text-[#F3F4F6] focus:outline-none focus:border-[#00AEEF] rounded-none shadow-none select-text"
+                                        />
+                                    </div>
+
+                                    {liveGtDeviations && (
+                                        <div
+                                            className={`px-fib-13 py-fib-8 border-l-[3px] flex items-center justify-between text-data-dense font-bold ${
+                                                liveGtDeviations.statusBand === 'ALERT'
+                                                    ? 'border-l-[#C68346] text-[#C68346]'
+                                                    : 'border-l-[#00AEEF] text-[#00AEEF]'
+                                            }`}
+                                        >
+                                            <span>
+                                                {liveGtDeviations.statusBand === 'ALERT'
+                                                    ? t('ground_truth.status_ALERT', 'ALERTA > 8%')
+                                                    : t('ground_truth.status_OPTIMAL', 'ÓPTIMO <= 8%')}
+                                            </span>
+                                            <span>MAX Δ {liveGtDeviations.maxAbsDeltaPct.toFixed(1)}%</span>
+                                        </div>
+                                    )}
+
+                                    {gtValidationError && (
+                                        <div className="text-data-dense text-[#C68346]">
+                                            {gtValidationError}
+                                        </div>
+                                    )}
+
+                                    <button
+                                        type="submit"
+                                        disabled={gtSaving}
+                                        className="w-full min-h-[48px] px-fib-13 bg-[#C68346] text-[#000000] border-0 font-mono text-data-dense font-bold uppercase flex items-center justify-center gap-fib-8 cursor-pointer disabled:opacity-40 rounded-none shadow-none"
+                                    >
+                                        <span className="material-symbols-outlined text-[20px]" aria-hidden="true">
+                                            fact_check
+                                        </span>
+                                        <span>
+                                            {t('ground_truth.save_hitl_action', 'CONFIRMAR CONTRASTE')}
+                                        </span>
+                                    </button>
+                                </form>
                             )}
                         </section>
                     )}
@@ -747,6 +1267,119 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
                 </div>
 
                 <HitlConfirmModal
+                    open={gtHitlOpen}
+                    title={t('ground_truth.hitl_title', 'REGISTRAR MEDIDAS REALES (HITL)')}
+                    description={t(
+                        'ground_truth.hitl_desc',
+                        'Registra el contraste real sin alterar el volumen comercial. Escriba ACTUALIZAR para confirmar.'
+                    )}
+                    keyword="ACTUALIZAR"
+                    comparisonDiff={
+                        [
+                            parsedRealInputs.realHeightM !== undefined
+                                ? {
+                                      field: 'H (m)',
+                                      current: `${estimatedSnapshot.heightM?.toFixed(2) ?? '--'} m`,
+                                      suggested: `${parsedRealInputs.realHeightM.toFixed(2)} m`,
+                                  }
+                                : null,
+                            parsedRealInputs.realBaseLengthM !== undefined
+                                ? {
+                                      field: 'L (m)',
+                                      current: `${estimatedSnapshot.baseLengthM?.toFixed(2) ?? '--'} m`,
+                                      suggested: `${parsedRealInputs.realBaseLengthM.toFixed(2)} m`,
+                                  }
+                                : null,
+                            parsedRealInputs.realBaseWidthM !== undefined
+                                ? {
+                                      field: 'A (m)',
+                                      current: `${estimatedSnapshot.baseWidthM?.toFixed(2) ?? '--'} m`,
+                                      suggested: `${parsedRealInputs.realBaseWidthM.toFixed(2)} m`,
+                                  }
+                                : null,
+                            parsedRealInputs.realDiameterM !== undefined
+                                ? {
+                                      field: 'Ø (m)',
+                                      current: `${estimatedSnapshot.diameterM?.toFixed(2) ?? '--'} m`,
+                                      suggested: `${parsedRealInputs.realDiameterM.toFixed(2)} m`,
+                                  }
+                                : null,
+                            parsedRealInputs.realVolumeM3 !== undefined
+                                ? {
+                                      field: 'V (m³)',
+                                      current: `${estimatedSnapshot.volumeM3 !== undefined ? formatStockpileVolumeM3(estimatedSnapshot.volumeM3) : '--'} m³`,
+                                      suggested: `${formatStockpileVolumeM3(parsedRealInputs.realVolumeM3)} m³`,
+                                  }
+                                : null,
+                            parsedRealInputs.realSlopeAngleDeg !== undefined
+                                ? {
+                                      field: 'α (°)',
+                                      current: `${estimatedSnapshot.slopeAngleDeg?.toFixed(1) ?? '--'}°`,
+                                      suggested: `${parsedRealInputs.realSlopeAngleDeg.toFixed(1)}°`,
+                                  }
+                                : null,
+                        ].filter((x): x is HitlComparisonDiffItem => x !== null)
+                    }
+                    loading={gtSaving}
+                    onConfirm={async () => {
+                        if (gtSaving) return;
+                        setGtSaving(true);
+                        try {
+                            const { record, queuedOffline } = await submitMeasurementGroundTruth({
+                                tenantId:
+                                    measurement.tenantId ||
+                                    asset?.tenantId ||
+                                    dataService.getTenantId() ||
+                                    undefined,
+                                assetId: measurement.assetId,
+                                assetName: asset?.name,
+                                measurementId: measurement.id,
+                                deviceModel: measurement.device_model || asset?.device_model,
+                                estimated: estimatedSnapshot,
+                                input: {
+                                    hitlConfirmation: 'ACTUALIZAR',
+                                    referenceMethod: gtMethod,
+                                    ...(gtNotesInput.trim() ? { fieldNotes: gtNotesInput.trim() } : {}),
+                                    ...parsedRealInputs,
+                                },
+                            });
+                            setGtRecords((prev) => [record, ...prev]);
+                            setGtHitlOpen(false);
+                            setGtEditMode(false);
+                            setGtHeightInput('');
+                            setGtLengthInput('');
+                            setGtWidthInput('');
+                            setGtDiameterInput('');
+                            setGtVolumeInput('');
+                            setGtSlopeInput('');
+                            setGtNotesInput('');
+                            setStatusBanner({
+                                type: 'success',
+                                text: queuedOffline
+                                    ? t(
+                                          'ground_truth.saved_offline',
+                                          'Contraste guardado localmente y encolado para sincronización.'
+                                      )
+                                    : t(
+                                          'ground_truth.saved_cloud',
+                                          'Contraste real registrado en AuditLedger.'
+                                      ),
+                            });
+                        } catch (err) {
+                            setGtHitlOpen(false);
+                            setGtValidationError(
+                                err instanceof Error
+                                    ? err.message
+                                    : t('hitl.save_error', 'Error guardando HITL.')
+                            );
+                        } finally {
+                            setGtSaving(false);
+                        }
+                    }}
+                    onCancel={() => setGtHitlOpen(false)}
+                />
+
+                <HitlConfirmModal
                     open={Boolean(pendingReconcileDecision)}
                     title={t('reconciliation.hitl_modal_title', 'CONCILIACIÓN VOLUMÉTRICA HITL')}
                     description={t(
@@ -853,6 +1486,7 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
                             isMobile={false}
                             heightPx={340}
                             canReconstruct3D={false}
+                            {...(twin3dContractProps as Record<string, unknown>)}
                         />
                         <ReportFieldRow
                             label={t('capture.cas_trace_label', 'TRAZABILIDAD CAS')}

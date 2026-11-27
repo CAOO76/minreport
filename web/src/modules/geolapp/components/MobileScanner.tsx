@@ -911,6 +911,17 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
             const effSlopeWarn =
                 spatialResult?.slopeWarning ?? inSituMetrology?.slopeWarning ?? null;
 
+            const spatialFootprintAreaM2 = (
+                spatialResult as (typeof spatialResult & { footprintAreaM2?: number }) | null
+            )?.footprintAreaM2;
+            const effFootprintAreaM2 =
+                typeof spatialFootprintAreaM2 === 'number' && Number.isFinite(spatialFootprintAreaM2)
+                    ? spatialFootprintAreaM2
+                    : typeof inSituMetrology?.footprintAreaM2 === 'number' &&
+                        Number.isFinite(inSituMetrology.footprintAreaM2)
+                      ? inSituMetrology.footprintAreaM2
+                      : undefined;
+
             const hardwareTelemetryPayload = resolveMeasurementHardwareTelemetry({
                 spatialScan,
                 capability: effectiveCapability,
@@ -952,6 +963,7 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                 mesh_sha256: spatialResult?.meshSha256 ?? undefined,
                 mesh_source: spatialResult?.meshSource ?? undefined,
                 tin_volume_m3: spatialResult?.tinVolumeM3 ?? inSituMetrology?.volumeM3 ?? undefined,
+                footprint_area_m2: effFootprintAreaM2,
                 is_non_stockpile: spatialResult?.isNonStockpile,
                 detected_slope_angle_deg: effSlopeAvg ?? undefined,
                 slope_left_deg: effSlopeLeft ?? undefined,
@@ -1024,6 +1036,7 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                         mesh_source: spatialResult?.meshSource ?? undefined,
                         tin_volume_m3:
                             spatialResult?.tinVolumeM3 ?? inSituMetrology?.volumeM3 ?? undefined,
+                        footprint_area_m2: effFootprintAreaM2,
                         is_non_stockpile: spatialResult?.isNonStockpile,
                         detected_slope_angle_deg: effSlopeAvg ?? undefined,
                         slope_warning: effSlopeWarn,

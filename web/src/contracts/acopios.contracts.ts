@@ -155,22 +155,35 @@ export const DemGridV1Schema = z.preprocess(
 
         return {
             ...obj,
-            format: obj.format ?? 'dem_grid_v1',
+            format: obj.format === 'dem_grid_v2' ? 'dem_grid_v2' : 'dem_grid_v1',
             nx,
             nz,
+            ...(typeof obj.rgbB64 === 'string' && obj.rgbB64.length > 0
+                ? { rgbB64: obj.rgbB64 }
+                : {}),
             ...(Array.isArray(confidenceMask) ? { confidenceMask } : {}),
             ...(groundPlane ? { groundPlane } : {}),
         };
     },
     z
         .object({
-            format: z.literal('dem_grid_v1').default('dem_grid_v1'),
+            format: z.enum(['dem_grid_v1', 'dem_grid_v2']).default('dem_grid_v1'),
             nx: z.number().int().min(2).max(128),
             nz: z.number().int().min(2).max(128),
             cellSizeM: z.number().finite().positive().max(5),
             originX: z.number().finite().default(0),
             originZ: z.number().finite().default(0),
             heightsM: z.array(z.number().finite().nonnegative()),
+            /** Base64 crudo (sin prefijo data:) de nx*nz*3 bytes RGB por celda para dem_grid_v2 */
+            rgbB64: z
+                .string()
+                .max(120_000)
+                .refine(
+                    (v) => !v.toLowerCase().startsWith('data:'),
+                    'Prohibido prefijo data: en rgbB64'
+                )
+                .nullable()
+                .optional(),
             /** 0 = vacío/exterior, 1 = interpolado/ocluido (#C68346), 2 = observado verificado (#00AEEF) */
             confidenceMask: z.array(z.number().int().min(0).max(2)).optional(),
             groundPlane: z
@@ -207,6 +220,7 @@ export type DemGridV1 = z.infer<typeof DemGridV1Schema>;
 export const InSituMetrologySchema = z.object({
     volumeM3: z.number().finite().positive(),
     footprintAreaM2: z.number().finite().nonnegative(),
+    footprint_area_m2: z.number().finite().nonnegative().optional(),
     heightMaxM: z.number().finite().positive(),
     baseLengthM: z.number().finite().positive(),
     baseWidthM: z.number().finite().positive(),
@@ -377,3 +391,132 @@ export function normalizeUnifiedBoundingBox(raw: unknown): UnifiedBoundingBoxM {
         depthZ: pick('depthZ', 'widthM', 'z'),
     };
 }
+
+// ─── SPRINT 3: GROUND-TRUTH REAL, DESVIACIONES, CALIBRACIÓN LOOCV & IA SOBERANA ───
+
+export const GroundTruthReferenceMethodSchema = z.enum([
+    'TAPE_MEASURE',
+    'LASER_DISTOMETER',
+    'TOTAL_STATION',
+    'DRONE_LIDAR',
+    'SCALE_TRUCK',
+    'KNOWN_GEOMETRY',
+]);
+export type GroundTruthReferenceMethod = z.infer<typeof GroundTruthReferenceMethodSchema>;
+
+export const MeasurementGroundTruthInputSchema = z
+    .object({
+        hitlConfirmation: z.literal('ACTUALIZAR'),
+        realHeightM: z.number().finite().positive().max(500).optional(),
+        realBaseLengthM: z.number().finite().positive().max(2000).optional(),
+        realBaseWidthM: z.number().finite().positive().max(2000).optional(),
+        realDiameterM: z.number().finite().positive().max(2000).optional(),
+        realVolumeM3: z.number().finite().positive().max(50_000_000).optional(),
+        realSlopeAngleDeg: z.number().finite().min(0).max(90).optional(),
+        referenceMethod: GroundTruthReferenceMethodSchema,
+        fieldNotes: z.string().trim().max(300).optional(),
+    })
+    .refine(
+        (v) =>
+            v.realHeightM !== undefined ||
+            v.realBaseLengthM !== undefined ||
+            v.realBaseWidthM !== undefined ||
+            v.realDiameterM !== undefined ||
+            v.realVolumeM3 !== undefined ||
+            v.realSlopeAngleDeg !== undefined,
+        {
+            message:
+                'Debe ingresar al menos una medida real (H, L, A, Ø, V o α) para registrar contraste.',
+        }
+    );
+export type MeasurementGroundTruthInput = z.infer<typeof MeasurementGroundTruthInputSchema>;
+
+export const MeasurementDeviationMetricsSchema = z.object({
+    deltaHeightPct: z.number().finite().optional(),
+    deltaLengthPct: z.number().finite().optional(),
+    deltaWidthPct: z.number().finite().optional(),
+    deltaDiameterPct: z.number().finite().optional(),
+    deltaVolumePct: z.number().finite().optional(),
+    deltaSlopeDeg: z.number().finite().optional(),
+    maxAbsDeltaPct: z.number().finite().nonnegative(),
+    statusBand: z.enum(['OPTIMAL', 'ALERT']),
+});
+export type MeasurementDeviationMetrics = z.infer<typeof MeasurementDeviationMetricsSchema>;
+
+export const GroundTruthEstimatedSnapshotSchema = z.object({
+    heightM: z.number().finite().nonnegative().optional(),
+    baseLengthM: z.number().finite().nonnegative().optional(),
+    baseWidthM: z.number().finite().nonnegative().optional(),
+    diameterM: z.number().finite().nonnegative().optional(),
+    volumeM3: z.number().finite().nonnegative().optional(),
+    slopeAngleDeg: z.number().finite().min(0).max(90).optional(),
+    footprintAreaM2: z.number().finite().nonnegative().optional(),
+});
+export type GroundTruthEstimatedSnapshot = z.infer<typeof GroundTruthEstimatedSnapshotSchema>;
+
+export const GroundTruthRecordSchema = z.object({
+    id: z.string().trim().min(1).max(128),
+    tenantId: z.string().trim().min(1).max(128),
+    assetId: z.string().trim().min(1).max(128),
+    assetName: z.string().trim().max(160).optional(),
+    measurementId: z.string().trim().min(1).max(128),
+    deviceModel: z.string().trim().max(120).optional(),
+    isEduSandbox: z.boolean().optional().default(false),
+    referenceMethod: GroundTruthReferenceMethodSchema,
+    fieldNotes: z.string().trim().max(300).optional(),
+    estimated: GroundTruthEstimatedSnapshotSchema,
+    real: z.object({
+        realHeightM: z.number().finite().positive().optional(),
+        realBaseLengthM: z.number().finite().positive().optional(),
+        realBaseWidthM: z.number().finite().positive().optional(),
+        realDiameterM: z.number().finite().positive().optional(),
+        realVolumeM3: z.number().finite().positive().optional(),
+        realSlopeAngleDeg: z.number().finite().min(0).max(90).optional(),
+    }),
+    deviations: MeasurementDeviationMetricsSchema,
+    createdAt: z.number().finite().nonnegative(),
+    createdBy: z.string().trim().max(128).optional(),
+    region: z.string().trim().max(64).optional().default('southamerica-west1'),
+    syncedToCloud: z.boolean().optional(),
+});
+export type GroundTruthRecord = z.infer<typeof GroundTruthRecordSchema>;
+
+export const CalibrationAiDiagnosisSchema = z.object({
+    summary: z.string().trim().min(1).max(600),
+    rootCauses: z.array(z.string().trim().min(1).max(240)).max(6),
+    recommendedAction: z.enum([
+        'ACTIVATE_PROFILE',
+        'COLLECT_MORE_SAMPLES',
+        'RECALIBRATE_DEVICE',
+        'REVIEW_CAPTURE_PROTOCOL',
+    ]),
+    modelUsed: z.string().trim().min(1).max(120),
+    generatedAt: z.number().finite().nonnegative(),
+    deterministicFallback: z.boolean().optional(),
+});
+export type CalibrationAiDiagnosis = z.infer<typeof CalibrationAiDiagnosisSchema>;
+
+export const CalibrationProfileSchema = z.object({
+    profileId: z.string().trim().min(1).max(128),
+    tenantId: z.string().trim().min(1).max(128),
+    deviceModel: z.string().trim().min(1).max(120),
+    status: z.enum(['DRAFT', 'ACTIVE', 'SUPERSEDED']),
+    sampleCount: z.number().int().nonnegative(),
+    outliersExcluded: z.number().int().nonnegative().optional().default(0),
+    volumeScaleFactor: z.number().finite().min(0.75).max(1.25),
+    heightScaleFactor: z.number().finite().min(0.8).max(1.2),
+    baseScaleFactor: z.number().finite().min(0.8).max(1.2),
+    loocvMetrics: z.object({
+        rawMapePct: z.number().finite().nonnegative(),
+        calibratedMapePct: z.number().finite().nonnegative(),
+        rmsePct: z.number().finite().nonnegative(),
+        biasPct: z.number().finite(),
+        improved: z.boolean(),
+    }),
+    aiDiagnosis: CalibrationAiDiagnosisSchema.optional(),
+    createdAt: z.number().finite().nonnegative().optional(),
+    activatedAt: z.number().finite().nonnegative().nullable().optional(),
+    activatedBy: z.string().trim().max(128).nullable().optional(),
+    region: z.string().trim().max(64).optional().default('southamerica-west1'),
+});
+export type CalibrationProfile = z.infer<typeof CalibrationProfileSchema>;

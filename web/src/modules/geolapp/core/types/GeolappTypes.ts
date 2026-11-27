@@ -267,6 +267,7 @@ export interface StockpileAsset {
     mesh_vertex_count?: number;
     mesh_triangle_count?: number;
     mesh_surface_area_m2?: number;
+    footprint_area_m2?: number | null;
     mesh_bounding_box_m?: UnifiedBoundingBoxM;
     scale_anchor_type?: GeolappDigitalScaleAnchorType;
     uncertainty_pct?: number | null;
@@ -408,6 +409,7 @@ export interface StockpileMeasurement {
     mesh_vertex_count?: number;
     mesh_triangle_count?: number;
     mesh_surface_area_m2?: number;
+    footprint_area_m2?: number | null;
     mesh_bounding_box_m?: UnifiedBoundingBoxM;
     scale_anchor_type?: GeolappDigitalScaleAnchorType;
     scale_anchor_meters?: number;

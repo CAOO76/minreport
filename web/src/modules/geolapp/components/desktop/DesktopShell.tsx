@@ -132,7 +132,11 @@ export const DesktopShell: React.FC<DesktopShellProps> = ({
     };
 
     const handleBackStep = () => {
-        if (navLevel === 'MONITORING' || navLevel === 'COMPATIBILITY') {
+        if (
+            navLevel === 'MONITORING' ||
+            navLevel === 'COMPATIBILITY' ||
+            navLevel === 'CALIBRATIONS'
+        ) {
             setNavLevel(activeFaenaId !== 'ALL' ? 'FAENA_STOCKPILES' : 'FAENAS');
             return;
         }
@@ -147,7 +151,10 @@ export const DesktopShell: React.FC<DesktopShellProps> = ({
         }
     };
 
-    const isDirectoryFlow = navLevel !== 'MONITORING' && navLevel !== 'COMPATIBILITY';
+    const isDirectoryFlow =
+        navLevel !== 'MONITORING' &&
+        navLevel !== 'COMPATIBILITY' &&
+        navLevel !== 'CALIBRATIONS';
 
     return (
         <div className="h-full w-full flex-1 flex flex-col bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] font-atkinson overflow-hidden rounded-none shadow-none select-none">
@@ -179,7 +186,9 @@ export const DesktopShell: React.FC<DesktopShellProps> = ({
                         {t('desktop.breadcrumb_faenas', 'FAENAS')}
                     </button>
 
-                    {activeFaenaLabel && navLevel !== 'COMPATIBILITY' && (
+                    {activeFaenaLabel &&
+                        navLevel !== 'COMPATIBILITY' &&
+                        navLevel !== 'CALIBRATIONS' && (
                         <>
                             <span className="text-[#94A3B8] dark:text-[#5A6072] shrink-0">/</span>
                             <button
@@ -239,6 +248,15 @@ export const DesktopShell: React.FC<DesktopShellProps> = ({
                         </>
                     )}
 
+                    {navLevel === 'CALIBRATIONS' && (
+                        <>
+                            <span className="text-[#94A3B8] dark:text-[#5A6072] shrink-0">/</span>
+                            <span className="font-bold text-[#C68346] shrink-0">
+                                {t('calibration.breadcrumb', 'CALIBRACIÓN')}
+                            </span>
+                        </>
+                    )}
+
                     {navLevel === 'COMPATIBILITY' && (
                         <>
                             <span className="text-[#94A3B8] dark:text-[#5A6072] shrink-0">/</span>
@@ -253,7 +271,11 @@ export const DesktopShell: React.FC<DesktopShellProps> = ({
                     <button
                         type="button"
                         onClick={() => {
-                            if (navLevel === 'MONITORING' || navLevel === 'COMPATIBILITY') {
+                            if (
+                                navLevel === 'MONITORING' ||
+                                navLevel === 'COMPATIBILITY' ||
+                                navLevel === 'CALIBRATIONS'
+                            ) {
                                 setNavLevel(
                                     activeFaenaId !== 'ALL' ? 'FAENA_STOCKPILES' : 'FAENAS'
                                 );
@@ -352,7 +374,9 @@ export const DesktopShell: React.FC<DesktopShellProps> = ({
                     />
                 )}
 
-                {navLevel === 'CALIBRATIONS' && <DesktopCalibrationAuditView />}
+                {navLevel === 'CALIBRATIONS' && (
+                    <DesktopCalibrationAuditView assets={assets} measurements={measurements} />
+                )}
 
                 {navLevel === 'COMPATIBILITY' && <DesktopDeviceCompatibilityView />}
 

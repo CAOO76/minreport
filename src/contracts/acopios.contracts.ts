@@ -351,6 +351,11 @@ export const InSituMetrologySchema = z
         baseWidthM: z.number().finite().nonnegative().optional(),
         heightMaxM: z.number().finite().nonnegative().optional(),
         footprintAreaM2: z.number().finite().nonnegative().optional(),
+        footprint_area_m2: z.number().finite().nonnegative().optional(),
+        visualHullViews: z.number().int().nonnegative().optional(),
+        depthSamplesCount: z.number().int().nonnegative().optional(),
+        sigmaGroundM: z.number().finite().nonnegative().optional(),
+        slopeProfile: z.enum(['NATURAL_REPOSE', 'STEEP_ALERT', 'VERTICAL_STRUCTURE']).optional(),
         metrologyGrade: AcopiosMetrologyGradeSchema,
         metrologyReasons: z.array(z.string().trim().max(200)).max(20).optional().default([]),
         coveragePct: z.number().finite().min(0).max(100).optional().default(100),
@@ -392,7 +397,12 @@ export const InSituMetrologySchema = z
             slopeAngleLeftDeg: m.slopeAngleLeftDeg ?? null,
             slopeAngleRightDeg: m.slopeAngleRightDeg ?? null,
             dimensionsM: { a, b, h },
-            footprintAreaM2: m.footprintAreaM2,
+            footprintAreaM2: m.footprintAreaM2 ?? m.footprint_area_m2,
+            footprint_area_m2: m.footprint_area_m2 ?? m.footprintAreaM2,
+            ...(m.visualHullViews !== undefined ? { visualHullViews: m.visualHullViews } : {}),
+            ...(m.depthSamplesCount !== undefined ? { depthSamplesCount: m.depthSamplesCount } : {}),
+            ...(m.sigmaGroundM !== undefined ? { sigmaGroundM: m.sigmaGroundM } : {}),
+            ...(m.slopeProfile !== undefined ? { slopeProfile: m.slopeProfile } : {}),
             metrologyGrade: m.metrologyGrade,
             metrologyReasons: m.metrologyReasons,
             coveragePct: m.coveragePct,
@@ -410,7 +420,7 @@ export type InSituMetrology = z.infer<typeof InSituMetrologySchema>;
 
 export const LocalPreviewMeshSchema = z
     .object({
-        format: z.literal('dem_grid_v1').optional().default('dem_grid_v1'),
+        format: z.enum(['dem_grid_v1', 'dem_grid_v2']).optional().default('dem_grid_v1'),
         originX: z.number().finite(),
         originZ: z.number().finite(),
         cellSizeM: z.number().finite().positive().max(5),
@@ -419,6 +429,15 @@ export const LocalPreviewMeshSchema = z
         cols: z.number().int().min(2).max(128).optional(),
         rows: z.number().int().min(2).max(128).optional(),
         heightsM: z.array(z.number().finite().nonnegative()).min(4).max(16384),
+        rgbB64: z
+            .string()
+            .max(120_000)
+            .refine(
+                (v) => !v.toLowerCase().startsWith('data:'),
+                'Prohibido prefijo data: en rgbB64; debe ser Base64 crudo de nx*nz*3 bytes.'
+            )
+            .nullable()
+            .optional(),
         interpolatedMask: z.array(z.number().int().min(0).max(1)).max(16384).optional(),
         observedMask: z.array(z.number().int().min(0).max(1)).max(16384).optional(),
         confidenceMask: z.array(z.number().int().min(0).max(2)).max(16384).optional(),
@@ -478,13 +497,16 @@ export const LocalPreviewMeshSchema = z
         const groundPlane = grid.groundPlane ?? { a: fallbackTanA, b: 0, d: 0 };
 
         return {
-            format: 'dem_grid_v1' as const,
+            format: grid.format ?? ('dem_grid_v1' as const),
             originX: grid.originX,
             originZ: grid.originZ,
             cellSizeM: grid.cellSizeM,
             nx,
             nz,
             heightsM: grid.heightsM,
+            ...(typeof grid.rgbB64 === 'string' && grid.rgbB64.length > 0
+                ? { rgbB64: grid.rgbB64 }
+                : {}),
             ...(interpolatedMask ? { interpolatedMask } : {}),
             ...(observationCount ? { observationCount } : {}),
             ...(grid.slopeDegGrid ? { slopeDegGrid: grid.slopeDegGrid } : {}),
@@ -537,6 +559,17 @@ export const CaptureSessionPackageV2Schema = z
             .nullable()
             .optional(),
         roiRadiusM: z.number().finite().positive().max(100).optional(),
+        targetConstraint: z
+            .object({
+                anchorXZ: z.tuple([z.number().finite(), z.number().finite()]).optional(),
+                radiusM: z.number().finite().positive().max(200).optional(),
+                polygonXZ: z.array(z.tuple([z.number().finite(), z.number().finite()])).max(256).optional(),
+                padReferenceY: z.number().finite().optional(),
+            })
+            .nullable()
+            .optional(),
+        visualHullViews: z.number().int().nonnegative().optional(),
+        footprint_area_m2: z.number().finite().nonnegative().optional(),
         calibrationScaleFactor: z.number().finite().min(0.85).max(1.15).optional(),
         calibration_scale_factor: z.number().finite().min(0.85).max(1.15).optional(),
         wallConfinement: WallConfinementModeSchema.optional().default('NONE'),
@@ -594,6 +627,9 @@ export const CaptureSessionPackageV2Schema = z
             groundSamplesM: pkg.groundSamplesM,
             anchorCenter: pkg.anchorCenter,
             roiRadiusM: pkg.roiRadiusM,
+            targetConstraint: pkg.targetConstraint ?? undefined,
+            visualHullViews: pkg.visualHullViews ?? pkg.inSituMetrology.visualHullViews,
+            footprint_area_m2: pkg.footprint_area_m2 ?? pkg.inSituMetrology.footprintAreaM2,
             calibrationScaleFactor,
             wallConfinement: pkg.wallConfinement,
             inSituMetrology: pkg.inSituMetrology,
@@ -620,6 +656,8 @@ export const CloudRefinedMetrologySchema = z.object({
         b: z.number().finite().nonnegative(),
         h: z.number().finite().nonnegative(),
     }),
+    footprintAreaM2: z.number().finite().nonnegative().optional(),
+    footprint_area_m2: z.number().finite().nonnegative().optional(),
     meshUrl: NonBase64UrlSchema,
     meshSha256: z.string().regex(SAFE_SHA256_REGEX),
     meshSource: z.string().trim().min(1).max(80),
@@ -681,3 +719,131 @@ export function evaluateStockpileReconciliation(params: {
         evaluatedAt: params.evaluatedAt ?? Date.now(),
     };
 }
+
+// ─── SPRINT 3: GROUND-TRUTH REAL, DESVIACIONES, CALIBRACIÓN LOOCV & IA SOBERANA ───
+
+export const GroundTruthReferenceMethodSchema = z.enum([
+    'TAPE_MEASURE',
+    'LASER_DISTOMETER',
+    'TOTAL_STATION',
+    'DRONE_LIDAR',
+    'SCALE_TRUCK',
+    'KNOWN_GEOMETRY',
+]);
+export type GroundTruthReferenceMethod = z.infer<typeof GroundTruthReferenceMethodSchema>;
+
+export const MeasurementGroundTruthInputSchema = z
+    .object({
+        hitlConfirmation: z.literal('ACTUALIZAR'),
+        realHeightM: z.number().finite().positive().max(500).optional(),
+        realBaseLengthM: z.number().finite().positive().max(2000).optional(),
+        realBaseWidthM: z.number().finite().positive().max(2000).optional(),
+        realDiameterM: z.number().finite().positive().max(2000).optional(),
+        realVolumeM3: z.number().finite().positive().max(50_000_000).optional(),
+        realSlopeAngleDeg: z.number().finite().min(0).max(90).optional(),
+        referenceMethod: GroundTruthReferenceMethodSchema,
+        fieldNotes: z.string().trim().max(300).optional(),
+    })
+    .refine(
+        (v) =>
+            v.realHeightM !== undefined ||
+            v.realBaseLengthM !== undefined ||
+            v.realBaseWidthM !== undefined ||
+            v.realDiameterM !== undefined ||
+            v.realVolumeM3 !== undefined ||
+            v.realSlopeAngleDeg !== undefined,
+        {
+            message:
+                'Debe ingresar al menos una medida real (H, L, A, Ø, V o α) para registrar contraste.',
+        }
+    );
+export type MeasurementGroundTruthInput = z.infer<typeof MeasurementGroundTruthInputSchema>;
+
+export const MeasurementDeviationMetricsSchema = z.object({
+    deltaHeightPct: z.number().finite().optional(),
+    deltaLengthPct: z.number().finite().optional(),
+    deltaWidthPct: z.number().finite().optional(),
+    deltaDiameterPct: z.number().finite().optional(),
+    deltaVolumePct: z.number().finite().optional(),
+    deltaSlopeDeg: z.number().finite().optional(),
+    maxAbsDeltaPct: z.number().finite().nonnegative(),
+    statusBand: z.enum(['OPTIMAL', 'ALERT']),
+});
+export type MeasurementDeviationMetrics = z.infer<typeof MeasurementDeviationMetricsSchema>;
+
+export const GroundTruthEstimatedSnapshotSchema = z.object({
+    heightM: z.number().finite().nonnegative().optional(),
+    baseLengthM: z.number().finite().nonnegative().optional(),
+    baseWidthM: z.number().finite().nonnegative().optional(),
+    diameterM: z.number().finite().nonnegative().optional(),
+    volumeM3: z.number().finite().nonnegative().optional(),
+    slopeAngleDeg: z.number().finite().min(0).max(90).optional(),
+    footprintAreaM2: z.number().finite().nonnegative().optional(),
+});
+export type GroundTruthEstimatedSnapshot = z.infer<typeof GroundTruthEstimatedSnapshotSchema>;
+
+export const GroundTruthRecordSchema = z.object({
+    id: z.string().trim().min(1).max(128),
+    tenantId: z.string().trim().min(1).max(128),
+    assetId: z.string().trim().min(1).max(128),
+    assetName: z.string().trim().max(160).optional(),
+    measurementId: z.string().trim().min(1).max(128),
+    deviceModel: z.string().trim().max(120).optional(),
+    isEduSandbox: z.boolean().optional().default(false),
+    referenceMethod: GroundTruthReferenceMethodSchema,
+    fieldNotes: z.string().trim().max(300).optional(),
+    estimated: GroundTruthEstimatedSnapshotSchema,
+    real: z.object({
+        realHeightM: z.number().finite().positive().optional(),
+        realBaseLengthM: z.number().finite().positive().optional(),
+        realBaseWidthM: z.number().finite().positive().optional(),
+        realDiameterM: z.number().finite().positive().optional(),
+        realVolumeM3: z.number().finite().positive().optional(),
+        realSlopeAngleDeg: z.number().finite().min(0).max(90).optional(),
+    }),
+    deviations: MeasurementDeviationMetricsSchema,
+    createdAt: z.number().finite().nonnegative(),
+    createdBy: z.string().trim().max(128).optional(),
+    region: z.string().trim().max(64).optional().default('southamerica-west1'),
+});
+export type GroundTruthRecord = z.infer<typeof GroundTruthRecordSchema>;
+
+export const CalibrationAiDiagnosisSchema = z.object({
+    summary: z.string().trim().min(1).max(600),
+    rootCauses: z.array(z.string().trim().min(1).max(240)).max(6),
+    recommendedAction: z.enum([
+        'ACTIVATE_PROFILE',
+        'COLLECT_MORE_SAMPLES',
+        'RECALIBRATE_DEVICE',
+        'REVIEW_CAPTURE_PROTOCOL',
+    ]),
+    modelUsed: z.string().trim().min(1).max(120),
+    generatedAt: z.number().finite().nonnegative(),
+    deterministicFallback: z.boolean().optional(),
+});
+export type CalibrationAiDiagnosis = z.infer<typeof CalibrationAiDiagnosisSchema>;
+
+export const CalibrationProfileSchema = z.object({
+    profileId: z.string().trim().min(1).max(128),
+    tenantId: z.string().trim().min(1).max(128),
+    deviceModel: z.string().trim().min(1).max(120),
+    status: z.enum(['DRAFT', 'ACTIVE', 'SUPERSEDED']),
+    sampleCount: z.number().int().nonnegative(),
+    outliersExcluded: z.number().int().nonnegative().optional().default(0),
+    volumeScaleFactor: z.number().finite().min(0.75).max(1.25),
+    heightScaleFactor: z.number().finite().min(0.8).max(1.2),
+    baseScaleFactor: z.number().finite().min(0.8).max(1.2),
+    loocvMetrics: z.object({
+        rawMapePct: z.number().finite().nonnegative(),
+        calibratedMapePct: z.number().finite().nonnegative(),
+        rmsePct: z.number().finite().nonnegative(),
+        biasPct: z.number().finite(),
+        improved: z.boolean(),
+    }),
+    aiDiagnosis: CalibrationAiDiagnosisSchema.optional(),
+    createdAt: z.number().finite().nonnegative().optional(),
+    activatedAt: z.number().finite().nonnegative().nullable().optional(),
+    activatedBy: z.string().trim().max(128).nullable().optional(),
+    region: z.string().trim().max(64).optional().default('southamerica-west1'),
+});
+export type CalibrationProfile = z.infer<typeof CalibrationProfileSchema>;
