@@ -144,6 +144,11 @@ function stubSupplyApiReads(holdLoading = false) {
         vi.spyOn(supplyApi, 'getForecast').mockReturnValue(neverResolve);
         vi.spyOn(supplyApi, 'listSiiDocuments').mockReturnValue(neverResolve);
         vi.spyOn(supplyApi, 'listSiiExpenseReports').mockReturnValue(neverResolve);
+        vi.spyOn(supplyApi, 'listSupplyWarehouses').mockReturnValue(neverResolve);
+        vi.spyOn(supplyApi, 'getSupplyBusinessUnitKpis').mockReturnValue(neverResolve);
+        vi.spyOn(supplyApi, 'listSupplyKardex').mockReturnValue(neverResolve);
+        vi.spyOn(supplyApi, 'listSupplyConversationThreads').mockReturnValue(neverResolve);
+        vi.spyOn(supplyApi, 'listSupplyProfiles').mockReturnValue(neverResolve);
         return;
     }
 
@@ -156,6 +161,11 @@ function stubSupplyApiReads(holdLoading = false) {
     vi.spyOn(supplyApi, 'getForecast').mockResolvedValue(null);
     vi.spyOn(supplyApi, 'listSiiDocuments').mockResolvedValue([]);
     vi.spyOn(supplyApi, 'listSiiExpenseReports').mockResolvedValue([]);
+    vi.spyOn(supplyApi, 'listSupplyWarehouses').mockResolvedValue({ warehouses: [], balances: [] });
+    vi.spyOn(supplyApi, 'getSupplyBusinessUnitKpis').mockResolvedValue(null as any);
+    vi.spyOn(supplyApi, 'listSupplyKardex').mockResolvedValue({ entries: [], balances: [], tankTelemetry: [] });
+    vi.spyOn(supplyApi, 'listSupplyConversationThreads').mockResolvedValue([]);
+    vi.spyOn(supplyApi, 'listSupplyProfiles').mockResolvedValue([]);
 }
 
 describe('E14 UI Certification — SupplyWorkspace, SiiRendicionesView & ReconciliationHitlDrawer', () => {
@@ -270,7 +280,7 @@ describe('E14 UI Certification — SupplyWorkspace, SiiRendicionesView & Reconci
             role: 'TEST_PILOT',
         });
         stubSupplyApiReads(false);
-        const { container: pilotContainer } = render(
+        const { container: pilotContainer, unmount: unmountPilot } = render(
             <I18nextProvider i18n={i18n}>
                 <SupplyWorkspace embedded={true} hostScope="TEST_PILOT" tenantId="pilot-u1" />
             </I18nextProvider>
@@ -278,6 +288,7 @@ describe('E14 UI Certification — SupplyWorkspace, SiiRendicionesView & Reconci
         await waitFor(() => {
             expect(pilotContainer.querySelector('[data-marketplace-opt-in="blocked"]')).toBeInTheDocument();
         });
+        unmountPilot();
     });
 
     it('3. SiiRendicionesView cumple ISA-101 Dark Cockpit (nominal transparente, aceptado cian, duplicado/urgente cobre) y expone CopyButton', () => {

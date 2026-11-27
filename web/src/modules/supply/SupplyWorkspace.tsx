@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import './locales/registerSupplyLocales';
 import { useMinReportSession } from '../../context/MinReportSessionContext';
@@ -315,9 +315,18 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
         return () => window.removeEventListener('supply:navigate-home', handleNavigateHome);
     }, [domainMode]);
 
+    const isMountedRef = useRef(true);
+    useEffect(() => {
+        isMountedRef.current = true;
+        return () => {
+            isMountedRef.current = false;
+        };
+    }, []);
+
     const refreshDeadLetterCount = useCallback(async () => {
         try {
             const dlq = await syncQueueEngine.getDeadLetterTasks(resolvedTenantId);
+            if (!isMountedRef.current) return;
             setDeadLetterCount(dlq.length);
         } catch {
             // Mantener contador previo si IndexedDB no está disponible
@@ -326,7 +335,11 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
 
     useEffect(() => {
         void refreshDeadLetterCount();
-        return syncQueueEngine.subscribe((state) => setOfflinePendingCount(state.pendingCount));
+        return syncQueueEngine.subscribe((state) => {
+            if (isMountedRef.current) {
+                setOfflinePendingCount(state.pendingCount);
+            }
+        });
     }, [refreshDeadLetterCount]);
 
     const loadTabData = useCallback(
@@ -334,7 +347,9 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
             setLoading(true);
             const siteFilter = selectedSiteId || undefined;
             const safeSites = supplyApi.listSites(resolvedTenantId).then((res) => {
-                setSites(res);
+                if (isMountedRef.current) {
+                    setSites(res);
+                }
                 return res;
             });
 
@@ -350,6 +365,7 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                         supplyApi.listSupplyWarehouses({ siteId: siteFilter }, resolvedTenantId),
                         supplyApi.getSupplyBusinessUnitKpis({ siteId: siteFilter }, resolvedTenantId),
                     ]);
+                if (!isMountedRef.current) return;
                 if (reqRes.status === 'fulfilled') setRequisitions(reqRes.value);
                 if (purRes.status === 'fulfilled') setPurchases(purRes.value);
                 if (docRes.status === 'fulfilled') setSiiDocuments(docRes.value);
@@ -366,6 +382,7 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                     supplyApi.getConsolidatedShoppingLists({ siteId: siteFilter }, resolvedTenantId),
                     supplyApi.listRequisitions({ siteId: siteFilter }, resolvedTenantId),
                 ]);
+                if (!isMountedRef.current) return;
                 if (listRes.status === 'fulfilled') setConsolidatedLists(listRes.value);
                 if (reqRes.status === 'fulfilled') setRequisitions(reqRes.value);
             } else if (targetTab === 'WAREHOUSE') {
@@ -379,6 +396,7 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                         supplyApi.listSupplyWarehouses({ siteId: siteFilter }, resolvedTenantId),
                         supplyApi.listSupplyKardex({ siteId: siteFilter }, resolvedTenantId),
                     ]);
+                if (!isMountedRef.current) return;
                 if (invRes.status === 'fulfilled') setInventory(invRes.value);
                 if (assetRes.status === 'fulfilled') setAssets(assetRes.value);
                 if (purRes.status === 'fulfilled') setPurchases(purRes.value);
@@ -397,6 +415,7 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                     supplyApi.listSiiDocuments({ siteId: siteFilter }, resolvedTenantId),
                     supplyApi.listSiiExpenseReports({ siteId: siteFilter }, resolvedTenantId),
                 ]);
+                if (!isMountedRef.current) return;
                 if (docRes.status === 'fulfilled') setSiiDocuments(docRes.value);
                 if (repRes.status === 'fulfilled') setExpenseReports(repRes.value);
             } else if (targetTab === 'CONVERSATIONS') {
@@ -404,6 +423,7 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                     safeSites,
                     supplyApi.listSupplyConversationThreads({}, resolvedTenantId),
                 ]);
+                if (!isMountedRef.current) return;
                 if (threadsRes.status === 'fulfilled') setConversationThreads(threadsRes.value);
             } else if (targetTab === 'PROFILES_WS') {
                 const [, profRes, whRes] = await Promise.allSettled([
@@ -411,6 +431,7 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                     supplyApi.listSupplyProfiles({}, resolvedTenantId),
                     supplyApi.listSupplyWarehouses({ siteId: siteFilter }, resolvedTenantId),
                 ]);
+                if (!isMountedRef.current) return;
                 if (profRes.status === 'fulfilled') setWsProfiles(profRes.value);
                 if (whRes.status === 'fulfilled') {
                     setWarehouses(whRes.value.warehouses);
@@ -418,7 +439,9 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
                 }
             } else {
                 await Promise.allSettled([safeSites]);
+                if (!isMountedRef.current) return;
             }
+            if (!isMountedRef.current) return;
             setLoading(false);
         },
         [resolvedTenantId, selectedSiteId]
@@ -432,7 +455,11 @@ export const SupplyWorkspace: React.FC<SupplyWorkspaceProps> = ({
         if (activeTab === 'CONVERSATIONS' && simulatorOpen && wsProfiles.length === 0) {
             void supplyApi
                 .listSupplyProfiles({}, resolvedTenantId)
-                .then(setWsProfiles)
+                .then((rows) => {
+                    if (isMountedRef.current) {
+                        setWsProfiles(rows);
+                    }
+                })
                 .catch(() => {});
         }
     }, [activeTab, simulatorOpen, wsProfiles.length, resolvedTenantId]);
