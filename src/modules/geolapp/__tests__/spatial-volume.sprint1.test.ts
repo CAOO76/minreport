@@ -487,3 +487,100 @@ test('(d) Retrocompatibilidad 100% sin targetConstraint (llamadores legacy de fi
         `Talud legacy sobre rampa 5% esperado ~36°, obtenido=${res.slopeAngleAvgDeg}°`
     );
 });
+
+test('(e) Multi-sólido v2.3.0: caja rectangular 0.60x0.40x0.45 m, acopio con mordida cóncava interior y prioridad targetConstraint sobre roiRadiusM legacy', () => {
+    // 1. Caja rectangular 0.60 x 0.40 x 0.45 m (exacto = 0.108 m³) con paredes verticales densas
+    const exactBoxVol = 0.6 * 0.4 * 0.45; // 0.108 m³
+    const boxPts: SpatialPoint3D[] = [];
+    const boxGround: SpatialPoint3D[] = [];
+    for (let x = -1.0; x <= 1.0 + 1e-6; x += 0.05) {
+        for (let z = -1.0; z <= 1.0 + 1e-6; z += 0.05) {
+            if (Math.abs(x) > 0.32 || Math.abs(z) > 0.22) {
+                const gp: SpatialPoint3D = [Number(x.toFixed(4)), 0, Number(z.toFixed(4))];
+                boxPts.push(gp);
+                boxGround.push(gp);
+            }
+        }
+    }
+    // Tapa superior densa
+    for (let x = -0.3; x <= 0.3 + 1e-6; x += 0.015) {
+        for (let z = -0.2; z <= 0.2 + 1e-6; z += 0.015) {
+            boxPts.push([Number(x.toFixed(4)), 0.45, Number(z.toFixed(4))]);
+        }
+    }
+    // Paredes verticales densas (con p50 erosionaba -50%; con envolvente superior MAD+p90 preserva 100%)
+    for (let h = 0.04; h <= 0.44; h += 0.03) {
+        for (let x = -0.3; x <= 0.3 + 1e-6; x += 0.025) {
+            boxPts.push([Number(x.toFixed(4)), Number(h.toFixed(4)), -0.2]);
+            boxPts.push([Number(x.toFixed(4)), Number(h.toFixed(4)), 0.2]);
+        }
+        for (let z = -0.2; z <= 0.2 + 1e-6; z += 0.025) {
+            boxPts.push([-0.3, Number(h.toFixed(4)), Number(z.toFixed(4))]);
+            boxPts.push([0.3, Number(h.toFixed(4)), Number(z.toFixed(4))]);
+        }
+    }
+
+    const resBox = computeSpatialStockpileVolume({
+        pointsM: boxPts,
+        groundSamplesM: boxGround,
+        // Pasar un roiRadiusM legacy pequeño (0.20 m) + targetConstraint real -> debe priorizar targetConstraint!
+        roiRadiusM: 0.2,
+        anchorCenter: { x: 0, y: 0, z: 0.2 },
+        targetConstraint: {
+            anchorXZ: [0, 0],
+            radiusM: 0.6,
+        },
+        coveragePct: 96,
+        sectorsCovered: 16,
+        loopClosed: true,
+    });
+
+    const boxErrPct = (Math.abs(resBox.volumeM3 - exactBoxVol) / exactBoxVol) * 100;
+    assert.ok(
+        boxErrPct < 8,
+        `Caja rectangular 0.60x0.40x0.45 m debe tener error < 8% (exacto=0.108, obtenido=${resBox.volumeM3}, err=${boxErrPct.toFixed(2)}%)`
+    );
+    assert.ok(
+        Math.abs(resBox.heightM - 0.45) <= 0.04,
+        `Altura de caja esperada ~0.45 m, obtenida=${resBox.heightM}`
+    );
+
+    // 2. Acopio cónico 35° con mordida cóncava interior real (< ±8% respecto a volumen analítico con mordida)
+    const rCone = 3.0;
+    const hCone = rCone * Math.tan((35 * Math.PI) / 180);
+    const concavePts: SpatialPoint3D[] = [];
+    const concaveGround: SpatialPoint3D[] = [];
+    const step = 0.12;
+    let exactConcaveVol = 0;
+    for (let x = -3.6; x <= 3.6 + 1e-6; x += step) {
+        for (let z = -3.6; z <= 3.6 + 1e-6; z += step) {
+            const r = Math.hypot(x, z);
+            if (r <= rCone) {
+                let h = hCone * (1 - r / rCone);
+                // Mordida cóncava interior (scoop de cargador frontal en cuadrante +X)
+                if (x >= 0.3 && x <= 2.2 && Math.abs(z) <= 1.2) {
+                    h *= 0.35;
+                }
+                exactConcaveVol += h * step * step;
+                concavePts.push([Number(x.toFixed(4)), Number(h.toFixed(4)), Number(z.toFixed(4))]);
+            } else {
+                const gp: SpatialPoint3D = [Number(x.toFixed(4)), 0, Number(z.toFixed(4))];
+                concavePts.push(gp);
+                concaveGround.push(gp);
+            }
+        }
+    }
+
+    const resConcave = computeSpatialStockpileVolume({
+        pointsM: concavePts,
+        groundSamplesM: concaveGround,
+        coveragePct: 95,
+        sectorsCovered: 16,
+        loopClosed: true,
+    });
+    const concaveErrPct = (Math.abs(resConcave.volumeM3 - exactConcaveVol) / exactConcaveVol) * 100;
+    assert.ok(
+        concaveErrPct < 8,
+        `Acopio con mordida cóncava debe estar dentro de ±8% (exacto=${exactConcaveVol.toFixed(2)}, obtenido=${resConcave.volumeM3}, err=${concaveErrPct.toFixed(2)}%)`
+    );
+});

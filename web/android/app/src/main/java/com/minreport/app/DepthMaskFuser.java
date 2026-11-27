@@ -31,6 +31,10 @@ public final class DepthMaskFuser {
     private static final float FLOOR_CLEARANCE_FUSE_M = 0.03f;
     private static final float FLOOR_CLEARANCE_EXTRACT_M = 0.025f;
     private static final float BFS_MAX_DEPTH_STEP_M = 0.25f;
+    private static final float CONTOUR_MAX_SEGMENT_DIST_M = 0.25f;
+    private static final float ASPECT_RATIO_CROP_EPS = 0.02f;
+    private static final float FLOOR_RELAX_REJECT_RATIO = 0.80f;
+    private static final float INWARD_CENTER_PUSH_FACTOR = 0.75f;
     private static final float BILINEAR_EDGE_GUARD_M = 0.15f;
     private static final int MIN_VALID_DEPTH_PIXELS = 12;
     private static final int MAX_MESH_GRID_DIM = 24;
@@ -44,6 +48,8 @@ public final class DepthMaskFuser {
         public final TargetVolumeConstraint constraint;
         public final float[] triVerticesXyz;
         public final float[] contourLoopXyz;
+        /** Filtered GL_LINES vertex pairs (x0,y0,z0, x1,y1,z1) breaking 3D jumps > 0.25 m. */
+        public final float[] contourSegmentsXyz;
         public final List<float[]> depthPointsM;
         public final boolean usedDepth;
         public final float estimatedRadiusM;
@@ -58,9 +64,32 @@ public final class DepthMaskFuser {
             final float estimatedRadiusM,
             final float estimatedHeightM
         ) {
+            this(
+                constraint,
+                triVerticesXyz,
+                contourLoopXyz,
+                buildContourSegmentsFromLoop(contourLoopXyz),
+                depthPointsM,
+                usedDepth,
+                estimatedRadiusM,
+                estimatedHeightM
+            );
+        }
+
+        public FusedTargetSurface(
+            final TargetVolumeConstraint constraint,
+            final float[] triVerticesXyz,
+            final float[] contourLoopXyz,
+            final float[] contourSegmentsXyz,
+            final List<float[]> depthPointsM,
+            final boolean usedDepth,
+            final float estimatedRadiusM,
+            final float estimatedHeightM
+        ) {
             this.constraint = constraint != null ? constraint : TargetVolumeConstraint.inactive();
             this.triVerticesXyz = triVerticesXyz != null ? triVerticesXyz : new float[0];
             this.contourLoopXyz = contourLoopXyz != null ? contourLoopXyz : new float[0];
+            this.contourSegmentsXyz = contourSegmentsXyz != null ? contourSegmentsXyz : new float[0];
             this.depthPointsM = depthPointsM != null ? depthPointsM : Collections.emptyList();
             this.usedDepth = usedDepth;
             this.estimatedRadiusM = estimatedRadiusM;
@@ -155,6 +184,7 @@ public final class DepthMaskFuser {
 
         if (hasDepthInput) {
             final int nMask = maskW * maskH;
+            final boolean[] hasDepthPixel = new boolean[nMask];
             final boolean[] valid = new boolean[nMask];
             final float[] depthArr = new float[nMask];
             final float[] worldX = new float[nMask];
@@ -178,16 +208,34 @@ public final class DepthMaskFuser {
             final float invFy = 1.0f / fy;
             final float minValidWorldY = effGroundY + FLOOR_CLEARANCE_FUSE_M;
 
+            final boolean useUniformCrop =
+                Math.abs(((float) maskW / (float) maskH) - ((float) depthW / (float) depthH)) > ASPECT_RATIO_CROP_EPS;
+            final float uniformScale = useUniformCrop
+                ? computeUniformCropScale(maskW, maskH, depthW, depthH)
+                : 1.0f;
+
+            int totalMaskWithDepth = 0;
+            int floorRejectedCount = 0;
             int validTotal = 0;
             for (int v = 0; v < maskH; v++) {
                 final int rowOff = v * maskW;
-                final float fdv = ((v + 0.5f) * depthH) / (float) maskH - 0.5f;
+                final float fdv = useUniformCrop
+                    ? mapCoordUniform(v, maskH, depthH, uniformScale)
+                    : (((v + 0.5f) * depthH) / (float) maskH - 0.5f);
+                if (fdv < -0.5f || fdv > depthH - 0.5f) {
+                    continue;
+                }
                 for (int u = 0; u < maskW; u++) {
                     final int idx = rowOff + u;
                     if ((maskConf[idx] & 0xFF) < MASK_THRESHOLD) {
                         continue;
                     }
-                    final float fdu = ((u + 0.5f) * depthW) / (float) maskW - 0.5f;
+                    final float fdu = useUniformCrop
+                        ? mapCoordUniform(u, maskW, depthW, uniformScale)
+                        : (((u + 0.5f) * depthW) / (float) maskW - 0.5f);
+                    if (fdu < -0.5f || fdu > depthW - 0.5f) {
+                        continue;
+                    }
                     final float dM = sampleDepthEdgePreserving(
                         depthMm,
                         hasDepthConf ? depthConf : null,
@@ -212,16 +260,60 @@ public final class DepthMaskFuser {
                     if (!Float.isFinite(wx) || !Float.isFinite(wy) || !Float.isFinite(wz)) {
                         continue;
                     }
-                    if (wy <= minValidWorldY) {
-                        continue;
-                    }
 
-                    valid[idx] = true;
+                    hasDepthPixel[idx] = true;
                     depthArr[idx] = dM;
                     worldX[idx] = wx;
                     worldY[idx] = wy;
                     worldZ[idx] = wz;
+                    totalMaskWithDepth++;
+
+                    if (wy <= minValidWorldY) {
+                        floorRejectedCount++;
+                        continue;
+                    }
+
+                    valid[idx] = true;
                     validTotal++;
+                }
+            }
+
+            float usedGroundY = effGroundY;
+            // If > 80% of mask depth pixels were discarded by an overestimated floor elevation,
+            // relax the floor cutoff using the minimum wy of the tap's depth-connected component.
+            if (
+                totalMaskWithDepth >= MIN_VALID_DEPTH_PIXELS &&
+                floorRejectedCount > totalMaskWithDepth * FLOOR_RELAX_REJECT_RATIO
+            ) {
+                final byte[] tapTmpMask = new byte[nMask];
+                final int[] tapComp = extractConnectedDepthComponent(
+                    hasDepthPixel,
+                    depthArr,
+                    maskW,
+                    maskH,
+                    seedU,
+                    seedV,
+                    tapTmpMask
+                );
+                if (tapComp != null && tapComp.length >= MIN_VALID_DEPTH_PIXELS) {
+                    float minCompY = Float.MAX_VALUE;
+                    for (int idx : tapComp) {
+                        if (worldY[idx] < minCompY) {
+                            minCompY = worldY[idx];
+                        }
+                    }
+                    if (Float.isFinite(minCompY)) {
+                        usedGroundY = minCompY;
+                        final float relaxedMinY = minCompY + 0.015f;
+                        Arrays.fill(valid, false);
+                        validTotal = 0;
+                        for (int idx : tapComp) {
+                            if (worldY[idx] > relaxedMinY) {
+                                valid[idx] = true;
+                                validTotal++;
+                            }
+                        }
+                    }
                 }
             }
 
@@ -246,7 +338,8 @@ public final class DepthMaskFuser {
                         worldZ,
                         maskW,
                         maskH,
-                        effGroundY,
+                        cameraToWorldColMajor16,
+                        usedGroundY,
                         baseConstraint
                     );
                 }
@@ -346,10 +439,29 @@ public final class DepthMaskFuser {
         final float invFx = 1.0f / fx;
         final float invFy = 1.0f / fy;
 
+        // Erode 2D mask inward by 2 px before sampling depth to eliminate mixed silhouette edge pixels
+        final boolean[] erodedMask = hasMask ? erodeMaskInward(maskConf, maskW, maskH, 2) : null;
+        final boolean useUniformCrop = hasMask &&
+            Math.abs(((float) maskW / (float) maskH) - ((float) depthW / (float) depthH)) > ASPECT_RATIO_CROP_EPS;
+        final float uniformScale = useUniformCrop
+            ? computeUniformCropScale(depthW, depthH, maskW, maskH)
+            : 1.0f;
+
         final List<float[]> collected = new ArrayList<>(Math.min(maxPoints * 2, 4096));
         for (int v = 0; v < depthH; v += step) {
             final int rowOff = v * depthW;
-            final int mv = hasMask ? clampInt((int) (((v + 0.5f) * maskH) / depthH), 0, maskH - 1) : 0;
+            final int mv;
+            if (hasMask) {
+                final float fmv = useUniformCrop
+                    ? mapCoordUniform(v, depthH, maskH, uniformScale)
+                    : (((v + 0.5f) * maskH) / (float) depthH - 0.5f);
+                mv = Math.round(fmv);
+                if (mv < 0 || mv >= maskH) {
+                    continue;
+                }
+            } else {
+                mv = 0;
+            }
             final int maskRowOff = mv * maskW;
             for (int u = 0; u < depthW; u += step) {
                 final int idx = rowOff + u;
@@ -365,10 +477,18 @@ public final class DepthMaskFuser {
                     continue;
                 }
                 if (hasMask) {
-                    final int mu = clampInt((int) (((u + 0.5f) * maskW) / depthW), 0, maskW - 1);
-                    if ((maskConf[maskRowOff + mu] & 0xFF) < MASK_THRESHOLD) {
+                    final float fmu = useUniformCrop
+                        ? mapCoordUniform(u, depthW, maskW, uniformScale)
+                        : (((u + 0.5f) * maskW) / (float) depthW - 0.5f);
+                    final int mu = Math.round(fmu);
+                    if (mu < 0 || mu >= maskW || !erodedMask[maskRowOff + mu]) {
                         continue;
                     }
+                }
+                // Anti edge-bleeding / flying-pixel filter: reject any pixel with depth jump > max(0.06, 0.05*d)
+                // against any of its 4-connected neighbors
+                if (hasDepthJumpTo4Neighbors(depthMm, hasConf ? depthConf : null, depthW, depthH, u, v, dM)) {
+                    continue;
                 }
 
                 final float xc = (u - cx) * invFx * dM;
@@ -390,7 +510,7 @@ public final class DepthMaskFuser {
                         continue;
                     }
                 }
-                collected.add(new float[] { wx, wy, wz, 2.0f });
+                collected.add(new float[] { wx, wy, wz, 1.0f });
             }
         }
 
@@ -618,6 +738,7 @@ public final class DepthMaskFuser {
         final float[] worldZ,
         final int maskW,
         final int maskH,
+        final float[] cameraToWorldColMajor16,
         final float effGroundY,
         final TargetVolumeConstraint baseConstraint
     ) {
@@ -645,8 +766,8 @@ public final class DepthMaskFuser {
             if (v > maxV) maxV = v;
         }
 
-        final float centroidX = (float) (sumWx / count);
-        final float centroidZ = (float) (sumWz / count);
+        final float frontCentroidX = (float) (sumWx / count);
+        final float frontCentroidZ = (float) (sumWz / count);
         final float centroidU = (float) (sumU / count);
         final float centroidV = (float) (sumV / count);
 
@@ -654,7 +775,7 @@ public final class DepthMaskFuser {
         final float[] heights = new float[count];
         for (int i = 0; i < count; i++) {
             final int idx = bfsPixels[i];
-            radii[i] = (float) Math.hypot(worldX[idx] - centroidX, worldZ[idx] - centroidZ);
+            radii[i] = (float) Math.hypot(worldX[idx] - frontCentroidX, worldZ[idx] - frontCentroidZ);
             heights[i] = Math.max(0.0f, worldY[idx] - effGroundY);
         }
         Arrays.sort(radii);
@@ -663,8 +784,27 @@ public final class DepthMaskFuser {
         final float p95R = radii[Math.min(count - 1, (int) Math.floor((count - 1) * 0.95))];
         final float p98H = heights[Math.min(count - 1, (int) Math.floor((count - 1) * 0.98))];
 
-        final float estimatedRadiusM = clamp(
-            p95R * 1.15f,
+        final float rApp = clamp(
+            p95R,
+            TargetVolumeConstraint.MIN_RADIUS_M,
+            TargetVolumeConstraint.MAX_RADIUS_M
+        );
+        // Push estimated volumetric center inward from the frontal skin along the horizontal camera->surface ray
+        final float camX = cameraToWorldColMajor16[12];
+        final float camZ = cameraToWorldColMajor16[14];
+        final float rayDx = frontCentroidX - camX;
+        final float rayDz = frontCentroidZ - camZ;
+        final float rayLen = (float) Math.hypot(rayDx, rayDz);
+        final float volCenterX = rayLen > 1e-3f
+            ? frontCentroidX + (INWARD_CENTER_PUSH_FACTOR * rApp) * (rayDx / rayLen)
+            : frontCentroidX;
+        final float volCenterZ = rayLen > 1e-3f
+            ? frontCentroidZ + (INWARD_CENTER_PUSH_FACTOR * rApp) * (rayDz / rayLen)
+            : frontCentroidZ;
+
+        // Generous search ROI radius (never a tight frontal-skin guillotine)
+        final float roiRadiusM = clamp(
+            Math.max(1.8f * rApp, rApp + 0.35f),
             TargetVolumeConstraint.MIN_RADIUS_M,
             TargetVolumeConstraint.MAX_RADIUS_M
         );
@@ -695,20 +835,21 @@ public final class DepthMaskFuser {
             centroidU,
             centroidV
         );
+        final float[] contourSegmentsXyz = buildContourSegmentsFromLoop(contourLoopXyz);
 
         final int outPtsCount = Math.min(count, MAX_FUSE_DEPTH_POINTS);
         final List<float[]> depthPointsM = new ArrayList<>(outPtsCount);
         final double ptRatio = count / (double) outPtsCount;
         for (int i = 0; i < outPtsCount; i++) {
             final int idx = bfsPixels[Math.min(count - 1, (int) Math.floor(i * ptRatio))];
-            depthPointsM.add(new float[] { worldX[idx], worldY[idx], worldZ[idx], 2.0f });
+            depthPointsM.add(new float[] { worldX[idx], worldY[idx], worldZ[idx], 1.0f });
         }
 
         final TargetVolumeConstraint constraint = baseConstraint.withAutoBounds(
-            centroidX,
+            volCenterX,
             effGroundY,
-            centroidZ,
-            estimatedRadiusM,
+            volCenterZ,
+            roiRadiusM,
             estimatedHeightM
         );
 
@@ -716,9 +857,10 @@ public final class DepthMaskFuser {
             constraint,
             triVerticesXyz,
             contourLoopXyz,
+            contourSegmentsXyz,
             depthPointsM,
             true,
-            estimatedRadiusM,
+            rApp,
             estimatedHeightM
         );
     }
@@ -941,7 +1083,190 @@ public final class DepthMaskFuser {
                 loop[out++] = worldZ[idx];
             }
         }
-        return loop;
+        return smoothContourLoop3Pt(loop);
+    }
+
+    /**
+     * Applies 3-point circular smoothing (0.25, 0.50, 0.25) only across continuous neighbors (dist3D <= 0.25 m)
+     * so silhouette noise softens without bridging across depth discontinuities.
+     */
+    private static float[] smoothContourLoop3Pt(final float[] loop) {
+        if (loop == null || loop.length < 9) {
+            return loop != null ? loop : new float[0];
+        }
+        final int n = loop.length / 3;
+        final float[] smoothed = new float[loop.length];
+        final float maxDistSq = CONTOUR_MAX_SEGMENT_DIST_M * CONTOUR_MAX_SEGMENT_DIST_M;
+        for (int i = 0; i < n; i++) {
+            final int prev = (i + n - 1) % n;
+            final int next = (i + 1) % n;
+            final float cx = loop[i * 3];
+            final float cy = loop[i * 3 + 1];
+            final float cz = loop[i * 3 + 2];
+            final float px = loop[prev * 3];
+            final float py = loop[prev * 3 + 1];
+            final float pz = loop[prev * 3 + 2];
+            final float nx = loop[next * 3];
+            final float ny = loop[next * 3 + 1];
+            final float nz = loop[next * 3 + 2];
+            final float dPrevSq = (cx - px) * (cx - px) + (cy - py) * (cy - py) + (cz - pz) * (cz - pz);
+            final float dNextSq = (cx - nx) * (cx - nx) + (cy - ny) * (cy - ny) + (cz - nz) * (cz - nz);
+            if (dPrevSq <= maxDistSq && dNextSq <= maxDistSq) {
+                smoothed[i * 3] = 0.25f * px + 0.50f * cx + 0.25f * nx;
+                smoothed[i * 3 + 1] = 0.25f * py + 0.50f * cy + 0.25f * ny;
+                smoothed[i * 3 + 2] = 0.25f * pz + 0.50f * cz + 0.25f * nz;
+            } else {
+                smoothed[i * 3] = cx;
+                smoothed[i * 3 + 1] = cy;
+                smoothed[i * 3 + 2] = cz;
+            }
+        }
+        return smoothed;
+    }
+
+    /**
+     * Converts an ordered 3D contour loop into GL_LINES vertex pairs (x0,y0,z0, x1,y1,z1),
+     * breaking every edge whose 3D Euclidean length exceeds 0.25 m to prevent cross-chords.
+     */
+    private static float[] buildContourSegmentsFromLoop(final float[] contourLoopXyz) {
+        if (contourLoopXyz == null || contourLoopXyz.length < 6) {
+            return new float[0];
+        }
+        final int n = contourLoopXyz.length / 3;
+        final float maxDistSq = CONTOUR_MAX_SEGMENT_DIST_M * CONTOUR_MAX_SEGMENT_DIST_M;
+        final float[] tmp = new float[n * 6];
+        int out = 0;
+        for (int i = 0; i < n; i++) {
+            final int next = (i + 1) % n;
+            final float x0 = contourLoopXyz[i * 3];
+            final float y0 = contourLoopXyz[i * 3 + 1];
+            final float z0 = contourLoopXyz[i * 3 + 2];
+            final float x1 = contourLoopXyz[next * 3];
+            final float y1 = contourLoopXyz[next * 3 + 1];
+            final float z1 = contourLoopXyz[next * 3 + 2];
+            final float dx = x1 - x0;
+            final float dy = y1 - y0;
+            final float dz = z1 - z0;
+            final float distSq = dx * dx + dy * dy + dz * dz;
+            if (distSq > 1e-8f && distSq <= maxDistSq) {
+                tmp[out++] = x0;
+                tmp[out++] = y0;
+                tmp[out++] = z0;
+                tmp[out++] = x1;
+                tmp[out++] = y1;
+                tmp[out++] = z1;
+            }
+        }
+        return Arrays.copyOf(tmp, out);
+    }
+
+    /**
+     * Iterative 4-connected morphological erosion by radiusPx pixels inward from mask background.
+     */
+    private static boolean[] erodeMaskInward(
+        final byte[] maskConf,
+        final int w,
+        final int h,
+        final int radiusPx
+    ) {
+        final int n = w * h;
+        boolean[] cur = new boolean[n];
+        for (int i = 0; i < n; i++) {
+            cur[i] = (maskConf[i] & 0xFF) >= MASK_THRESHOLD;
+        }
+        for (int iter = 0; iter < radiusPx; iter++) {
+            final boolean[] next = new boolean[n];
+            for (int v = 0; v < h; v++) {
+                final int rowOff = v * w;
+                for (int u = 0; u < w; u++) {
+                    final int idx = rowOff + u;
+                    if (!cur[idx]) {
+                        continue;
+                    }
+                    final boolean leftOk = (u == 0) || cur[idx - 1];
+                    final boolean rightOk = (u + 1 == w) || cur[idx + 1];
+                    final boolean upOk = (v == 0) || cur[idx - w];
+                    final boolean downOk = (v + 1 == h) || cur[idx + w];
+                    if (leftOk && rightOk && upOk && downOk) {
+                        next[idx] = true;
+                    }
+                }
+            }
+            cur = next;
+        }
+        return cur;
+    }
+
+    /**
+     * Anti edge-bleeding / flying-pixel guard: returns true if depth dM differs by more than
+     * max(0.06 m, 0.05 * dM) from any valid 4-connected neighbor.
+     */
+    private static boolean hasDepthJumpTo4Neighbors(
+        final short[] depthMm,
+        final byte[] depthConf,
+        final int w,
+        final int h,
+        final int u,
+        final int v,
+        final float dM
+    ) {
+        final float maxJump = Math.max(0.06f, 0.05f * dM);
+        final int idx = v * w + u;
+        if (u > 0 && isDepthNeighborJump(depthMm, depthConf, idx - 1, dM, maxJump)) {
+            return true;
+        }
+        if (u + 1 < w && isDepthNeighborJump(depthMm, depthConf, idx + 1, dM, maxJump)) {
+            return true;
+        }
+        if (v > 0 && isDepthNeighborJump(depthMm, depthConf, idx - w, dM, maxJump)) {
+            return true;
+        }
+        if (v + 1 < h && isDepthNeighborJump(depthMm, depthConf, idx + w, dM, maxJump)) {
+            return true;
+        }
+        return false;
+    }
+
+    private static boolean isDepthNeighborJump(
+        final short[] depthMm,
+        final byte[] depthConf,
+        final int nIdx,
+        final float dM,
+        final float maxJump
+    ) {
+        if (depthConf != null && (depthConf[nIdx] & 0xFF) < EXTRACT_DEPTH_CONF_MIN) {
+            return false;
+        }
+        final int mm = depthMm[nIdx] & 0xFFFF;
+        if (mm <= 0) {
+            return false;
+        }
+        final float dnM = mm * 0.001f;
+        return Math.abs(dM - dnM) > maxJump;
+    }
+
+    private static float computeUniformCropScale(
+        final int srcW,
+        final int srcH,
+        final int dstW,
+        final int dstH
+    ) {
+        if (srcW >= srcH && dstW >= dstH) {
+            return (float) dstW / (float) srcW;
+        }
+        if (srcH > srcW && dstH > dstW) {
+            return (float) dstH / (float) srcH;
+        }
+        return Math.min((float) dstW / (float) srcW, (float) dstH / (float) srcH);
+    }
+
+    private static float mapCoordUniform(
+        final float srcCoord,
+        final int srcDim,
+        final int dstDim,
+        final float uniformScale
+    ) {
+        return (srcCoord + 0.5f - 0.5f * srcDim) * uniformScale + 0.5f * dstDim - 0.5f;
     }
 
     private static FusedTargetSurface buildNoDepthFallbackResult(
@@ -1016,6 +1341,9 @@ public final class DepthMaskFuser {
 
         final float estimatedRadiusM;
         final float estimatedHeightM;
+        final float roiRadiusM;
+        float volCenterX = anchorX;
+        float volCenterZ = anchorZ;
         if (compCount > 0 && maxU >= minU && maxV >= minV) {
             final float camX = cameraToWorldColMajor16[12];
             final float camY = cameraToWorldColMajor16[13];
@@ -1040,22 +1368,34 @@ public final class DepthMaskFuser {
                 TargetVolumeConstraint.MIN_RADIUS_M,
                 TargetVolumeConstraint.MAX_RADIUS_M
             );
+            final float rayLenXZ = (float) Math.hypot(dx, dz);
+            if (rayLenXZ > 1e-3f) {
+                volCenterX = anchorX + (INWARD_CENTER_PUSH_FACTOR * estimatedRadiusM) * (dx / rayLenXZ);
+                volCenterZ = anchorZ + (INWARD_CENTER_PUSH_FACTOR * estimatedRadiusM) * (dz / rayLenXZ);
+            }
+            roiRadiusM = clamp(
+                Math.max(1.8f * estimatedRadiusM, estimatedRadiusM + 0.35f),
+                TargetVolumeConstraint.MIN_RADIUS_M,
+                TargetVolumeConstraint.MAX_RADIUS_M
+            );
         } else {
             estimatedRadiusM = baseConstraint.active
                 ? baseConstraint.radiusM
                 : TargetVolumeConstraint.DEFAULT_RADIUS_M;
             estimatedHeightM = baseConstraint.heightEstM;
+            roiRadiusM = estimatedRadiusM;
         }
 
         final TargetVolumeConstraint constraint = baseConstraint.withAutoBounds(
-            anchorX,
+            volCenterX,
             effGroundY,
-            anchorZ,
-            estimatedRadiusM,
+            volCenterZ,
+            roiRadiusM,
             estimatedHeightM
         );
         return new FusedTargetSurface(
             constraint,
+            new float[0],
             new float[0],
             new float[0],
             Collections.emptyList(),

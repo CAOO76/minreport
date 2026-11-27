@@ -165,6 +165,43 @@ public final class TargetVolumeConstraint {
         );
     }
 
+    /**
+     * Translates anchorX/Y/Z (and polygonXZ vertices if present) by VIO drift delta (dx, dy, dz)
+     * without ever overwriting a refined volumetric centroid with the initial frontal-skin tap pose.
+     */
+    public TargetVolumeConstraint translateByDelta(final float dx, final float dy, final float dz) {
+        if (!this.active) {
+            return this;
+        }
+        if (!Float.isFinite(dx) || !Float.isFinite(dy) || !Float.isFinite(dz)) {
+            return this;
+        }
+        if (dx == 0.0f && dy == 0.0f && dz == 0.0f) {
+            return this;
+        }
+        final float[] shiftedPolygon;
+        if (hasValidPolygon()) {
+            shiftedPolygon = new float[this.polygonXZ.length];
+            for (int i = 0; i < this.polygonXZ.length; i += 2) {
+                shiftedPolygon[i] = this.polygonXZ[i] + dx;
+                shiftedPolygon[i + 1] = this.polygonXZ[i + 1] + dz;
+            }
+        } else {
+            shiftedPolygon = EMPTY_POLY;
+        }
+        return new TargetVolumeConstraint(
+            true,
+            this.anchorX + dx,
+            this.anchorY + dy,
+            this.anchorZ + dz,
+            this.radiusM,
+            shiftedPolygon,
+            this.hasPadReferenceY,
+            this.padReferenceY,
+            this.heightEstM
+        );
+    }
+
     public TargetVolumeConstraint withRadius(final float newRadiusM) {
         return new TargetVolumeConstraint(
             this.active,

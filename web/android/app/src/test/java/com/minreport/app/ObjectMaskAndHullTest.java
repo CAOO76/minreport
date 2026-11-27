@@ -603,6 +603,23 @@ public class ObjectMaskAndHullTest {
         assertEquals("triVerticesXyz must contain complete triangles (multiple of 9 floats)", 0, fused.triVerticesXyz.length % 9);
         assertTrue("3D contour loop must have >= 3 vertices", fused.contourLoopXyz.length >= 9);
         assertEquals(0, fused.contourLoopXyz.length % 3);
+        assertTrue("contourSegmentsXyz must emit GL_LINES vertex pairs", fused.contourSegmentsXyz.length >= 6);
+        assertEquals("contourSegmentsXyz must be multiple of 6 floats", 0, fused.contourSegmentsXyz.length % 6);
+        for (int i = 0; i + 5 < fused.contourSegmentsXyz.length; i += 6) {
+            final float ddx = fused.contourSegmentsXyz[i + 3] - fused.contourSegmentsXyz[i];
+            final float ddy = fused.contourSegmentsXyz[i + 4] - fused.contourSegmentsXyz[i + 1];
+            final float ddz = fused.contourSegmentsXyz[i + 5] - fused.contourSegmentsXyz[i + 2];
+            final float segLen = (float) Math.sqrt(ddx * ddx + ddy * ddy + ddz * ddz);
+            assertTrue("contourSegmentsXyz must break 3D jumps > 0.25 m, got " + segLen, segLen <= 0.251f);
+        }
+        assertTrue(
+            "Fused constraint must use generous ROI radius (>= R_app + 0.35 m), got " + fused.constraint.radiusM,
+            fused.constraint.radiusM >= fused.estimatedRadiusM + 0.34f
+        );
+        assertTrue(
+            "Inward center push must move constraint center closer to Z=0 than front skin (+0.105 m), got " + fused.constraint.anchorZ,
+            Math.abs(fused.constraint.anchorZ) < 0.08f
+        );
         assertFalse("depthPointsM must not be empty", fused.depthPointsM.isEmpty());
 
         // Strict verification: NO floor points (y <= groundY + 0.03) and NO furniture leakage (x > 0.21 or z < -0.25)
@@ -610,6 +627,7 @@ public class ObjectMaskAndHullTest {
             assertTrue("Floor point leaked into depthPointsM: y=" + pt[1], pt[1] > groundY + 0.03f);
             assertTrue("Furniture leaked into depthPointsM (x=" + pt[0] + ")", pt[0] <= 0.21f);
             assertTrue("Furniture leaked into depthPointsM (z=" + pt[2] + ")", pt[2] >= -0.25f);
+            assertEquals("Depth points must carry weight 1.0f", 1.0f, pt[3], 1e-5f);
         }
         for (int i = 0; i + 2 < fused.triVerticesXyz.length; i += 3) {
             assertTrue(
@@ -718,5 +736,341 @@ public class ObjectMaskAndHullTest {
         final TargetVolumeConstraint floorAnchored = TargetVolumeConstraint.fromAnchor(0.0f, groundY, 0.0f, 0.20f);
         assertFalse("3-arg must reject y = groundY + 0.02 when anchorY = groundY", floorAnchored.contains3DForVisual(0.0f, groundY + 0.02f, 0.0f));
         assertTrue("3-arg must accept y = groundY + 0.05 when anchorY = groundY", floorAnchored.contains3DForVisual(0.0f, groundY + 0.05f, 0.0f));
+
+        // Verify translateByDelta shifts anchor & polygon by VIO delta without overwriting refined centroid
+        final TargetVolumeConstraint shifted = auto.translateByDelta(0.05f, -0.02f, 0.03f);
+        assertEquals(auto.anchorX + 0.05f, shifted.anchorX, 1e-6f);
+        assertEquals(auto.anchorY - 0.02f, shifted.anchorY, 1e-6f);
+        assertEquals(auto.anchorZ + 0.03f, shifted.anchorZ, 1e-6f);
+        assertEquals(auto.radiusM, shifted.radiusM, 1e-6f);
+        assertEquals(auto.heightEstM, shifted.heightEstM, 1e-6f);
+        assertEquals(auto.polygonXZ[0] + 0.05f, shifted.polygonXZ[0], 1e-6f);
+        assertEquals(auto.polygonXZ[1] + 0.03f, shifted.polygonXZ[1], 1e-6f);
+    }
+
+    @Test
+    public void testCylinderWithFrontalSkinAnchorBiasAndRawDepthEdgeBleedingWithin6Pct() {
+        // (a) 54 x 33 cm cylinder (exact V = 0.046186 m^3) with:
+        //     - 0 MVS points on walls
+        //     - Initial target anchor displaced +16.5 cm onto the FRONT SKIN (AC-9723 failure mode!)
+        //     - Raw Depth points containing vertical wall points + edge-bleeding flying pixels at mid-height
+        final float cylR = 0.165f;
+        final float cylH = 0.54f;
+        final float groundY = -1.20f;
+        final double exactVol = Math.PI * cylR * cylR * cylH; // 0.046186 m^3
+
+        final int w = 320;
+        final int h = 240;
+        final float fx = 280.0f;
+        final float fy = 280.0f;
+        final float cx = 160.0f;
+        final float cy = 120.0f;
+
+        final List<VisualHullCarver.SegmentedView> views = new ArrayList<>(16);
+        final List<WalkRingToeSolver.WalkPose> walkPoses = new ArrayList<>(16);
+        final List<float[]> noisyRawDepthPts = new ArrayList<>();
+
+        for (int i = 0; i < 16; i++) {
+            final double ang = (2.0 * Math.PI * i) / 16.0;
+            final float camX = (float) (Math.cos(ang) * 1.45);
+            final float camY = groundY + 0.85f;
+            final float camZ = (float) (Math.sin(ang) * 1.45);
+
+            final float[] c2w = lookAtCameraToWorldColMajor(camX, camY, camZ, 0.0f, groundY + 0.27f, 0.0f);
+            final float[] w2c = invertRigidColMajor(c2w);
+
+            final byte[] mask = new byte[w * h];
+            final short[] depthMm = new short[w * h];
+            final byte[] depthConf = new byte[w * h];
+
+            for (int py = 0; py < h; py++) {
+                final int rowOff = py * w;
+                final float rcy = -(py - cy) / fy;
+                for (int px = 0; px < w; px++) {
+                    final float rcx = (px - cx) / fx;
+                    final float rcz = -1.0f;
+                    float dx = c2w[0] * rcx + c2w[4] * rcy + c2w[8] * rcz;
+                    float dy = c2w[1] * rcx + c2w[5] * rcy + c2w[9] * rcz;
+                    float dz = c2w[2] * rcx + c2w[6] * rcy + c2w[10] * rcz;
+                    final float len = (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
+                    dx /= len;
+                    dy /= len;
+                    dz /= len;
+
+                    final float tCyl = intersectVerticalCylinder(camX, camY, camZ, dx, dy, dz, cylR, groundY, cylH);
+                    if (tCyl < Float.MAX_VALUE) {
+                        mask[rowOff + px] = (byte) 255;
+                        final float wx = camX + tCyl * dx;
+                        final float wy = camY + tCyl * dy;
+                        final float wz = camZ + tCyl * dz;
+                        final float zCam = w2c[2] * wx + w2c[6] * wy + w2c[10] * wz + w2c[14];
+                        depthMm[rowOff + px] = (short) Math.round((-zCam) * 1000.0f);
+                        depthConf[rowOff + px] = (byte) 230;
+                    } else {
+                        // Background wall at 3.2 m to trigger realistic depth-jump edge-bleeding on silhouette rim
+                        depthMm[rowOff + px] = 3200;
+                        depthConf[rowOff + px] = (byte) 220;
+                    }
+                }
+            }
+
+            // Inject synthetic edge-bleeding mixed depth pixels right along the silhouette boundary
+            for (int py = 1; py < h - 1; py++) {
+                for (int px = 1; px < w - 1; px++) {
+                    final int idx = py * w + px;
+                    if ((mask[idx] & 0xFF) >= 128 &&
+                        ((mask[idx - 1] & 0xFF) < 128 || (mask[idx + 1] & 0xFF) < 128)) {
+                        // Mixed depth between cylinder (~1.3m) and background (3.2m) -> 2.1m flying pixel!
+                        depthMm[idx] = 2100;
+                    }
+                }
+            }
+
+            views.add(new VisualHullCarver.SegmentedView(mask, w, h, fx, fy, cx, cy, w2c, groundY));
+            walkPoses.add(new WalkRingToeSolver.WalkPose(
+                camX, camY, camZ, -c2w[8], -c2w[9], -c2w[10], i * 100_000_000L
+            ));
+
+            if (i % 2 == 0) {
+                noisyRawDepthPts.addAll(DepthMaskFuser.extractFilteredDepthPoints(
+                    mask, w, h, depthMm, depthConf, w, h,
+                    fx, fy, cx, cy, c2w, groundY, null, 2, 400
+                ));
+            }
+        }
+
+        // Verify all extracted depth points have weight 1.0f and none flew to background (> 0.25 m from center)
+        assertFalse("Filtered Raw Depth should still retain clean interior cylinder points", noisyRawDepthPts.isEmpty());
+        for (float[] pt : noisyRawDepthPts) {
+            assertEquals(1.0f, pt[3], 1e-5f);
+            assertTrue(
+                "Edge-bleeding flying pixel must be rejected (r=" + Math.hypot(pt[0], pt[2]) + ")",
+                Math.hypot(pt[0], pt[2]) <= cylR + 0.05f
+            );
+        }
+
+        // Also inject raw wall/edge-bleeding points directly on the cylinder perimeter to verify Tri-Modal protection
+        for (int a = 0; a < 32; a++) {
+            final double ang = (2.0 * Math.PI * a) / 32.0;
+            final float wx = (float) (Math.cos(ang) * (cylR - 0.01f));
+            final float wz = (float) (Math.sin(ang) * (cylR - 0.01f));
+            noisyRawDepthPts.add(new float[] { wx, groundY + 0.18f, wz, 1.0f });
+            noisyRawDepthPts.add(new float[] { wx, groundY + 0.27f, wz, 1.0f });
+        }
+
+        final List<float[]> groundSamples = new ArrayList<>();
+        for (int s = 0; s < 32; s++) {
+            final double ang = (2.0 * Math.PI * s) / 32.0;
+            for (float r = 0.50f; r <= 1.20f; r += 0.35f) {
+                groundSamples.add(new float[] {
+                    (float) (Math.cos(ang) * r),
+                    groundY,
+                    (float) (Math.sin(ang) * r)
+                });
+            }
+        }
+
+        // FRONT-SKIN BIASED ANCHOR (+16.5 cm off-center) with tight radius 0.21 m!
+        final TargetVolumeConstraint frontSkinTarget = TargetVolumeConstraint
+            .fromAnchor(0.0f, groundY + 0.25f, +0.165f, 0.21f)
+            .withAutoBounds(0.0f, groundY + 0.25f, +0.165f, 0.21f, 0.54f);
+
+        final VisualHullCarver.VisualHullResult hull = VisualHullCarver.carve(views, frontSkinTarget, groundY, 64);
+        assertTrue(hull.isValid());
+        // Verify hull centroid recovered true center ~(0, -0.93, 0) despite +16.5 cm front-skin anchor!
+        assertEquals("Hull centroidX must recover 0.0 m", 0.0f, hull.centroidX, 0.03f);
+        assertEquals("Hull centroidZ must recover 0.0 m despite +16.5 cm anchor bias", 0.0f, hull.centroidZ, 0.03f);
+
+        final WalkRingToeSolver.MetrologyResult res = WalkRingToeSolver.solve(
+            noisyRawDepthPts,
+            walkPoses,
+            groundSamples,
+            true,
+            0.3,
+            frontSkinTarget,
+            hull
+        );
+
+        assertTrue(
+            "Cylinder V must be in [0.0434, 0.0490] m^3 (< +/-6% of " + exactVol + "), got " + res.volumeM3,
+            res.volumeM3 >= 0.0434 && res.volumeM3 <= 0.0490
+        );
+        assertTrue("dimA must be in [0.30, 0.36] m, got " + res.dimA, res.dimA >= 0.30 && res.dimA <= 0.36);
+        assertTrue("dimB must be in [0.30, 0.36] m, got " + res.dimB, res.dimB >= 0.30 && res.dimB <= 0.36);
+        assertTrue("dimH must be in [0.51, 0.57] m, got " + res.dimH, res.dimH >= 0.51 && res.dimH <= 0.57);
+        assertTrue("Cylinder slope must exceed 80 deg, got " + res.slopeAngleAvgDeg, res.slopeAngleAvgDeg > 80.0);
+        assertEquals(WalkRingToeSolver.SLOPE_PROFILE_VERTICAL_STRUCTURE, res.slopeProfile);
+        // Exported anchor must be the true centroid (~0, ~0), NOT the +16.5 cm front-skin anchor!
+        assertEquals("Exported anchorX must match true centroid", 0.0f, res.anchorX, 0.04f);
+        assertEquals("Exported anchorZ must match true centroid", 0.0f, res.anchorZ, 0.04f);
+        assertTrue("Exported roiRadiusM must be generous", res.roiRadiusM >= 0.35f);
+        // LocalPreviewMesh dem_grid_v2 helper
+        assertNotNull(res.previewMesh);
+        assertEquals("dem_grid_v1", res.previewMesh.format);
+        final WalkRingToeSolver.LocalPreviewMesh v2Mesh = res.previewMesh.withRgbB64("AAAA");
+        assertEquals("dem_grid_v2", v2Mesh.format);
+        assertEquals("AAAA", v2Mesh.rgbB64);
+    }
+
+    @Test
+    public void testRectangularBox60x40x45cmVisualHullWithin8Pct() {
+        // (b) Rectangular box 0.60 x 0.40 x 0.45 m -> exact V = 0.108 m^3 (< +/-8%)
+        // Tests BOTH: (1) Multi-view Visual Hull with realistic walk-ring distance + top/wall depth,
+        // and (2) Pure point-cloud vertical-wall box via robust upper-envelope MAD+p90 (zero -50% p50 wall erosion).
+        final float halfX = 0.30f;
+        final float halfZ = 0.20f;
+        final float boxH = 0.45f;
+        final float groundY = -1.10f;
+        final double exactVol = 0.60 * 0.40 * 0.45; // 0.108 m^3
+
+        final int w = 320;
+        final int h = 240;
+        final float fx = 280.0f;
+        final float fy = 280.0f;
+        final float cx = 160.0f;
+        final float cy = 120.0f;
+
+        final List<VisualHullCarver.SegmentedView> views = new ArrayList<>(16);
+        final List<WalkRingToeSolver.WalkPose> walkPoses = new ArrayList<>(16);
+        for (int i = 0; i < 16; i++) {
+            final double ang = (2.0 * Math.PI * i) / 16.0;
+            final float camX = (float) (Math.cos(ang) * 3.20);
+            final float camY = groundY + 0.60f;
+            final float camZ = (float) (Math.sin(ang) * 3.20);
+            final float[] c2w = lookAtCameraToWorldColMajor(camX, camY, camZ, 0.0f, groundY + 0.22f, 0.0f);
+            final float[] w2c = invertRigidColMajor(c2w);
+
+            final byte[] mask = new byte[w * h];
+            for (int py = 0; py < h; py++) {
+                final int rowOff = py * w;
+                final float rcy = -(py - cy) / fy;
+                for (int px = 0; px < w; px++) {
+                    final float rcx = (px - cx) / fx;
+                    final float rcz = -1.0f;
+                    float dx = c2w[0] * rcx + c2w[4] * rcy + c2w[8] * rcz;
+                    float dy = c2w[1] * rcx + c2w[5] * rcy + c2w[9] * rcz;
+                    float dz = c2w[2] * rcx + c2w[6] * rcy + c2w[10] * rcz;
+                    final float len = (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
+                    dx /= len;
+                    dy /= len;
+                    dz /= len;
+                    if (intersectBox(camX, camY, camZ, dx, dy, dz, -halfX, halfX, groundY, groundY + boxH, -halfZ, halfZ) < Float.MAX_VALUE) {
+                        mask[rowOff + px] = (byte) 255;
+                    }
+                }
+            }
+            views.add(new VisualHullCarver.SegmentedView(mask, w, h, fx, fy, cx, cy, w2c, groundY));
+            walkPoses.add(new WalkRingToeSolver.WalkPose(
+                camX, camY, camZ, -c2w[8], -c2w[9], -c2w[10], i * 100_000_000L
+            ));
+        }
+
+        final List<float[]> groundSamples = new ArrayList<>();
+        for (int s = 0; s < 32; s++) {
+            final double ang = (2.0 * Math.PI * s) / 32.0;
+            groundSamples.add(new float[] { (float) (Math.cos(ang) * 1.4), groundY, (float) (Math.sin(ang) * 1.4) });
+        }
+
+        // 1. Dense vertical-wall + top-cap point cloud (tests robust MAD+p90 upper envelope without p50 wall collapse)
+        final List<float[]> boxCloud = new ArrayList<>();
+        for (float x = -halfX; x <= halfX + 1e-4f; x += 0.02f) {
+            for (float z = -halfZ; z <= halfZ + 1e-4f; z += 0.02f) {
+                boxCloud.add(new float[] { x, groundY + boxH, z, 1.0f });
+            }
+        }
+        for (float hWall = 0.04f; hWall <= boxH - 0.02f; hWall += 0.03f) {
+            for (float x = -halfX; x <= halfX + 1e-4f; x += 0.025f) {
+                boxCloud.add(new float[] { x, groundY + hWall, -halfZ, 1.0f });
+                boxCloud.add(new float[] { x, groundY + hWall, halfZ, 1.0f });
+            }
+            for (float z = -halfZ; z <= halfZ + 1e-4f; z += 0.025f) {
+                boxCloud.add(new float[] { -halfX, groundY + hWall, z, 1.0f });
+                boxCloud.add(new float[] { halfX, groundY + hWall, z, 1.0f });
+            }
+        }
+        final TargetVolumeConstraint boxTarget = TargetVolumeConstraint.fromAnchor(0.0f, groundY + 0.22f, +0.20f, 0.70f);
+        final WalkRingToeSolver.MetrologyResult resCloud = WalkRingToeSolver.solve(
+            boxCloud, walkPoses, groundSamples, true, 0.3, boxTarget, null
+        );
+        final double errCloudPct = Math.abs(resCloud.volumeM3 - exactVol) / exactVol * 100.0;
+        assertTrue(
+            "Box 0.60x0.40x0.45 m cloud volume error must be < 8% (exact=0.108, got=" + resCloud.volumeM3 + ", err=" + errCloudPct + "%)",
+            errCloudPct < 8.0
+        );
+        assertEquals("Box cloud height ~0.45 m", 0.45, resCloud.dimH, 0.04);
+        assertTrue("Box vertical wall slope must exceed 80 deg, got " + resCloud.slopeAngleAvgDeg, resCloud.slopeAngleAvgDeg > 80.0);
+
+        // 2. Visual Hull with front-face displaced anchor (+0.20 m) recovers true centroid ~(0, 0) & height ~0.45 m
+        //    (note: exact analytical silhouette-only hull of a rectangular box from R=3.2 m has ~14% perspective corner overhang)
+        final TargetVolumeConstraint target = TargetVolumeConstraint.fromAnchor(0.0f, groundY + 0.20f, +0.20f, 0.35f);
+        final VisualHullCarver.VisualHullResult hull = VisualHullCarver.carve(views, target, groundY, 64);
+        assertTrue(hull.isValid());
+        assertEquals("Box hull centroidX must recover 0.0 m", 0.0f, hull.centroidX, 0.03f);
+        assertEquals("Box hull centroidZ must recover 0.0 m despite +0.20 m front anchor", 0.0f, hull.centroidZ, 0.03f);
+        final WalkRingToeSolver.MetrologyResult resHull = WalkRingToeSolver.solve(
+            Collections.emptyList(), walkPoses, groundSamples, true, 0.3, target, hull
+        );
+        assertEquals("Box hull height ~0.45 m", 0.45, resHull.dimH, 0.05);
+        assertTrue("Box hull volume must stay close to analytical visual hull bound (got " + resHull.volumeM3 + ")",
+            resHull.volumeM3 >= 0.100 && resHull.volumeM3 <= 0.136);
+    }
+
+    @Test
+    public void testTargetActiveNeverFallsBackToRoomCloudAndFloorRelaxationWorks() {
+        // 1. Target active with 0 in-envelope points and NO visual hull -> must return REJECTED, never absorb room cloud!
+        final List<float[]> roomPts = new ArrayList<>();
+        for (float x = 3.0f; x <= 5.0f; x += 0.2f) {
+            for (float z = 3.0f; z <= 5.0f; z += 0.2f) {
+                roomPts.add(new float[] { x, -0.5f, z, 1.0f });
+            }
+        }
+        final TargetVolumeConstraint emptyTarget = TargetVolumeConstraint.fromAnchor(0.0f, -1.2f, 0.0f, 0.35f);
+        final WalkRingToeSolver.MetrologyResult rejected = WalkRingToeSolver.solve(
+            roomPts, Collections.emptyList(), Collections.emptyList(), false, 0.5, emptyTarget, null
+        );
+        assertEquals("Target with < 12 in-envelope points and no hull must be REJECTED (no room fallback)", "REJECTED", rejected.metrologyGrade);
+        assertEquals(0.0, rejected.volumeM3, 1e-6);
+
+        // 2. DepthMaskFuser floor-cut relaxation when groundY arrives overestimated (> 80% pixels below groundY + 0.03)
+        final int w = 80;
+        final int h = 60;
+        final float fx = 70.0f;
+        final float fy = 70.0f;
+        final float cx = 40.0f;
+        final float cy = 30.0f;
+        final float trueGroundY = -1.20f;
+        final float[] c2w = lookAtCameraToWorldColMajor(0.0f, trueGroundY + 0.70f, 1.40f, 0.0f, trueGroundY + 0.27f, 0.0f);
+        final float[] w2c = invertRigidColMajor(c2w);
+        final byte[] mask = new byte[w * h];
+        final short[] depthMm = new short[w * h];
+        final byte[] depthConf = new byte[w * h];
+        for (int py = 0; py < h; py++) {
+            for (int px = 0; px < w; px++) {
+                final float rcx = (px - cx) / fx;
+                final float rcy = -(py - cy) / fy;
+                float dx = c2w[0] * rcx + c2w[4] * rcy + c2w[8] * -1.0f;
+                float dy = c2w[1] * rcx + c2w[5] * rcy + c2w[9] * -1.0f;
+                float dz = c2w[2] * rcx + c2w[6] * rcy + c2w[10] * -1.0f;
+                final float len = (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
+                dx /= len; dy /= len; dz /= len;
+                final float tCyl = intersectVerticalCylinder(0.0f, trueGroundY + 0.70f, 1.40f, dx, dy, dz, 0.165f, trueGroundY, 0.54f);
+                if (tCyl < Float.MAX_VALUE) {
+                    mask[py * w + px] = (byte) 255;
+                    final float wx = tCyl * dx;
+                    final float wy = trueGroundY + 0.70f + tCyl * dy;
+                    final float wz = 1.40f + tCyl * dz;
+                    final float zCam = w2c[2] * wx + w2c[6] * wy + w2c[10] * wz + w2c[14];
+                    depthMm[py * w + px] = (short) Math.round((-zCam) * 1000.0f);
+                    depthConf[py * w + px] = (byte) 230;
+                }
+            }
+        }
+        // Pass an erroneously HIGH groundY (top of cylinder = trueGroundY + 0.52 m) -> > 80% discarded -> must relax!
+        final DepthMaskFuser.FusedTargetSurface relaxed = DepthMaskFuser.fuse(
+            mask, w, h, depthMm, depthConf, w, h, fx, fy, cx, cy, c2w,
+            trueGroundY + 0.52f, 0.0f, trueGroundY + 0.52f, 0.165f, 0.5f, 0.5f, null
+        );
+        assertTrue("Overestimated floor must trigger relaxation and retain usedDepth=true", relaxed.usedDepth);
+        assertTrue("Relaxed fusion must still produce frontal triangles", relaxed.triVerticesXyz.length >= 9);
     }
 }

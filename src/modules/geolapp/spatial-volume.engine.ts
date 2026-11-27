@@ -184,6 +184,36 @@ function percentile(sortedAsc: number[], p: number): number {
     return sortedAsc[lo] * (1 - frac) + sortedAsc[hi] * frac;
 }
 
+/**
+ * Envolvente superior robusta para columna ordenada ascendente de alturas en celda DEM
+ * (paridad 1:1 con WalkRingToeSolver.java):
+ * rechaza outliers superiores > p85 + 2.5*MAD y toma p90 (count >= 5), p80 (count == 3..4) o max (<= 2).
+ */
+function computeRobustUpperEnvelope(sortedAsc: number[]): number {
+    const n = sortedAsc.length;
+    if (n === 0) return 0;
+    if (n === 1) return sortedAsc[0];
+    let cleanLen = n;
+    if (n >= 4) {
+        const med = percentile(sortedAsc, 0.5);
+        const devs = sortedAsc.map((v) => Math.abs(v - med)).sort((a, b) => a - b);
+        const mad = Math.max(percentile(devs, 0.5), 0.015);
+        const p85 = percentile(sortedAsc, 0.85);
+        const upperFence = p85 + 2.5 * mad;
+        while (cleanLen > 1 && sortedAsc[cleanLen - 1] > upperFence) {
+            cleanLen--;
+        }
+    }
+    const clean = cleanLen === n ? sortedAsc : sortedAsc.slice(0, cleanLen);
+    if (clean.length >= 5) {
+        return percentile(clean, 0.9);
+    }
+    if (clean.length >= 3) {
+        return percentile(clean, 0.8);
+    }
+    return clean[clean.length - 1];
+}
+
 function median(values: number[]): number {
     if (values.length === 0) return 0;
     const sorted = [...values].sort((a, b) => a - b);
@@ -2517,14 +2547,17 @@ export function computeSpatialStockpileVolume(input: SpatialVolumeInput): Spatia
         ? effectiveAnchorXZ[1]
         : median(scaledPoints.map((p) => p[2]));
 
-    // Aplicar roiRadiusM legado antes del plano base (manteniendo suelo circundante si solo viene targetConstraint)
-    const points = effectiveRoiRadiusM
+    // Si existe targetConstraint, priorizarlo sobre el recorte legacy roiCenter/roiRadiusM
+    // para evitar doble recorte y preservar suelo circundante para el ajuste del plano base.
+    const applyLegacyRoiFilter = !scaledConstraint && effectiveRoiRadiusM !== undefined;
+
+    const points = applyLegacyRoiFilter
         ? scaledPoints.filter(
               ([x, , z]) => Math.hypot(x - roiCenterX, z - roiCenterZ) <= effectiveRoiRadiusM * 1.15
           )
         : scaledPoints;
 
-    const groundSamples = effectiveRoiRadiusM
+    const groundSamples = applyLegacyRoiFilter
         ? scaledGroundSamples.filter(
               ([x, , z]) => Math.hypot(x - roiCenterX, z - roiCenterZ) <= effectiveRoiRadiusM * 1.35
           )
@@ -2685,7 +2718,7 @@ export function computeSpatialStockpileVolume(input: SpatialVolumeInput): Spatia
             observed[idx] = 1;
             observationCount[idx] = bucket.length;
             const sorted = [...bucket].sort((a, b) => a - b);
-            const repHeight = Math.max(0, percentile(sorted, 0.5));
+            const repHeight = Math.max(0, computeRobustUpperEnvelope(sorted));
             const isGridBorder = ix === 0 || ix === nx - 1 || iz === 0 || iz === nz - 1;
             heightsM[idx] = isGridBorder ? 0 : Number(repHeight.toFixed(4));
         }

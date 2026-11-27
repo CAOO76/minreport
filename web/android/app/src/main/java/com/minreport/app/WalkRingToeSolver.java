@@ -20,7 +20,7 @@ public final class WalkRingToeSolver {
     public static final String SLOPE_PROFILE_VERTICAL_STRUCTURE = "VERTICAL_STRUCTURE";
 
     private static final int MAX_DEM_DIM = 64;
-    private static final int PREVIEW_MAX_DIM = 32;
+    private static final int PREVIEW_MAX_DIM = 48;
     private static final float MIN_CELL_SIZE_M = 0.03f;
     private static final float MAX_CELL_SIZE_M = 0.75f;
     private static final float MAX_GRAVITY_MISMATCH_DEG = 3.5f;
@@ -62,7 +62,7 @@ public final class WalkRingToeSolver {
     }
 
     public static final class LocalPreviewMesh {
-        public final String format = "dem_grid_v1";
+        public final String format;
         public final float originX;
         public final float originZ;
         public final float cellSizeM;
@@ -77,6 +77,8 @@ public final class WalkRingToeSolver {
         public final float groundSlopeDeg;
         public final float volumeM3;
         public final float maxHeightM;
+        /** Optional Base64-encoded per-cell RGB bytes (cols * rows * 3); when non-null, format = "dem_grid_v2". */
+        public final String rgbB64;
 
         public LocalPreviewMesh(
             final float originX,
@@ -94,6 +96,44 @@ public final class WalkRingToeSolver {
             final float volumeM3,
             final float maxHeightM
         ) {
+            this(
+                originX,
+                originZ,
+                cellSizeM,
+                cols,
+                rows,
+                heightsM,
+                observedMask,
+                confidenceMask,
+                planeA,
+                planeB,
+                planeD,
+                groundSlopeDeg,
+                volumeM3,
+                maxHeightM,
+                null
+            );
+        }
+
+        public LocalPreviewMesh(
+            final float originX,
+            final float originZ,
+            final float cellSizeM,
+            final int cols,
+            final int rows,
+            final float[] heightsM,
+            final byte[] observedMask,
+            final byte[] confidenceMask,
+            final double planeA,
+            final double planeB,
+            final double planeD,
+            final float groundSlopeDeg,
+            final float volumeM3,
+            final float maxHeightM,
+            final String rgbB64
+        ) {
+            this.rgbB64 = rgbB64;
+            this.format = rgbB64 != null ? "dem_grid_v2" : "dem_grid_v1";
             this.originX = originX;
             this.originZ = originZ;
             this.cellSizeM = cellSizeM;
@@ -108,6 +148,26 @@ public final class WalkRingToeSolver {
             this.groundSlopeDeg = groundSlopeDeg;
             this.volumeM3 = volumeM3;
             this.maxHeightM = maxHeightM;
+        }
+
+        public LocalPreviewMesh withRgbB64(final String newRgbB64) {
+            return new LocalPreviewMesh(
+                originX,
+                originZ,
+                cellSizeM,
+                cols,
+                rows,
+                heightsM,
+                observedMask,
+                confidenceMask,
+                planeA,
+                planeB,
+                planeD,
+                groundSlopeDeg,
+                volumeM3,
+                maxHeightM,
+                newRgbB64
+            );
         }
     }
 
@@ -500,6 +560,7 @@ public final class WalkRingToeSolver {
             radialEnvelope = estimatePointCloudP98Radius(points, cx, cz) * 1.05f;
         }
 
+        final boolean hasValidPolygon = hasTarget && targetConstraint.hasValidPolygon();
         final List<float[]> allFinitePoints = new ArrayList<>(points.size());
         final List<float[]> inEnvelopePoints = new ArrayList<>(points.size());
         for (float[] p : points) {
@@ -511,7 +572,10 @@ public final class WalkRingToeSolver {
             }
             allFinitePoints.add(p);
             if (hasTarget) {
-                if (targetConstraint.containsXZ(p[0], p[2], 1.25f)) {
+                final boolean inTarget = targetConstraint.containsXZ(p[0], p[2], 1.25f);
+                final boolean inHullNoPoly = !hasValidPolygon && hasVisualHull &&
+                    isWithinVisualHullMargin(visualHull, p[0], p[2], 2);
+                if (inTarget || inHullNoPoly) {
                     inEnvelopePoints.add(p);
                 }
             } else {
@@ -522,8 +586,15 @@ public final class WalkRingToeSolver {
             }
         }
         if (inEnvelopePoints.size() < 12) {
-            inEnvelopePoints.clear();
-            inEnvelopePoints.addAll(allFinitePoints);
+            if (hasTarget) {
+                // NEVER fall back to entire room cloud when targetConstraint is active!
+                if (!hasVisualHull) {
+                    return buildRejectedResult(inEnvelopePoints, filteredGround, poses, loopDriftPct);
+                }
+            } else {
+                inEnvelopePoints.clear();
+                inEnvelopePoints.addAll(allFinitePoints);
+            }
         }
 
         // 4. Gravity-Regularized Unbiased Ground Plane Solver (p50 + Huber IRLS + padReferenceY + sigmaGround)
@@ -558,7 +629,7 @@ public final class WalkRingToeSolver {
         final float[] posHeightsTmp = new float[inEnvelopePoints.size()];
         int posCount = 0;
         for (float[] p : inEnvelopePoints) {
-            if (hasTarget && !targetConstraint.containsXZ(p[0], p[2], 1.05f)) {
+            if (hasTarget && (hasValidPolygon || !hasVisualHull) && !targetConstraint.containsXZ(p[0], p[2], 1.05f)) {
                 continue;
             }
             if (hasVisualHull && visualHull.viewsUsed >= 6 && !isWithinVisualHullMargin(visualHull, p[0], p[2], 1)) {
@@ -585,7 +656,7 @@ public final class WalkRingToeSolver {
                         continue;
                     }
                     final float wx = visualHull.originX + (hc + 0.5f) * visualHull.cellSizeM;
-                    if (hasTarget && !targetConstraint.containsXZ(wx, wz, 1.05f)) {
+                    if (hasValidPolygon && !targetConstraint.containsXZ(wx, wz, 1.05f)) {
                         continue;
                     }
                     hullHeightsTmp[hullPosCount++] = hh;
@@ -675,11 +746,11 @@ public final class WalkRingToeSolver {
         final float spanZ = maxZ - minZ;
         final float maxSpan = Math.max(spanX, spanZ);
         final float effectiveMinCellM = hasVisualHull
-            ? Math.max(0.015f, Math.min(MIN_CELL_SIZE_M, visualHull.cellSizeM))
-            : MIN_CELL_SIZE_M;
+            ? Math.max(0.010f, Math.min(MIN_CELL_SIZE_M, visualHull.cellSizeM))
+            : (maxSpan < 1.5f ? 0.020f : MIN_CELL_SIZE_M);
         final float nnSpacingM = hasVisualHull ? 0.0f : estimateLocalPointSpacingXZ(aboveToePts);
         final float densityFloorCellM = Float.isFinite(nnSpacingM) && nnSpacingM > 0.0f
-            ? nnSpacingM * 1.15f
+            ? nnSpacingM * 1.10f
             : effectiveMinCellM;
         final float spanFitCellM = maxSpan / (MAX_DEM_DIM - 5.0f);
         final float cellSizeM = clamp(
@@ -688,12 +759,14 @@ public final class WalkRingToeSolver {
             MAX_CELL_SIZE_M
         );
 
-        // Add 2-cell border padding so exterior flood-fill always surrounds the object cleanly
-        final float padM = 2.0f * cellSizeM;
-        final float originX = minX - padM;
-        final float originZ = minZ - padM;
-        final int cols = Math.min(MAX_DEM_DIM, Math.max(6, (int) Math.ceil((spanX + 2.0f * padM) / cellSizeM)));
-        final int rows = Math.min(MAX_DEM_DIM, Math.max(6, (int) Math.ceil((spanZ + 2.0f * padM) / cellSizeM)));
+        // Center DEM grid symmetrically on [minX, maxX] x [minZ, maxZ] with 2-cell exterior padding
+        // so wall points on maxX/maxZ never spill into an extra quantization-inflated outer cell.
+        final int cols = Math.min(MAX_DEM_DIM, Math.max(6, (int) Math.ceil(spanX / cellSizeM) + 4));
+        final int rows = Math.min(MAX_DEM_DIM, Math.max(6, (int) Math.ceil(spanZ / cellSizeM) + 4));
+        final float midX = 0.5f * (minX + maxX);
+        final float midZ = 0.5f * (minZ + maxZ);
+        final float originX = midX - 0.5f * cols * cellSizeM;
+        final float originZ = midZ - 0.5f * rows * cellSizeM;
         final int cellCount = cols * rows;
 
         // Bucket heights per cell to compute robust p50 median + obs count
@@ -722,36 +795,49 @@ public final class WalkRingToeSolver {
         final float[] rawHeights = new float[cellCount];
         final byte[] rawObserved = new byte[cellCount];
         final boolean[] inAllowedRegion = new boolean[cellCount];
+        final float[] upperEnvHeights = new float[cellCount];
+        final float[] cellIqrM = new float[cellCount];
+        final boolean[] hasObsBucketArr = new boolean[cellCount];
+        final float[] hullHeightsGrid = hasVisualHull ? new float[cellCount] : null;
+        final byte[] hullMaskGrid = hasVisualHull ? new byte[cellCount] : null;
+
         for (int r = 0; r < rows; r++) {
             final float wz = originZ + (r + 0.5f) * cellSizeM;
             for (int c = 0; c < cols; c++) {
                 final int idx = r * cols + c;
                 final float wx = originX + (c + 0.5f) * cellSizeM;
                 if (hasTarget) {
-                    inAllowedRegion[idx] = targetConstraint.hasValidPolygon()
-                        ? targetConstraint.containsXZ(wx, wz, 1.0f)
-                        : targetConstraint.containsXZ(wx, wz, 1.15f);
+                    if (hasValidPolygon) {
+                        inAllowedRegion[idx] = targetConstraint.containsXZ(wx, wz, 1.0f);
+                    } else if (hasVisualHull) {
+                        inAllowedRegion[idx] =
+                            targetConstraint.containsXZ(wx, wz, 1.15f) ||
+                            isWithinVisualHullMargin(visualHull, wx, wz, 1);
+                    } else {
+                        inAllowedRegion[idx] = targetConstraint.containsXZ(wx, wz, 1.15f);
+                    }
                 } else {
                     inAllowedRegion[idx] = true;
                 }
                 final ArrayList<Float> list = buckets[idx];
                 final boolean hasObsBucket = list != null && !list.isEmpty();
-                float med = 0.0f;
+                hasObsBucketArr[idx] = hasObsBucket;
                 if (hasObsBucket) {
                     final float[] arr = new float[list.size()];
                     for (int k = 0; k < list.size(); k++) {
                         arr[k] = list.get(k);
                     }
                     Arrays.sort(arr);
-                    med = arr[arr.length / 2];
-                    if (med > 0.0f) {
-                        rawHeights[idx] = med;
+                    final float upperEnv = computeRobustUpperEnvelope(arr);
+                    upperEnvHeights[idx] = upperEnv;
+                    cellIqrM[idx] = arr.length >= 2
+                        ? (percentileSorted(arr, arr.length, 0.75) - percentileSorted(arr, arr.length, 0.25))
+                        : 0.0f;
+                    if (upperEnv > 0.0f) {
+                        rawHeights[idx] = upperEnv;
                         rawObserved[idx] = 1;
                     }
                 }
-
-                // Tri-Modal Visual Hull fusion: carve real concavities via min(H_hull, H_obs),
-                // fill textureless smooth walls from silhouette height, and discard external noise
                 if (hasVisualHull) {
                     if (visualHull.viewsUsed >= 6 && !isWithinVisualHullMargin(visualHull, wx, wz, 1)) {
                         inAllowedRegion[idx] = false;
@@ -759,17 +845,90 @@ public final class WalkRingToeSolver {
                         rawObserved[idx] = 0;
                     } else if (inAllowedRegion[idx]) {
                         final float hHull = sampleVisualHullHeight(visualHull, wx, wz);
+                        hullHeightsGrid[idx] = hHull;
                         if (hHull >= hToe) {
-                            if (obsCount[idx] >= 2 && hasObsBucket) {
-                                final float fusedH = Math.min(hHull, med);
-                                rawHeights[idx] = fusedH;
-                                rawObserved[idx] = fusedH > 0.0f ? (byte) 1 : (byte) 0;
-                            } else {
-                                rawHeights[idx] = hHull;
-                                rawObserved[idx] = 1;
-                                obsCount[idx] = Math.max(obsCount[idx], 2);
+                            hullMaskGrid[idx] = 1;
+                        } else if (visualHull.viewsUsed >= 6) {
+                            // Strictly outside 6+ view carved visual hull: discard stray exterior depth/MVS bleed
+                            rawHeights[idx] = 0.0f;
+                            rawObserved[idx] = 0;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Tri-Modal Visual Hull fusion without wall erosion:
+        // - Allow Math.min(hHull, hUpperEnv) ONLY in the deep interior (dEdge >= 2 * cellSizeM) with
+        //   strong, low-variance horizontal/sloped observation support (obsCount >= 5 && IQR < 0.08 m,
+        //   or spatially coherent 3x3 interior concavity with >= 5 local obs & IQR < 0.08 m).
+        // - On border/wall rings (dEdge < 2 * cellSizeM) or high vertical variance (real vertical walls):
+        //   preserve hHull (or max(hHull, hUpperEnv) capped at 1.05 * hHull) so Raw Depth never erodes a wall!
+        if (hasVisualHull) {
+            final float[] hullDEdgeM = computeDistanceToExteriorM(hullMaskGrid, cols, rows, cellSizeM);
+            final float deepInteriorDistM = 2.0f * cellSizeM - 1e-4f;
+            final float[] nbHeightsTmp = new float[9];
+
+            for (int r = 0; r < rows; r++) {
+                for (int c = 0; c < cols; c++) {
+                    final int idx = r * cols + c;
+                    if (!inAllowedRegion[idx] || hullMaskGrid[idx] == 0) {
+                        continue;
+                    }
+                    final float hHull = hullHeightsGrid[idx];
+                    final boolean hasObsBucket = hasObsBucketArr[idx];
+                    final float hUpperEnv = upperEnvHeights[idx];
+                    final boolean isDeepInterior = hullDEdgeM[idx] >= deepInteriorDistM;
+                    final boolean cellLowSpread = cellIqrM[idx] < 0.08f;
+
+                    boolean allowCarveDown = false;
+                    if (isDeepInterior && hasObsBucket && cellLowSpread) {
+                        if (obsCount[idx] >= 5) {
+                            allowCarveDown = true;
+                        } else if (obsCount[idx] >= 1 && hUpperEnv < hHull) {
+                            // Check 3x3 neighborhood for spatially coherent interior surface / concavity
+                            int localObs = 0;
+                            int localCells = 0;
+                            int localBelowHull = 0;
+                            for (int dr = -1; dr <= 1; dr++) {
+                                final int nr = r + dr;
+                                if (nr < 0 || nr >= rows) continue;
+                                for (int dc = -1; dc <= 1; dc++) {
+                                    final int nc = c + dc;
+                                    if (nc < 0 || nc >= cols) continue;
+                                    final int ni = nr * cols + nc;
+                                    if (hasObsBucketArr[ni] && hullMaskGrid[ni] != 0) {
+                                        localObs += obsCount[ni];
+                                        nbHeightsTmp[localCells++] = upperEnvHeights[ni];
+                                        if (upperEnvHeights[ni] < hullHeightsGrid[ni] - 0.005f) {
+                                            localBelowHull++;
+                                        }
+                                    }
+                                }
+                            }
+                            if (localObs >= 5 && localCells >= 4 && localBelowHull * 4 >= localCells * 3) {
+                                Arrays.sort(nbHeightsTmp, 0, localCells);
+                                final float nbIqr =
+                                    percentileSorted(nbHeightsTmp, localCells, 0.75) -
+                                    percentileSorted(nbHeightsTmp, localCells, 0.25);
+                                if (nbIqr < 0.08f) {
+                                    allowCarveDown = true;
+                                }
                             }
                         }
+                    }
+
+                    if (allowCarveDown) {
+                        final float fusedH = Math.min(hHull, hUpperEnv);
+                        rawHeights[idx] = fusedH;
+                        rawObserved[idx] = fusedH > 0.0f ? (byte) 1 : (byte) 0;
+                    } else {
+                        final float fusedH = (hasObsBucket && hUpperEnv > hHull)
+                            ? Math.min(hUpperEnv, hHull * 1.05f)
+                            : hHull;
+                        rawHeights[idx] = fusedH;
+                        rawObserved[idx] = 1;
+                        obsCount[idx] = Math.max(obsCount[idx], 2);
                     }
                 }
             }
@@ -942,10 +1101,10 @@ public final class WalkRingToeSolver {
             metrologyGrade = "VALID_IN_SITU";
         }
 
-        final float anchorOutX = hasTarget ? targetConstraint.anchorX : objCx;
-        final float anchorOutZ = hasTarget ? targetConstraint.anchorZ : objCz;
+        final float anchorOutX = objCx;
+        final float anchorOutZ = objCz;
         final float anchorY = (float) (planeA * anchorOutX + planeB * anchorOutZ + planeD);
-        final float effectiveRadiusM = (float) Math.max(0.15, Math.max(dimA, dimB) * 0.5);
+        final float effectiveRadiusM = (float) Math.max(0.15, Math.max(dimA, dimB) * 0.65 + 0.15);
         final double footprintAreaM2 = totalFootprintCells * (double) cellArea;
 
         // 12. Build compact < 60 KB localPreviewMesh (<= 32x32)
@@ -2396,29 +2555,39 @@ public final class WalkRingToeSolver {
             for (int pc = 0; pc < pCols; pc++) {
                 final int c0 = pc * stride;
                 final int c1 = Math.min(cols, c0 + stride);
-                float sumH = 0.0f;
-                int cnt = 0;
-                boolean anyObs = false;
-                boolean anyFootprint = false;
+                final int totalSubcells = Math.max(1, (r1 - r0) * (c1 - c0));
+                float sumActiveH = 0.0f;
+                int activeCount = 0;
+                boolean anyObsActive = false;
                 for (int r = r0; r < r1; r++) {
                     for (int c = c0; c < c1; c++) {
                         final int idx = r * cols + c;
-                        sumH += heights[idx];
-                        cnt++;
-                        if (observedMask[idx] != 0) anyObs = true;
-                        if (footprintMask[idx] != 0) anyFootprint = true;
+                        if (footprintMask[idx] != 0) {
+                            sumActiveH += heights[idx];
+                            activeCount++;
+                            if (observedMask[idx] != 0) {
+                                anyObsActive = true;
+                            }
+                        }
                     }
                 }
                 final int pIdx = pr * pCols + pc;
-                final float avgH = cnt > 0 ? Math.round((sumH / cnt) * 1000.0f) / 1000.0f : 0.0f;
-                pHeights[pIdx] = avgH;
-                pObs[pIdx] = anyObs ? (byte) 1 : (byte) 0;
-                if (anyObs) {
-                    pConf[pIdx] = 2; // directly observed
-                } else if (anyFootprint && avgH > 1e-4f) {
-                    pConf[pIdx] = 1; // interpolated inside footprint
+                // Average ONLY active footprint cells and activate macro-cell only if activeCount >= totalSubcells / 2
+                if (activeCount > 0 && activeCount * 2 >= totalSubcells) {
+                    final float avgH = Math.round((sumActiveH / activeCount) * 1000.0f) / 1000.0f;
+                    pHeights[pIdx] = avgH;
+                    pObs[pIdx] = anyObsActive ? (byte) 1 : (byte) 0;
+                    if (anyObsActive) {
+                        pConf[pIdx] = 2; // directly observed
+                    } else if (avgH > 1e-4f) {
+                        pConf[pIdx] = 1; // interpolated inside footprint
+                    } else {
+                        pConf[pIdx] = 0;
+                    }
                 } else {
-                    pConf[pIdx] = 0; // empty / outside footprint
+                    pHeights[pIdx] = 0.0f;
+                    pObs[pIdx] = 0;
+                    pConf[pIdx] = 0;
                 }
             }
         }
@@ -2521,12 +2690,13 @@ public final class WalkRingToeSolver {
                 final int i10 = r * cols + (c + stride);
                 final int i01 = (r + stride) * cols + c;
                 final int i11 = (r + stride) * cols + (c + stride);
-                if (
-                    footprintMask[i00] == 0 &&
-                    footprintMask[i10] == 0 &&
-                    footprintMask[i01] == 0 &&
-                    footprintMask[i11] == 0
-                ) {
+                // Strictly require all 4 corners active inside footprint (zero spikes dropping to exterior floor!)
+                final boolean allFourActive =
+                    footprintMask[i00] != 0 &&
+                    footprintMask[i10] != 0 &&
+                    footprintMask[i01] != 0 &&
+                    footprintMask[i11] != 0;
+                if (!allFourActive) {
                     continue;
                 }
                 final float x0 = originX + (c + 0.5f) * cellSizeM;
@@ -2555,19 +2725,32 @@ public final class WalkRingToeSolver {
                     addPt(triVerts, x0, y01, z1);
                     addPt(triVerts, x1, y11, z1);
                 } else if (!verified && gapLines.size() < 2400) {
+                    // Only interior unobserved quads (all 4 corners inside footprint)
                     addPt(gapLines, x0, y00, z0);
                     addPt(gapLines, x1, y10, z0);
                     addPt(gapLines, x0, y00, z0);
                     addPt(gapLines, x0, y01, z1);
                 }
 
+                // True Marching-Squares contour lines strictly inside fully active quads
                 if (contourLines.size() < 2400) {
-                    final int b00 = (int) Math.floor(heights[i00] / 0.5f);
-                    final int b10 = (int) Math.floor(heights[i10] / 0.5f);
-                    final int b01 = (int) Math.floor(heights[i01] / 0.5f);
-                    if (b00 != b10 || b00 != b01) {
-                        addPt(contourLines, x0, y00 + 0.01f, z0);
-                        addPt(contourLines, x1, y10 + 0.01f, z0);
+                    final float h00 = heights[i00];
+                    final float h10 = heights[i10];
+                    final float h01 = heights[i01];
+                    final float h11 = heights[i11];
+                    final float hMin = Math.min(Math.min(h00, h10), Math.min(h01, h11));
+                    final float hMax = Math.max(Math.max(h00, h10), Math.max(h01, h11));
+                    final int kStart = (int) Math.floor(hMin / 0.5f) + 1;
+                    final int kEnd = (int) Math.floor(hMax / 0.5f);
+                    for (int k = kStart; k <= kEnd && contourLines.size() + 6 <= 2400; k++) {
+                        final float level = k * 0.5f;
+                        emitMarchingSquaresContour(
+                            contourLines,
+                            level,
+                            x0, x1, z0, z1,
+                            h00, h10, h01, h11,
+                            planeA, planeB, planeD
+                        );
                     }
                 }
 
@@ -2577,9 +2760,9 @@ public final class WalkRingToeSolver {
             }
         }
 
-        final float[] sectorToeX = new float[SECTOR_COUNT];
-        final float[] sectorToeZ = new float[SECTOR_COUNT];
-        final float[] sectorMaxDist = new float[SECTOR_COUNT];
+        // Toe perimeter ring: radial p90 per populated sector, omitting empty sectors (never fallbackR spikes)
+        @SuppressWarnings("unchecked")
+        final ArrayList<float[]>[] sectorFootprint = new ArrayList[SECTOR_COUNT];
         for (int r = 0; r < rows; r++) {
             final float wz = originZ + (r + 0.5f) * cellSizeM;
             for (int c = 0; c < cols; c++) {
@@ -2588,29 +2771,50 @@ public final class WalkRingToeSolver {
                 final float wx = originX + (c + 0.5f) * cellSizeM;
                 final float d = (float) Math.hypot(wx - cx, wz - cz);
                 final int s = sectorOf(wx - cx, wz - cz);
-                if (d > sectorMaxDist[s]) {
-                    sectorMaxDist[s] = d;
-                    sectorToeX[s] = wx;
-                    sectorToeZ[s] = wz;
+                if (sectorFootprint[s] == null) {
+                    sectorFootprint[s] = new ArrayList<>(8);
                 }
+                sectorFootprint[s].add(new float[] { d, wx, wz });
             }
         }
 
+        final float[] sectorToeX = new float[SECTOR_COUNT];
+        final float[] sectorToeZ = new float[SECTOR_COUNT];
+        final boolean[] sectorHasToe = new boolean[SECTOR_COUNT];
         final ArrayList<Float> toeAnchored = new ArrayList<>(128);
         final ArrayList<Float> toeOpen = new ArrayList<>(128);
-        final float fallbackR = Math.max(0.20f, estDiameterM * 0.5f);
+
         for (int s = 0; s < SECTOR_COUNT; s++) {
-            if (sectorMaxDist[s] <= 0.01f) {
-                final double ang = Math.toRadians((s + 0.5) * (360.0 / SECTOR_COUNT));
-                sectorToeX[s] = cx + (float) (Math.cos(ang) * fallbackR);
-                sectorToeZ[s] = cz + (float) (Math.sin(ang) * fallbackR);
+            final ArrayList<float[]> list = sectorFootprint[s];
+            if (list == null || list.isEmpty()) {
+                continue;
             }
-            final float ty = (float) (planeA * sectorToeX[s] + planeB * sectorToeZ[s] + planeD) + 0.02f;
-            addPt(toePts, sectorToeX[s], ty, sectorToeZ[s]);
+            list.sort((a, b) -> Float.compare(a[0], b[0]));
+            final int p90Idx = Math.min(list.size() - 1, (int) Math.floor((list.size() - 1) * 0.90));
+            final float[] chosen = list.get(p90Idx);
+            sectorHasToe[s] = true;
+            sectorToeX[s] = chosen[1];
+            sectorToeZ[s] = chosen[2];
+            final float ty = (float) (planeA * chosen[1] + planeB * chosen[2] + planeD) + 0.02f;
+            addPt(toePts, chosen[1], ty, chosen[2]);
         }
 
         for (int s = 0; s < SECTOR_COUNT; s++) {
-            final int next = (s + 1) % SECTOR_COUNT;
+            if (!sectorHasToe[s]) {
+                continue;
+            }
+            // Connect to the next populated sector within <= 2 sector steps (never bridge wide empty gaps)
+            int next = -1;
+            for (int step = 1; step <= 2; step++) {
+                final int cand = (s + step) % SECTOR_COUNT;
+                if (sectorHasToe[cand]) {
+                    next = cand;
+                    break;
+                }
+            }
+            if (next < 0 || next == s) {
+                continue;
+            }
             final float y0 = (float) (planeA * sectorToeX[s] + planeB * sectorToeZ[s] + planeD) + 0.02f;
             final float y1 = (float) (planeA * sectorToeX[next] + planeB * sectorToeZ[next] + planeD) + 0.02f;
             final ArrayList<Float> target = (toeSectorAnchored[s] && toeSectorAnchored[next]) ? toeAnchored : toeOpen;
@@ -2637,6 +2841,107 @@ public final class WalkRingToeSolver {
         dst.add(x);
         dst.add(y);
         dst.add(z);
+    }
+
+    /**
+     * Robust upper envelope for a sorted ascending column of cell heights (replaces p50 median):
+     * rejects upper outliers > p85 + 2.5*MAD, then takes p90 (count >= 5), p80 (count == 3..4), or max (<= 2).
+     */
+    private static float computeRobustUpperEnvelope(final float[] sorted) {
+        final int n = sorted.length;
+        if (n == 0) {
+            return 0.0f;
+        }
+        if (n == 1) {
+            return sorted[0];
+        }
+        int cleanLen = n;
+        if (n >= 4) {
+            final float med = percentileSorted(sorted, n, 0.50);
+            final float[] devs = new float[n];
+            for (int i = 0; i < n; i++) {
+                devs[i] = Math.abs(sorted[i] - med);
+            }
+            Arrays.sort(devs);
+            final float mad = Math.max(percentileSorted(devs, n, 0.50), 0.015f);
+            final float p85 = percentileSorted(sorted, n, 0.85);
+            final float upperFence = p85 + 2.5f * mad;
+            while (cleanLen > 1 && sorted[cleanLen - 1] > upperFence) {
+                cleanLen--;
+            }
+        }
+        if (cleanLen >= 5) {
+            return percentileSorted(sorted, cleanLen, 0.90);
+        }
+        if (cleanLen >= 3) {
+            return percentileSorted(sorted, cleanLen, 0.80);
+        }
+        return sorted[cleanLen - 1];
+    }
+
+    private static float percentileSorted(final float[] sorted, final int len, final double p) {
+        if (len <= 0) {
+            return 0.0f;
+        }
+        if (len == 1) {
+            return sorted[0];
+        }
+        final double idx = p * (len - 1);
+        final int lo = Math.max(0, Math.min(len - 1, (int) Math.floor(idx)));
+        final int hi = Math.min(len - 1, lo + 1);
+        final double frac = idx - lo;
+        return (float) (sorted[lo] + (sorted[hi] - sorted[lo]) * frac);
+    }
+
+    private static void emitMarchingSquaresContour(
+        final ArrayList<Float> contourLines,
+        final float level,
+        final float x0,
+        final float x1,
+        final float z0,
+        final float z1,
+        final float h00,
+        final float h10,
+        final float h01,
+        final float h11,
+        final double planeA,
+        final double planeB,
+        final double planeD
+    ) {
+        final float[] pts = new float[8]; // up to 4 edge intersections (x, z)
+        int count = 0;
+        if ((h00 < level) != (h10 < level)) {
+            final float t = (level - h00) / (h10 - h00);
+            pts[count * 2] = x0 + t * (x1 - x0);
+            pts[count * 2 + 1] = z0;
+            count++;
+        }
+        if ((h10 < level) != (h11 < level)) {
+            final float t = (level - h10) / (h11 - h10);
+            pts[count * 2] = x1;
+            pts[count * 2 + 1] = z0 + t * (z1 - z0);
+            count++;
+        }
+        if ((h01 < level) != (h11 < level)) {
+            final float t = (level - h01) / (h11 - h01);
+            pts[count * 2] = x0 + t * (x1 - x0);
+            pts[count * 2 + 1] = z1;
+            count++;
+        }
+        if ((h00 < level) != (h01 < level)) {
+            final float t = (level - h00) / (h01 - h00);
+            pts[count * 2] = x0;
+            pts[count * 2 + 1] = z0 + t * (z1 - z0);
+            count++;
+        }
+        if (count >= 2) {
+            final float ax = pts[0], az = pts[1];
+            final float bx = pts[2], bz = pts[3];
+            final float ay = (float) (planeA * ax + planeB * az + planeD + level) + 0.01f;
+            final float by = (float) (planeA * bx + planeB * bz + planeD + level) + 0.01f;
+            addPt(contourLines, ax, ay, az);
+            addPt(contourLines, bx, by, bz);
+        }
     }
 
     private static float[] toFloatArray(final ArrayList<Float> list) {
