@@ -345,6 +345,9 @@ public class ArCoreCameraRenderer implements GLSurfaceView.Renderer {
             if (frameListener != null) {
                 try {
                     frameListener.onArFrame(activeSession, frame);
+                } catch (Throwable listenerEx) {
+                    Log.w(TAG, "Unexpected ARCore frameListener error", listenerEx);
+                    frameListener.onArRenderError(listenerEx.getClass().getSimpleName());
                 } finally {
                     pendingGlFallbackFrame = null;
                 }

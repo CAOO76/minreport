@@ -477,4 +477,113 @@ public class CapturePipelineUnitTest {
         assertEquals(320.0f, synthetic[2], 1e-3f);
         assertEquals(240.0f, synthetic[3], 1e-3f);
     }
+
+    @Test
+    public void testAdaptiveKeyframeStepWithFloat2AutoCenterNeverThrowsOob() {
+        // Primary regression guard: autoCenterXZ is float[2] {cx, cz}; must NEVER index [2]
+        final float expectedMid = 0.14f * (float) Math.hypot(1.0 - 0.0, 4.0 - 0.0);
+        assertEquals(
+            expectedMid,
+            CapturePipelineHelper.computeAdaptiveKeyframeStepM(
+                new float[] { 1.0f, 1.4f, 4.0f },
+                new float[] { 0.0f, 0.0f },
+                0.40f,
+                1.30f
+            ),
+            1e-4f
+        );
+
+        // Null and short array edge cases -> return minStepM without throwing
+        assertEquals(
+            0.40f,
+            CapturePipelineHelper.computeAdaptiveKeyframeStepM(null, new float[] { 0.0f, 0.0f }, 0.40f, 1.30f),
+            1e-6f
+        );
+        assertEquals(
+            0.40f,
+            CapturePipelineHelper.computeAdaptiveKeyframeStepM(new float[] { 1.0f, 1.4f, 4.0f }, null, 0.40f, 1.30f),
+            1e-6f
+        );
+        assertEquals(
+            0.40f,
+            CapturePipelineHelper.computeAdaptiveKeyframeStepM(new float[] { 1.0f, 4.0f }, new float[] { 0.0f, 0.0f }, 0.40f, 1.30f),
+            1e-6f
+        );
+        assertEquals(
+            0.40f,
+            CapturePipelineHelper.computeAdaptiveKeyframeStepM(new float[] { 1.0f, 1.4f, 4.0f }, new float[] { 0.0f }, 0.40f, 1.30f),
+            1e-6f
+        );
+
+        // Non-finite inputs -> return minStepM
+        assertEquals(
+            0.40f,
+            CapturePipelineHelper.computeAdaptiveKeyframeStepM(new float[] { Float.NaN, 1.4f, 4.0f }, new float[] { 0.0f, 0.0f }, 0.40f, 1.30f),
+            1e-6f
+        );
+        assertEquals(
+            0.40f,
+            CapturePipelineHelper.computeAdaptiveKeyframeStepM(new float[] { 1.0f, 1.4f, 4.0f }, new float[] { 0.0f, Float.POSITIVE_INFINITY }, 0.40f, 1.30f),
+            1e-6f
+        );
+
+        // Large radius -> clamped to maxStepM (1.30f)
+        assertEquals(
+            1.30f,
+            CapturePipelineHelper.computeAdaptiveKeyframeStepM(
+                new float[] { 20.0f, 1.4f, 0.0f },
+                new float[] { 0.0f, 0.0f },
+                0.40f,
+                1.30f
+            ),
+            1e-6f
+        );
+
+        // Small radius (< 1.5 m, 0.14 * 1.5 = 0.21) -> clamped to minStepM (0.40f)
+        assertEquals(
+            0.40f,
+            CapturePipelineHelper.computeAdaptiveKeyframeStepM(
+                new float[] { 0.5f, 1.4f, 0.5f },
+                new float[] { 0.0f, 0.0f },
+                0.40f,
+                1.30f
+            ),
+            1e-6f
+        );
+    }
+
+    @Test
+    public void testGyroDeadlockBypassRespects450msSinceLastCapture() {
+        final CapturePipelineHelper.BurstCaptureState state = new CapturePipelineHelper.BurstCaptureState();
+        final long startMs = 40_000L;
+        state.resetAll(startMs);
+        state.beginBurstIfNeeded(startMs);
+
+        // Before 450 ms -> gyro gate remains enforced
+        assertFalse(state.shouldBypassGyroForDeadlock(startMs + 200L, 450L));
+
+        // Simulate BURST_WINDOW_MS (220 ms) timeout resetting burstStartMs with no accepted candidate
+        state.clearBurst();
+        state.beginBurstIfNeeded(startMs + 220L);
+        assertFalse(state.shouldBypassGyroForDeadlock(startMs + 449L, 450L));
+
+        // At startMs + 450 ms, bypass MUST engage despite burstStartMs reset at +220 ms
+        assertTrue(state.shouldBypassGyroForDeadlock(startMs + 450L, 450L));
+
+        // Once a candidate is accepted at +460 ms, bypass returns false immediately
+        final long acceptedAtMs = startMs + 460L;
+        assertTrue(state.commitExtractedCandidate(makeCandidate(11.0, false), acceptedAtMs));
+        assertFalse(state.shouldBypassGyroForDeadlock(acceptedAtMs + 600L, 450L));
+
+        // Consume committed candidate and start next burst; timer resets to acceptedAtMs
+        assertNotNull(state.consumeCommittedCandidate());
+        state.beginBurstIfNeeded(acceptedAtMs + 40L);
+        assertFalse(state.shouldBypassGyroForDeadlock(acceptedAtMs + 240L, 450L));
+
+        // Another 220 ms burst reset without candidate still measures elapsed time from acceptedAtMs
+        state.clearBurst();
+        state.beginBurstIfNeeded(acceptedAtMs + 260L);
+        assertFalse(state.shouldBypassGyroForDeadlock(acceptedAtMs + 449L, 450L));
+        assertTrue(state.shouldBypassGyroForDeadlock(acceptedAtMs + 450L, 450L));
+    }
 }

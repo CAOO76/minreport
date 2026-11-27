@@ -163,7 +163,15 @@ public final class OfflineVioMvsEngine {
      * using known ARCore SE(3) poses. Covers 0.4 m to 30.0 m with NO 5 m depth ceiling.
      */
     public int ingestKeyframeIncremental(final KeyframeFrame kf) {
-        if (kf == null || kf.luma == null || kf.width < 32 || kf.height < 24) {
+        if (
+            kf == null ||
+            kf.luma == null ||
+            kf.width <= 0 ||
+            kf.height <= 0 ||
+            kf.width < 32 ||
+            kf.height < 24 ||
+            (long) kf.luma.length < (long) kf.width * (long) kf.height
+        ) {
             return 0;
         }
         extractFastOrientedBrief(kf);

@@ -32,6 +32,35 @@ public final class CapturePipelineHelper {
     private CapturePipelineHelper() {}
 
     /**
+     * Computes adaptive keyframe step Δd = clamp(0.14 * R_est, minStepM, maxStepM)
+     * from a 3D camera position (x, y, z) and a 2D horizontal center (cx, cz).
+     * Strictly indexes autoCenterXZ[1] for Z and guards against null, short, or non-finite inputs.
+     */
+    public static float computeAdaptiveKeyframeStepM(
+        final float[] camPos,
+        final float[] autoCenterXZ,
+        final float minStepM,
+        final float maxStepM
+    ) {
+        if (
+            camPos == null || camPos.length < 3 ||
+            autoCenterXZ == null || autoCenterXZ.length < 2 ||
+            !Float.isFinite(camPos[0]) || !Float.isFinite(camPos[2]) ||
+            !Float.isFinite(autoCenterXZ[0]) || !Float.isFinite(autoCenterXZ[1])
+        ) {
+            return minStepM;
+        }
+        final float rEst = Math.max(
+            1.5f,
+            (float) Math.hypot(camPos[0] - autoCenterXZ[0], camPos[2] - autoCenterXZ[1])
+        );
+        if (!Float.isFinite(rEst)) {
+            return minStepM;
+        }
+        return Math.max(minStepM, Math.min(maxStepM, 0.14f * rEst));
+    }
+
+    /**
      * Converts YUV_420_888 plane ByteBuffers into packed NV21 (Y followed by interleaved VU).
      * Assumes yPixelStride == 1 (standard Android camera Y plane).
      */
@@ -710,6 +739,14 @@ public final class CapturePipelineHelper {
 
         public boolean isTimedOutWithNoCandidate(final long nowMs, final long thresholdMs) {
             return active && bestCandidate == null && burstStartMs > 0L && (nowMs - burstStartMs) >= thresholdMs;
+        }
+
+        public boolean shouldBypassGyroForDeadlock(final long nowMs, final long thresholdMs) {
+            if (!active || bestCandidate != null) {
+                return false;
+            }
+            final long refMs = Math.max(capturingStartedAtMs, lastCandidateAcceptedAtMs);
+            return refMs > 0L && (nowMs - refMs) >= thresholdMs;
         }
 
         public void beginBurstIfNeeded(final long nowMs) {

@@ -340,14 +340,22 @@ public final class WalkRingToeSolver {
     private static float[] computeMedianPointsXZ(final List<float[]> points3D) {
         final float[] xs = new float[points3D.size()];
         final float[] zs = new float[points3D.size()];
+        int valid = 0;
         for (int i = 0; i < points3D.size(); i++) {
             final float[] p = points3D.get(i);
-            xs[i] = p[0];
-            zs[i] = p[2];
+            if (p == null || p.length < 3 || !Float.isFinite(p[0]) || !Float.isFinite(p[2])) {
+                continue;
+            }
+            xs[valid] = p[0];
+            zs[valid] = p[2];
+            valid++;
         }
-        Arrays.sort(xs);
-        Arrays.sort(zs);
-        return new float[] { xs[xs.length / 2], zs[zs.length / 2] };
+        if (valid == 0) {
+            return new float[] { 0.0f, -DEFAULT_FORWARD_PROJECTION_M };
+        }
+        Arrays.sort(xs, 0, valid);
+        Arrays.sort(zs, 0, valid);
+        return new float[] { xs[valid / 2], zs[valid / 2] };
     }
 
     public static MetrologyResult solve(
@@ -434,7 +442,14 @@ public final class WalkRingToeSolver {
         }
         if (inEnvelopePoints.size() < 12) {
             inEnvelopePoints.clear();
-            inEnvelopePoints.addAll(points);
+            for (float[] p : points) {
+                if (
+                    p != null && p.length >= 3 &&
+                    Float.isFinite(p[0]) && Float.isFinite(p[1]) && Float.isFinite(p[2])
+                ) {
+                    inEnvelopePoints.add(p);
+                }
+            }
         }
 
         // 4. Gravity-Regularized Walk-Ring Toe Ground Plane Solver

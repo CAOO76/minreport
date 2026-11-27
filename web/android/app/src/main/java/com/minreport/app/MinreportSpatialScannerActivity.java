@@ -112,7 +112,7 @@ public class MinreportSpatialScannerActivity
     public static final String PREFS_CALIBRATION_NAME = "minreport_spatial_calibration";
 
     private static final String TAG = "MinreportSpatialScanner";
-    private static final String SCANNER_ENGINE_VERSION = "2.0.3-vio-mvs-java";
+    private static final String SCANNER_ENGINE_VERSION = "2.0.4-vio-mvs-java";
     private static final int KEYCODE_XCOVER_KEY = 1015;
     private static final int KEYCODE_XCOVER_TOP_KEY = 1079;
 
@@ -1031,7 +1031,7 @@ public class MinreportSpatialScannerActivity
         this.hudBuildHeartbeatText.setSingleLine(true);
         this.hudBuildHeartbeatText.setEllipsize(TextUtils.TruncateAt.END);
         this.hudBuildHeartbeatText.setPadding(0, dp(1), 0, 0);
-        this.hudBuildHeartbeatText.setText("2.0.3 · 0 PTS");
+        this.hudBuildHeartbeatText.setText("2.0.4 · 0 PTS");
         centerBlock.addView(
             this.hudBuildHeartbeatText,
             new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
@@ -1395,8 +1395,9 @@ public class MinreportSpatialScannerActivity
                 );
 
                 // 4. Adaptive keyframe trigger: Δd = clamp(0.14 * R_est, 0.40, 1.30) OR Δyaw >= 12° (cap 32)
-                final float rEst = Math.max(1.5f, (float) Math.hypot(camPos[0] - autoCenter[0], camPos[2] - autoCenter[2]));
-                final float stepThreshM = clamp(0.14f * rEst, MIN_KF_STEP_M, MAX_KF_STEP_M);
+                final float stepThreshM = CapturePipelineHelper.computeAdaptiveKeyframeStepM(
+                    camPos, autoCenter, MIN_KF_STEP_M, MAX_KF_STEP_M
+                );
                 final boolean kfTriggered = shouldTriggerKeyframe(camPos, fwdX, fwdZ, stepThreshM);
 
                 if (savedKeyframes.size() < MAX_KEYFRAME_PHOTOS && (kfTriggered || burstState.isActive())) {
@@ -1629,7 +1630,7 @@ public class MinreportSpatialScannerActivity
 
         if (
             liveGyroNormRadS > MAX_CAPTURE_GYRO_RAD_S &&
-            !burstState.isTimedOutWithNoCandidate(nowMs, 450L)
+            !burstState.shouldBypassGyroForDeadlock(nowMs, 450L)
         ) {
             lastSpeedAlertAtMs = nowMs;
             burstState.recordNonAcquireDiag(CapturePipelineHelper.DIAG_GYR);
@@ -1644,62 +1645,69 @@ public class MinreportSpatialScannerActivity
                 final int w = camImg.getWidth();
                 final int h = camImg.getHeight();
                 final Image.Plane[] planes = camImg.getPlanes();
-                final byte[] nv21 = CapturePipelineHelper.extractNv21FromPlanes(
-                    planes[0].getBuffer(),
-                    planes[0].getRowStride(),
-                    planes[0].getPixelStride(),
-                    planes[1].getBuffer(),
-                    planes[1].getRowStride(),
-                    planes[1].getPixelStride(),
-                    planes[2].getBuffer(),
-                    planes[2].getRowStride(),
-                    planes[2].getPixelStride(),
-                    w,
-                    h
-                );
-                if (nv21 == null || nv21.length == 0) {
+                if (
+                    planes == null || planes.length < 3 ||
+                    planes[0] == null || planes[1] == null || planes[2] == null
+                ) {
                     burstState.recordAcquireFailure(CapturePipelineHelper.DIAG_ERR, nowMs);
                 } else {
-                    final double blurScore = CapturePipelineHelper.computeLaplacianVarianceFromY(nv21, w, h);
-                    if (!Double.isFinite(blurScore) || blurScore < 0.0) {
+                    final byte[] nv21 = CapturePipelineHelper.extractNv21FromPlanes(
+                        planes[0].getBuffer(),
+                        planes[0].getRowStride(),
+                        planes[0].getPixelStride(),
+                        planes[1].getBuffer(),
+                        planes[1].getRowStride(),
+                        planes[1].getPixelStride(),
+                        planes[2].getBuffer(),
+                        planes[2].getRowStride(),
+                        planes[2].getPixelStride(),
+                        w,
+                        h
+                    );
+                    if (nv21 == null || nv21.length == 0) {
                         burstState.recordAcquireFailure(CapturePipelineHelper.DIAG_ERR, nowMs);
                     } else {
-                        acquiredPrimary = true;
-                        if (blurScore < CapturePipelineHelper.BLUR_VARIANCE_THRESHOLD) {
-                            rejectedBlurCount++;
-                            if (blurScore < CapturePipelineHelper.BLUR_LOW_THRESHOLD) {
-                                lastSpeedAlertAtMs = nowMs;
+                        final double blurScore = CapturePipelineHelper.computeLaplacianVarianceFromY(nv21, w, h);
+                        if (!Double.isFinite(blurScore) || blurScore < 0.0) {
+                            burstState.recordAcquireFailure(CapturePipelineHelper.DIAG_ERR, nowMs);
+                        } else {
+                            acquiredPrimary = true;
+                            if (blurScore < CapturePipelineHelper.BLUR_VARIANCE_THRESHOLD) {
+                                rejectedBlurCount++;
+                                if (blurScore < CapturePipelineHelper.BLUR_LOW_THRESHOLD) {
+                                    lastSpeedAlertAtMs = nowMs;
+                                }
                             }
-                        }
-                        if (burstState.shouldEvaluateScore(blurScore)) {
-                            burstState.tryAcceptCandidate(blurScore, nowMs, () -> {
-                                final byte[] lumaSmall = CapturePipelineHelper.downscaleLumaFromNv21(
-                                    nv21,
-                                    w,
-                                    h,
-                                    MVS_LUMA_W,
-                                    MVS_LUMA_H
-                                );
-                                final float[] rWc = poseToRowMajorRotation3x3(camPose);
-                                final float[] tWc = camPose.getTranslation();
-                                final float[] intr = resolveCameraIntrinsicsLocked(camera, w, h, false);
-                                return new CapturePipelineHelper.BurstCandidate(
-                                    blurScore,
-                                    nv21,
-                                    lumaSmall,
-                                    w,
-                                    h,
-                                    rWc,
-                                    tWc,
-                                    intr,
-                                    frame.getTimestamp(),
-                                    liveImuPitchDeg,
-                                    liveImuRollDeg,
-                                    false
-                                );
-                            });
-                        } else if (burstState.getBestCandidate() != null) {
-                            burstState.recordAcquireSuccess();
+                            if (burstState.shouldEvaluateScore(blurScore)) {
+                                burstState.tryAcceptCandidate(blurScore, nowMs, () -> {
+                                    final byte[] lumaSmall = CapturePipelineHelper.downscaleLumaFromNv21(
+                                        nv21,
+                                        w,
+                                        h,
+                                        MVS_LUMA_W,
+                                        MVS_LUMA_H
+                                    );
+                                    final float[] rWc = poseToRowMajorRotation3x3(camPose);
+                                    final float[] tWc = camPose.getTranslation();
+                                    final float[] intr = resolveCameraIntrinsicsLocked(camera, w, h, false);
+                                    return new CapturePipelineHelper.BurstCandidate(
+                                        blurScore,
+                                        nv21,
+                                        lumaSmall,
+                                        w,
+                                        h,
+                                        rWc,
+                                        tWc,
+                                        intr,
+                                        frame.getTimestamp(),
+                                        liveImuPitchDeg,
+                                        liveImuRollDeg,
+                                        false
+                                    );
+                                });
+                            } else if (burstState.getBestCandidate() != null) {
+                                burstState.recordAcquireSuccess();
+                            }
                         }
                     }
                 }
@@ -1741,8 +1749,10 @@ public class MinreportSpatialScannerActivity
                             MVS_LUMA_W,
                             MVS_LUMA_H
                         );
-                        final float[] rWc = poseToRowMajorRotation3x3(camPose);
-                        final float[] tWc = camPose.getTranslation();
+                        final Pose rawGlPose = camera.getDisplayOrientedPose();
+                        final Pose glPose = rawGlPose != null ? rawGlPose : camPose;
+                        final float[] rWc = poseToRowMajorRotation3x3(glPose);
+                        final float[] tWc = glPose.getTranslation();
                         final float[] intr = resolveCameraIntrinsicsLocked(camera, w, h, true);
                         return new CapturePipelineHelper.BurstCandidate(
                             blurScore,
@@ -2445,7 +2455,7 @@ public class MinreportSpatialScannerActivity
             liveDimsText.setText("Ø --.- m · H --.- m");
             liveKfCountText.setText("0 KF");
             liveKfCountText.setTextColor(COLOR_DISABLED);
-            hudBuildHeartbeatText.setText(String.format(Locale.US, "2.0.3 · %d PTS", livePtsCount));
+            hudBuildHeartbeatText.setText(String.format(Locale.US, "2.0.4 · %d PTS", livePtsCount));
             hudBuildHeartbeatText.setVisibility(View.VISIBLE);
 
             // Always clickable in READY_TRACKING so operator can arm pendingStartCapture before TRACKING locks
@@ -2482,7 +2492,7 @@ public class MinreportSpatialScannerActivity
             }
             liveKfCountText.setText(String.format(Locale.US, "%d KF · %.1f m", kfCount, distM));
             liveKfCountText.setTextColor(kfCount > 0 ? COLOR_PRIMARY : COLOR_COPPER);
-            hudBuildHeartbeatText.setText(String.format(Locale.US, "2.0.3 · %d PTS · F%d", livePtsCount, frameCount));
+            hudBuildHeartbeatText.setText(String.format(Locale.US, "2.0.4 · %d PTS · F%d", livePtsCount, frameCount));
             hudBuildHeartbeatText.setVisibility(View.VISIBLE);
 
             primaryActionButton.setEnabled(true);
