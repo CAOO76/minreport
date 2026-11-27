@@ -1,9 +1,11 @@
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import multer from 'multer';
 import {
+    CasPreflightBatchRequestSchema,
     CasStorageScopeSchema,
     DigestUploadQuerySchema,
     MediaDigestionProfileSchema,
+    type CasMediaDescriptor,
     type CasStorageScope,
     type MediaDigestionProfile,
 } from '../contracts/media.contracts';
@@ -308,6 +310,28 @@ function resolveEffectiveMediaScope(
     return requestedScope;
 }
 
+export const CAS_PREFLIGHT_BATCH_CONCURRENCY = 8;
+
+async function runBoundedConcurrency<T>(
+    items: readonly T[],
+    concurrency: number,
+    worker: (item: T) => Promise<void>
+): Promise<void> {
+    if (items.length === 0) return;
+    const workerCount = Math.min(Math.max(1, concurrency), items.length);
+    let nextIndex = 0;
+    await Promise.all(
+        Array.from({ length: workerCount }, async () => {
+            while (true) {
+                const current = nextIndex;
+                nextIndex += 1;
+                if (current >= items.length) break;
+                await worker(items[current]);
+            }
+        })
+    );
+}
+
 /**
  * GET /api/media/cas-preflight/:sha256
  * Verifica en < 10ms si el hash SHA-256 ya reside en CAS para ahorrar 100% de ancho de banda de subida.
@@ -334,6 +358,39 @@ mediaRouter.get('/cas-preflight/:sha256', resolveMinReportSessionScope, async (r
         return res.status(500).json({ error: err?.message || 'Error en preflight CAS.' });
     }
 });
+
+/**
+ * POST /api/media/cas-preflight-batch
+ * Verifica en lote (1..64 SHA-256) si los activos ya residen en CAS bajo aislamiento estricto de `ctx.tenantId`.
+ */
+export async function handleCasPreflightBatch(req: ScopedRequest, res: Response) {
+    try {
+        const ctx = req.opermaqContext!;
+        const parsed = CasPreflightBatchRequestSchema.safeParse(req.body || {});
+        if (!parsed.success) {
+            return res.status(400).json({
+                error: 'Parámetros de preflight batch CAS inválidos.',
+                details: parsed.error.format(),
+            });
+        }
+
+        const { hashes, scope, profile } = parsed.data;
+        const effectiveScope = resolveEffectiveMediaScope(ctx, scope, profile);
+        const uniqueHashes = Array.from(new Set(hashes));
+        const results: Record<string, { exists: boolean; descriptor?: CasMediaDescriptor }> = {};
+
+        await runBoundedConcurrency(uniqueHashes, CAS_PREFLIGHT_BATCH_CONCURRENCY, async (sha256) => {
+            const hit = await CasStorageService.preflightCheck(sha256, effectiveScope, ctx.tenantId);
+            results[sha256] = hit ? { exists: true, descriptor: hit } : { exists: false };
+        });
+
+        return res.status(200).json({ results });
+    } catch (err: any) {
+        return res.status(500).json({ error: err?.message || 'Error en preflight batch CAS.' });
+    }
+}
+
+mediaRouter.post('/cas-preflight-batch', resolveMinReportSessionScope, handleCasPreflightBatch);
 
 /**
  * POST /api/media/digest-upload

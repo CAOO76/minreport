@@ -192,6 +192,56 @@ function fitCameraToBox(
     controls.update();
 }
 
+/**
+ * Aplica estado visual wireframe / capa de confianza ANSI/ISA-101 (`COLOR_0`)
+ * preservando color neutro (`0xffffff`) cuando el material posee textura fotográfica real (`mat.map`).
+ */
+export function applyStockpileVisualMaterialState(
+    root: THREE.Object3D | null,
+    wireframe: boolean,
+    confidenceLayer: boolean
+): void {
+    if (!root) return;
+    root.traverse((obj) => {
+        const mesh = obj as THREE.Mesh;
+        if (!mesh.isMesh || !mesh.material) return;
+        const hasColorAttr = Boolean(mesh.geometry?.getAttribute('color'));
+        const useVertexColors = confidenceLayer && hasColorAttr && !wireframe;
+        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        for (const mat of mats) {
+            if (mat instanceof THREE.MeshStandardMaterial) {
+                const hasPhotoTexture = Boolean(mat.map);
+                mat.wireframe = wireframe;
+                mat.vertexColors = useVertexColors;
+                if (useVertexColors) {
+                    mat.color.setHex(0xffffff);
+                    mat.emissive.setHex(0x000000);
+                } else if (hasPhotoTexture && !wireframe) {
+                    mat.color.setHex(0xffffff);
+                    mat.emissive.setHex(0x000000);
+                } else {
+                    mat.color.setHex(wireframe ? 0x00aeef : 0xc68346);
+                    mat.emissive.setHex(wireframe ? 0x004966 : 0x000000);
+                }
+                mat.needsUpdate = true;
+            } else if ('wireframe' in mat) {
+                const basicMat = mat as THREE.MeshBasicMaterial;
+                const hasPhotoTexture = Boolean(basicMat.map);
+                basicMat.wireframe = wireframe;
+                basicMat.vertexColors = useVertexColors;
+                basicMat.color?.setHex(
+                    useVertexColors || (hasPhotoTexture && !wireframe)
+                        ? 0xffffff
+                        : wireframe
+                          ? 0x00aeef
+                          : 0xc68346
+                );
+                mat.needsUpdate = true;
+            }
+        }
+    });
+}
+
 export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
     meshUrl,
     localPreviewMesh,
@@ -380,35 +430,7 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
     // Actualizar material wireframe / capa de confianza ANSI/ISA-101 (`COLOR_0`) sin recrear la escena
     const applyVisualMaterialState = useCallback(
         (root: THREE.Object3D | null, wireframe: boolean, confidenceLayer: boolean) => {
-            if (!root) return;
-            root.traverse((obj) => {
-                const mesh = obj as THREE.Mesh;
-                if (!mesh.isMesh || !mesh.material) return;
-                const hasColorAttr = Boolean(mesh.geometry?.getAttribute('color'));
-                const useVertexColors = confidenceLayer && hasColorAttr && !wireframe;
-                const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-                for (const mat of mats) {
-                    if (mat instanceof THREE.MeshStandardMaterial) {
-                        mat.wireframe = wireframe;
-                        mat.vertexColors = useVertexColors;
-                        if (useVertexColors) {
-                            mat.color.setHex(0xffffff);
-                            mat.emissive.setHex(0x000000);
-                        } else {
-                            mat.color.setHex(wireframe ? 0x00aeef : 0xc68346);
-                            mat.emissive.setHex(wireframe ? 0x004966 : 0x000000);
-                        }
-                        mat.needsUpdate = true;
-                    } else if ('wireframe' in mat) {
-                        (mat as THREE.MeshBasicMaterial).wireframe = wireframe;
-                        (mat as THREE.MeshBasicMaterial).vertexColors = useVertexColors;
-                        (mat as THREE.MeshBasicMaterial).color?.setHex(
-                            useVertexColors ? 0xffffff : wireframe ? 0x00aeef : 0xc68346
-                        );
-                        mat.needsUpdate = true;
-                    }
-                }
-            });
+            applyStockpileVisualMaterialState(root, wireframe, confidenceLayer);
             requestRenderRef.current?.();
         },
         []

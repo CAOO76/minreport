@@ -21,6 +21,8 @@ import {
     SpatialScanRejectedError,
     analyzeSpatialScan,
     formatStockpileVolumeM3,
+    getCachedCalibration,
+    isCalibrationValid,
     persistCaptureSessionOffline,
     saveOfflineSpatialPayload,
     startNativeSpatialScan,
@@ -123,6 +125,59 @@ const MAX_AUTO_THUMBS = 4;
 function getActiveTenantId(): string | undefined {
     if (typeof window === 'undefined') return undefined;
     return window.localStorage.getItem('minreport_active_account_id')?.trim() || undefined;
+}
+
+export function resolveMeasurementHardwareTelemetry(params: {
+    spatialScan?: SpatialScanNativeResult | null;
+    capability?: { manufacturer?: string | null; model?: string | null } | null;
+    cachedCalibration?: ReturnType<typeof getCachedCalibration>;
+}): {
+    device_model?: string;
+    calibration_id?: string;
+    calibration_scale_factor?: number;
+    scanner_engine_version?: string;
+} {
+    const validCal = isCalibrationValid(params.cachedCalibration)
+        ? params.cachedCalibration
+        : null;
+    const capabilityDeviceModel = [params.capability?.manufacturer, params.capability?.model]
+        .filter((part): part is string => typeof part === 'string' && part.trim().length > 0)
+        .join(' ')
+        .trim();
+    const resolvedDeviceModel =
+        (
+            params.spatialScan?.deviceModel?.trim() ||
+            capabilityDeviceModel ||
+            validCal?.deviceModel?.trim() ||
+            ''
+        ).slice(0, 120) || undefined;
+    const resolvedCalibrationId =
+        (
+            params.spatialScan?.calibrationId?.trim() ||
+            validCal?.calibrationId?.trim() ||
+            ''
+        ).slice(0, 128) || undefined;
+    const resolvedCalibrationScaleFactor =
+        typeof params.spatialScan?.calibrationScaleFactor === 'number' &&
+        Number.isFinite(params.spatialScan.calibrationScaleFactor)
+            ? params.spatialScan.calibrationScaleFactor
+            : typeof validCal?.scaleFactor === 'number' &&
+                Number.isFinite(validCal.scaleFactor)
+              ? validCal.scaleFactor
+              : undefined;
+    const resolvedScannerEngineVersion =
+        (params.spatialScan?.scannerEngineVersion?.trim() || '').slice(0, 64) || undefined;
+
+    return {
+        ...(resolvedDeviceModel ? { device_model: resolvedDeviceModel } : {}),
+        ...(resolvedCalibrationId ? { calibration_id: resolvedCalibrationId } : {}),
+        ...(typeof resolvedCalibrationScaleFactor === 'number'
+            ? { calibration_scale_factor: resolvedCalibrationScaleFactor }
+            : {}),
+        ...(resolvedScannerEngineVersion
+            ? { scanner_engine_version: resolvedScannerEngineVersion }
+            : {}),
+    };
 }
 
 export const MobileScanner: React.FC<MobileScannerProps> = ({
@@ -708,6 +763,12 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
             const effSlopeWarn =
                 spatialResult?.slopeWarning ?? inSituMetrology?.slopeWarning ?? null;
 
+            const hardwareTelemetryPayload = resolveMeasurementHardwareTelemetry({
+                spatialScan,
+                capability: effectiveCapability,
+                cachedCalibration: getCachedCalibration(),
+            });
+
             const measurementBasePayload = {
                 timestamp: now,
                 captured_at: now,
@@ -757,6 +818,7 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                         : undefined,
                 gnss_status: latestDraft?.gnssStatus,
                 underground_sector: latestDraft?.undergroundSector,
+                ...hardwareTelemetryPayload,
                 ...(safeGeo
                     ? {
                           location_metadata: {
@@ -818,6 +880,7 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                         detected_slope_angle_deg: effSlopeAvg ?? undefined,
                         slope_warning: effSlopeWarn,
                         wall_confinement: spatialResult?.wallConfinement,
+                        ...hardwareTelemetryPayload,
                     },
                     measurement: measurementBasePayload,
                 });
@@ -898,6 +961,7 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
         allKeyframeBlobs,
         assetId,
         editableDraftName,
+        effectiveCapability,
         extraPhotos,
         hasInSituVolume,
         hasSpatialPoints,

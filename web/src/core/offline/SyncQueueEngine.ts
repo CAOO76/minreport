@@ -207,6 +207,42 @@ function dispatchSyncSuccessEvent(task: SyncTask, eventName: string | undefined,
     );
 }
 
+export const CAPTURE_SESSION_CAS_UPLOAD_CONCURRENCY = 5;
+const CAS_PREFLIGHT_BATCH_MAX_HASHES = 64;
+
+async function runWithBoundedConcurrency<T>(
+    items: readonly T[],
+    concurrency: number,
+    worker: (item: T) => Promise<void>
+): Promise<void> {
+    if (items.length === 0) return;
+    const workerCount = Math.min(Math.max(1, concurrency), items.length);
+    let nextIndex = 0;
+    let firstError: unknown = null;
+
+    await Promise.all(
+        Array.from({ length: workerCount }, async () => {
+            while (firstError === null) {
+                const current = nextIndex;
+                nextIndex += 1;
+                if (current >= items.length) break;
+                try {
+                    await worker(items[current]);
+                } catch (err) {
+                    if (firstError === null) {
+                        firstError = err;
+                    }
+                    break;
+                }
+            }
+        })
+    );
+
+    if (firstError !== null) {
+        throw firstError;
+    }
+}
+
 export interface HydratedRawSpatialBundle {
     pointsM?: Array<[number, number, number]>;
     groundSamplesM?: Array<[number, number, number]>;
@@ -217,6 +253,10 @@ export interface HydratedRawSpatialBundle {
     anchorCenter?: { x: number; y: number; z: number } | null;
     roiRadiusM?: number;
     coveragePct?: number;
+    deviceModel?: string;
+    calibrationId?: string;
+    calibrationScaleFactor?: number;
+    scannerEngineVersion?: string;
 }
 
 /**
@@ -327,8 +367,46 @@ export function buildCaptureSessionHttpPayload(
             ? hydratedBundle.groundSamplesM
             : undefined;
 
+    const sessionRecord = session as Record<string, unknown>;
+    const resolvedDeviceModel =
+        (typeof session.deviceModel === 'string' && session.deviceModel.trim()
+            ? session.deviceModel.trim()
+            : typeof hydratedBundle?.deviceModel === 'string' && hydratedBundle.deviceModel.trim()
+              ? hydratedBundle.deviceModel.trim()
+              : undefined);
+    const resolvedCalibrationId =
+        (typeof sessionRecord.calibrationId === 'string' && sessionRecord.calibrationId.trim()
+            ? sessionRecord.calibrationId.trim()
+            : typeof hydratedBundle?.calibrationId === 'string' &&
+                hydratedBundle.calibrationId.trim()
+              ? hydratedBundle.calibrationId.trim()
+              : undefined);
+    const resolvedCalibrationScaleFactor =
+        typeof sessionRecord.calibrationScaleFactor === 'number' &&
+        Number.isFinite(sessionRecord.calibrationScaleFactor)
+            ? sessionRecord.calibrationScaleFactor
+            : typeof hydratedBundle?.calibrationScaleFactor === 'number' &&
+                Number.isFinite(hydratedBundle.calibrationScaleFactor)
+              ? hydratedBundle.calibrationScaleFactor
+              : undefined;
+    const resolvedScannerEngineVersion =
+        (typeof session.scannerEngineVersion === 'string' && session.scannerEngineVersion.trim()
+            ? session.scannerEngineVersion.trim()
+            : typeof hydratedBundle?.scannerEngineVersion === 'string' &&
+                hydratedBundle.scannerEngineVersion.trim()
+              ? hydratedBundle.scannerEngineVersion.trim()
+              : undefined);
+
     return {
         ...session,
+        ...(resolvedDeviceModel ? { deviceModel: resolvedDeviceModel } : {}),
+        ...(resolvedCalibrationId ? { calibrationId: resolvedCalibrationId } : {}),
+        ...(typeof resolvedCalibrationScaleFactor === 'number'
+            ? { calibrationScaleFactor: resolvedCalibrationScaleFactor }
+            : {}),
+        ...(resolvedScannerEngineVersion
+            ? { scannerEngineVersion: resolvedScannerEngineVersion }
+            : {}),
         keyframes,
         walkRing,
         ...(walkRing.length > 0 ? { walkRingPoses: walkRing } : {}),
@@ -419,6 +497,10 @@ const StockpileMeasurementSyncSchema = z.object({
     volumen_m3: z.number().nonnegative().optional(),
     peso_t: z.number().nonnegative().optional(),
     shape: z.enum(['elliptic-cone', 'truncated-elliptic-cone', 'perimeter-cone', 'windrow', 'toe-wall']).optional(),
+    device_model: z.string().trim().max(120).optional(),
+    calibration_id: z.string().trim().max(128).optional(),
+    calibration_scale_factor: z.number().finite().min(0.85).max(1.15).optional(),
+    scanner_engine_version: z.string().trim().max(64).optional(),
     timestamp: z.number().nonnegative(),
 }).passthrough();
 
@@ -1372,106 +1454,260 @@ class SyncQueueEngine {
                 session.lifecycle_status = 'SYNCING_RAW_CAS';
                 await offlineStorage.saveCaptureSession(session).catch(() => {});
 
-                // Etapa 1: Preflight SHA-256 + subida resumible archivo por archivo a CAS TENANT_PRIVATE
-                const uploadCasItemIfNeeded = async (
-                    sha256: string,
-                    profile: string,
-                    filename: string
-                ): Promise<string> => {
-                    const cachedUrl = await offlineStorage
-                        .getOfflineMetadata<string>(`cas_remote_url_${sha256}`)
-                        .catch(() => null);
-                    if (isRemoteMediaUrl(cachedUrl)) {
-                        return cachedUrl;
-                    }
-
-                    try {
-                        const preRes = await coreAuthFetch(
-                            `/api/media/cas-preflight/${encodeURIComponent(sha256)}`,
-                            {
-                                method: 'GET',
-                                headers: { 'X-Active-Account-Id': activeTenantId },
-                            }
-                        );
-                        if (preRes.ok) {
-                            const preJson = (await parseResponseBodySafe(preRes)) as {
-                                exists?: boolean;
-                                descriptor?: { downloadUrl?: string };
-                            } | null;
-                            if (preJson?.exists && isRemoteMediaUrl(preJson.descriptor?.downloadUrl)) {
-                                const hitUrl = preJson.descriptor!.downloadUrl!;
-                                await offlineStorage
-                                    .putOfflineMetadata(`cas_remote_url_${sha256}`, hitUrl)
-                                    .catch(() => {});
-                                return hitUrl;
-                            }
-                        }
-                    } catch {
-                        // Continuar con subida directa si preflight no respondió
-                    }
-
-                    const localRes = await localCasFilesystem.getBlob(sha256);
-                    if (!localRes?.blob) {
-                        throw new NonRetryableSyncError(
-                            404,
-                            `Blob CAS local ${sha256} ausente para sesión ${session.sessionId}`
-                        );
-                    }
-
-                    const form = new FormData();
-                    form.append('file', localRes.blob, filename);
-                    form.append('profile', profile);
-                    form.append('scope', 'TENANT_PRIVATE');
-                    form.append(
-                        'clientOriginalBytes',
-                        String(localRes.record.originalBytes || localRes.blob.size)
-                    );
-
-                    const upRes = await coreAuthFetch('/api/media/digest-upload', {
-                        method: 'POST',
-                        headers: { 'X-Active-Account-Id': activeTenantId },
-                        body: form,
-                    });
-                    const upJson = (await parseResponseBodySafe(upRes)) as {
-                        descriptor?: { downloadUrl?: string };
-                        error?: string;
-                    } | null;
-
-                    if (!upRes.ok || !isRemoteMediaUrl(upJson?.descriptor?.downloadUrl)) {
-                        const msg = upJson?.error || `HTTP ${upRes.status} subiendo CAS ${sha256}`;
-                        if (NON_RETRYABLE_HTTP_STATUSES.has(upRes.status)) {
-                            throw new NonRetryableSyncError(upRes.status, msg);
-                        }
-                        throw new Error(msg);
-                    }
-
-                    const remoteUrl = upJson!.descriptor!.downloadUrl!;
-                    await offlineStorage
-                        .putOfflineMetadata(`cas_remote_url_${sha256}`, remoteUrl)
-                        .catch(() => {});
-                    return remoteUrl;
+                // Etapa 1: Preflight SHA-256 en lote único + pool de subida concurrente acotada (`CONCURRENCY = 5`)
+                type PendingCasItem = {
+                    sha256: string;
+                    profile: string;
+                    filename: string;
+                    assignUrl: (url: string) => void;
                 };
 
+                const pendingCasItems: PendingCasItem[] = [];
                 for (let i = 0; i < session.keyframes.length; i++) {
                     const kf = session.keyframes[i];
                     if (isRemoteMediaUrl(kf.remoteCasUrl)) continue;
-                    const remoteUrl = await uploadCasItemIfNeeded(
-                        kf.sha256,
-                        'IMAGE_FIELD_EVIDENCE',
-                        `${session.sessionId}_kf_${kf.index}.webp`
-                    );
-                    kf.remoteCasUrl = remoteUrl;
-                    await offlineStorage.saveCaptureSession(session).catch(() => {});
+                    pendingCasItems.push({
+                        sha256: kf.sha256,
+                        profile: 'IMAGE_FIELD_EVIDENCE',
+                        filename: `${session.sessionId}_kf_${kf.index}.webp`,
+                        assignUrl: (url) => {
+                            kf.remoteCasUrl = url;
+                        },
+                    });
                 }
 
                 if (session.rawSpatialBundle && !isRemoteMediaUrl(session.rawSpatialBundle.remoteCasUrl)) {
-                    const bundleUrl = await uploadCasItemIfNeeded(
-                        session.rawSpatialBundle.sha256,
-                        'SPATIAL_SESSION_BUNDLE',
-                        `${session.sessionId}_bundle.bin`
-                    );
-                    session.rawSpatialBundle.remoteCasUrl = bundleUrl;
-                    await offlineStorage.saveCaptureSession(session).catch(() => {});
+                    const bundleRef = session.rawSpatialBundle;
+                    pendingCasItems.push({
+                        sha256: bundleRef.sha256,
+                        profile: 'SPATIAL_SESSION_BUNDLE',
+                        filename: `${session.sessionId}_bundle.bin`,
+                        assignUrl: (url) => {
+                            bundleRef.remoteCasUrl = url;
+                        },
+                    });
+                }
+
+                let sessionCasDirty = false;
+                try {
+                    if (pendingCasItems.length > 0) {
+                        // 1a) Resolver primero hits ya cacheados en metadatos offline
+                        const unresolvedAfterCache: PendingCasItem[] = [];
+                        await runWithBoundedConcurrency(
+                            pendingCasItems,
+                            CAPTURE_SESSION_CAS_UPLOAD_CONCURRENCY,
+                            async (item) => {
+                                const cachedUrl = await offlineStorage
+                                    .getOfflineMetadata<string>(`cas_remote_url_${item.sha256}`)
+                                    .catch(() => null);
+                                if (isRemoteMediaUrl(cachedUrl)) {
+                                    item.assignUrl(cachedUrl);
+                                    sessionCasDirty = true;
+                                } else {
+                                    unresolvedAfterCache.push(item);
+                                }
+                            }
+                        );
+
+                        // 1b) Una sola llamada POST /api/media/cas-preflight-batch (fallback unitario ante 404/405/501)
+                        let useUnitPreflightFallback = false;
+                        const batchResolvedBySha = new Map<string, string>();
+                        if (unresolvedAfterCache.length > 0) {
+                            const uniquePendingHashes = Array.from(
+                                new Set(
+                                    unresolvedAfterCache
+                                        .map((item) => item.sha256.trim().toLowerCase())
+                                        .filter((sha) => /^[a-f0-9]{64}$/.test(sha))
+                                )
+                            );
+
+                            for (
+                                let offset = 0;
+                                offset < uniquePendingHashes.length;
+                                offset += CAS_PREFLIGHT_BATCH_MAX_HASHES
+                            ) {
+                                const chunk = uniquePendingHashes.slice(
+                                    offset,
+                                    offset + CAS_PREFLIGHT_BATCH_MAX_HASHES
+                                );
+                                try {
+                                    const batchRes = await coreAuthFetch(
+                                        '/api/media/cas-preflight-batch',
+                                        {
+                                            method: 'POST',
+                                            headers: {
+                                                'Content-Type': 'application/json',
+                                                'X-Active-Account-Id': activeTenantId,
+                                            },
+                                            body: JSON.stringify({
+                                                hashes: chunk,
+                                                scope: 'TENANT_PRIVATE',
+                                            }),
+                                        }
+                                    );
+                                    if (
+                                        batchRes.status === 404 ||
+                                        batchRes.status === 405 ||
+                                        batchRes.status === 501
+                                    ) {
+                                        useUnitPreflightFallback = true;
+                                        break;
+                                    }
+                                    if (batchRes.ok) {
+                                        const batchJson = (await parseResponseBodySafe(
+                                            batchRes
+                                        )) as {
+                                            results?: Record<
+                                                string,
+                                                {
+                                                    exists?: boolean;
+                                                    descriptor?: { downloadUrl?: string };
+                                                }
+                                            >;
+                                        } | null;
+                                        const resultsMap = batchJson?.results || {};
+                                        for (const sha of chunk) {
+                                            const hit = resultsMap[sha];
+                                            if (
+                                                hit?.exists &&
+                                                isRemoteMediaUrl(hit.descriptor?.downloadUrl)
+                                            ) {
+                                                const hitUrl = hit.descriptor!.downloadUrl!;
+                                                batchResolvedBySha.set(sha, hitUrl);
+                                                await offlineStorage
+                                                    .putOfflineMetadata(
+                                                        `cas_remote_url_${sha}`,
+                                                        hitUrl
+                                                    )
+                                                    .catch(() => {});
+                                            }
+                                        }
+                                    }
+                                } catch {
+                                    // Continuar con subida directa si el endpoint batch no respondió
+                                    break;
+                                }
+                            }
+                        }
+
+                        const itemsToUpload: PendingCasItem[] = [];
+                        for (const item of unresolvedAfterCache) {
+                            const hitUrl = batchResolvedBySha.get(item.sha256.trim().toLowerCase());
+                            if (hitUrl) {
+                                item.assignUrl(hitUrl);
+                                sessionCasDirty = true;
+                            } else {
+                                itemsToUpload.push(item);
+                            }
+                        }
+
+                        // 1c) Subida de faltantes con pool de concurrencia acotada (CONCURRENCY = 5)
+                        const inFlightUploads = new Map<string, Promise<string>>();
+                        const uploadCasItem = (item: PendingCasItem): Promise<string> => {
+                            const normalizedSha = item.sha256.trim().toLowerCase();
+                            const existingPromise = inFlightUploads.get(normalizedSha);
+                            if (existingPromise) return existingPromise;
+
+                            const work = (async (): Promise<string> => {
+                                if (useUnitPreflightFallback) {
+                                    try {
+                                        const preRes = await coreAuthFetch(
+                                            `/api/media/cas-preflight/${encodeURIComponent(item.sha256)}`,
+                                            {
+                                                method: 'GET',
+                                                headers: { 'X-Active-Account-Id': activeTenantId },
+                                            }
+                                        );
+                                        if (preRes.ok) {
+                                            const preJson = (await parseResponseBodySafe(
+                                                preRes
+                                            )) as {
+                                                exists?: boolean;
+                                                descriptor?: { downloadUrl?: string };
+                                            } | null;
+                                            if (
+                                                preJson?.exists &&
+                                                isRemoteMediaUrl(preJson.descriptor?.downloadUrl)
+                                            ) {
+                                                const hitUrl = preJson.descriptor!.downloadUrl!;
+                                                await offlineStorage
+                                                    .putOfflineMetadata(
+                                                        `cas_remote_url_${item.sha256}`,
+                                                        hitUrl
+                                                    )
+                                                    .catch(() => {});
+                                                return hitUrl;
+                                            }
+                                        }
+                                    } catch {
+                                        // Continuar con subida directa si preflight unitario no respondió
+                                    }
+                                }
+
+                                const localRes = await localCasFilesystem.getBlob(item.sha256);
+                                if (!localRes?.blob) {
+                                    throw new NonRetryableSyncError(
+                                        404,
+                                        `Blob CAS local ${item.sha256} ausente para sesión ${session.sessionId}`
+                                    );
+                                }
+
+                                const form = new FormData();
+                                form.append('file', localRes.blob, item.filename);
+                                form.append('profile', item.profile);
+                                form.append('scope', 'TENANT_PRIVATE');
+                                form.append(
+                                    'clientOriginalBytes',
+                                    String(localRes.record.originalBytes || localRes.blob.size)
+                                );
+
+                                const upRes = await coreAuthFetch('/api/media/digest-upload', {
+                                    method: 'POST',
+                                    headers: { 'X-Active-Account-Id': activeTenantId },
+                                    body: form,
+                                });
+                                const upJson = (await parseResponseBodySafe(upRes)) as {
+                                    descriptor?: { downloadUrl?: string };
+                                    error?: string;
+                                } | null;
+
+                                if (!upRes.ok || !isRemoteMediaUrl(upJson?.descriptor?.downloadUrl)) {
+                                    const msg =
+                                        upJson?.error ||
+                                        `HTTP ${upRes.status} subiendo CAS ${item.sha256}`;
+                                    if (NON_RETRYABLE_HTTP_STATUSES.has(upRes.status)) {
+                                        throw new NonRetryableSyncError(upRes.status, msg);
+                                    }
+                                    throw new Error(msg);
+                                }
+
+                                const remoteUrl = upJson!.descriptor!.downloadUrl!;
+                                await offlineStorage
+                                    .putOfflineMetadata(`cas_remote_url_${item.sha256}`, remoteUrl)
+                                    .catch(() => {});
+                                return remoteUrl;
+                            })();
+
+                            inFlightUploads.set(normalizedSha, work);
+                            return work;
+                        };
+
+                        if (itemsToUpload.length > 0) {
+                            await runWithBoundedConcurrency(
+                                itemsToUpload,
+                                CAPTURE_SESSION_CAS_UPLOAD_CONCURRENCY,
+                                async (item) => {
+                                    const remoteUrl = await uploadCasItem(item);
+                                    item.assignUrl(remoteUrl);
+                                    sessionCasDirty = true;
+                                }
+                            );
+                        }
+                    }
+                } finally {
+                    if (sessionCasDirty) {
+                        await offlineStorage.saveCaptureSession(session).catch(() => {});
+                    }
                 }
 
                 // Hidratar pointsM/groundSamplesM desde rawSpatialBundle local para reconstrucción cloud determinista

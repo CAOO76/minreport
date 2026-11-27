@@ -1479,6 +1479,8 @@ const SpatialAnalyzeBodySchema = z.object({
     sectorsCovered: z.number().int().min(0).max(32),
     sectorsTotal: z.number().int().min(1).max(32).optional(),
     roiRadiusM: z.number().finite().positive().max(100).optional(),
+    deviceModel: z.string().trim().max(120).optional(),
+    scannerEngineVersion: z.string().trim().max(64).optional(),
     calibrationScaleFactor: z.number().finite().min(0.85).max(1.15).optional(),
     calibrationId: z.string().trim().max(128).optional(),
     calibrationPlaneNoiseRmsM: z.number().finite().nonnegative().max(1).optional(),
@@ -1978,6 +1980,17 @@ router.post(
                 mesh_reconstructed_at: now,
             };
 
+            const hardwareTelemetryPatch: Record<string, unknown> = {
+                ...(effectiveBody.deviceModel ? { device_model: effectiveBody.deviceModel } : {}),
+                ...(effectiveBody.calibrationId ? { calibration_id: effectiveBody.calibrationId } : {}),
+                ...(typeof effectiveBody.calibrationScaleFactor === 'number'
+                    ? { calibration_scale_factor: effectiveBody.calibrationScaleFactor }
+                    : {}),
+                ...(effectiveBody.scannerEngineVersion
+                    ? { scanner_engine_version: effectiveBody.scannerEngineVersion }
+                    : {}),
+            };
+
             const assetPatch: Record<string, unknown> = {
                 analysis_status: 'AI_VERIFIED',
                 scale_anchor_type: 'ARCORE_VIO_DEPTH',
@@ -1994,6 +2007,7 @@ router.post(
                       }
                     : {}),
                 ...symmetricMeshMetrics,
+                ...hardwareTelemetryPatch,
                 uncertainty_pct: result.uncertaintyPct,
                 toe_score: result.toeScore,
                 coverage_pct: result.coveragePct,
@@ -2021,6 +2035,7 @@ router.post(
                         volumen_m3: result.volumeM3,
                         peso_t: resolvedWeightT,
                         ...symmetricMeshMetrics,
+                        ...hardwareTelemetryPatch,
                         uncertainty_pct: result.uncertaintyPct,
                         toe_score: result.toeScore,
                         coverage_pct: result.coveragePct,
@@ -2189,6 +2204,16 @@ router.post(
             }
 
             const now = Date.now();
+            const hardwareTelemetryPatch: Record<string, unknown> = {
+                ...(body.deviceModel ? { device_model: body.deviceModel } : {}),
+                ...(body.calibrationId ? { calibration_id: body.calibrationId } : {}),
+                ...(typeof body.calibrationScaleFactor === 'number'
+                    ? { calibration_scale_factor: body.calibrationScaleFactor }
+                    : {}),
+                ...(body.scannerEngineVersion
+                    ? { scanner_engine_version: body.scannerEngineVersion }
+                    : {}),
+            };
             const inSituOffline = {
                 volume_m3: Number(body.inSituMetrology.volumeM3.toFixed(2)),
                 uncertainty_pct: body.inSituMetrology.uncertaintyPct,
@@ -2229,6 +2254,7 @@ router.post(
                     reconciliation: null,
                     keyframes_count: body.keyframes.length,
                     walk_ring_count: body.walkRing.length,
+                    ...hardwareTelemetryPatch,
                     capturedAt: body.capturedAt,
                     updatedAt: now,
                 };
@@ -2243,6 +2269,7 @@ router.post(
                             metrology_grade: 'REJECTED',
                             reconciliation_status: 'PENDING_CLOUD',
                             in_situ_offline: inSituOffline,
+                            ...hardwareTelemetryPatch,
                             updatedAt: now,
                         },
                         { merge: true }
@@ -2524,6 +2551,7 @@ router.post(
                 cloud_refined: cloudRefined,
                 reconciliation,
                 ...symmetricMeshMetrics,
+                ...hardwareTelemetryPatch,
                 keyframes_count: body.keyframes.length,
                 walk_ring_count: body.walkRing.length,
                 raw_bundle_sha256: body.rawBundleSha256 || null,
@@ -2560,6 +2588,7 @@ router.post(
                     cloud_refined: cloudRefined,
                     reconciliation,
                     ...symmetricMeshMetrics,
+                    ...hardwareTelemetryPatch,
                     uncertainty_pct:
                         reconciliation.activeSource === 'CLOUD_REFINED'
                             ? cloudUncertaintyPct
@@ -2611,6 +2640,7 @@ router.post(
                       }
                     : {}),
                 ...symmetricMeshMetrics,
+                ...hardwareTelemetryPatch,
                 uncertainty_pct:
                     reconciliation.activeSource === 'CLOUD_REFINED'
                         ? cloudUncertaintyPct

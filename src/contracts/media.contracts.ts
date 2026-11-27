@@ -51,6 +51,32 @@ export const DigestedMediaDescriptorSchema = z.object({
 });
 
 export type DigestedMediaDescriptor = z.infer<typeof DigestedMediaDescriptorSchema>;
+export type CasMediaDescriptor = DigestedMediaDescriptor;
+
+export const CasSha256HexSchema = z
+    .string()
+    .trim()
+    .regex(/^[a-f0-9]{64}$/i, 'SHA-256 debe tener exactamente 64 caracteres hexadecimales.')
+    .transform((v) => v.toLowerCase());
+
+export const CasPreflightBatchRequestSchema = z.object({
+    hashes: z.array(CasSha256HexSchema).min(1).max(64),
+    scope: CasStorageScopeSchema.optional().default('TENANT_PRIVATE'),
+    profile: MediaDigestionProfileSchema.optional(),
+});
+
+export type CasPreflightBatchRequest = z.infer<typeof CasPreflightBatchRequestSchema>;
+
+export const CasPreflightBatchItemResultSchema = z.object({
+    exists: z.boolean(),
+    descriptor: DigestedMediaDescriptorSchema.optional(),
+});
+
+export const CasPreflightBatchResponseSchema = z.object({
+    results: z.record(z.string(), CasPreflightBatchItemResultSchema),
+});
+
+export type CasPreflightBatchResponse = z.infer<typeof CasPreflightBatchResponseSchema>;
 
 export const DigestUploadQuerySchema = z.object({
     profile: MediaDigestionProfileSchema.optional().default('IMAGE_FIELD_EVIDENCE'),

@@ -204,6 +204,8 @@ app.use(
             'x-payment-proof',
             'X-HITL-Confirmation',
             'x-hitl-confirmation',
+            'Idempotency-Key',
+            'idempotency-key',
         ],
         exposedHeaders: ['PAYMENT-REQUIRED', 'WWW-Authenticate', 'Retry-After'],
     })

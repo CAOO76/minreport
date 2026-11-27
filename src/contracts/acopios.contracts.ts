@@ -510,6 +510,11 @@ export const CaptureSessionPackageV2Schema = z
         measurementId: z.string().trim().regex(SAFE_SESSION_ID_REGEX).optional(),
         tenantId: z.string().trim().max(128).optional(),
         deviceModel: z.string().trim().max(120).optional(),
+        device_model: z.string().trim().max(120).optional(),
+        calibrationId: z.string().trim().max(128).optional(),
+        calibration_id: z.string().trim().max(128).optional(),
+        scannerEngineVersion: z.string().trim().max(64).optional(),
+        scanner_engine_version: z.string().trim().max(64).optional(),
         rawBundleSha256: z.string().regex(SAFE_SHA256_REGEX).optional(),
         rawBundleUrl: NonBase64UrlSchema.optional(),
         rawBundleOriginalBytes: z.number().int().nonnegative().optional(),
@@ -533,6 +538,7 @@ export const CaptureSessionPackageV2Schema = z
             .optional(),
         roiRadiusM: z.number().finite().positive().max(100).optional(),
         calibrationScaleFactor: z.number().finite().min(0.85).max(1.15).optional(),
+        calibration_scale_factor: z.number().finite().min(0.85).max(1.15).optional(),
         wallConfinement: WallConfinementModeSchema.optional().default('NONE'),
         inSituMetrology: InSituMetrologySchema,
         localPreviewMesh: LocalPreviewMeshSchema.nullable().optional(),
@@ -560,12 +566,21 @@ export const CaptureSessionPackageV2Schema = z
         const rawBundleSavingsPct =
             pkg.rawBundleSavingsPct ?? rawSpatialBundle?.savingsPct;
 
+        const deviceModel = pkg.deviceModel ?? pkg.device_model;
+        const calibrationId = pkg.calibrationId ?? pkg.calibration_id;
+        const calibrationScaleFactor =
+            pkg.calibrationScaleFactor ?? pkg.calibration_scale_factor;
+        const scannerEngineVersion =
+            pkg.scannerEngineVersion ?? pkg.scanner_engine_version;
+
         return {
             schemaVersion: pkg.schemaVersion,
             sessionId: pkg.sessionId,
             measurementId: pkg.measurementId,
             tenantId: pkg.tenantId,
-            deviceModel: pkg.deviceModel,
+            deviceModel,
+            calibrationId,
+            scannerEngineVersion,
             rawBundleSha256,
             rawBundleUrl,
             rawBundleOriginalBytes,
@@ -579,7 +594,7 @@ export const CaptureSessionPackageV2Schema = z
             groundSamplesM: pkg.groundSamplesM,
             anchorCenter: pkg.anchorCenter,
             roiRadiusM: pkg.roiRadiusM,
-            calibrationScaleFactor: pkg.calibrationScaleFactor,
+            calibrationScaleFactor,
             wallConfinement: pkg.wallConfinement,
             inSituMetrology: pkg.inSituMetrology,
             localPreviewMesh,

@@ -281,6 +281,12 @@ export interface StockpileAsset {
     gnss_status?: GeolappGnssStatus;
     underground_sector?: string;
     captured_at?: number;
+
+    // Telemetría Hardware & Calibración (Trazabilidad Metrológica)
+    device_model?: string;
+    calibration_id?: string;
+    calibration_scale_factor?: number;
+    scanner_engine_version?: string;
 }
 
 export interface StockpileMeasurement {
@@ -420,4 +426,10 @@ export interface StockpileMeasurement {
     gnss_status?: GeolappGnssStatus;
     underground_sector?: string;
     captured_at?: number;
+
+    // Telemetría Hardware & Calibración (Trazabilidad Metrológica)
+    device_model?: string;
+    calibration_id?: string;
+    calibration_scale_factor?: number;
+    scanner_engine_version?: string;
 }
