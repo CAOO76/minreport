@@ -2225,9 +2225,6 @@ public class MinreportSpatialScannerActivity
                         !targetConstraint.hasValidPolygon()
                     ) {
                         targetConstraint = fused.constraint;
-                        if (renderer != null) {
-                            renderer.updateTargetVolumeConstraint(targetConstraint);
-                        }
                         if (overlayRenderer != null) {
                             overlayRenderer.setGroundY(estGroundY);
                             if (fused.usedDepth && fused.triVerticesXyz != null && fused.triVerticesXyz.length >= 9) {
@@ -2254,6 +2251,9 @@ public class MinreportSpatialScannerActivity
                                 );
                                 overlayRenderer.setFallbackMaskQuad(mask.conf, mask.width, mask.height, quadWorld12);
                             }
+                        }
+                        if (renderer != null) {
+                            renderer.updateTargetVolumeConstraint(targetConstraint);
                         }
                         applied = true;
                     }
@@ -2977,11 +2977,21 @@ public class MinreportSpatialScannerActivity
             ioExecutor.execute(() -> saveUnrotatedWebpWithCasStats(nv21Copy, srcW, srcH, outW, outH, photoFile, rec));
         }
 
-        // 2. Capture on-demand Raw Depth snapshot (skipped automatically under thermal throttle)
+        // 2. Capture on-demand Raw Depth snapshot aligned strictly with CURRENT frame pose & sensor intrinsics
         final DepthSnapshot rawDepthSnap = acquireDepthSnapshotOnDemand(frame, true, false);
+        final float[] depthCamToWorld16 = new float[16];
+        final float[] depthIntr;
+        final boolean depthMatchesWinnerFrame;
+        if (rawDepthSnap != null && camera != null) {
+            camera.getPose().toMatrix(depthCamToWorld16, 0);
+            depthIntr = resolveCameraIntrinsicsLocked(camera, rawDepthSnap.width, rawDepthSnap.height, false);
+            depthMatchesWinnerFrame = !winner.fromGlFallback && winner.timestampNs == frame.getTimestamp();
+        } else {
+            depthIntr = null;
+            depthMatchesWinnerFrame = false;
+        }
         final TargetVolumeConstraint targetSnap = targetConstraint;
         final float estGroundY = estimateCurrentGroundYLocked(activeSession, winner.tWc[1]);
-        final float[] camToWorld16 = buildCamToWorldColMajor16(winner.rWc, winner.tWc);
         final float[] worldToCam16 = buildWorldToCamColMajor16(winner.rWc, winner.tWc);
         final float[] winnerIntr = Arrays.copyOf(winner.intr, 4);
 
@@ -3072,16 +3082,25 @@ public class MinreportSpatialScannerActivity
                         }
                     }
 
-                    if (rawDepthSnap != null) {
-                        final boolean hasMask = kfMask != null && kfMask.valid;
-                        final int refW = hasMask ? kfMask.width : rawDepthSnap.width;
-                        final int refH = hasMask ? kfMask.height : rawDepthSnap.height;
-                        final float fxD = winnerIntr[0] * (refW / (float) Math.max(1, srcW));
-                        final float fyD = winnerIntr[1] * (refH / (float) Math.max(1, srcH));
-                        final float cxD = winnerIntr[2] * (refW / (float) Math.max(1, srcW));
-                        final float cyD = winnerIntr[3] * (refH / (float) Math.max(1, srcH));
+                    if (rawDepthSnap != null && depthIntr != null) {
+                        final boolean useKfMaskForDepth = depthMatchesWinnerFrame && kfMask != null && kfMask.valid;
+                        final int refW = useKfMaskForDepth ? kfMask.width : rawDepthSnap.width;
+                        final int refH = useKfMaskForDepth ? kfMask.height : rawDepthSnap.height;
+                        final float fxD = useKfMaskForDepth
+                            ? depthIntr[0] * (refW / (float) Math.max(1, rawDepthSnap.width))
+                            : depthIntr[0];
+                        final float fyD = useKfMaskForDepth
+                            ? depthIntr[1] * (refH / (float) Math.max(1, rawDepthSnap.height))
+                            : depthIntr[1];
+                        final float cxD = useKfMaskForDepth
+                            ? depthIntr[2] * (refW / (float) Math.max(1, rawDepthSnap.width))
+                            : depthIntr[2];
+                        final float cyD = useKfMaskForDepth
+                            ? depthIntr[3] * (refH / (float) Math.max(1, rawDepthSnap.height))
+                            : depthIntr[3];
+                        final boolean targetActive = targetSnap != null && targetSnap.active;
                         final List<float[]> depthPts = DepthMaskFuser.extractFilteredDepthPoints(
-                            hasMask ? kfMask.conf : null,
+                            useKfMaskForDepth ? kfMask.conf : null,
                             refW,
                             refH,
                             rawDepthSnap.depthMm,
@@ -3092,11 +3111,11 @@ public class MinreportSpatialScannerActivity
                             fyD,
                             cxD,
                             cyD,
-                            camToWorld16,
+                            depthCamToWorld16,
                             estGroundY,
                             targetSnap,
-                            hasMask ? 2 : 4,
-                            hasMask ? 600 : 400
+                            (useKfMaskForDepth || targetActive) ? 2 : 4,
+                            (useKfMaskForDepth || targetActive) ? 600 : 400
                         );
                         if (depthPts != null && !depthPts.isEmpty()) {
                             synchronized (stateLock) {

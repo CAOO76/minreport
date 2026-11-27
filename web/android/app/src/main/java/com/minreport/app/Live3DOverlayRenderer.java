@@ -397,7 +397,18 @@ public final class Live3DOverlayRenderer {
                     this.pendingTargetRingVerts = buildAnchorReticleLines(this.targetConstraint);
                     this.targetVolumeDirty = true;
                 }
+            } else {
+                refreshNonPolygonRingLocked();
             }
+        }
+    }
+
+    private void refreshNonPolygonRingLocked() {
+        if (this.targetConstraint != null && this.targetConstraint.active && !this.targetConstraint.hasValidPolygon()) {
+            final TargetVolumeGeometry geom = buildTargetVolumeGeometry(this.targetConstraint);
+            this.pendingTargetFillVerts = null;
+            this.pendingTargetRingVerts = geom != null ? geom.baseRingLineVerts : null;
+            this.targetVolumeDirty = true;
         }
     }
 
@@ -420,6 +431,7 @@ public final class Live3DOverlayRenderer {
                 this.pendingFallbackQuadActive = false;
                 this.fallbackMaskDirty = true;
             }
+            refreshNonPolygonRingLocked();
         }
     }
 
@@ -480,6 +492,7 @@ public final class Live3DOverlayRenderer {
             this.pendingMaskQuadVerts = quadVerts;
             this.pendingFallbackQuadActive = true;
             this.fallbackMaskDirty = true;
+            refreshNonPolygonRingLocked();
         }
     }
 
@@ -491,6 +504,7 @@ public final class Live3DOverlayRenderer {
             this.fusedSurfaceDirty = true;
             this.pendingFallbackQuadActive = false;
             this.fallbackMaskDirty = true;
+            refreshNonPolygonRingLocked();
         }
     }
 
