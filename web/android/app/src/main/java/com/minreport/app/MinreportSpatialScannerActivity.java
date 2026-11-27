@@ -61,6 +61,7 @@ import com.google.ar.core.ArCoreApk;
 import com.google.ar.core.Camera;
 import com.google.ar.core.CameraIntrinsics;
 import com.google.ar.core.Config;
+import com.google.ar.core.Coordinates2d;
 import com.google.ar.core.DepthPoint;
 import com.google.ar.core.Frame;
 import com.google.ar.core.HitResult;
@@ -77,6 +78,7 @@ import com.google.ar.core.exceptions.NotYetAvailableException;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -88,6 +90,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -112,13 +115,18 @@ public class MinreportSpatialScannerActivity
     public static final String PREFS_CALIBRATION_NAME = "minreport_spatial_calibration";
 
     private static final String TAG = "MinreportSpatialScanner";
-    private static final String SCANNER_ENGINE_VERSION = "2.1.0-vio-mvs-java";
-    private static final String HUD_APP_VERSION = "2.1.0";
+    private static final String SCANNER_ENGINE_VERSION = "2.2.0-trimodal-hull-java";
+    private static final String HUD_APP_VERSION = "2.2.0";
     private static final int KEYCODE_XCOVER_KEY = 1015;
     private static final int KEYCODE_XCOVER_TOP_KEY = 1079;
 
     private static final int SECTOR_COUNT = WalkRingToeSolver.SECTOR_COUNT; // 16 x 22.5 deg
     private static final int MAX_KEYFRAME_PHOTOS = 32;
+    private static final int MAX_SEGMENTED_VIEWS = 32;
+    private static final int MAX_DEPTH_CLOUD_POINTS = 6000;
+    private static final int TARGET_SEG_BITMAP_MAX_W = 512;
+    private static final float PRE_PLAY_REFRESH_MIN_POS_M = 0.45f;
+    private static final float PRE_PLAY_REFRESH_MIN_YAW_DEG = 20.0f;
     private static final int MAX_PHOTO_DIMENSION_PX = 1280;
     private static final int WEBP_QUALITY = 76;
     private static final int MVS_LUMA_W = 320;
@@ -435,11 +443,44 @@ public class MinreportSpatialScannerActivity
         }
     }
 
+    private static final class DepthSnapshot {
+        final short[] depthMm;
+        final byte[] depthConf;
+        final int width;
+        final int height;
+        final long timestampNs;
+
+        DepthSnapshot(
+            final short[] depthMm,
+            final byte[] depthConf,
+            final int width,
+            final int height,
+            final long timestampNs
+        ) {
+            this.depthMm = depthMm;
+            this.depthConf = depthConf;
+            this.width = width;
+            this.height = height;
+            this.timestampNs = timestampNs;
+        }
+    }
+
     private GLSurfaceView glSurfaceView;
     private ArCoreCameraRenderer renderer;
+    private Live3DOverlayRenderer overlayRenderer;
+    private InteractiveObjectSegmenter objectSegmenter;
     private Session session;
     private boolean installRequested = false;
     private boolean hasHardwareDepthSensor = false;
+    private boolean depthEnabled = false;
+    private long lastDepthTimestampNs = 0L;
+    private float[] lastPrePlayDepthCamPos = null;
+    private float[] lastPrePlayDepthCamFwdXZ = null;
+    private final AtomicBoolean prePlaySegBusy = new AtomicBoolean(false);
+    private final AtomicInteger targetSegGeneration = new AtomicInteger(0);
+    private float lastReportedGroundY = Float.NaN;
+    private float calibrationScaleFactor = 1.0f;
+    private boolean hasActiveCalibration = false;
 
     private SensorManager sensorManager;
     private Sensor gyroSensor;
@@ -509,6 +550,9 @@ public class MinreportSpatialScannerActivity
     private final CapturePipelineHelper.GroundCellAggregator groundCellAggregator =
         new CapturePipelineHelper.GroundCellAggregator(MAX_GROUND_SAMPLES);
     private final List<float[]> extraVioCloud = new ArrayList<>(1024);
+    private final List<float[]> depthCloudPoints = new ArrayList<>(2048);
+    private final List<VisualHullCarver.SegmentedView> segmentedViews = new ArrayList<>(MAX_SEGMENTED_VIEWS);
+    private int depthSamplesCollectedCount = 0;
     private final CapturePipelineHelper.LivePointCloudAccumulator livePointAccumulator =
         new CapturePipelineHelper.LivePointCloudAccumulator(Live3DOverlayRenderer.MAX_LIVE_POINTS);
 
@@ -583,6 +627,14 @@ public class MinreportSpatialScannerActivity
         this.scanId = "scan-" + System.currentTimeMillis();
         this.ioExecutor = Executors.newSingleThreadExecutor();
         this.visionExecutor = Executors.newSingleThreadExecutor();
+        this.objectSegmenter = new InteractiveObjectSegmenter(getApplicationContext());
+        this.visionExecutor.execute(() -> {
+            final InteractiveObjectSegmenter seg = this.objectSegmenter;
+            if (seg != null) {
+                seg.warmUp();
+            }
+        });
+        loadCalibrationAnchorState();
         this.rearSensorOrientation = resolveRearCameraSensorOrientation();
         this.hasHardwareDepthSensor = MinreportDeviceCapabilityPlugin.detectRearHardwareDepthSensor(this);
 
@@ -598,6 +650,7 @@ public class MinreportSpatialScannerActivity
         buildLandscapeGoldenHudLayout();
 
         this.renderer = new ArCoreCameraRenderer(this, this);
+        this.overlayRenderer = Live3DOverlayRenderer.getLatestInstance();
         this.glSurfaceView.setEGLContextClientVersion(2);
         this.glSurfaceView.setPreserveEGLContextOnPause(true);
         this.glSurfaceView.setRenderer(this.renderer);
@@ -729,6 +782,26 @@ public class MinreportSpatialScannerActivity
             visionExecutor.shutdownNow();
             visionExecutor = null;
         }
+        if (objectSegmenter != null) {
+            objectSegmenter.close();
+            objectSegmenter = null;
+        }
+    }
+
+    private void loadCalibrationAnchorState() {
+        try {
+            final SharedPreferences calPrefs = getSharedPreferences(PREFS_CALIBRATION_NAME, Context.MODE_PRIVATE);
+            final boolean calFlag = calPrefs.getBoolean("calibrated", false);
+            final float calScale = calPrefs.getFloat("scaleFactor", 1.0f);
+            final boolean validScale = Float.isFinite(calScale) && calScale >= MIN_SCALE_FACTOR && calScale <= MAX_SCALE_FACTOR;
+            this.calibrationScaleFactor = validScale ? calScale : 1.0f;
+            this.hasActiveCalibration = calFlag && validScale;
+            this.hasScaleAnchor = this.hasActiveCalibration || Math.abs(this.calibrationScaleFactor - 1.0f) > 1e-4f;
+        } catch (Throwable ignored) {
+            this.calibrationScaleFactor = 1.0f;
+            this.hasActiveCalibration = false;
+            this.hasScaleAnchor = false;
+        }
     }
 
     @Override
@@ -828,13 +901,16 @@ public class MinreportSpatialScannerActivity
         config.setPlaneFindingMode(Config.PlaneFindingMode.HORIZONTAL);
         config.setInstantPlacementMode(Config.InstantPlacementMode.LOCAL_Y_UP);
 
-        // Per Red-Team verdict: DepthMode.DISABLED on non-ToF/LiDAR hardware (XCover 7)
-        if (hasHardwareDepthSensor && targetSession.isDepthModeSupported(Config.DepthMode.AUTOMATIC)) {
+        // Enable ARCore Depth API whenever supported (including monocular DfM on XCover 7)
+        // Reads remain strictly on-demand and thermally guarded to prevent continuous thermal spin.
+        if (targetSession.isDepthModeSupported(Config.DepthMode.AUTOMATIC)) {
             config.setDepthMode(Config.DepthMode.AUTOMATIC);
-            configuredDepthMode = "HARDWARE_TOF_DEPTH";
+            configuredDepthMode = "ARCORE_DEPTH_TRIMODAL";
+            depthEnabled = true;
         } else {
             config.setDepthMode(Config.DepthMode.DISABLED);
             configuredDepthMode = "VIO_MVS_OFFLINE";
+            depthEnabled = false;
         }
         targetSession.configure(config);
     }
@@ -1244,7 +1320,11 @@ public class MinreportSpatialScannerActivity
             final float step = TargetVolumeConstraint.radiusStepFor(targetConstraint.radiusM, increase);
             final float nextR = TargetVolumeConstraint.clampRadius(targetConstraint.radiusM + step);
             if (Math.abs(nextR - targetConstraint.radiusM) > 1e-4f) {
+                targetSegGeneration.incrementAndGet();
                 targetConstraint = targetConstraint.withRadius(nextR);
+                if (overlayRenderer != null) {
+                    overlayRenderer.clearFusedTargetSurface();
+                }
                 if (renderer != null) {
                     renderer.updateTargetVolumeConstraint(targetConstraint);
                 }
@@ -1268,6 +1348,10 @@ public class MinreportSpatialScannerActivity
                 targetEditMode = TargetEditMode.ANCHOR;
             } else {
                 targetEditMode = TargetEditMode.POLYGON;
+                targetSegGeneration.incrementAndGet();
+                if (overlayRenderer != null) {
+                    overlayRenderer.clearFusedTargetSurface();
+                }
                 if (targetPolygonVerticesXZ.size() >= TargetVolumeConstraint.MAX_POLYGON_VERTICES) {
                     targetPolygonVerticesXZ.clear();
                     if (targetConstraint.active) {
@@ -1310,7 +1394,13 @@ public class MinreportSpatialScannerActivity
             hasPendingPadReferenceY = false;
             pendingPadReferenceY = 0.0f;
             targetEditMode = TargetEditMode.ANCHOR;
+            targetSegGeneration.incrementAndGet();
+            lastPrePlayDepthCamPos = null;
+            lastPrePlayDepthCamFwdXZ = null;
             targetConstraint = TargetVolumeConstraint.inactive();
+            if (overlayRenderer != null) {
+                overlayRenderer.clearFusedTargetSurface();
+            }
             if (renderer != null) {
                 renderer.updateTargetVolumeConstraint(targetConstraint);
             }
@@ -1447,6 +1537,14 @@ public class MinreportSpatialScannerActivity
         savedKeyframes.clear();
         groundCellAggregator.clear();
         extraVioCloud.clear();
+        depthCloudPoints.clear();
+        segmentedViews.clear();
+        depthSamplesCollectedCount = 0;
+        lastDepthTimestampNs = 0L;
+        lastPrePlayDepthCamPos = null;
+        lastPrePlayDepthCamFwdXZ = null;
+        targetSegGeneration.incrementAndGet();
+        hasScaleAnchor = hasActiveCalibration || Math.abs(calibrationScaleFactor - 1.0f) > 1e-4f;
         Arrays.fill(sectorStates, 0);
         Arrays.fill(sectorKfCounts, 0);
         sectorsCovered = 0;
@@ -1558,6 +1656,15 @@ public class MinreportSpatialScannerActivity
             // Immediate 3D visual feedback from Frame 1 (both READY_TRACKING & CAPTURING_WALK, even at 0 KF)
             if (currentStep == FlowStep.READY_TRACKING || currentStep == FlowStep.CAPTURING_WALK) {
                 syncTargetAnchorPoseLocked();
+                final float estFloorY = estimateCurrentGroundYLocked(activeSession, camera.getPose().getTranslation()[1]);
+                if (
+                    overlayRenderer != null &&
+                    Float.isFinite(estFloorY) &&
+                    (!Float.isFinite(lastReportedGroundY) || Math.abs(estFloorY - lastReportedGroundY) >= 0.01f)
+                ) {
+                    lastReportedGroundY = estFloorY;
+                    overlayRenderer.setGroundY(estFloorY);
+                }
                 updateLivePointCloudAndVioLocked(frame, nowMs, currentStep == FlowStep.CAPTURING_WALK);
                 updateLivePlaneOutlines(activeSession);
             }
@@ -1578,6 +1685,8 @@ public class MinreportSpatialScannerActivity
                         fireShortPulse = true;
                         forceHud = true;
                     }
+                } else if (targetConstraint.active && !targetConstraint.hasValidPolygon()) {
+                    maybeSchedulePrePlayTargetRefreshLocked(activeSession, frame, camera);
                 }
             }
 
@@ -1668,7 +1777,14 @@ public class MinreportSpatialScannerActivity
                     }
 
                     if (burstState.isBurstFinished(nowMs, liveGyroNormRadS, SPEED_ALERT_GYRO_RAD_S)) {
-                        final boolean committed = commitBestBurstKeyframeLocked(curSector, liveHeadingDeg, nowMs);
+                        final boolean committed = commitBestBurstKeyframeLocked(
+                            activeSession,
+                            frame,
+                            camera,
+                            curSector,
+                            liveHeadingDeg,
+                            nowMs
+                        );
                         if (committed) {
                             fireShortPulse = true;
                             fireCaptureFlash = true;
@@ -1678,8 +1794,8 @@ public class MinreportSpatialScannerActivity
                     }
                 }
 
-                // 5. Periodic 3D DEM overlay refresh every 650 ms even before next KF commits
-                if (extraVioCloud.size() >= 20) {
+                // 5. Periodic 3D DEM + Visual Hull overlay refresh every 650 ms even on textureless objects
+                if (extraVioCloud.size() >= 20 || depthCloudPoints.size() >= 20 || segmentedViews.size() >= 2) {
                     maybeScheduleLiveOverlayRefreshLocked(nowMs);
                 }
 
@@ -1809,6 +1925,10 @@ public class MinreportSpatialScannerActivity
             targetEditMode = TargetEditMode.ANCHOR;
             // Apply padReferenceY even if !targetConstraint.active so pressing PLAY directly still honors patio Y
             targetConstraint = targetConstraint.withPadReferenceY(tr[1]);
+            lastReportedGroundY = tr[1];
+            if (overlayRenderer != null) {
+                overlayRenderer.setGroundY(tr[1]);
+            }
             if (renderer != null && targetConstraint.active) {
                 renderer.updateTargetVolumeConstraint(targetConstraint);
             }
@@ -1863,7 +1983,7 @@ public class MinreportSpatialScannerActivity
             return true;
         }
 
-        // Default ANCHOR mode: create ARCore Anchor at hitPose & activate TargetVolumeConstraint
+        // Default ANCHOR mode: create ARCore Anchor at hitPose & run real MagicTouch + Depth fusion off-thread
         replaceTargetAnchorLocked(activeSession, hitPose);
         targetPolygonVerticesXZ.clear();
         final float prevRadius = targetConstraint.active
@@ -1881,10 +2001,494 @@ public class MinreportSpatialScannerActivity
             keepPad,
             padY
         );
+        if (overlayRenderer != null) {
+            overlayRenderer.setTargetSegmenting(true);
+        }
         if (renderer != null) {
             renderer.updateTargetVolumeConstraint(targetConstraint);
         }
+
+        // Convert viewport tap coordinates to unrotated CPU camera IMAGE_NORMALIZED [0..1] (handles ROTATION_90/270)
+        final float[] tapImgNorm = resolveTapImageNormalized(frame, tapX, tapY);
+        scheduleTargetSegmentationLocked(activeSession, frame, tapImgNorm[0], tapImgNorm[1], true);
         return true;
+    }
+
+    private float[] resolveTapImageNormalized(final Frame frame, final float tapX, final float tapY) {
+        final float[] tapView = new float[] { tapX, tapY };
+        final float[] tapImgNorm = new float[] { 0.5f, 0.5f };
+        try {
+            frame.transformCoordinates2d(
+                Coordinates2d.VIEW,
+                tapView,
+                Coordinates2d.IMAGE_NORMALIZED,
+                tapImgNorm
+            );
+            if (Float.isFinite(tapImgNorm[0]) && Float.isFinite(tapImgNorm[1])) {
+                tapImgNorm[0] = clamp(tapImgNorm[0], 0.01f, 0.99f);
+                tapImgNorm[1] = clamp(tapImgNorm[1], 0.01f, 0.99f);
+                return tapImgNorm;
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "transformCoordinates2d VIEW->IMAGE_NORMALIZED failed; using viewport fallback", t);
+        }
+        final int vw = Math.max(1, renderer != null ? renderer.getViewportWidth() : 1);
+        final int vh = Math.max(1, renderer != null ? renderer.getViewportHeight() : 1);
+        return new float[] { clamp(tapX / vw, 0.01f, 0.99f), clamp(tapY / vh, 0.01f, 0.99f) };
+    }
+
+    private void maybeSchedulePrePlayTargetRefreshLocked(
+        final Session activeSession,
+        final Frame frame,
+        final Camera camera
+    ) {
+        if (isThermallyThrottled() || prePlaySegBusy.get() || objectSegmenter == null) {
+            return;
+        }
+        final Pose camPose = camera.getPose();
+        final float[] camPos = camPose.getTranslation();
+        final float[] zAxis = camPose.getZAxis();
+        final float fx = -zAxis[0];
+        final float fz = -zAxis[2];
+        final float fLen = (float) Math.hypot(fx, fz);
+        final float nxFwd = fLen > 1e-4f ? fx / fLen : 0.0f;
+        final float nzFwd = fLen > 1e-4f ? fz / fLen : -1.0f;
+
+        boolean shouldRefresh = false;
+        if (lastPrePlayDepthCamPos == null || lastPrePlayDepthCamFwdXZ == null) {
+            shouldRefresh = true;
+        } else {
+            final float movedM = dist3D(camPos, lastPrePlayDepthCamPos);
+            final float dot = clamp(
+                nxFwd * lastPrePlayDepthCamFwdXZ[0] + nzFwd * lastPrePlayDepthCamFwdXZ[1],
+                -1.0f,
+                1.0f
+            );
+            final double yawDeg = Math.toDegrees(Math.acos(dot));
+            if (movedM >= PRE_PLAY_REFRESH_MIN_POS_M || yawDeg >= PRE_PLAY_REFRESH_MIN_YAW_DEG) {
+                shouldRefresh = true;
+            }
+        }
+        if (!shouldRefresh) {
+            return;
+        }
+
+        final float estGroundY = estimateCurrentGroundYLocked(activeSession, camPos[1]);
+        final float midY = estGroundY + 0.5f * Math.max(targetConstraint.heightEstM, 0.30f);
+        final float[] worldToCam16 = new float[16];
+        camPose.inverse().toMatrix(worldToCam16, 0);
+        final float[] intr = resolveCameraIntrinsicsLocked(camera, TARGET_SEG_BITMAP_MAX_W, 384, false);
+        final float[] normPt = projectWorldPointToNormalizedImage(
+            targetConstraint.anchorX,
+            midY,
+            targetConstraint.anchorZ,
+            worldToCam16,
+            intr[0],
+            intr[1],
+            intr[2],
+            intr[3],
+            TARGET_SEG_BITMAP_MAX_W,
+            384
+        );
+        if (normPt == null) {
+            return;
+        }
+        scheduleTargetSegmentationLocked(activeSession, frame, normPt[0], normPt[1], false);
+    }
+
+    private void scheduleTargetSegmentationLocked(
+        final Session activeSession,
+        final Frame frame,
+        final float tapNormX,
+        final float tapNormY,
+        final boolean isDirectTap
+    ) {
+        if (visionExecutor == null || visionExecutor.isShutdown() || objectSegmenter == null) {
+            if (overlayRenderer != null) {
+                overlayRenderer.setTargetSegmenting(false);
+            }
+            return;
+        }
+        if (!isDirectTap && !prePlaySegBusy.compareAndSet(false, true)) {
+            return;
+        }
+
+        Bitmap snapBmp = null;
+        try (Image camImg = frame.acquireCameraImage()) {
+            snapBmp = InteractiveObjectSegmenter.yuv420ToScaledRgbBitmap(camImg, TARGET_SEG_BITMAP_MAX_W);
+        } catch (NotYetAvailableException ignored) {
+            snapBmp = null;
+        } catch (Throwable t) {
+            Log.w(TAG, "Failed to acquire camera snapshot for MagicTouch", t);
+            snapBmp = null;
+        }
+        if (snapBmp == null) {
+            if (!isDirectTap) {
+                prePlaySegBusy.set(false);
+            }
+            if (isDirectTap && overlayRenderer != null) {
+                overlayRenderer.setTargetSegmenting(false);
+            }
+            return;
+        }
+
+        final Camera camera = frame.getCamera();
+        final Pose camPose = camera.getPose();
+        final float[] camPos = camPose.getTranslation();
+        final float[] zAxis = camPose.getZAxis();
+        final float fxDir = -zAxis[0];
+        final float fzDir = -zAxis[2];
+        final float fLen = (float) Math.hypot(fxDir, fzDir);
+        lastPrePlayDepthCamPos = Arrays.copyOf(camPos, 3);
+        lastPrePlayDepthCamFwdXZ = fLen > 1e-4f
+            ? new float[] { fxDir / fLen, fzDir / fLen }
+            : new float[] { 0.0f, -1.0f };
+
+        final float[] camToWorld16 = new float[16];
+        camPose.toMatrix(camToWorld16, 0);
+        final int bmpW = snapBmp.getWidth();
+        final int bmpH = snapBmp.getHeight();
+        final float[] bmpIntr = resolveCameraIntrinsicsLocked(camera, bmpW, bmpH, false);
+        final float estGroundY = estimateCurrentGroundYLocked(activeSession, camPos[1]);
+
+        // On-demand ARCore Depth snapshot (smooth Depth preferred on tap; fallback to raw Depth if unavailable)
+        DepthSnapshot depthSnap = acquireDepthSnapshotOnDemand(frame, false, isDirectTap);
+        if (depthSnap == null) {
+            depthSnap = acquireDepthSnapshotOnDemand(frame, true, isDirectTap);
+        }
+
+        final TargetVolumeConstraint existingSnap = targetConstraint;
+        final float anchorX = existingSnap.anchorX;
+        final float anchorY = existingSnap.anchorY;
+        final float anchorZ = existingSnap.anchorZ;
+        final int gen = isDirectTap ? targetSegGeneration.incrementAndGet() : targetSegGeneration.get();
+        final Bitmap bmpForBg = snapBmp;
+        final DepthSnapshot depthForBg = depthSnap;
+
+        visionExecutor.execute(() -> {
+            try {
+                final InteractiveObjectSegmenter seg = objectSegmenter;
+                if (seg == null) {
+                    return;
+                }
+                final InteractiveObjectSegmenter.ObjectMask mask =
+                    seg.segmentAtNormalizedPoint(bmpForBg, tapNormX, tapNormY);
+                if (!mask.valid) {
+                    if (isDirectTap && overlayRenderer != null && gen == targetSegGeneration.get()) {
+                        overlayRenderer.setTargetSegmenting(false);
+                    }
+                    return;
+                }
+
+                final float sx = mask.width / (float) Math.max(1, bmpW);
+                final float sy = mask.height / (float) Math.max(1, bmpH);
+                final float fxM = bmpIntr[0] * sx;
+                final float fyM = bmpIntr[1] * sy;
+                final float cxM = bmpIntr[2] * sx;
+                final float cyM = bmpIntr[3] * sy;
+
+                final DepthMaskFuser.FusedTargetSurface fused = DepthMaskFuser.fuse(
+                    mask.conf,
+                    mask.width,
+                    mask.height,
+                    depthForBg != null ? depthForBg.depthMm : null,
+                    depthForBg != null ? depthForBg.depthConf : null,
+                    depthForBg != null ? depthForBg.width : 0,
+                    depthForBg != null ? depthForBg.height : 0,
+                    fxM,
+                    fyM,
+                    cxM,
+                    cyM,
+                    camToWorld16,
+                    estGroundY,
+                    anchorX,
+                    anchorY,
+                    anchorZ,
+                    tapNormX,
+                    tapNormY,
+                    existingSnap
+                );
+                if (fused == null || fused.constraint == null) {
+                    if (isDirectTap && overlayRenderer != null && gen == targetSegGeneration.get()) {
+                        overlayRenderer.setTargetSegmenting(false);
+                    }
+                    return;
+                }
+
+                boolean applied = false;
+                synchronized (stateLock) {
+                    if (
+                        gen == targetSegGeneration.get() &&
+                        !finishing &&
+                        currentStep == FlowStep.READY_TRACKING &&
+                        targetConstraint.active &&
+                        !targetConstraint.hasValidPolygon()
+                    ) {
+                        targetConstraint = fused.constraint;
+                        if (renderer != null) {
+                            renderer.updateTargetVolumeConstraint(targetConstraint);
+                        }
+                        if (overlayRenderer != null) {
+                            overlayRenderer.setGroundY(estGroundY);
+                            if (fused.usedDepth && fused.triVerticesXyz != null && fused.triVerticesXyz.length >= 9) {
+                                overlayRenderer.setFusedTargetSurface(fused.triVerticesXyz, fused.contourLoopXyz);
+                            } else {
+                                final float anchorDistM = clamp(
+                                    (float) Math.sqrt(
+                                        (fused.constraint.anchorX - camToWorld16[12]) * (fused.constraint.anchorX - camToWorld16[12]) +
+                                        (fused.constraint.anchorY - camToWorld16[13]) * (fused.constraint.anchorY - camToWorld16[13]) +
+                                        (fused.constraint.anchorZ - camToWorld16[14]) * (fused.constraint.anchorZ - camToWorld16[14])
+                                    ),
+                                    0.35f,
+                                    15.0f
+                                );
+                                final float[] quadWorld12 = computeFallbackMaskQuadCornersWorld(
+                                    camToWorld16,
+                                    fxM,
+                                    fyM,
+                                    cxM,
+                                    cyM,
+                                    mask.width,
+                                    mask.height,
+                                    anchorDistM
+                                );
+                                overlayRenderer.setFallbackMaskQuad(mask.conf, mask.width, mask.height, quadWorld12);
+                            }
+                        }
+                        applied = true;
+                    }
+                }
+                if (applied) {
+                    mainHandler.post(() -> updateHudFromState(true));
+                }
+            } catch (Throwable t) {
+                Log.w(TAG, "Background MagicTouch + DepthMaskFuser failed", t);
+                if (isDirectTap && overlayRenderer != null && gen == targetSegGeneration.get()) {
+                    overlayRenderer.setTargetSegmenting(false);
+                }
+            } finally {
+                if (!bmpForBg.isRecycled()) {
+                    bmpForBg.recycle();
+                }
+                if (!isDirectTap) {
+                    prePlaySegBusy.set(false);
+                }
+            }
+        });
+    }
+
+    /**
+     * On-demand ARCore 16-bit Depth snapshot deduplicated by timestamp and skipped when thermally throttled.
+     * Always closes ARCore Image handles inside try-with-resources; NotYetAvailableException is silently ignored.
+     */
+    private DepthSnapshot acquireDepthSnapshotOnDemand(
+        final Frame frame,
+        final boolean useRawDepth,
+        final boolean allowSameTimestamp
+    ) {
+        if (!depthEnabled || frame == null || isThermallyThrottled()) {
+            return null;
+        }
+        try (Image depthImg = useRawDepth ? frame.acquireRawDepthImage16Bits() : frame.acquireDepthImage16Bits()) {
+            final long ts = depthImg.getTimestamp();
+            if (!allowSameTimestamp && ts != 0L && ts == lastDepthTimestampNs) {
+                return null;
+            }
+            final int w = depthImg.getWidth();
+            final int h = depthImg.getHeight();
+            final Image.Plane[] planes = depthImg.getPlanes();
+            if (w <= 0 || h <= 0 || planes == null || planes.length < 1 || planes[0] == null) {
+                return null;
+            }
+            final ByteBuffer buf = planes[0].getBuffer();
+            final int rowStride = planes[0].getRowStride();
+            final int pixelStride = planes[0].getPixelStride();
+            final int limit = buf.limit();
+            final short[] depthMm = new short[w * h];
+            for (int y = 0; y < h; y++) {
+                final int rowOff = y * rowStride;
+                final int outRow = y * w;
+                for (int x = 0; x < w; x++) {
+                    final int idx = rowOff + x * pixelStride;
+                    if (idx + 1 < limit) {
+                        final int lo = buf.get(idx) & 0xFF;
+                        final int hi = buf.get(idx + 1) & 0xFF;
+                        depthMm[outRow + x] = (short) ((hi << 8) | lo);
+                    }
+                }
+            }
+
+            byte[] depthConf = null;
+            if (useRawDepth) {
+                try (Image confImg = frame.acquireRawDepthConfidenceImage()) {
+                    final int cw = confImg.getWidth();
+                    final int ch = confImg.getHeight();
+                    final Image.Plane[] cPlanes = confImg.getPlanes();
+                    if (cw == w && ch == h && cPlanes != null && cPlanes.length >= 1 && cPlanes[0] != null) {
+                        final ByteBuffer cBuf = cPlanes[0].getBuffer();
+                        final int cRowStride = cPlanes[0].getRowStride();
+                        final int cPixStride = cPlanes[0].getPixelStride();
+                        final int cLimit = cBuf.limit();
+                        depthConf = new byte[cw * ch];
+                        for (int y = 0; y < ch; y++) {
+                            final int cRowOff = y * cRowStride;
+                            final int outRow = y * cw;
+                            for (int x = 0; x < cw; x++) {
+                                final int cIdx = cRowOff + x * cPixStride;
+                                if (cIdx < cLimit) {
+                                    depthConf[outRow + x] = cBuf.get(cIdx);
+                                }
+                            }
+                        }
+                    }
+                } catch (NotYetAvailableException ignored) {
+                } catch (Throwable ignored) {
+                }
+            }
+
+            if (ts != 0L) {
+                lastDepthTimestampNs = ts;
+            }
+            return new DepthSnapshot(depthMm, depthConf, w, h, ts);
+        } catch (NotYetAvailableException ignored) {
+            return null;
+        } catch (Throwable t) {
+            Log.w(TAG, "On-demand ARCore depth acquisition unavailable: " + t.getMessage());
+            return null;
+        }
+    }
+
+    private float estimateCurrentGroundYLocked(final Session activeSession, final float camY) {
+        if (targetConstraint != null && targetConstraint.hasPadReferenceY) {
+            return targetConstraint.padReferenceY;
+        }
+        if (hasPendingPadReferenceY) {
+            return pendingPadReferenceY;
+        }
+        final List<float[]> medGround = groundCellAggregator.snapshotTrimmedMedians();
+        if (!medGround.isEmpty()) {
+            final float[] ys = new float[medGround.size()];
+            for (int i = 0; i < medGround.size(); i++) {
+                ys[i] = medGround.get(i)[1];
+            }
+            Arrays.sort(ys);
+            return ys[ys.length / 2];
+        }
+        if (activeSession != null) {
+            try {
+                final List<Float> planeYs = new ArrayList<>(8);
+                for (Plane plane : activeSession.getAllTrackables(Plane.class)) {
+                    if (
+                        plane.getTrackingState() == TrackingState.TRACKING &&
+                        plane.getSubsumedBy() == null &&
+                        plane.getType() == Plane.Type.HORIZONTAL_UPWARD_FACING
+                    ) {
+                        final Pose cp = plane.getCenterPose();
+                        if (cp != null) {
+                            final float py = cp.getTranslation()[1];
+                            if (Float.isFinite(py) && (!Float.isFinite(camY) || py <= camY - 0.35f)) {
+                                planeYs.add(py);
+                            }
+                        }
+                    }
+                }
+                if (!planeYs.isEmpty()) {
+                    final float[] arr = new float[planeYs.size()];
+                    for (int i = 0; i < planeYs.size(); i++) {
+                        arr[i] = planeYs.get(i);
+                    }
+                    Arrays.sort(arr);
+                    return arr[arr.length / 2];
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        if (targetConstraint != null && targetConstraint.active && Float.isFinite(targetConstraint.anchorY)) {
+            return targetConstraint.anchorY;
+        }
+        return Float.isFinite(camY) ? (camY - 1.15f) : 0.0f;
+    }
+
+    private static float[] computeFallbackMaskQuadCornersWorld(
+        final float[] camToWorld16,
+        final float fx,
+        final float fy,
+        final float cx,
+        final float cy,
+        final int maskW,
+        final int maskH,
+        final float depthM
+    ) {
+        final float safeFx = Math.max(1.0f, fx);
+        final float safeFy = Math.max(1.0f, fy);
+        final float[] uvCorners = new float[] {
+            0.0f, 0.0f,
+            (float) maskW, 0.0f,
+            0.0f, (float) maskH,
+            (float) maskW, (float) maskH
+        };
+        final float[] out12 = new float[12];
+        for (int i = 0; i < 4; i++) {
+            final float u = uvCorners[i * 2];
+            final float v = uvCorners[i * 2 + 1];
+            final float xc = ((u - cx) / safeFx) * depthM;
+            final float yc = -((v - cy) / safeFy) * depthM;
+            final float zc = -depthM;
+            out12[i * 3] = camToWorld16[0] * xc + camToWorld16[4] * yc + camToWorld16[8] * zc + camToWorld16[12];
+            out12[i * 3 + 1] = camToWorld16[1] * xc + camToWorld16[5] * yc + camToWorld16[9] * zc + camToWorld16[13];
+            out12[i * 3 + 2] = camToWorld16[2] * xc + camToWorld16[6] * yc + camToWorld16[10] * zc + camToWorld16[14];
+        }
+        return out12;
+    }
+
+    private static float[] buildCamToWorldColMajor16(final float[] rWcRowMajor9, final float[] tWc3) {
+        return new float[] {
+            rWcRowMajor9[0], rWcRowMajor9[3], rWcRowMajor9[6], 0.0f,
+            rWcRowMajor9[1], rWcRowMajor9[4], rWcRowMajor9[7], 0.0f,
+            rWcRowMajor9[2], rWcRowMajor9[5], rWcRowMajor9[8], 0.0f,
+            tWc3[0], tWc3[1], tWc3[2], 1.0f
+        };
+    }
+
+    private static float[] buildWorldToCamColMajor16(final float[] rWcRowMajor9, final float[] tWc3) {
+        final float tx = -(rWcRowMajor9[0] * tWc3[0] + rWcRowMajor9[3] * tWc3[1] + rWcRowMajor9[6] * tWc3[2]);
+        final float ty = -(rWcRowMajor9[1] * tWc3[0] + rWcRowMajor9[4] * tWc3[1] + rWcRowMajor9[7] * tWc3[2]);
+        final float tz = -(rWcRowMajor9[2] * tWc3[0] + rWcRowMajor9[5] * tWc3[1] + rWcRowMajor9[8] * tWc3[2]);
+        return new float[] {
+            rWcRowMajor9[0], rWcRowMajor9[1], rWcRowMajor9[2], 0.0f,
+            rWcRowMajor9[3], rWcRowMajor9[4], rWcRowMajor9[5], 0.0f,
+            rWcRowMajor9[6], rWcRowMajor9[7], rWcRowMajor9[8], 0.0f,
+            tx, ty, tz, 1.0f
+        };
+    }
+
+    private static float[] projectWorldPointToNormalizedImage(
+        final float wx,
+        final float wy,
+        final float wz,
+        final float[] worldToCam16,
+        final float fx,
+        final float fy,
+        final float cx,
+        final float cy,
+        final int imgW,
+        final int imgH
+    ) {
+        final float xc = worldToCam16[0] * wx + worldToCam16[4] * wy + worldToCam16[8] * wz + worldToCam16[12];
+        final float yc = worldToCam16[1] * wx + worldToCam16[5] * wy + worldToCam16[9] * wz + worldToCam16[13];
+        final float zc = worldToCam16[2] * wx + worldToCam16[6] * wy + worldToCam16[10] * wz + worldToCam16[14];
+        if (!Float.isFinite(zc) || zc >= -0.15f) {
+            return null;
+        }
+        final float invNegZ = 1.0f / (-zc);
+        final float u = fx * (xc * invNegZ) + cx;
+        final float v = cy - fy * (yc * invNegZ);
+        final float nx = u / Math.max(1, imgW);
+        final float ny = v / Math.max(1, imgH);
+        if (!Float.isFinite(nx) || !Float.isFinite(ny) || nx < 0.04f || nx > 0.96f || ny < 0.04f || ny > 0.96f) {
+            return null;
+        }
+        return new float[] { nx, ny };
     }
 
     private void replaceTargetAnchorLocked(final Session activeSession, final Pose hitPose) {
@@ -2304,7 +2908,14 @@ public class MinreportSpatialScannerActivity
             );
     }
 
-    private boolean commitBestBurstKeyframeLocked(final int sector, final double angleDeg, final long nowMs) {
+    private boolean commitBestBurstKeyframeLocked(
+        final Session activeSession,
+        final Frame frame,
+        final Camera camera,
+        final int sector,
+        final double angleDeg,
+        final long nowMs
+    ) {
         final CapturePipelineHelper.BurstCandidate winner = burstState.consumeCommittedCandidate();
         if (winner == null || !winner.isComplete()) {
             return false;
@@ -2366,7 +2977,15 @@ public class MinreportSpatialScannerActivity
             ioExecutor.execute(() -> saveUnrotatedWebpWithCasStats(nv21Copy, srcW, srcH, outW, outH, photoFile, rec));
         }
 
-        // 2. Feed 4:3 luma into incremental FAST+rBRIEF VIO triangulation off-thread (< 5 ms)
+        // 2. Capture on-demand Raw Depth snapshot (skipped automatically under thermal throttle)
+        final DepthSnapshot rawDepthSnap = acquireDepthSnapshotOnDemand(frame, true, false);
+        final TargetVolumeConstraint targetSnap = targetConstraint;
+        final float estGroundY = estimateCurrentGroundYLocked(activeSession, winner.tWc[1]);
+        final float[] camToWorld16 = buildCamToWorldColMajor16(winner.rWc, winner.tWc);
+        final float[] worldToCam16 = buildWorldToCamColMajor16(winner.rWc, winner.tWc);
+        final float[] winnerIntr = Arrays.copyOf(winner.intr, 4);
+
+        // 3. Feed 4:3 luma into incremental FAST+rBRIEF VIO triangulation + Auto-Prompt MagicTouch + Depth extraction
         final float mvsScaleX = MVS_LUMA_W / (float) winner.width;
         final float mvsScaleY = MVS_LUMA_H / (float) winner.height;
         final OfflineVioMvsEngine.KeyframeFrame mvsKf = new OfflineVioMvsEngine.KeyframeFrame(
@@ -2389,6 +3008,112 @@ public class MinreportSpatialScannerActivity
                 } catch (Throwable t) {
                     Log.e(TAG, "Incremental VIO keyframe ingest failed for kf=" + kfIndex, t);
                 }
+
+                // Auto-prompting MagicTouch for Visual Hull + Raw Depth extraction on target object
+                try {
+                    InteractiveObjectSegmenter.ObjectMask kfMask = null;
+                    if (targetSnap != null && targetSnap.active && objectSegmenter != null) {
+                        final float targetMidY = estGroundY + 0.5f * Math.max(targetSnap.heightEstM, 0.30f);
+                        final float[] promptNorm = projectWorldPointToNormalizedImage(
+                            targetSnap.anchorX,
+                            targetMidY,
+                            targetSnap.anchorZ,
+                            worldToCam16,
+                            winnerIntr[0],
+                            winnerIntr[1],
+                            winnerIntr[2],
+                            winnerIntr[3],
+                            srcW,
+                            srcH
+                        );
+                        if (promptNorm != null) {
+                            final Bitmap kfBmp = InteractiveObjectSegmenter.nv21ToScaledRgbBitmap(
+                                nv21Copy,
+                                srcW,
+                                srcH,
+                                TARGET_SEG_BITMAP_MAX_W
+                            );
+                            if (kfBmp != null) {
+                                try {
+                                    kfMask = objectSegmenter.segmentAtNormalizedPoint(
+                                        kfBmp,
+                                        promptNorm[0],
+                                        promptNorm[1]
+                                    );
+                                } finally {
+                                    if (!kfBmp.isRecycled()) {
+                                        kfBmp.recycle();
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (kfMask != null && kfMask.valid) {
+                        final float fxM = winnerIntr[0] * (kfMask.width / (float) Math.max(1, srcW));
+                        final float fyM = winnerIntr[1] * (kfMask.height / (float) Math.max(1, srcH));
+                        final float cxM = winnerIntr[2] * (kfMask.width / (float) Math.max(1, srcW));
+                        final float cyM = winnerIntr[3] * (kfMask.height / (float) Math.max(1, srcH));
+                        final VisualHullCarver.SegmentedView segView = new VisualHullCarver.SegmentedView(
+                            kfMask.conf,
+                            kfMask.width,
+                            kfMask.height,
+                            fxM,
+                            fyM,
+                            cxM,
+                            cyM,
+                            worldToCam16,
+                            estGroundY
+                        );
+                        synchronized (stateLock) {
+                            if (segmentedViews.size() < MAX_SEGMENTED_VIEWS) {
+                                segmentedViews.add(segView);
+                            }
+                        }
+                    }
+
+                    if (rawDepthSnap != null) {
+                        final boolean hasMask = kfMask != null && kfMask.valid;
+                        final int refW = hasMask ? kfMask.width : rawDepthSnap.width;
+                        final int refH = hasMask ? kfMask.height : rawDepthSnap.height;
+                        final float fxD = winnerIntr[0] * (refW / (float) Math.max(1, srcW));
+                        final float fyD = winnerIntr[1] * (refH / (float) Math.max(1, srcH));
+                        final float cxD = winnerIntr[2] * (refW / (float) Math.max(1, srcW));
+                        final float cyD = winnerIntr[3] * (refH / (float) Math.max(1, srcH));
+                        final List<float[]> depthPts = DepthMaskFuser.extractFilteredDepthPoints(
+                            hasMask ? kfMask.conf : null,
+                            refW,
+                            refH,
+                            rawDepthSnap.depthMm,
+                            rawDepthSnap.depthConf,
+                            rawDepthSnap.width,
+                            rawDepthSnap.height,
+                            fxD,
+                            fyD,
+                            cxD,
+                            cyD,
+                            camToWorld16,
+                            estGroundY,
+                            targetSnap,
+                            hasMask ? 2 : 4,
+                            hasMask ? 600 : 400
+                        );
+                        if (depthPts != null && !depthPts.isEmpty()) {
+                            synchronized (stateLock) {
+                                depthSamplesCollectedCount += depthPts.size();
+                                final int remaining = MAX_DEPTH_CLOUD_POINTS - depthCloudPoints.size();
+                                if (remaining > 0) {
+                                    final int toAdd = Math.min(remaining, depthPts.size());
+                                    for (int i = 0; i < toAdd; i++) {
+                                        depthCloudPoints.add(depthPts.get(i));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } catch (Throwable t) {
+                    Log.w(TAG, "Keyframe auto-prompt MagicTouch / Depth extraction failed for kf=" + kfIndex, t);
+                }
             });
         }
         return true;
@@ -2402,16 +3127,35 @@ public class MinreportSpatialScannerActivity
         final List<WalkRingToeSolver.WalkPose> walkSnap = new ArrayList<>(walkRingPoses);
         final List<float[]> groundSnap = groundCellAggregator.snapshotTrimmedMedians();
         final List<float[]> extraSnap = new ArrayList<>(extraVioCloud);
+        final List<float[]> depthSnap = new ArrayList<>(depthCloudPoints);
+        final List<VisualHullCarver.SegmentedView> viewsSnap = new ArrayList<>(segmentedViews);
         final TargetVolumeConstraint targetSnap = targetConstraint;
+        final boolean anchorSnap = hasScaleAnchor;
+        final float camY = lastWalkPosePos != null ? lastWalkPosePos[1] : Float.NaN;
+        final float estGroundY = estimateCurrentGroundYLocked(session, camY);
+        final int hullGridRes = isThermallyThrottled() ? 40 : 48;
 
         if (visionExecutor != null && !visionExecutor.isShutdown()) {
             visionExecutor.execute(() -> {
                 try {
                     final List<float[]> pts = offlineEngine.getIncrementalPointsSnapshot();
                     pts.addAll(extraSnap);
-                    if (pts.size() >= 20) {
+                    pts.addAll(depthSnap);
+
+                    VisualHullCarver.VisualHullResult liveHull = null;
+                    if (targetSnap != null && targetSnap.active && viewsSnap.size() >= 2) {
+                        liveHull = VisualHullCarver.carve(viewsSnap, targetSnap, estGroundY, hullGridRes);
+                    }
+
+                    if (pts.size() >= 20 || (liveHull != null && liveHull.isValid())) {
                         final WalkRingToeSolver.MetrologyResult liveRes = WalkRingToeSolver.solve(
-                            pts, walkSnap, groundSnap, hasScaleAnchor, -1.0, targetSnap
+                            pts,
+                            walkSnap,
+                            groundSnap,
+                            anchorSnap,
+                            -1.0,
+                            targetSnap,
+                            liveHull
                         );
                         if (liveRes.liveOverlay != null && renderer != null) {
                             renderer.updateLiveOverlay(liveRes.liveOverlay);
@@ -2494,31 +3238,101 @@ public class MinreportSpatialScannerActivity
                 final List<WalkRingToeSolver.WalkPose> walkSnap;
                 final List<float[]> groundSnap;
                 final List<float[]> extraSnap;
+                final List<float[]> depthSnap;
+                final List<VisualHullCarver.SegmentedView> viewsSnap;
                 final List<KeyframeRecord> kfSnap;
                 final TargetVolumeConstraint targetSnap;
                 final int coveredSnap;
                 final int blurSnap;
                 final boolean anchorSnap;
+                final int depthCountSnap;
                 synchronized (stateLock) {
                     walkSnap = new ArrayList<>(walkRingPoses);
                     groundSnap = groundCellAggregator.snapshotTrimmedMedians();
                     extraSnap = new ArrayList<>(extraVioCloud);
+                    depthSnap = new ArrayList<>(depthCloudPoints);
+                    viewsSnap = new ArrayList<>(segmentedViews);
                     kfSnap = new ArrayList<>(savedKeyframes);
                     targetSnap = targetConstraint;
                     coveredSnap = sectorsCovered;
                     blurSnap = rejectedBlurCount;
                     anchorSnap = hasScaleAnchor;
+                    depthCountSnap = depthSamplesCollectedCount;
                 }
 
+                final long finalizeStartMs = System.currentTimeMillis();
                 final boolean thermalDegraded = isThermallyThrottled();
-                final OfflineVioMvsEngine.EngineOutput engineOut = offlineEngine.solveFullOffline(
+                final List<float[]> extraPlusDepth = new ArrayList<>(extraSnap.size() + depthSnap.size());
+                extraPlusDepth.addAll(extraSnap);
+                extraPlusDepth.addAll(depthSnap);
+
+                OfflineVioMvsEngine.EngineOutput engineOut = offlineEngine.solveFullOffline(
                     walkSnap,
                     groundSnap,
-                    extraSnap,
+                    extraPlusDepth,
                     anchorSnap,
                     thermalDegraded,
                     targetSnap
                 );
+
+                int visualHullViewsUsed = 0;
+                if (targetSnap != null && targetSnap.active && viewsSnap.size() >= 2) {
+                    float estGroundY = targetSnap.hasPadReferenceY ? targetSnap.padReferenceY : Float.NaN;
+                    if (!Float.isFinite(estGroundY) && !groundSnap.isEmpty()) {
+                        final float[] gYs = new float[groundSnap.size()];
+                        for (int i = 0; i < groundSnap.size(); i++) {
+                            gYs[i] = groundSnap.get(i)[1];
+                        }
+                        Arrays.sort(gYs);
+                        estGroundY = gYs[gYs.length / 2];
+                    }
+                    if (!Float.isFinite(estGroundY) && engineOut.metrology != null) {
+                        estGroundY = (float) (
+                            engineOut.metrology.planeA * targetSnap.anchorX +
+                            engineOut.metrology.planeB * targetSnap.anchorZ +
+                            engineOut.metrology.planeD
+                        );
+                    }
+                    if (!Float.isFinite(estGroundY)) {
+                        estGroundY = targetSnap.anchorY;
+                    }
+
+                    final int gridRes = thermalDegraded ? 40 : 48;
+                    final VisualHullCarver.VisualHullResult finalHull = VisualHullCarver.carve(
+                        viewsSnap,
+                        targetSnap,
+                        estGroundY,
+                        gridRes
+                    );
+                    if (finalHull != null && finalHull.isValid()) {
+                        visualHullViewsUsed = finalHull.viewsUsed;
+                        final List<float[]> triModalPts = offlineEngine.getIncrementalPointsSnapshot();
+                        triModalPts.addAll(extraPlusDepth);
+                        if (engineOut.metrology != null && engineOut.metrology.stratifiedPointsM != null) {
+                            triModalPts.addAll(engineOut.metrology.stratifiedPointsM);
+                        }
+                        final WalkRingToeSolver.MetrologyResult triModalRes = WalkRingToeSolver.solve(
+                            triModalPts,
+                            walkSnap,
+                            groundSnap,
+                            anchorSnap,
+                            -1.0,
+                            targetSnap,
+                            finalHull
+                        );
+                        final long totalComputeMs = Math.max(
+                            engineOut.computeMs,
+                            System.currentTimeMillis() - finalizeStartMs
+                        );
+                        engineOut = new OfflineVioMvsEngine.EngineOutput(
+                            triModalRes,
+                            totalComputeMs,
+                            thermalDegraded,
+                            engineOut.sparseTriangulatedCount,
+                            engineOut.denseMvsCount
+                        );
+                    }
+                }
 
                 final JSONObject payload = buildScanResultJsonV2(
                     engineOut,
@@ -2526,7 +3340,9 @@ public class MinreportSpatialScannerActivity
                     kfSnap,
                     coveredSnap,
                     blurSnap,
-                    targetSnap
+                    targetSnap,
+                    visualHullViewsUsed,
+                    depthCountSnap
                 );
 
                 final File resultFile = new File(getCacheDir(), scanId + "_result.json");
@@ -2570,7 +3386,9 @@ public class MinreportSpatialScannerActivity
         final List<KeyframeRecord> kfSnap,
         final int covered,
         final int blurRejected,
-        final TargetVolumeConstraint targetSnap
+        final TargetVolumeConstraint targetSnap,
+        final int visualHullViews,
+        final int depthSamplesCount
     ) throws Exception {
         final WalkRingToeSolver.MetrologyResult m = engineOut.metrology;
         final JSONObject root = new JSONObject();
@@ -2745,10 +3563,15 @@ public class MinreportSpatialScannerActivity
         metObj.put("densePointsCount", m.densePointsCount);
         metObj.put("sparseTriangulatedCount", engineOut.sparseTriangulatedCount);
         metObj.put("denseMvsCount", engineOut.denseMvsCount);
+        metObj.put("visualHullViews", visualHullViews);
+        metObj.put("depthSamplesCount", depthSamplesCount);
         metObj.put("computeMs", engineOut.computeMs);
         metObj.put("thermalDegraded", engineOut.thermalDegraded);
         root.put("inSituMetrology", metObj);
         root.put("slopeProfile", m.slopeProfile);
+        root.put("sigmaGroundM", round4(m.sigmaGroundM));
+        root.put("visualHullViews", visualHullViews);
+        root.put("depthSamplesCount", depthSamplesCount);
 
         if (targetSnap != null && (targetSnap.active || targetSnap.hasPadReferenceY)) {
             final JSONObject tgtObj = new JSONObject();
@@ -3005,17 +3828,24 @@ public class MinreportSpatialScannerActivity
             perimeterRingView.setVisibility(View.VISIBLE);
             perimeterRingView.updateState(statesSnap, heading, true, pctInt, optimalReady, null);
 
-            // Anti-false-volume rule: show ~XX.X m³ in neutral #F3F4F6 ONLY at >= 75% coverage
-            if (pctInt >= 75 && vol > 0.05f) {
-                liveVolumeText.setText(String.format(Locale.US, "~%.1f m³", vol));
-                liveVolumeText.setTextColor(COLOR_PRIMARY);
+            // Live volume unlocked from 25% coverage (covered >= 4) when vol > 0.003 m³ (3 decimals < 1 m³)
+            if (covered >= 4 && vol > 0.003f) {
+                final String prefix = pctInt >= 75 ? "" : "~";
+                if (vol < 1.0f) {
+                    liveVolumeText.setText(String.format(Locale.US, "%s%.3f m³", prefix, vol));
+                } else {
+                    liveVolumeText.setText(String.format(Locale.US, "%s%.1f m³", prefix, vol));
+                }
+                liveVolumeText.setTextColor(pctInt >= 75 ? COLOR_CYAN : COLOR_PRIMARY);
             } else {
                 liveVolumeText.setText("--.- m³");
                 liveVolumeText.setTextColor(COLOR_DISABLED);
             }
 
-            if (covered >= 3 && diam > 0.1f) {
-                liveDimsText.setText(String.format(Locale.US, "Ø %.1f m · H %.1f m", diam, height));
+            if (covered >= 3 && diam > 0.05f) {
+                final String dFmt = diam < 1.0f ? "%.2f" : "%.1f";
+                final String hFmt = height < 1.0f ? "%.2f" : "%.1f";
+                liveDimsText.setText(String.format(Locale.US, "Ø " + dFmt + " m · H " + hFmt + " m", diam, height));
             } else {
                 liveDimsText.setText("Ø --.- m · H --.- m");
             }
