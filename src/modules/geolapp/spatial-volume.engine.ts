@@ -10,6 +10,15 @@ export type WallConfinementMode = 'NONE' | 'SINGLE_WALL' | 'BUNKER_3_WALLS';
 
 export type MetrologyGrade = 'VALID_IN_SITU' | 'LOW_CONFIDENCE_RECAPTURE' | 'REJECTED';
 
+export type SlopeProfile = 'NATURAL_REPOSE' | 'STEEP_ALERT' | 'VERTICAL_STRUCTURE';
+
+export interface TargetVolumeConstraint {
+    anchorXZ?: [number, number];
+    radiusM?: number;
+    polygonXZ?: Array<[number, number]>;
+    padReferenceY?: number;
+}
+
 export interface WalkRingPose {
     x: number;
     y: number;
@@ -30,6 +39,7 @@ export interface InclinedGroundPlaneResult {
     b: number;
     d: number;
     residualRmsM: number;
+    sigmaGroundM?: number;
     groundSlopeDeg: number;
     toeScore: number;
     walkRingSlopeDeg?: number;
@@ -75,6 +85,7 @@ export interface SpatialVolumeInput {
     hasScaleAnchor?: boolean;
     crestClippedRatio?: number;
     depthMode?: 'RAW_DEPTH_ONLY' | 'AUTOMATIC' | 'VIO_POINTCLOUD' | 'KNOWN_POSE_MVS_OFFLINE' | string;
+    targetConstraint?: TargetVolumeConstraint | null;
 }
 
 export interface SpatialVolumeResult {
@@ -86,6 +97,7 @@ export interface SpatialVolumeResult {
     slopeAngleLeftDeg: number | null;
     slopeAngleRightDeg: number | null;
     slopeAngleAvgDeg: number | null;
+    slopeProfile: SlopeProfile | null;
     slopeWarning: string | null;
     groundSlopeDeg: number;
     planeMismatchDeg: number;
@@ -130,6 +142,11 @@ const RANSAC_ITERATIONS = 120;
 const RADIAL_SECTORS = 16;
 const DEFAULT_OPERATOR_HEIGHT_M = 1.45;
 
+function round4(n: number): number {
+    if (!Number.isFinite(n)) return 0;
+    return Math.round(n * 10000) / 10000;
+}
+
 function round2(n: number): number {
     if (!Number.isFinite(n)) return 0;
     return Math.round(n * 100) / 100;
@@ -138,6 +155,19 @@ function round2(n: number): number {
 function round1(n: number): number {
     if (!Number.isFinite(n)) return 0;
     return Math.round(n * 10) / 10;
+}
+
+export function classifySlopeProfile(slopeAngleAvgDeg: number | null): SlopeProfile | null {
+    if (slopeAngleAvgDeg === null || !Number.isFinite(slopeAngleAvgDeg)) {
+        return null;
+    }
+    if (slopeAngleAvgDeg > 65) {
+        return 'VERTICAL_STRUCTURE';
+    }
+    if (slopeAngleAvgDeg > 38) {
+        return 'STEEP_ALERT';
+    }
+    return 'NATURAL_REPOSE';
 }
 
 function clamp(v: number, min: number, max: number): number {
@@ -270,6 +300,219 @@ function fitPlaneOls(samples: ReadonlyArray<SpatialPoint3D>): { a: number; b: nu
     return { a, b, d };
 }
 
+function fitPlaneWls(
+    samples: ReadonlyArray<SpatialPoint3D>,
+    weights: ReadonlyArray<number>
+): { a: number; b: number; d: number } | null {
+    if (samples.length < 3 || weights.length !== samples.length) return null;
+
+    let sxx = 0;
+    let sxz = 0;
+    let sx = 0;
+    let szz = 0;
+    let sz = 0;
+    let sw = 0;
+    let sxy = 0;
+    let szy = 0;
+    let sy = 0;
+
+    for (let i = 0; i < samples.length; i++) {
+        const w = weights[i];
+        if (!Number.isFinite(w) || w <= 0) continue;
+        const [x, y, z] = samples[i];
+        sxx += w * x * x;
+        sxz += w * x * z;
+        sx += w * x;
+        szz += w * z * z;
+        sz += w * z;
+        sw += w;
+        sxy += w * x * y;
+        szy += w * z * y;
+        sy += w * y;
+    }
+
+    if (sw < 1e-6) return null;
+
+    const m: number[][] = [
+        [sxx, sxz, sx, sxy],
+        [sxz, szz, sz, szy],
+        [sx, sz, sw, sy],
+    ];
+
+    for (let col = 0; col < 3; col++) {
+        let pivotRow = col;
+        let maxAbs = Math.abs(m[col][col]);
+        for (let r = col + 1; r < 3; r++) {
+            const absVal = Math.abs(m[r][col]);
+            if (absVal > maxAbs) {
+                maxAbs = absVal;
+                pivotRow = r;
+            }
+        }
+        if (maxAbs < 1e-10) return null;
+        if (pivotRow !== col) {
+            const tmp = m[col];
+            m[col] = m[pivotRow];
+            m[pivotRow] = tmp;
+        }
+        const diag = m[col][col];
+        for (let c = col; c < 4; c++) m[col][c] /= diag;
+        for (let r = 0; r < 3; r++) {
+            if (r === col) continue;
+            const factor = m[r][col];
+            for (let c = col; c < 4; c++) {
+                m[r][c] -= factor * m[col][c];
+            }
+        }
+    }
+
+    const a = m[0][3];
+    const b = m[1][3];
+    const d = m[2][3];
+    if (!Number.isFinite(a) || !Number.isFinite(b) || !Number.isFinite(d)) return null;
+    return { a, b, d };
+}
+
+/**
+ * Refina un plano y = a*x + b*z + d mediante IRLS con función de pérdida Huber
+ * y ajuste final de término independiente `d` por mediana `p50` (cero sesgo negativo).
+ */
+function fitPlaneIrlsHuber(
+    samples: ReadonlyArray<SpatialPoint3D>,
+    initial: { a: number; b: number; d: number },
+    iterations = 5
+): { a: number; b: number; d: number } {
+    if (samples.length < 3) return initial;
+
+    let current = { ...initial };
+    const weights = new Array<number>(samples.length).fill(1);
+
+    for (let iter = 0; iter < iterations; iter++) {
+        const absResiduals = new Array<number>(samples.length);
+        for (let i = 0; i < samples.length; i++) {
+            const [x, y, z] = samples[i];
+            absResiduals[i] = Math.abs(y - (current.a * x + current.b * z + current.d));
+        }
+        const mad = median(absResiduals);
+        const delta = Math.max(0.02, 1.345 * 1.4826 * mad);
+
+        for (let i = 0; i < samples.length; i++) {
+            const r = absResiduals[i];
+            weights[i] = r <= delta ? 1.0 : delta / Math.max(1e-6, r);
+        }
+
+        const next = fitPlaneWls(samples, weights);
+        if (!next || Math.hypot(next.a, next.b) > MAX_GROUND_TAN) {
+            break;
+        }
+        current = next;
+    }
+
+    const offsets = samples.map(([x, y, z]) => y - (current.a * x + current.b * z));
+    return {
+        a: current.a,
+        b: current.b,
+        d: median(offsets),
+    };
+}
+
+function computeEmpiricalGroundSigma(residuals: ReadonlyArray<number>, fallbackRms: number): number {
+    if (residuals.length < 4) {
+        return clamp(fallbackRms, 0.012, 0.06);
+    }
+    const med = median([...residuals]);
+    const absDev = residuals.map((r) => Math.abs(r - med));
+    const mad = median(absDev);
+    return clamp(1.4826 * mad, 0.012, 0.06);
+}
+
+function sanitizeTargetConstraint(
+    constraint?: TargetVolumeConstraint | null,
+    scaleFactor = 1.0
+): TargetVolumeConstraint | null {
+    if (!constraint || typeof constraint !== 'object') return null;
+
+    let anchorXZ: [number, number] | undefined;
+    if (
+        Array.isArray(constraint.anchorXZ) &&
+        constraint.anchorXZ.length >= 2 &&
+        Number.isFinite(constraint.anchorXZ[0]) &&
+        Number.isFinite(constraint.anchorXZ[1])
+    ) {
+        anchorXZ = [constraint.anchorXZ[0] * scaleFactor, constraint.anchorXZ[1] * scaleFactor];
+    }
+
+    const radiusM =
+        typeof constraint.radiusM === 'number' &&
+        Number.isFinite(constraint.radiusM) &&
+        constraint.radiusM > 0
+            ? constraint.radiusM * scaleFactor
+            : undefined;
+
+    let polygonXZ: Array<[number, number]> | undefined;
+    if (Array.isArray(constraint.polygonXZ)) {
+        const cleanVerts: Array<[number, number]> = [];
+        for (const v of constraint.polygonXZ) {
+            if (
+                Array.isArray(v) &&
+                v.length >= 2 &&
+                Number.isFinite(v[0]) &&
+                Number.isFinite(v[1])
+            ) {
+                cleanVerts.push([v[0] * scaleFactor, v[1] * scaleFactor]);
+            }
+        }
+        if (cleanVerts.length >= 3 && cleanVerts.length <= 8) {
+            polygonXZ = cleanVerts;
+        }
+    }
+
+    const padReferenceY =
+        typeof constraint.padReferenceY === 'number' && Number.isFinite(constraint.padReferenceY)
+            ? constraint.padReferenceY * scaleFactor
+            : undefined;
+
+    if (!anchorXZ && radiusM === undefined && !polygonXZ && padReferenceY === undefined) {
+        return null;
+    }
+
+    return { anchorXZ, radiusM, polygonXZ, padReferenceY };
+}
+
+function pointInPolygonXZ(
+    px: number,
+    pz: number,
+    polygon: ReadonlyArray<[number, number]>
+): boolean {
+    const n = polygon.length;
+    if (n < 3) return true;
+
+    let inside = false;
+    for (let i = 0, j = n - 1; i < n; j = i++) {
+        const xi = polygon[i][0];
+        const zi = polygon[i][1];
+        const xj = polygon[j][0];
+        const zj = polygon[j][1];
+
+        // Inclusión exacta sobre aristas
+        const cross = (pz - zi) * (xj - xi) - (px - xi) * (zj - zi);
+        if (Math.abs(cross) <= 1e-9) {
+            const minX = Math.min(xi, xj) - 1e-9;
+            const maxX = Math.max(xi, xj) + 1e-9;
+            const minZ = Math.min(zi, zj) - 1e-9;
+            const maxZ = Math.max(zi, zj) + 1e-9;
+            if (px >= minX && px <= maxX && pz >= minZ && pz <= maxZ) {
+                return true;
+            }
+        }
+
+        const intersects =
+            zi > pz !== zj > pz && px < ((xj - xi) * (pz - zi)) / (zj - zi + 0.0) + xi;
+        if (intersects) inside = !inside;
+    }
+    return inside;
+}
+
 function fitPlaneThroughThreePoints(
     p0: SpatialPoint3D,
     p1: SpatialPoint3D,
@@ -382,6 +625,11 @@ function selectGroundCandidates(
         for (let i = 0; i < effectiveGround.length; i += stride) {
             pushUnique(effectiveGround[i]);
         }
+        // Si ya disponemos de suficientes muestras explícitas de suelo (>= 12), evitar sesgar
+        // el conjunto con mínimos del borde exterior de la nube de puntos del objeto.
+        if (candidates.length >= 12) {
+            return candidates;
+        }
     }
 
     if (points.length === 0) return candidates;
@@ -404,27 +652,51 @@ function selectGroundCandidates(
         sectorBuckets[item.sector].push({ pt: item.pt, r: item.r });
     }
 
-    // Por cada sector radial: tomar EXCLUSIVAMENTE los puntos de menor elevación `y` en el borde externo
-    // (prohibido tomar `byRadiusDesc` sin filtrar `y`, que contaminaba el plano con talud alto cortado).
+    // Por cada sector radial: distinguir suelo circundante plano/inclinado (banda simétrica sin sesgo -2σ)
+    // vs talud de acopio puro sin piso externo (perímetro extremo `r >= 0.90 * rMax`).
     for (const bucket of sectorBuckets) {
         if (bucket.length === 0) continue;
         const rSectorMax = Math.max(...bucket.map((b) => b.r));
 
-        const outerLowest = bucket
-            .filter((b) => b.r >= rSectorMax * 0.78)
-            .sort((a, b) => a.pt[1] - b.pt[1]);
+        const outerRing = bucket.filter((b) => b.r >= rSectorMax * 0.88);
+        const innerRing = bucket.filter(
+            (b) => b.r >= rSectorMax * 0.72 && b.r < rSectorMax * 0.88
+        );
 
-        if (outerLowest.length === 0) continue;
-        const minSectorY = outerLowest[0].pt[1];
-        const lowTake = Math.max(1, Math.min(3, Math.ceil(outerLowest.length * 0.12)));
+        const isFlatSurroundingFloor =
+            outerRing.length >= 3 &&
+            innerRing.length >= 3 &&
+            Math.abs(
+                median(innerRing.map((b) => b.pt[1])) - median(outerRing.map((b) => b.pt[1]))
+            ) <= 0.08;
 
-        let taken = 0;
-        for (const item of outerLowest) {
-            if (taken >= lowTake) break;
-            // Excluir puntos que estén claramente elevados sobre el mínimo local del sector (> 0.14 m)
-            if (taken > 0 && item.pt[1] > minSectorY + 0.14) break;
-            pushUnique(item.pt);
-            taken += 1;
+        const pool = (
+            isFlatSurroundingFloor
+                ? bucket.filter((b) => b.r >= rSectorMax * 0.75)
+                : outerRing.length > 0
+                  ? outerRing
+                  : bucket.filter((b) => b.r >= rSectorMax * 0.78)
+        ).sort((a, b) => a.pt[1] - b.pt[1]);
+
+        if (pool.length === 0) continue;
+        const minSectorY = pool[0].pt[1];
+
+        if (isFlatSurroundingFloor) {
+            // Tomar la banda simétrica completa del piso (<= minY + 0.12 m) para p50 sin sesgo negativo
+            const floorBand = pool.filter((item) => item.pt[1] <= minSectorY + 0.12);
+            const stride = Math.max(1, Math.floor(floorBand.length / 16));
+            for (let i = 0; i < floorBand.length; i += stride) {
+                pushUnique(floorBand[i].pt);
+            }
+        } else {
+            const lowTake = Math.max(1, Math.min(4, Math.ceil(pool.length * 0.16)));
+            let taken = 0;
+            for (const item of pool) {
+                if (taken >= lowTake) break;
+                if (taken > 0 && item.pt[1] > minSectorY + 0.06) break;
+                pushUnique(item.pt);
+                taken += 1;
+            }
         }
     }
 
@@ -517,12 +789,13 @@ export interface FitGroundPlaneOptions {
     walkRingPoses?: ReadonlyArray<WalkRingPose>;
     wallConfinement?: WallConfinementMode;
     operatorHeightM?: number;
+    targetConstraint?: TargetVolumeConstraint | null;
 }
 
 /**
- * Walk-Ring Toe Solver RANSAC determinista (`120` iteraciones): ajusta plano de cancha
- * `y = a*x + b*z + d` con regularización por gravedad IMU + trayectoria Walk-Ring
- * (`|slope_plane - slope_walk_ring| <= 3.5°`) y soporte para confinamiento contra muro.
+ * Walk-Ring Toe Solver RANSAC determinista (`120` iteraciones) + IRLS Huber + mediana p50:
+ * ajusta plano de cancha `y = a*x + b*z + d` sin sesgo negativo, respeta `padReferenceY`,
+ * calcula ruido empírico `sigmaGround = clamp(1.4826 * MAD, 0.012, 0.06)` y soporta muro confinado.
  */
 export function fitInclinedGroundPlane(
     pointsM: ReadonlyArray<SpatialPoint3D>,
@@ -534,6 +807,7 @@ export function fitInclinedGroundPlane(
     const groundSamples = sanitizePoints(groundSamplesM);
     const walkRingPoses = sanitizeWalkRingPoses(options?.walkRingPoses);
     const wallConfinement: WallConfinementMode = options?.wallConfinement || 'NONE';
+    const constraint = sanitizeTargetConstraint(options?.targetConstraint, 1.0);
     const operatorHeightM =
         typeof options?.operatorHeightM === 'number' &&
         Number.isFinite(options.operatorHeightM) &&
@@ -543,11 +817,18 @@ export function fitInclinedGroundPlane(
 
     const refPoints = points.length > 0 ? points : groundSamples;
     if (refPoints.length === 0) {
+        const dFallback =
+            constraint?.padReferenceY !== undefined
+                ? constraint.padReferenceY
+                : anchorCenter && Number.isFinite(anchorCenter.y)
+                  ? anchorCenter.y
+                  : 0;
         return {
             a: 0,
             b: 0,
-            d: anchorCenter && Number.isFinite(anchorCenter.y) ? anchorCenter.y : 0,
+            d: dFallback,
             residualRmsM: 0,
+            sigmaGroundM: 0.012,
             groundSlopeDeg: 0,
             toeScore: 0,
             planeMismatchDeg: 0,
@@ -558,37 +839,87 @@ export function fitInclinedGroundPlane(
 
     const walkPlane = fitWalkRingGroundPlane(walkRingPoses, operatorHeightM);
 
-    const cx =
-        anchorCenter && Number.isFinite(anchorCenter.x) && walkRingPoses.length === 0 && points.length === 0
-            ? anchorCenter.x
-            : walkRingPoses.length >= 4
-              ? median(walkRingPoses.map((p) => p.x))
-              : points.length > 0
-                ? median(points.map((p) => p[0]))
-                : median(refPoints.map((p) => p[0]));
-    const cz =
-        anchorCenter && Number.isFinite(anchorCenter.z) && walkRingPoses.length === 0 && points.length === 0
-            ? anchorCenter.z
-            : walkRingPoses.length >= 4
-              ? median(walkRingPoses.map((p) => p.z))
-              : points.length > 0
-                ? median(points.map((p) => p[2]))
-                : median(refPoints.map((p) => p[2]));
+    const cx = constraint?.anchorXZ
+        ? constraint.anchorXZ[0]
+        : anchorCenter && Number.isFinite(anchorCenter.x) && walkRingPoses.length === 0 && points.length === 0
+          ? anchorCenter.x
+          : walkRingPoses.length >= 4
+            ? median(walkRingPoses.map((p) => p.x))
+            : points.length > 0
+              ? median(points.map((p) => p[0]))
+              : median(refPoints.map((p) => p[0]));
+    const cz = constraint?.anchorXZ
+        ? constraint.anchorXZ[1]
+        : anchorCenter && Number.isFinite(anchorCenter.z) && walkRingPoses.length === 0 && points.length === 0
+          ? anchorCenter.z
+          : walkRingPoses.length >= 4
+            ? median(walkRingPoses.map((p) => p.z))
+            : points.length > 0
+              ? median(points.map((p) => p[2]))
+              : median(refPoints.map((p) => p[2]));
 
     const candidates = selectGroundCandidates(points, groundSamples, cx, cz, walkPlane);
+
+    // Si el operador fijó explícitamente una cota de patio (`padReferenceY`), respetarla como datum soberano.
+    if (constraint?.padReferenceY !== undefined) {
+        const baseA = walkPlane ? walkPlane.a : 0;
+        const baseB = walkPlane ? walkPlane.b : 0;
+        const d = constraint.padReferenceY - baseA * cx - baseB * cz;
+        const residPool = groundSamples.length >= 4 ? groundSamples : candidates;
+        const residuals = residPool
+            .map((p) => p[1] - (baseA * p[0] + baseB * p[2] + d))
+            .filter((r) => Math.abs(r) <= 0.12);
+        const rms =
+            residuals.length > 0
+                ? Math.sqrt(residuals.reduce((acc, r) => acc + r * r, 0) / residuals.length)
+                : 0.02;
+        const sigmaGroundM = computeEmpiricalGroundSigma(residuals, rms);
+        const slopeDeg = (Math.atan(Math.hypot(baseA, baseB)) * 180) / Math.PI;
+        const toeScore = computeToeCoverageScore(
+            points,
+            groundSamples,
+            baseA,
+            baseB,
+            d,
+            cx,
+            cz,
+            rms,
+            wallConfinement
+        );
+        return {
+            a: Number(baseA.toFixed(6)),
+            b: Number(baseB.toFixed(6)),
+            d: Number(d.toFixed(5)),
+            residualRmsM: Number(rms.toFixed(4)),
+            sigmaGroundM: Number(sigmaGroundM.toFixed(4)),
+            groundSlopeDeg: round2(slopeDeg),
+            toeScore,
+            walkRingSlopeDeg: walkPlane ? round2(walkPlane.slopeDeg) : undefined,
+            planeMismatchDeg: 0,
+            usedWalkRingRegularization: Boolean(walkPlane),
+            wallPlane:
+                wallConfinement !== 'NONE'
+                    ? detectVerticalWallPlane(points, { a: baseA, b: baseB, d })
+                    : null,
+        };
+    }
 
     const horizontalFallback = (): InclinedGroundPlaneResult => {
         const baseA = walkPlane ? walkPlane.a : 0;
         const baseB = walkPlane ? walkPlane.b : 0;
-        const offsets = refPoints
+        const offsetPool = candidates.length >= 3 ? candidates : refPoints;
+        const offsets = offsetPool
             .map((p) => p[1] - (baseA * p[0] + baseB * p[2]))
             .sort((a, b) => a - b);
-        const d = percentile(offsets, 0.05);
-        const residuals = candidates.map((p) => p[1] - (baseA * p[0] + baseB * p[2] + d));
+        const d = candidates.length >= 3 ? percentile(offsets, 0.5) : percentile(offsets, 0.05);
+        const residuals = offsetPool
+            .map((p) => p[1] - (baseA * p[0] + baseB * p[2] + d))
+            .filter((r) => Math.abs(r) <= 0.12);
         const rms =
             residuals.length > 0
                 ? Math.sqrt(residuals.reduce((acc, r) => acc + r * r, 0) / residuals.length)
                 : 0;
+        const sigmaGroundM = computeEmpiricalGroundSigma(residuals, rms);
         const toeScore = computeToeCoverageScore(
             points,
             groundSamples,
@@ -606,6 +937,7 @@ export function fitInclinedGroundPlane(
             b: Number(baseB.toFixed(6)),
             d: Number(d.toFixed(5)),
             residualRmsM: Number(rms.toFixed(4)),
+            sigmaGroundM: Number(sigmaGroundM.toFixed(4)),
             groundSlopeDeg: round2(slopeDeg),
             toeScore,
             walkRingSlopeDeg: walkPlane ? round2(walkPlane.slopeDeg) : undefined,
@@ -663,7 +995,7 @@ export function fitInclinedGroundPlane(
 
         if (inliers.length < 3) continue;
 
-        const belowLimit = groundSamples.length >= 6 ? -RANSAC_INLIER_TOL_M * 1.2 : -0.025;
+        const belowLimit = -RANSAC_INLIER_TOL_M * 1.2;
         let belowCount = 0;
         for (const pt of supportSample) {
             const h = pt[1] - (plane.a * pt[0] + plane.b * pt[2] + plane.d);
@@ -673,8 +1005,7 @@ export function fitInclinedGroundPlane(
         }
         const belowRatio = supportSample.length > 0 ? belowCount / supportSample.length : 0;
         const rmsInliers = Math.sqrt(errorSumSq / inliers.length);
-        const belowPenaltyWeight = groundSamples.length >= 6 ? 1.5 : 2.5;
-        // Prior suave de gravedad IMU cuando no hay muestras explícitas de suelo
+        const belowPenaltyWeight = groundSamples.length >= 6 ? 1.5 : 2.2;
         const slopeDegCand = (Math.atan(slopeTan) * 180) / Math.PI;
         const gravityPriorPenalty =
             groundSamples.length < 6 && !walkPlane && slopeDegCand > 4.5
@@ -700,19 +1031,10 @@ export function fitInclinedGroundPlane(
         return horizontalFallback();
     }
 
-    const refined = fitPlaneOls(bestInliers) ?? bestPlane;
-    const refinedSlopeTan = Math.hypot(refined.a, refined.b);
-    let finalPlane = refinedSlopeTan <= MAX_GROUND_TAN ? refined : bestPlane;
-
-    if (groundSamples.length < 6 && bestInliers.length >= 6) {
-        const inlierOffsets = bestInliers
-            .map((pt) => pt[1] - (finalPlane.a * pt[0] + finalPlane.b * pt[2]))
-            .sort((a, b) => a - b);
-        finalPlane = {
-            ...finalPlane,
-            d: percentile(inlierOffsets, 0.15),
-        };
-    }
+    // Refinamiento robusto: OLS + IRLS Huber + mediana p50 (reemplaza p15 sin sesgo negativo)
+    const olsRefined = fitPlaneOls(bestInliers) ?? bestPlane;
+    const initRefined = Math.hypot(olsRefined.a, olsRefined.b) <= MAX_GROUND_TAN ? olsRefined : bestPlane;
+    let finalPlane = fitPlaneIrlsHuber(bestInliers, initRefined);
 
     let usedWalkRingRegularization = false;
     let planeMismatchDeg = 0;
@@ -720,15 +1042,15 @@ export function fitInclinedGroundPlane(
     if (walkPlane) {
         planeMismatchDeg = angleBetweenGroundPlanesDeg(finalPlane, walkPlane);
         if (planeMismatchDeg > MAX_WALK_RING_MISMATCH_DEG) {
-            // Bloquear inclinación espuria anclando (a, b) al plano real del Walk-Ring
-            const anchorPool = groundSamples.length >= 4 ? groundSamples : candidates;
+            // Bloquear inclinación espuria anclando (a, b) al plano real del Walk-Ring con mediana p50
+            const anchorPool = groundSamples.length >= 4 ? groundSamples : bestInliers.length >= 4 ? bestInliers : candidates;
             const offsets = anchorPool
                 .map((pt) => pt[1] - (walkPlane.a * pt[0] + walkPlane.b * pt[2]))
                 .sort((a, b) => a - b);
             finalPlane = {
                 a: walkPlane.a,
                 b: walkPlane.b,
-                d: offsets.length > 0 ? percentile(offsets, 0.15) : walkPlane.d,
+                d: offsets.length > 0 ? percentile(offsets, 0.5) : walkPlane.d,
             };
             usedWalkRingRegularization = true;
         }
@@ -748,20 +1070,21 @@ export function fitInclinedGroundPlane(
         );
         if (groundSamples.length < 6 && rawSlopeDeg > 5.5 && preToeScore < 65) {
             planeMismatchDeg = rawSlopeDeg;
-            const candY = candidates.map((pt) => pt[1]).sort((a, b) => a - b);
+            const candY = bestInliers.map((pt) => pt[1]).sort((a, b) => a - b);
             finalPlane = {
                 a: 0,
                 b: 0,
-                d: percentile(candY, 0.12),
+                d: percentile(candY, 0.5),
             };
             usedWalkRingRegularization = true;
         }
     }
 
+    const residSource = groundSamples.length >= 6 ? groundSamples : candidates;
     const finalResiduals: number[] = [];
-    for (const pt of candidates) {
+    for (const pt of residSource) {
         const err = pt[1] - (finalPlane.a * pt[0] + finalPlane.b * pt[2] + finalPlane.d);
-        if (Math.abs(err) <= RANSAC_INLIER_TOL_M) {
+        if (Math.abs(err) <= 0.12) {
             finalResiduals.push(err);
         }
     }
@@ -769,6 +1092,7 @@ export function fitInclinedGroundPlane(
         finalResiduals.length > 0
             ? Math.sqrt(finalResiduals.reduce((acc, r) => acc + r * r, 0) / finalResiduals.length)
             : RANSAC_INLIER_TOL_M;
+    const sigmaGroundM = computeEmpiricalGroundSigma(finalResiduals, rms);
 
     const slopeDeg = (Math.atan(Math.hypot(finalPlane.a, finalPlane.b)) * 180) / Math.PI;
     const toeScore = computeToeCoverageScore(
@@ -791,6 +1115,7 @@ export function fitInclinedGroundPlane(
         b: Number(finalPlane.b.toFixed(6)),
         d: Number(finalPlane.d.toFixed(5)),
         residualRmsM: Number(rms.toFixed(4)),
+        sigmaGroundM: Number(sigmaGroundM.toFixed(4)),
         groundSlopeDeg: round2(slopeDeg),
         toeScore,
         walkRingSlopeDeg: walkPlane ? round2(walkPlane.slopeDeg) : undefined,
@@ -834,34 +1159,399 @@ function computeToeCoverageScore(
     return Math.round(clamp(sectorRatio * 100 * fitFactor, 0, 100));
 }
 
-function selectPrimaryClusterMask(
+class MinPriorityQueue {
+    private readonly keys: number[] = [];
+    private readonly values: number[] = [];
+
+    get size(): number {
+        return this.keys.length;
+    }
+
+    push(key: number, value: number): void {
+        let i = this.keys.length;
+        this.keys.push(key);
+        this.values.push(value);
+        while (i > 0) {
+            const parent = (i - 1) >> 1;
+            if (this.keys[parent] <= this.keys[i]) break;
+            const tk = this.keys[parent];
+            this.keys[parent] = this.keys[i];
+            this.keys[i] = tk;
+            const tv = this.values[parent];
+            this.values[parent] = this.values[i];
+            this.values[i] = tv;
+            i = parent;
+        }
+    }
+
+    pop(): number {
+        const top = this.values[0];
+        const lastKey = this.keys.pop()!;
+        const lastVal = this.values.pop()!;
+        if (this.keys.length > 0) {
+            this.keys[0] = lastKey;
+            this.values[0] = lastVal;
+            let i = 0;
+            const n = this.keys.length;
+            while (true) {
+                const l = (i << 1) + 1;
+                const r = l + 1;
+                let smallest = i;
+                if (l < n && this.keys[l] < this.keys[smallest]) smallest = l;
+                if (r < n && this.keys[r] < this.keys[smallest]) smallest = r;
+                if (smallest === i) break;
+                const tk = this.keys[i];
+                this.keys[i] = this.keys[smallest];
+                this.keys[smallest] = tk;
+                const tv = this.values[i];
+                this.values[i] = this.values[smallest];
+                this.values[smallest] = tv;
+                i = smallest;
+            }
+        }
+        return top;
+    }
+}
+
+/**
+ * Detecta picos competidores (`>= max(0.20, 0.25 * hTarget)` separados por silla >= 15%)
+ * y ejecuta Priority-Flood Watershed 3D sobre `-h(x, z)` para cortar por la línea de valle.
+ */
+function buildWatershedTargetMask(
     observed: Uint8Array,
+    allowedMask: Uint8Array,
     heightsM: number[],
     nx: number,
     nz: number,
     originX: number,
     originZ: number,
     cellSizeM: number,
-    targetCx: number,
-    targetCz: number
-): Uint8Array {
+    hSeed: number,
+    hToe: number,
+    anchorXZ: [number, number] | null
+): Uint8Array | null {
     const total = nx * nz;
-    const inCluster = new Uint8Array(total);
-    const visited = new Uint8Array(total);
+    const smoothH = new Float64Array(total);
+    const smoothValid = new Uint8Array(total);
 
-    interface ClusterCandidate {
+    for (let iz = 1; iz < nz - 1; iz++) {
+        for (let ix = 1; ix < nx - 1; ix++) {
+            const idx = iz * nx + ix;
+            if (!allowedMask[idx]) continue;
+
+            let sum = 0;
+            let wSum = 0;
+            let obsNeighbors = 0;
+            for (let dz = -1; dz <= 1; dz++) {
+                for (let dx = -1; dx <= 1; dx++) {
+                    const nIdx = (iz + dz) * nx + (ix + dx);
+                    if (!allowedMask[nIdx] || !observed[nIdx] || heightsM[nIdx] < hToe) continue;
+                    const w = dx === 0 && dz === 0 ? 4 : dx === 0 || dz === 0 ? 2 : 1;
+                    sum += heightsM[nIdx] * w;
+                    wSum += w;
+                    if (dx !== 0 || dz !== 0) obsNeighbors += 1;
+                }
+            }
+
+            if (observed[idx] && heightsM[idx] >= hToe && wSum > 0) {
+                smoothH[idx] = sum / wSum;
+                smoothValid[idx] = 1;
+            } else if (!observed[idx] && obsNeighbors >= 4 && wSum > 0) {
+                // Puentes de 1 celda solo para no crear falsas sillas por micro-oclusiones
+                smoothH[idx] = sum / wSum;
+                smoothValid[idx] = 1;
+            }
+        }
+    }
+
+    const rWin = clamp(Math.round(0.45 / cellSizeM), 2, 5);
+    const localMaxIndices: number[] = [];
+
+    for (let iz = 1; iz < nz - 1; iz++) {
+        for (let ix = 1; ix < nx - 1; ix++) {
+            const idx = iz * nx + ix;
+            if (!observed[idx] || !allowedMask[idx] || smoothH[idx] < hSeed) continue;
+
+            const hVal = smoothH[idx];
+            let isMax = true;
+            for (let dz = -rWin; dz <= rWin && isMax; dz++) {
+                const nzC = iz + dz;
+                if (nzC <= 0 || nzC >= nz - 1) continue;
+                for (let dx = -rWin; dx <= rWin; dx++) {
+                    if (dx === 0 && dz === 0) continue;
+                    if (dx * dx + dz * dz > rWin * rWin) continue;
+                    const nxC = ix + dx;
+                    if (nxC <= 0 || nxC >= nx - 1) continue;
+                    const nIdx = nzC * nx + nxC;
+                    if (!smoothValid[nIdx]) continue;
+                    const nh = smoothH[nIdx];
+                    if (nh > hVal + 1e-6 || (Math.abs(nh - hVal) <= 1e-6 && nIdx < idx)) {
+                        isMax = false;
+                        break;
+                    }
+                }
+            }
+
+            if (isMax) {
+                localMaxIndices.push(idx);
+            }
+        }
+    }
+
+    if (localMaxIndices.length < 2) {
+        return null;
+    }
+
+    // Elegir pico objetivo: más cercano a anchorXZ si existe, o pico más alto en caso contrario
+    let targetPeak = localMaxIndices[0];
+    if (anchorXZ) {
+        let bestDistSq = Infinity;
+        for (const pIdx of localMaxIndices) {
+            const px = originX + (pIdx % nx) * cellSizeM;
+            const pz = originZ + Math.floor(pIdx / nx) * cellSizeM;
+            const dSq = (px - anchorXZ[0]) ** 2 + (pz - anchorXZ[1]) ** 2;
+            if (
+                dSq < bestDistSq - 1e-6 ||
+                (Math.abs(dSq - bestDistSq) <= 1e-6 && smoothH[pIdx] > smoothH[targetPeak])
+            ) {
+                bestDistSq = dSq;
+                targetPeak = pIdx;
+            }
+        }
+    } else {
+        for (const pIdx of localMaxIndices) {
+            if (smoothH[pIdx] > smoothH[targetPeak]) {
+                targetPeak = pIdx;
+            }
+        }
+    }
+
+    const hTarget = smoothH[targetPeak];
+    const minCompetitorH = Math.max(0.2, 0.25 * hTarget);
+    const competingPeaks: number[] = [];
+
+    const bfsVisited = new Uint8Array(total);
+    const bfsQueue = new Int32Array(total);
+
+    const isConnectedAbove = (startIdx: number, endIdx: number, thresholdH: number): boolean => {
+        bfsVisited.fill(0);
+        let head = 0;
+        let tail = 0;
+        bfsVisited[startIdx] = 1;
+        bfsQueue[tail++] = startIdx;
+
+        while (head < tail) {
+            const curr = bfsQueue[head++];
+            if (curr === endIdx) return true;
+            const cx = curr % nx;
+            const cz = Math.floor(curr / nx);
+            for (let dz = -1; dz <= 1; dz++) {
+                const nzC = cz + dz;
+                if (nzC <= 0 || nzC >= nz - 1) continue;
+                for (let dx = -1; dx <= 1; dx++) {
+                    if (dx === 0 && dz === 0) continue;
+                    const nxC = cx + dx;
+                    if (nxC <= 0 || nxC >= nx - 1) continue;
+                    const nIdx = nzC * nx + nxC;
+                    if (bfsVisited[nIdx] || !smoothValid[nIdx] || smoothH[nIdx] <= thresholdH) {
+                        continue;
+                    }
+                    bfsVisited[nIdx] = 1;
+                    bfsQueue[tail++] = nIdx;
+                }
+            }
+        }
+        return false;
+    };
+
+    for (const pIdx of localMaxIndices) {
+        if (pIdx === targetPeak) continue;
+        const hp = smoothH[pIdx];
+        if (hp < minCompetitorH) continue;
+        // Verificar silla/valle real (>= 15% de caída respecto al menor de los dos picos)
+        const saddleLimit = 0.85 * Math.min(hTarget, hp);
+        if (!isConnectedAbove(targetPeak, pIdx, saddleLimit)) {
+            competingPeaks.push(pIdx);
+        }
+    }
+
+    if (competingPeaks.length === 0) {
+        return null;
+    }
+
+    // Priority-Flood Watershed 3D sobre `-h(x, z)`
+    const label = new Int32Array(total);
+    const pq = new MinPriorityQueue();
+
+    label[targetPeak] = 1;
+    pq.push(-smoothH[targetPeak], targetPeak);
+
+    for (let i = 0; i < competingPeaks.length; i++) {
+        const cIdx = competingPeaks[i];
+        label[cIdx] = i + 2;
+        pq.push(-smoothH[cIdx], cIdx);
+    }
+
+    while (pq.size > 0) {
+        const curr = pq.pop();
+        const currLabel = label[curr];
+        const cx = curr % nx;
+        const cz = Math.floor(curr / nx);
+
+        for (let dz = -1; dz <= 1; dz++) {
+            const nzC = cz + dz;
+            if (nzC <= 0 || nzC >= nz - 1) continue;
+            for (let dx = -1; dx <= 1; dx++) {
+                if (dx === 0 && dz === 0) continue;
+                const nxC = cx + dx;
+                if (nxC <= 0 || nxC >= nx - 1) continue;
+                const nIdx = nzC * nx + nxC;
+                if (label[nIdx] !== 0 || !allowedMask[nIdx] || !smoothValid[nIdx]) continue;
+                label[nIdx] = currLabel;
+                pq.push(-smoothH[nIdx], nIdx);
+            }
+        }
+    }
+
+    const targetBasin = new Uint8Array(total);
+    for (let i = 0; i < total; i++) {
+        if (label[i] === 1) {
+            targetBasin[i] = 1;
+        }
+    }
+    return targetBasin;
+}
+
+/**
+ * Segmentación Pie-Objeto por Histéresis Dual (`hSeed` / `hToe`) + Componente Conexo 8-vecinos +
+ * Expansión Geodésica acotada (`<= max(2 celdas, 0.25 * rCore)`) + Recorte `polygonXZ` + Watershed 3D.
+ */
+function segmentTargetObjectMask(params: {
+    observed: Uint8Array;
+    heightsM: number[];
+    nx: number;
+    nz: number;
+    originX: number;
+    originZ: number;
+    cellSizeM: number;
+    sigmaGroundM: number;
+    anchorXZ: [number, number] | null;
+    targetRadiusM?: number;
+    polygonXZ?: ReadonlyArray<[number, number]>;
+}): {
+    objectObservedMask: Uint8Array;
+    allowedMask: Uint8Array;
+    hSeed: number;
+    hToe: number;
+    usedWatershed: boolean;
+} {
+    const {
+        observed,
+        heightsM,
+        nx,
+        nz,
+        originX,
+        originZ,
+        cellSizeM,
+        sigmaGroundM,
+        anchorXZ,
+        targetRadiusM,
+        polygonXZ,
+    } = params;
+
+    const total = nx * nz;
+    const allowedMask = new Uint8Array(total);
+    allowedMask.fill(1);
+
+    const hasPoly = Boolean(polygonXZ && polygonXZ.length >= 3);
+    const hasRadius = targetRadiusM !== undefined && targetRadiusM > 0 && anchorXZ !== null;
+
+    if (hasPoly || hasRadius) {
+        const maxR = hasRadius ? targetRadiusM! * 1.02 : Infinity;
+        for (let iz = 0; iz < nz; iz++) {
+            const wz = originZ + iz * cellSizeM;
+            for (let ix = 0; ix < nx; ix++) {
+                const wx = originX + ix * cellSizeM;
+                const idx = iz * nx + ix;
+                if (hasPoly && !pointInPolygonXZ(wx, wz, polygonXZ!)) {
+                    allowedMask[idx] = 0;
+                    continue;
+                }
+                if (hasRadius) {
+                    const dist = Math.hypot(wx - anchorXZ![0], wz - anchorXZ![1]);
+                    if (dist > maxR) {
+                        allowedMask[idx] = 0;
+                    }
+                }
+            }
+        }
+    }
+
+    // Estimar hPeak en la región objetivo (priorizando proximidad al anchorXZ si existe)
+    let hPeakLocal = 0;
+    let hPeakGlobal = 0;
+    const localProbeR = targetRadiusM !== undefined ? Math.max(0.5, targetRadiusM) : 1.5;
+
+    for (let iz = 1; iz < nz - 1; iz++) {
+        const wz = originZ + iz * cellSizeM;
+        for (let ix = 1; ix < nx - 1; ix++) {
+            const idx = iz * nx + ix;
+            if (!observed[idx] || !allowedMask[idx]) continue;
+            const h = heightsM[idx];
+            if (h > hPeakGlobal) hPeakGlobal = h;
+            if (anchorXZ) {
+                const wx = originX + ix * cellSizeM;
+                if (Math.hypot(wx - anchorXZ[0], wz - anchorXZ[1]) <= localProbeR && h > hPeakLocal) {
+                    hPeakLocal = h;
+                }
+            }
+        }
+    }
+
+    const hPeak = hPeakLocal > 0.08 ? hPeakLocal : hPeakGlobal;
+    const hSeed = Math.max(0.08, 3.5 * sigmaGroundM, 0.15 * hPeak);
+    const hToe = Math.max(0.03, 2.0 * sigmaGroundM, 0.04 * hPeak);
+
+    // Watershed 3D cuando existe pico competidor dentro de la grilla/ROI
+    const watershedBasin = buildWatershedTargetMask(
+        observed,
+        allowedMask,
+        heightsM,
+        nx,
+        nz,
+        originX,
+        originZ,
+        cellSizeM,
+        hSeed,
+        hToe,
+        anchorXZ
+    );
+
+    const effectiveAllowed = new Uint8Array(total);
+    for (let i = 0; i < total; i++) {
+        effectiveAllowed[i] = allowedMask[i] && (!watershedBasin || watershedBasin[i]) ? 1 : 0;
+    }
+
+    // 1. Extraer componentes conexos 8-vecinos del núcleo (`h >= hSeed`)
+    const visited = new Uint8Array(total);
+    interface CoreCluster {
         cells: number[];
         minDistSq: number;
         centroidDistSq: number;
+        maxH: number;
     }
-
-    const clusters: ClusterCandidate[] = [];
+    const clusters: CoreCluster[] = [];
     const queue: number[] = [];
 
     for (let iz = 1; iz < nz - 1; iz++) {
         for (let ix = 1; ix < nx - 1; ix++) {
             const startIdx = iz * nx + ix;
-            if (visited[startIdx] || !observed[startIdx] || heightsM[startIdx] <= 0.02) {
+            if (
+                visited[startIdx] ||
+                !observed[startIdx] ||
+                !effectiveAllowed[startIdx] ||
+                heightsM[startIdx] < hSeed
+            ) {
                 continue;
             }
 
@@ -872,19 +1562,23 @@ function selectPrimaryClusterMask(
             let minDistSq = Infinity;
             let sumX = 0;
             let sumZ = 0;
+            let maxClusterH = 0;
 
             let head = 0;
             while (head < queue.length) {
                 const curr = queue[head++];
                 cells.push(curr);
+                if (heightsM[curr] > maxClusterH) maxClusterH = heightsM[curr];
                 const cxCell = curr % nx;
                 const czCell = Math.floor(curr / nx);
                 const wx = originX + cxCell * cellSizeM;
                 const wz = originZ + czCell * cellSizeM;
                 sumX += wx;
                 sumZ += wz;
-                const dSq = (wx - targetCx) ** 2 + (wz - targetCz) ** 2;
-                if (dSq < minDistSq) minDistSq = dSq;
+                if (anchorXZ) {
+                    const dSq = (wx - anchorXZ[0]) ** 2 + (wz - anchorXZ[1]) ** 2;
+                    if (dSq < minDistSq) minDistSq = dSq;
+                }
 
                 for (let dz = -1; dz <= 1; dz++) {
                     for (let dx = -1; dx <= 1; dx++) {
@@ -895,7 +1589,12 @@ function selectPrimaryClusterMask(
                             continue;
                         }
                         const nIdx = nzCell * nx + nxCell;
-                        if (visited[nIdx] || !observed[nIdx] || heightsM[nIdx] <= 0.02) {
+                        if (
+                            visited[nIdx] ||
+                            !observed[nIdx] ||
+                            !effectiveAllowed[nIdx] ||
+                            heightsM[nIdx] < hSeed
+                        ) {
                             continue;
                         }
                         visited[nIdx] = 1;
@@ -906,41 +1605,124 @@ function selectPrimaryClusterMask(
 
             const meanX = sumX / cells.length;
             const meanZ = sumZ / cells.length;
-            const centroidDistSq = (meanX - targetCx) ** 2 + (meanZ - targetCz) ** 2;
-            clusters.push({ cells, minDistSq, centroidDistSq });
+            const centroidDistSq = anchorXZ
+                ? (meanX - anchorXZ[0]) ** 2 + (meanZ - anchorXZ[1]) ** 2
+                : 0;
+            clusters.push({
+                cells,
+                minDistSq: anchorXZ ? minDistSq : 0,
+                centroidDistSq,
+                maxH: maxClusterH,
+            });
         }
     }
 
+    const objectObservedMask = new Uint8Array(total);
     if (clusters.length === 0) {
-        return inCluster;
+        return {
+            objectObservedMask,
+            allowedMask: effectiveAllowed,
+            hSeed,
+            hToe,
+            usedWatershed: Boolean(watershedBasin),
+        };
     }
 
-    const nearbyMulti = clusters.filter(
-        (c) => c.cells.length >= 2 && Math.sqrt(c.minDistSq) <= Math.max(0.2, cellSizeM * 4)
-    );
-    const pool = nearbyMulti.length > 0 ? nearbyMulti : clusters;
-    const distTieTolSq = (cellSizeM * 1.5) ** 2;
+    // Selección del núcleo principal: alrededor de anchorXZ o núcleo más alto sin anchor
+    let selectedCluster: CoreCluster;
+    if (anchorXZ) {
+        const nearbyMulti = clusters.filter(
+            (c) => c.cells.length >= 2 && Math.sqrt(c.minDistSq) <= Math.max(0.35, cellSizeM * 5)
+        );
+        const pool = nearbyMulti.length > 0 ? nearbyMulti : clusters;
+        const distTieTolSq = (cellSizeM * 1.5) ** 2;
 
-    pool.sort((a, b) => {
-        // Evitar que un parche diminuto de ruido (<= 3 celdas) desplace a un cuerpo principal cercano
-        const aSubstantial = a.cells.length >= 4;
-        const bSubstantial = b.cells.length >= 4;
-        if (aSubstantial !== bSubstantial && nearbyMulti.length > 1) {
-            return aSubstantial ? -1 : 1;
-        }
-        if (Math.abs(a.minDistSq - b.minDistSq) > distTieTolSq) {
-            return a.minDistSq - b.minDistSq;
-        }
-        if (Math.abs(a.centroidDistSq - b.centroidDistSq) > distTieTolSq) {
-            return a.centroidDistSq - b.centroidDistSq;
-        }
-        return b.cells.length - a.cells.length;
-    });
-
-    for (const idx of pool[0].cells) {
-        inCluster[idx] = 1;
+        pool.sort((a, b) => {
+            const aSubstantial = a.cells.length >= 4;
+            const bSubstantial = b.cells.length >= 4;
+            if (aSubstantial !== bSubstantial && nearbyMulti.length > 1) {
+                return aSubstantial ? -1 : 1;
+            }
+            if (Math.abs(a.minDistSq - b.minDistSq) > distTieTolSq) {
+                return a.minDistSq - b.minDistSq;
+            }
+            if (Math.abs(a.centroidDistSq - b.centroidDistSq) > distTieTolSq) {
+                return a.centroidDistSq - b.centroidDistSq;
+            }
+            return b.cells.length - a.cells.length;
+        });
+        selectedCluster = pool[0];
+    } else {
+        const substantial = clusters.filter((c) => c.cells.length >= 4);
+        const pool = substantial.length > 0 ? substantial : clusters;
+        pool.sort((a, b) => {
+            if (Math.abs(b.maxH - a.maxH) > 0.05) {
+                return b.maxH - a.maxH;
+            }
+            return b.cells.length - a.cells.length;
+        });
+        selectedCluster = pool[0];
     }
-    return inCluster;
+
+    // 2. Expansión geodésica acotada Core -> Toe (`<= max(2 celdas, 0.25 * rCore)`)
+    const rCoreM = Math.sqrt((selectedCluster.cells.length * cellSizeM * cellSizeM) / Math.PI);
+    const maxExpandM = Math.max(2 * cellSizeM, 0.25 * rCoreM);
+    const distFromCore = new Float64Array(total);
+    distFromCore.fill(Infinity);
+    const pq = new MinPriorityQueue();
+
+    for (const idx of selectedCluster.cells) {
+        objectObservedMask[idx] = 1;
+        distFromCore[idx] = 0;
+        pq.push(0, idx);
+    }
+
+    const SQRT2 = Math.SQRT2;
+    while (pq.size > 0) {
+        const curr = pq.pop();
+        const currDist = distFromCore[curr];
+        if (currDist >= maxExpandM) continue;
+
+        const cxCell = curr % nx;
+        const czCell = Math.floor(curr / nx);
+        const currH = heightsM[curr];
+
+        for (let dz = -1; dz <= 1; dz++) {
+            const nzCell = czCell + dz;
+            if (nzCell <= 0 || nzCell >= nz - 1) continue;
+            for (let dx = -1; dx <= 1; dx++) {
+                if (dx === 0 && dz === 0) continue;
+                const nxCell = cxCell + dx;
+                if (nxCell <= 0 || nxCell >= nx - 1) continue;
+                const nIdx = nzCell * nx + nxCell;
+                if (!observed[nIdx] || !effectiveAllowed[nIdx] || heightsM[nIdx] < hToe) {
+                    continue;
+                }
+                const stepM = dx === 0 || dz === 0 ? cellSizeM : cellSizeM * SQRT2;
+                const nextDist = currDist + stepM;
+                if (nextDist > maxExpandM + 1e-6 || nextDist >= distFromCore[nIdx]) {
+                    continue;
+                }
+                // Evitar propagación plana sobre suelo ruidoso que apenas alcanza hToe
+                const nh = heightsM[nIdx];
+                const slopeStep = Math.abs(currH - nh) / stepM;
+                if (nh < 0.5 * hSeed && slopeStep < 0.12) {
+                    continue;
+                }
+                distFromCore[nIdx] = nextDist;
+                objectObservedMask[nIdx] = 1;
+                pq.push(nextDist, nIdx);
+            }
+        }
+    }
+
+    return {
+        objectObservedMask,
+        allowedMask: effectiveAllowed,
+        hSeed,
+        hToe,
+        usedWatershed: Boolean(watershedBasin),
+    };
 }
 
 interface DelaunayVertex2D {
@@ -1090,7 +1872,8 @@ function fillInteriorHolesDelaunay(
     primaryCluster: Uint8Array,
     heightsM: number[],
     nx: number,
-    nz: number
+    nz: number,
+    allowedMask?: Uint8Array
 ): {
     interpolatedMask: number[];
     exteriorMask: Uint8Array;
@@ -1136,6 +1919,10 @@ function fillInteriorHolesDelaunay(
         for (let ix = 1; ix < nx - 1; ix++) {
             const idx = iz * nx + ix;
             if (primaryCluster[idx]) continue;
+            if (allowedMask && !allowedMask[idx]) {
+                exteriorMask[idx] = 1;
+                continue;
+            }
 
             if (!exteriorMask[idx]) {
                 holeMask[idx] = 1;
@@ -1328,11 +2115,312 @@ function computePrincipalFootprintAxes(
 }
 
 /**
+ * Fórmula estricta de Talud del Objeto (`slopeAngleAvgDeg` + `slopeProfile`):
+ * - Dominio exclusivo: celdas observadas dentro de `objectMask` en cinturón de flancos
+ *   `h ∈ [max(0.18 * H, hToe + 2 * sigmaGround), 0.82 * H]`.
+ * - Primario: perfil radial `h(d_edge)` Theil-Sen por 16 sectores (`median(atan2(|Δh|, |Δd_edge|))`).
+ * - Secundario / DEM corregido: suma `+ planeA` y `+ planeB` respecto a `+Y` gravedad,
+ *   diferencias unilaterales en el borde de `objectMask`, descarte mesetas `< 12°`, techo `89.5°`.
+ */
+function computeStrictObjectSlope(params: {
+    relativePoints: ReadonlyArray<{ x: number; z: number; h: number }>;
+    objectObservedMask: Uint8Array;
+    objectMask: Uint8Array;
+    interpolatedMask: ReadonlyArray<number>;
+    heightsM: ReadonlyArray<number>;
+    nx: number;
+    nz: number;
+    originX: number;
+    originZ: number;
+    cellSizeM: number;
+    maxH: number;
+    hToe: number;
+    sigmaGroundM: number;
+    groundPlane: { a: number; b: number };
+    objectCenterX: number;
+    objectCenterZ: number;
+    axisV: [number, number];
+}): {
+    slopeDegGrid: number[];
+    slopeAngleAvgDeg: number | null;
+    slopeAngleLeftDeg: number | null;
+    slopeAngleRightDeg: number | null;
+    slopeProfile: SlopeProfile | null;
+} {
+    const {
+        relativePoints,
+        objectObservedMask,
+        objectMask,
+        interpolatedMask,
+        heightsM,
+        nx,
+        nz,
+        originX,
+        originZ,
+        cellSizeM,
+        maxH,
+        hToe,
+        sigmaGroundM,
+        groundPlane,
+        objectCenterX,
+        objectCenterZ,
+        axisV,
+    } = params;
+
+    const totalCells = nx * nz;
+    const slopeDegGrid = new Array<number>(totalCells).fill(0);
+
+    if (maxH < 0.5) {
+        return {
+            slopeDegGrid,
+            slopeAngleAvgDeg: null,
+            slopeAngleLeftDeg: null,
+            slopeAngleRightDeg: null,
+            slopeProfile: null,
+        };
+    }
+
+    const hMinFlank = Math.max(0.18 * maxH, hToe + 2 * sigmaGroundM);
+    const hMaxFlank = 0.82 * maxH;
+
+    // 1. Colectar celdas exteriores inmediatamente adyacentes al borde de objectMask para d_edge euclidiana
+    const outsideEdgeCoords: Array<{ x: number; z: number }> = [];
+    for (let iz = 0; iz < nz; iz++) {
+        for (let ix = 0; ix < nx; ix++) {
+            const idx = iz * nx + ix;
+            if (objectMask[idx] === 1) continue;
+            let touchesObject = false;
+            for (let dz = -1; dz <= 1 && !touchesObject; dz++) {
+                const nzC = iz + dz;
+                if (nzC < 0 || nzC >= nz) continue;
+                for (let dx = -1; dx <= 1; dx++) {
+                    const nxC = ix + dx;
+                    if (nxC < 0 || nxC >= nx) continue;
+                    if (objectMask[nzC * nx + nxC] === 1) {
+                        touchesObject = true;
+                        break;
+                    }
+                }
+            }
+            if (touchesObject) {
+                outsideEdgeCoords.push({
+                    x: originX + ix * cellSizeM,
+                    z: originZ + iz * cellSizeM,
+                });
+            }
+        }
+    }
+
+    const computeEdgeDist = (px: number, pz: number): number => {
+        let minSq = Infinity;
+        for (let i = 0; i < outsideEdgeCoords.length; i++) {
+            const dx = px - outsideEdgeCoords[i].x;
+            const dz = pz - outsideEdgeCoords[i].z;
+            const dSq = dx * dx + dz * dz;
+            if (dSq < minSq) minSq = dSq;
+        }
+        return minSq < Infinity ? Math.max(0, Math.sqrt(minSq) - 0.5 * cellSizeM) : 0;
+    };
+
+    // 2. Primario: Perfil radial h(d_edge) Theil-Sen por 16 sectores sobre puntos observados en cinturón de flancos
+    const primarySectorAngles: number[] = [];
+    const primaryLeftAngles: number[] = [];
+    const primaryRightAngles: number[] = [];
+
+    if (outsideEdgeCoords.length > 0 && hMinFlank < hMaxFlank) {
+        const sectorBuckets: Array<Array<{ x: number; z: number; h: number; dEdge: number }>> =
+            Array.from({ length: RADIAL_SECTORS }, () => []);
+
+        for (const pt of relativePoints) {
+            if (pt.h < hMinFlank || pt.h > hMaxFlank) continue;
+            const ix = Math.round((pt.x - originX) / cellSizeM);
+            const iz = Math.round((pt.z - originZ) / cellSizeM);
+            if (ix <= 0 || ix >= nx - 1 || iz <= 0 || iz >= nz - 1) continue;
+            const idx = iz * nx + ix;
+            if (!objectMask[idx] || !objectObservedMask[idx] || interpolatedMask[idx] === 1) {
+                continue;
+            }
+            const angle = Math.atan2(pt.z - objectCenterZ, pt.x - objectCenterX);
+            const sector =
+                Math.floor(((angle + Math.PI) / (2 * Math.PI)) * RADIAL_SECTORS) % RADIAL_SECTORS;
+            sectorBuckets[sector].push({
+                x: pt.x,
+                z: pt.z,
+                h: pt.h,
+                dEdge: computeEdgeDist(pt.x, pt.z),
+            });
+        }
+
+        const minDd = Math.max(0.04, cellSizeM * 0.6);
+        const minDhVert = Math.max(0.08, 3.0 * sigmaGroundM);
+
+        for (let s = 0; s < RADIAL_SECTORS; s++) {
+            const rawBucket = sectorBuckets[s];
+            if (rawBucket.length < 4) continue;
+
+            rawBucket.sort((a, b) => a.h - b.h);
+            const maxPts = 48;
+            const bucket =
+                rawBucket.length > maxPts
+                    ? rawBucket.filter(
+                          (_, i) => i % Math.ceil(rawBucket.length / maxPts) === 0
+                      )
+                    : rawBucket;
+
+            const pairAngles: number[] = [];
+            for (let i = 0; i < bucket.length; i++) {
+                const pi = bucket[i];
+                for (let j = i + 1; j < bucket.length; j++) {
+                    const pj = bucket[j];
+                    const dd = pj.dEdge - pi.dEdge;
+                    const dyWorld =
+                        pj.h -
+                        pi.h +
+                        groundPlane.a * (pj.x - pi.x) +
+                        groundPlane.b * (pj.z - pi.z);
+                    if (Math.abs(dd) < minDd && Math.abs(dyWorld) < minDhVert) continue;
+                    const angDeg = clamp(
+                        (Math.atan2(Math.abs(dyWorld), Math.max(1e-4, Math.abs(dd))) * 180) /
+                            Math.PI,
+                        0,
+                        89.5
+                    );
+                    if (angDeg < 12) continue;
+                    pairAngles.push(angDeg);
+                }
+            }
+
+            if (pairAngles.length >= 3) {
+                const medSector = median(pairAngles);
+                primarySectorAngles.push(medSector);
+                const meanX = bucket.reduce((acc, p) => acc + p.x, 0) / bucket.length - objectCenterX;
+                const meanZ = bucket.reduce((acc, p) => acc + p.z, 0) / bucket.length - objectCenterZ;
+                const sideProj = meanX * axisV[0] + meanZ * axisV[1];
+                if (sideProj < 0) primaryLeftAngles.push(medSector);
+                else primaryRightAngles.push(medSector);
+            }
+        }
+    }
+
+    // 3. Secundario / Gradiente DEM corregido (+ planeA, + planeB, unilaterales en borde, techo 89.5°)
+    const secondaryAnglesAll: number[] = [];
+    const secondaryAnglesLeft: number[] = [];
+    const secondaryAnglesRight: number[] = [];
+
+    const isObsInObj = (idx: number): boolean =>
+        objectMask[idx] === 1 && objectObservedMask[idx] === 1 && interpolatedMask[idx] === 0;
+
+    for (let iz = 1; iz < nz - 1; iz++) {
+        for (let ix = 1; ix < nx - 1; ix++) {
+            const idx = iz * nx + ix;
+            if (!isObsInObj(idx)) continue;
+
+            const nL = idx - 1;
+            const nR = idx + 1;
+            const nU = idx - nx;
+            const nD = idx + nx;
+
+            const h = heightsM[idx];
+            const outL = objectMask[nL] === 0;
+            const outR = objectMask[nR] === 0;
+            const outU = objectMask[nU] === 0;
+            const outD = objectMask[nD] === 0;
+            const isBorderCell = outL || outR || outU || outD;
+
+            let dhdx: number | null = null;
+            if (isObsInObj(nL) && isObsInObj(nR)) {
+                dhdx = (heightsM[nR] - heightsM[nL]) / (2 * cellSizeM);
+            } else if (outL && !outR) {
+                const edgeGrad = h / cellSizeM;
+                const innerGrad = isObsInObj(nR) ? (heightsM[nR] - h) / cellSizeM : 0;
+                dhdx = Math.abs(edgeGrad) >= Math.abs(innerGrad) ? edgeGrad : innerGrad;
+            } else if (outR && !outL) {
+                const edgeGrad = -h / cellSizeM;
+                const innerGrad = isObsInObj(nL) ? (h - heightsM[nL]) / cellSizeM : 0;
+                dhdx = Math.abs(edgeGrad) >= Math.abs(innerGrad) ? edgeGrad : innerGrad;
+            } else if (outL && outR) {
+                dhdx = h / cellSizeM;
+            } else if (isObsInObj(nR)) {
+                dhdx = (heightsM[nR] - h) / cellSizeM;
+            } else if (isObsInObj(nL)) {
+                dhdx = (h - heightsM[nL]) / cellSizeM;
+            }
+
+            let dhdz: number | null = null;
+            if (isObsInObj(nU) && isObsInObj(nD)) {
+                dhdz = (heightsM[nD] - heightsM[nU]) / (2 * cellSizeM);
+            } else if (outU && !outD) {
+                const edgeGrad = h / cellSizeM;
+                const innerGrad = isObsInObj(nD) ? (heightsM[nD] - h) / cellSizeM : 0;
+                dhdz = Math.abs(edgeGrad) >= Math.abs(innerGrad) ? edgeGrad : innerGrad;
+            } else if (outD && !outU) {
+                const edgeGrad = -h / cellSizeM;
+                const innerGrad = isObsInObj(nU) ? (h - heightsM[nU]) / cellSizeM : 0;
+                dhdz = Math.abs(edgeGrad) >= Math.abs(innerGrad) ? edgeGrad : innerGrad;
+            } else if (outU && outD) {
+                dhdz = h / cellSizeM;
+            } else if (isObsInObj(nD)) {
+                dhdz = (heightsM[nD] - h) / cellSizeM;
+            } else if (isObsInObj(nU)) {
+                dhdz = (h - heightsM[nU]) / cellSizeM;
+            }
+
+            if (dhdx === null && dhdz === null) continue;
+
+            const dydx = (dhdx ?? 0) + groundPlane.a;
+            const dydz = (dhdz ?? 0) + groundPlane.b;
+            const gradMag = Math.hypot(dydx, dydz);
+            const angleDeg = clamp((Math.atan(gradMag) * 180) / Math.PI, 0, 89.5);
+            slopeDegGrid[idx] = round1(angleDeg);
+
+            if (angleDeg < 12) continue;
+
+            const inFlankBelt = h >= hMinFlank && h <= hMaxFlank;
+            const isVerticalCliffBorder = isBorderCell && h >= hMinFlank && angleDeg >= 65;
+            if (!inFlankBelt && !isVerticalCliffBorder) continue;
+
+            secondaryAnglesAll.push(angleDeg);
+            const wx = originX + ix * cellSizeM - objectCenterX;
+            const wz = originZ + iz * cellSizeM - objectCenterZ;
+            const sideProj = wx * axisV[0] + wz * axisV[1];
+            if (sideProj < 0) secondaryAnglesLeft.push(angleDeg);
+            else secondaryAnglesRight.push(angleDeg);
+        }
+    }
+
+    const usePrimary =
+        primarySectorAngles.length >= 3 ||
+        (primarySectorAngles.length > 0 && secondaryAnglesAll.length === 0);
+
+    const slopeAngleAvgDeg = usePrimary
+        ? round1(median(primarySectorAngles))
+        : secondaryAnglesAll.length > 0
+          ? round1(median(secondaryAnglesAll))
+          : null;
+
+    const leftPool = usePrimary ? primaryLeftAngles : secondaryAnglesLeft;
+    const rightPool = usePrimary ? primaryRightAngles : secondaryAnglesRight;
+
+    const slopeAngleLeftDeg =
+        leftPool.length > 0 ? round1(median(leftPool)) : slopeAngleAvgDeg;
+    const slopeAngleRightDeg =
+        rightPool.length > 0 ? round1(median(rightPool)) : slopeAngleAvgDeg;
+
+    return {
+        slopeDegGrid,
+        slopeAngleAvgDeg,
+        slopeAngleLeftDeg,
+        slopeAngleRightDeg,
+        slopeProfile: classifySlopeProfile(slopeAngleAvgDeg),
+    };
+}
+
+/**
  * Calcula volumen métrico real desde nube 3D (MVS Offline / ARCore VIO):
- * Calibración -> Walk-Ring Toe Solver con regularización gravedad IMU ->
- * Grilla adaptativa [0.08..0.25 m] -> Mediana p50 por celda -> Clustering 8-conectado ->
- * Relleno Delaunay sin cráteres (zeroCellsInside = 0) -> p99 altura + talud observado respecto a +Y ->
- * Incertidumbre honesta ±Δ% + clasificación MetrologyGrade.
+ * Calibración -> Walk-Ring Toe Solver IRLS Huber + p50 sin sesgo negativo ->
+ * Grilla adaptativa -> Mediana p50 por celda -> Histéresis Dual + Clustering 8-conectado + Watershed 3D ->
+ * Relleno Delaunay solo interior sin cráteres (zeroCellsInside = 0) -> p99 altura +
+ * Talud estricto Theil-Sen h(d_edge) + gradiente DEM +Y hasta 89.5° -> Incertidumbre honesta ±Δ% + MetrologyGrade.
  */
 export function computeSpatialStockpileVolume(input: SpatialVolumeInput): SpatialVolumeResult {
     const rawPoints = sanitizePoints(input.pointsM);
@@ -1409,6 +2497,8 @@ export function computeSpatialStockpileVolume(input: SpatialVolumeInput): Spatia
               }
             : null;
 
+    const scaledConstraint = sanitizeTargetConstraint(input.targetConstraint, scaleFactor);
+
     const effectiveRoiRadiusM =
         typeof input.roiRadiusM === 'number' &&
         Number.isFinite(input.roiRadiusM) &&
@@ -1416,13 +2506,18 @@ export function computeSpatialStockpileVolume(input: SpatialVolumeInput): Spatia
             ? input.roiRadiusM * scaleFactor
             : undefined;
 
-    const roiCenterX = scaledAnchorCenter
-        ? scaledAnchorCenter.x
+    const effectiveAnchorXZ: [number, number] | null =
+        scaledConstraint?.anchorXZ ??
+        (scaledAnchorCenter ? [scaledAnchorCenter.x, scaledAnchorCenter.z] : null);
+
+    const roiCenterX = effectiveAnchorXZ
+        ? effectiveAnchorXZ[0]
         : median(scaledPoints.map((p) => p[0]));
-    const roiCenterZ = scaledAnchorCenter
-        ? scaledAnchorCenter.z
+    const roiCenterZ = effectiveAnchorXZ
+        ? effectiveAnchorXZ[1]
         : median(scaledPoints.map((p) => p[2]));
 
+    // Aplicar roiRadiusM legado antes del plano base (manteniendo suelo circundante si solo viene targetConstraint)
     const points = effectiveRoiRadiusM
         ? scaledPoints.filter(
               ([x, , z]) => Math.hypot(x - roiCenterX, z - roiCenterZ) <= effectiveRoiRadiusM * 1.15
@@ -1448,7 +2543,13 @@ export function computeSpatialStockpileVolume(input: SpatialVolumeInput): Spatia
         walkRingPoses: scaledWalkRing,
         wallConfinement,
         operatorHeightM: input.operatorHeightM,
+        targetConstraint: scaledConstraint,
     });
+
+    const sigmaGroundM =
+        typeof groundPlane.sigmaGroundM === 'number' && Number.isFinite(groundPlane.sigmaGroundM)
+            ? clamp(groundPlane.sigmaGroundM, 0.012, 0.06)
+            : clamp(groundPlane.residualRmsM, 0.012, 0.06);
 
     const relativePoints: Array<{ x: number; z: number; h: number }> = [];
     for (const [x, y, z] of points) {
@@ -1464,8 +2565,62 @@ export function computeSpatialStockpileVolume(input: SpatialVolumeInput): Spatia
         );
     }
 
-    const pilePoints = relativePoints.filter((p) => p.h > 0.015);
-    const boundSource = pilePoints.length >= 6 ? pilePoints : relativePoints;
+    // Restricción espacial opcional para delimitar la grilla al objeto objetivo
+    const targetRelativePoints = relativePoints.filter((pt) => {
+        if (
+            scaledConstraint?.polygonXZ &&
+            !pointInPolygonXZ(pt.x, pt.z, scaledConstraint.polygonXZ)
+        ) {
+            return false;
+        }
+        if (scaledConstraint?.radiusM !== undefined && effectiveAnchorXZ) {
+            const dist = Math.hypot(pt.x - effectiveAnchorXZ[0], pt.z - effectiveAnchorXZ[1]);
+            if (dist > scaledConstraint.radiusM * 1.05) {
+                return false;
+            }
+        }
+        return true;
+    });
+
+    const activeRelPoints =
+        targetRelativePoints.length >= 6 ? targetRelativePoints : relativePoints;
+
+    let hPeakPre = 0;
+    for (const pt of activeRelPoints) {
+        if (pt.h > hPeakPre) hPeakPre = pt.h;
+    }
+    const hSeedPre = Math.max(0.08, 3.5 * sigmaGroundM, 0.15 * hPeakPre);
+    const hToePre = Math.max(0.03, 2.0 * sigmaGroundM, 0.04 * hPeakPre);
+
+    const seedPoints = activeRelPoints.filter((p) => p.h >= hSeedPre);
+    let boundSource: Array<{ x: number; z: number; h: number }>;
+
+    if (seedPoints.length >= 6) {
+        let sMinX = Infinity;
+        let sMaxX = -Infinity;
+        let sMinZ = Infinity;
+        let sMaxZ = -Infinity;
+        for (const p of seedPoints) {
+            if (p.x < sMinX) sMinX = p.x;
+            if (p.x > sMaxX) sMaxX = p.x;
+            if (p.z < sMinZ) sMinZ = p.z;
+            if (p.z > sMaxZ) sMaxZ = p.z;
+        }
+        const seedMaxSpan = Math.max(0.04, sMaxX - sMinX, sMaxZ - sMinZ);
+        const pad = Math.max(0.35, 0.35 * seedMaxSpan);
+        const nearToePoints = activeRelPoints.filter(
+            (p) =>
+                p.h >= hToePre &&
+                p.x >= sMinX - pad &&
+                p.x <= sMaxX + pad &&
+                p.z >= sMinZ - pad &&
+                p.z <= sMaxZ + pad
+        );
+        boundSource = nearToePoints.length >= 6 ? nearToePoints : seedPoints;
+    } else {
+        const pilePoints = activeRelPoints.filter((p) => p.h > 0.015);
+        boundSource = pilePoints.length >= 6 ? pilePoints : activeRelPoints;
+    }
 
     const xs = boundSource.map((p) => p.x).sort((a, b) => a - b);
     const zs = boundSource.map((p) => p.z).sort((a, b) => a - b);
@@ -1478,23 +2633,30 @@ export function computeSpatialStockpileVolume(input: SpatialVolumeInput): Spatia
     const spanZ = Math.max(0.04, maxZ - minZ);
     const maxSpan = Math.max(spanX, spanZ);
 
-    // Grilla adaptativa: clamp(max(maxSpan / 64, densityCellSize), 0.08, 0.25) en acopios reales
-    // (elimina forzado 0.04 m en pilas reales y evita tablero vacío cuando el paso puntual > maxSpan/64).
-    // Solo objetos miniatura (< 1.0 m con ROI <= 1.0 m) mantienen 0.04 m para pruebas de cajas pequeñas.
-    const isMiniatureObject =
-        maxSpan < 1.0 && effectiveRoiRadiusM !== undefined && effectiveRoiRadiusM <= 1.0;
-    const densityCellSize = Math.sqrt((spanX * spanZ) / Math.max(40, pilePoints.length * 0.95));
-    const cellSizeM = isMiniatureObject
+    // Grilla adaptativa:
+    // - Retrocompatibilidad miniatura con roiRadiusM <= 1.0 y maxSpan < 1.0 -> 0.04 m exacto.
+    // - Objetos pequeños (< 1.5 m, ej. cilindro 54x33 cm) -> [0.03..0.04 m] para preservar paredes y volumen.
+    // - Acopios mineros reales (>= 1.5 m) -> [0.08..0.25 m].
+    const isLegacyMiniatureRoi =
+        maxSpan < 1.0 &&
+        effectiveRoiRadiusM !== undefined &&
+        effectiveRoiRadiusM <= 1.0 &&
+        !scaledConstraint;
+    const isSmallObject = maxSpan < 1.5;
+    const densityCellSize = Math.sqrt((spanX * spanZ) / Math.max(40, boundSource.length * 0.95));
+    const cellSizeM = isLegacyMiniatureRoi
         ? 0.04
-        : Number(
-              Math.max(
-                  clamp(Math.max(maxSpan / 64, densityCellSize * 1.15), 0.08, 0.25),
-                  maxSpan / 120
-              ).toFixed(4)
-          );
+        : isSmallObject
+          ? Number(clamp(Math.max(maxSpan / 56, densityCellSize * 0.9), 0.02, 0.04).toFixed(4))
+          : Number(
+                Math.max(
+                    clamp(Math.max(maxSpan / 64, densityCellSize * 1.15), 0.08, 0.25),
+                    maxSpan / 120
+                ).toFixed(4)
+            );
 
-    const nx = Math.min(128, Math.max(8, Math.ceil(spanX / cellSizeM) + 2));
-    const nz = Math.min(128, Math.max(8, Math.ceil(spanZ / cellSizeM) + 2));
+    const nx = Math.min(128, Math.max(8, Math.ceil(spanX / cellSizeM) + 4));
+    const nz = Math.min(128, Math.max(8, Math.ceil(spanZ / cellSizeM) + 4));
     const centerX = (minX + maxX) * 0.5;
     const centerZ = (minZ + maxZ) * 0.5;
     const originX = centerX - ((nx - 1) * cellSizeM) * 0.5;
@@ -1503,11 +2665,11 @@ export function computeSpatialStockpileVolume(input: SpatialVolumeInput): Spatia
     const totalCells = nx * nz;
     const cellBuckets: number[][] = Array.from({ length: totalCells }, () => []);
 
-    for (const pt of relativePoints) {
+    for (const pt of activeRelPoints) {
         const ix = Math.round((pt.x - originX) / cellSizeM);
         const iz = Math.round((pt.z - originZ) / cellSizeM);
         if (ix < 0 || ix >= nx || iz < 0 || iz >= nz) continue;
-        cellBuckets[iz * nx + ix].push(Math.max(0, pt.h));
+        cellBuckets[iz * nx + ix].push(pt.h);
     }
 
     const observed = new Uint8Array(totalCells);
@@ -1523,15 +2685,18 @@ export function computeSpatialStockpileVolume(input: SpatialVolumeInput): Spatia
             observed[idx] = 1;
             observationCount[idx] = bucket.length;
             const sorted = [...bucket].sort((a, b) => a - b);
-            const repHeight = percentile(sorted, 0.5);
+            const repHeight = Math.max(0, percentile(sorted, 0.5));
             const isGridBorder = ix === 0 || ix === nx - 1 || iz === 0 || iz === nz - 1;
             heightsM[idx] = isGridBorder ? 0 : Number(repHeight.toFixed(4));
         }
     }
 
-    const targetClusterCx = scaledAnchorCenter ? scaledAnchorCenter.x : centerX;
-    const targetClusterCz = scaledAnchorCenter ? scaledAnchorCenter.z : centerZ;
-    const primaryCluster = selectPrimaryClusterMask(
+    // Segmentación Pie-Objeto por Histéresis Dual + Clustering 8-vecinos + Watershed 3D + Polígono
+    const {
+        objectObservedMask,
+        allowedMask,
+        hToe,
+    } = segmentTargetObjectMask({
         observed,
         heightsM,
         nx,
@@ -1539,24 +2704,34 @@ export function computeSpatialStockpileVolume(input: SpatialVolumeInput): Spatia
         originX,
         originZ,
         cellSizeM,
-        targetClusterCx,
-        targetClusterCz
-    );
+        sigmaGroundM,
+        anchorXZ: effectiveAnchorXZ,
+        targetRadiusM: scaledConstraint?.radiusM,
+        polygonXZ: scaledConstraint?.polygonXZ,
+    });
 
     for (let idx = 0; idx < totalCells; idx++) {
-        if (!primaryCluster[idx]) {
+        if (!objectObservedMask[idx]) {
             heightsM[idx] = 0;
             observationCount[idx] = 0;
         }
     }
 
-    // Relleno Delaunay sin cráteres (zeroCellsInside = 0) registrando interpolatedMask
+    // Relleno Delaunay solo de huecos interiores (zeroCellsInside = 0, sin puentes globales)
     const { interpolatedMask, zeroCellsInside } = fillInteriorHolesDelaunay(
-        primaryCluster,
+        objectObservedMask,
         heightsM,
         nx,
-        nz
+        nz,
+        allowedMask
     );
+
+    const objectMask = new Uint8Array(totalCells);
+    for (let idx = 0; idx < totalCells; idx++) {
+        if (objectObservedMask[idx] === 1 || interpolatedMask[idx] === 1) {
+            objectMask[idx] = 1;
+        }
+    }
 
     // Integral volumétrica discreta + altura p99 + oclusión + huella activa
     const cellArea = cellSizeM * cellSizeM;
@@ -1569,6 +2744,7 @@ export function computeSpatialStockpileVolume(input: SpatialVolumeInput): Spatia
     for (let iz = 0; iz < nz; iz++) {
         for (let ix = 0; ix < nx; ix++) {
             const idx = iz * nx + ix;
+            if (!objectMask[idx]) continue;
             const h = heightsM[idx];
             if (h > 0) {
                 const cellVol = h * cellArea;
@@ -1598,9 +2774,10 @@ export function computeSpatialStockpileVolume(input: SpatialVolumeInput): Spatia
     activeHeights.sort((a, b) => a - b);
     const p99H = activeHeights.length >= 10 ? percentile(activeHeights, 0.99) : maxH;
 
-    const volumeM3 = round2(rawVolume);
+    const volumeM3 = rawVolume < 1.0 ? round4(rawVolume) : round2(rawVolume);
     const heightM = round2(p99H);
-    const footprintAreaM2 = round2(activeFootprintCells.length * cellArea);
+    const rawFootprintArea = activeFootprintCells.length * cellArea;
+    const footprintAreaM2 = rawFootprintArea < 1.0 ? round4(rawFootprintArea) : round2(rawFootprintArea);
     const occludedVolumePct =
         rawVolume > 0 ? round1(clamp((interpolatedVolume / rawVolume) * 100, 0, 100)) : 0;
 
@@ -1609,75 +2786,41 @@ export function computeSpatialStockpileVolume(input: SpatialVolumeInput): Spatia
         cellSizeM
     );
 
-    // Talud honesto: únicamente si maxH >= 0.50 m, SOLO sobre celdas observadas contiguas
-    // (excluyendo huecos/interpolaciones) y referido al eje vertical real de gravedad `+Y`.
-    const slopeDegGrid = new Array<number>(totalCells).fill(0);
-    const flankAnglesAll: number[] = [];
-    const flankAnglesLeft: number[] = [];
-    const flankAnglesRight: number[] = [];
+    const objectCenterX =
+        activeFootprintCells.length > 0
+            ? activeFootprintCells.reduce((acc, c) => acc + c.x, 0) / activeFootprintCells.length
+            : centerX;
+    const objectCenterZ =
+        activeFootprintCells.length > 0
+            ? activeFootprintCells.reduce((acc, c) => acc + c.z, 0) / activeFootprintCells.length
+            : centerZ;
 
-    if (maxH >= 0.5) {
-        const minFlankH = 0.15 * maxH;
-        const maxFlankH = 0.85 * maxH;
-
-        for (let iz = 1; iz < nz - 1; iz++) {
-            for (let ix = 1; ix < nx - 1; ix++) {
-                const idx = iz * nx + ix;
-                if (!primaryCluster[idx] || interpolatedMask[idx] === 1) continue;
-
-                // Exigir que los 4 vecinos cardinales sean celdas directamente observadas (cero cráteres)
-                const nL = idx - 1;
-                const nR = idx + 1;
-                const nU = idx - nx;
-                const nD = idx + nx;
-                if (
-                    !primaryCluster[nL] ||
-                    interpolatedMask[nL] === 1 ||
-                    !primaryCluster[nR] ||
-                    interpolatedMask[nR] === 1 ||
-                    !primaryCluster[nU] ||
-                    interpolatedMask[nU] === 1 ||
-                    !primaryCluster[nD] ||
-                    interpolatedMask[nD] === 1
-                ) {
-                    continue;
-                }
-
-                // Gradiente respecto a +Y gravedad: y_world = h + a*x + b*z + d
-                const dydx = (heightsM[nR] - heightsM[nL]) / (2 * cellSizeM) + groundPlane.a;
-                const dydz = (heightsM[nD] - heightsM[nU]) / (2 * cellSizeM) + groundPlane.b;
-                const gradMag = Math.hypot(dydx, dydz);
-                const angleDeg = (Math.atan(gradMag) * 180) / Math.PI;
-                slopeDegGrid[idx] = round1(angleDeg);
-
-                const h = heightsM[idx];
-                if (h <= minFlankH || h >= maxFlankH) continue;
-                if (gradMag < 0.08 || angleDeg > 82) continue;
-
-                flankAnglesAll.push(angleDeg);
-                const wx = originX + ix * cellSizeM - centerX;
-                const wz = originZ + iz * cellSizeM - centerZ;
-                const sideProj = wx * axisV[0] + wz * axisV[1];
-                if (sideProj < 0) flankAnglesLeft.push(angleDeg);
-                else flankAnglesRight.push(angleDeg);
-            }
-        }
-    }
-
-    const slopeAngleAvgDeg =
-        maxH >= 0.5 && flankAnglesAll.length > 0 ? round1(median(flankAnglesAll)) : null;
-    const slopeAngleLeftDeg =
-        maxH >= 0.5
-            ? flankAnglesLeft.length > 0
-                ? round1(median(flankAnglesLeft))
-                : slopeAngleAvgDeg
-            : null;
-    const slopeAngleRightDeg =
-        maxH >= 0.5
-            ? flankAnglesRight.length > 0
-                ? round1(median(flankAnglesRight))
-                : slopeAngleAvgDeg
-            : null;
+    // Fórmula estricta de Talud del Objeto (Theil-Sen h(d_edge) + DEM +Y hasta 89.5° + slopeProfile)
+    const {
+        slopeDegGrid,
+        slopeAngleAvgDeg,
+        slopeAngleLeftDeg,
+        slopeAngleRightDeg,
+        slopeProfile,
+    } = computeStrictObjectSlope({
+        relativePoints: activeRelPoints,
+        objectObservedMask,
+        objectMask,
+        interpolatedMask,
+        heightsM,
+        nx,
+        nz,
+        originX,
+        originZ,
+        cellSizeM,
+        maxH,
+        hToe,
+        sigmaGroundM,
+        groundPlane,
+        objectCenterX,
+        objectCenterZ,
+        axisV,
+    });
 
     let slopeWarning: string | null = null;
     if (maxH >= 0.5 && slopeAngleAvgDeg !== null && slopeAngleAvgDeg > 48 && wallConfinement === 'NONE') {
@@ -1765,6 +2908,7 @@ export function computeSpatialStockpileVolume(input: SpatialVolumeInput): Spatia
         slopeAngleLeftDeg,
         slopeAngleRightDeg,
         slopeAngleAvgDeg,
+        slopeProfile,
         slopeWarning,
         groundSlopeDeg: groundPlane.groundSlopeDeg,
         planeMismatchDeg: groundPlane.planeMismatchDeg,
