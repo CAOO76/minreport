@@ -33,6 +33,8 @@ rules_version = '2';
 //   - /stockpiles/{stkId}: Acopios STOCKPILE CONTROL Next-Gen — Aislamiento multi-tenant estricto + descripción, mapa estático CAS (static_map_url/sha256/bytes), deltas de volumen, proyecto (project_id/project_name), cierre de ciclo exclusivo móvil (closed_at/by, closure_reason ['SHIPPED'|'FIELD_REMOVED'|'ZERO_VOLUME'|'MANUAL_CLOSE'], closure_cause <= 300, closure_origin ['MOBILE_FIELD'], dispatch_reference, dispatch_transport <= 200, dispatch_destination <= 200, dispatch_timestamp >= 0, shipped_weight_t, pre_closure_volume_m3) y bloqueo data: Base64 en URLs.
 //   - /stockpiles/{stkId}/measurements/{measId}: Mediciones STOCKPILE CONTROL Next-Gen — volumen_m3 >= 0, peso_t >= 0, cadena previa (previous_measurement_id/photo_url), deltas, metadatos de cierre y despacho (closure_reason ['SHIPPED'|'FIELD_REMOVED'|'ZERO_VOLUME'|'MANUAL_CLOSE'], closure_cause <= 300, closure_origin ['MOBILE_FIELD'], dispatch_transport <= 200, dispatch_destination <= 200, dispatch_timestamp >= 0) y bloqueo data: Base64 en photo_url/previous_photo_url/mesh_url.
 //   - /device_calibrations/{calId}: Calibración geométrica on-demand por dispositivo (R5) — Aislamiento multi-tenant estricto, rango scaleFactor [0.85..1.15], distancias y calibratedAt > 0, campos opcionales (id, calibrationId, deviceId, deviceModel, platform <= 32, calibratedBy, userId, actorUid, tenantId, region, planeNoiseRmsM, imuPitchOffsetDeg, imuRollOffsetDeg, createdAt), sin PII (actorEmail/email/ipAddress prohibidos), append-only en cliente (update == false, delete exclusivo isAdmin).
+//   - /stockpile_ground_truth/{gtId}: Registros inmutables de medidas reales en terreno (ground-truth) y desviaciones `Δ%` respecto de la estimación de la app (validación Zod + HITL `"ACTUALIZAR"` + `AuditLedger`, escritura exclusiva Cloud Run Admin SDK vía `/api/geolapp/stockpiles/:id/measurements/:measId/ground-truth`). Lectura tenant-scoped (`canReadTenantDoc` / `isSystemPrivileged`), escritura/borrado cliente bloqueado (`false`).
+//   - /stockpile_calibration_profiles/{profileId}: Perfiles de calibración geométrica y aprendizaje LOOCV + diagnóstico IA soberano (`DRAFT` / `ACTIVE` / `SUPERSEDED`, guardrail `calibratedMapePct < rawMapePct`, HITL `"ACTUALIZAR"` + `AuditLedger`, escritura exclusiva Cloud Run Admin SDK vía `/api/geolapp/calibration-profiles/recompute` y `/activate`). Lectura tenant-scoped (`canReadTenantDoc` / `isSystemPrivileged`), escritura/borrado cliente bloqueado (`false`).
 //   - /device_compatibility_registry/{deviceId}: Registro global del motor on-demand de compatibilidad móvil — Lectura autenticada (isAuthenticated), escritura bloqueada en cliente (exclusivo Cloud Run Admin SDK).
 //   - /financial_events/{eventId}: Append-Only estricto (create exclusivo Admin/Owner de cuenta, update/delete == false).
 //   - /audit_ledger/{logId}: Cadena SHA-256 Server-Only (create/update/delete == false; lectura Admin o auditor titular sin cruce multi-tenant).
@@ -1762,6 +1764,18 @@ service cloud.firestore {
         );
       allow update: if false;
       allow delete: if isAuthenticated() && isAdmin();
+    }
+
+    // Registros inmutables de ground-truth en terreno y desviaciones Δ% (MINREPORT · ACOPIOS 2.3.0 — Lectura tenant-scoped; escritura exclusiva Cloud Run Admin SDK)
+    match /stockpile_ground_truth/{gtId} {
+      allow read: if isAuthenticated() && (isSystemPrivileged() || canReadTenantDoc(resource.data));
+      allow create, update, delete: if false;
+    }
+
+    // Perfiles de calibración geométrica y aprendizaje LOOCV + diagnóstico IA (MINREPORT · ACOPIOS 2.3.0 — Lectura tenant-scoped; escritura exclusiva Cloud Run Admin SDK)
+    match /stockpile_calibration_profiles/{profileId} {
+      allow read: if isAuthenticated() && (isSystemPrivileged() || canReadTenantDoc(resource.data));
+      allow create, update, delete: if false;
     }
 
     // Registro global del motor on-demand de compatibilidad móvil (Lectura autenticada; escritura exclusiva Cloud Run Admin SDK)
