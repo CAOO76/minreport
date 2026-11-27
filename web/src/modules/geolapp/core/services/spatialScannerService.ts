@@ -33,16 +33,36 @@ export type SpatialDepthMode =
     | 'AUTOMATIC'
     | 'VIO_POINTCLOUD';
 
+export type SpatialSlopeProfile =
+    | 'NATURAL_REPOSE'
+    | 'STEEP_ALERT'
+    | 'VERTICAL_STRUCTURE';
+
+export interface SpatialMetrologyDiagnosticsV220 {
+    slopeProfile?: SpatialSlopeProfile;
+    sigmaGroundM?: number;
+    visualHullViews?: number;
+    depthSamplesCount?: number;
+}
+
+export type NormalizedInSituMetrology = InSituMetrology & SpatialMetrologyDiagnosticsV220;
+
 const CALIBRATION_STORAGE_KEY = 'minreport_spatial_device_calibration_v1';
 const CALIBRATION_HISTORY_STORAGE_KEY = 'spatial_device_calibration_history_v1';
 export const CALIBRATION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
- * Formatea m³ para operación industrial: 2 decimales si < 10 m³, 1 decimal si >= 10 m³.
+ * Formatea m³ para operación industrial:
+ * - 3 decimales si < 1.0 m³ (evita truncar volúmenes pequeños como 0.046 m³ a 0.05 o 0.0)
+ * - 2 decimales si 1.0 <= m³ < 10
+ * - 1 decimal si >= 10 m³
  */
 export function formatStockpileVolumeM3(volumeM3: number): string {
     if (!Number.isFinite(volumeM3) || volumeM3 <= 0) {
-        return '0.00';
+        return '0.000';
+    }
+    if (volumeM3 < 1) {
+        return volumeM3.toFixed(3);
     }
     return volumeM3 < 10 ? volumeM3.toFixed(2) : volumeM3.toFixed(1);
 }
@@ -143,8 +163,12 @@ export interface SpatialScanNativeResult {
     walkRingPoses?: WalkRingPose[];
     keyframes?: SpatialScanKeyframe[];
     keyframesV2?: SpatialScanKeyframeV2Native[];
-    inSituMetrology?: InSituMetrology | null;
+    inSituMetrology?: NormalizedInSituMetrology | null;
     localPreviewMesh?: DemGridV1 | null;
+    slopeProfile?: SpatialSlopeProfile;
+    sigmaGroundM?: number;
+    visualHullViews?: number;
+    depthSamplesCount?: number;
     captureImuPitchDeg?: number;
     rejectedBlurCount?: number;
     calibrationScaleFactor?: number;
@@ -789,6 +813,16 @@ export function normalizeNativeSpatialScan(rawInput: unknown): SpatialScanNative
 
     const toFinite = (val: unknown): number | undefined =>
         typeof val === 'number' && Number.isFinite(val) ? val : undefined;
+    const toNonNegativeFinite = (val: unknown): number | undefined =>
+        typeof val === 'number' && Number.isFinite(val) && val >= 0 ? val : undefined;
+    const toNonNegativeInt = (val: unknown): number | undefined => {
+        const n = toNonNegativeFinite(val);
+        return n !== undefined ? Math.round(n) : undefined;
+    };
+    const parseSlopeProfile = (val: unknown): SpatialSlopeProfile | undefined =>
+        val === 'NATURAL_REPOSE' || val === 'STEEP_ALERT' || val === 'VERTICAL_STRUCTURE'
+            ? val
+            : undefined;
 
     // 1. Normalizar keyframesV2 (imuPitchDeg -> pitchDeg, widthPx/heightPx -> width/height)
     const rawKeyframesV2 = Array.isArray(raw.keyframesV2)
@@ -868,89 +902,132 @@ export function normalizeNativeSpatialScan(rawInput: unknown): SpatialScanNative
     }
 
     // 5. Normalizar inSituMetrology (Android dimensionsM/groundSlopeDeg -> baseLengthM/baseWidthM/heightMaxM/groundPlane)
-    let normalizedMetrology: InSituMetrology | null = null;
-    if (raw.inSituMetrology && typeof raw.inSituMetrology === 'object') {
-        const m = raw.inSituMetrology as Record<string, unknown>;
-        const volumeM3 = toFinite(m.volumeM3);
-        if (volumeM3 !== undefined && volumeM3 > 0) {
-            const dims =
-                m.dimensionsM && typeof m.dimensionsM === 'object'
-                    ? (m.dimensionsM as Record<string, unknown>)
-                    : null;
-            const rawGp =
-                m.groundPlane && typeof m.groundPlane === 'object'
-                    ? (m.groundPlane as Record<string, unknown>)
-                    : null;
+    //    y preservar campos opcionales Android 2.2.0 (slopeProfile, sigmaGroundM, visualHullViews, depthSamplesCount)
+    const rawMetObj =
+        raw.inSituMetrology && typeof raw.inSituMetrology === 'object'
+            ? (raw.inSituMetrology as Record<string, unknown>)
+            : null;
+    const topSlopeProfile =
+        parseSlopeProfile(raw.slopeProfile) ?? parseSlopeProfile(rawMetObj?.slopeProfile);
+    const topSigmaGroundM =
+        toNonNegativeFinite(raw.sigmaGroundM) ?? toNonNegativeFinite(rawMetObj?.sigmaGroundM);
+    const topVisualHullViews =
+        toNonNegativeInt(raw.visualHullViews) ?? toNonNegativeInt(rawMetObj?.visualHullViews);
+    const topDepthSamplesCount =
+        toNonNegativeInt(raw.depthSamplesCount) ?? toNonNegativeInt(rawMetObj?.depthSamplesCount);
 
-            const baseLengthM = Math.max(
-                0.05,
-                toFinite(m.baseLengthM) ?? toFinite(dims?.a) ?? toFinite(dims?.lengthM) ?? 0.5
-            );
-            const baseWidthM = Math.max(
-                0.05,
-                toFinite(m.baseWidthM) ?? toFinite(dims?.b) ?? toFinite(dims?.widthM) ?? baseLengthM
-            );
-            const heightMaxM = Math.max(
-                0.02,
-                toFinite(m.heightMaxM) ??
-                    toFinite(dims?.h) ??
-                    toFinite(dims?.heightM) ??
-                    toFinite(m.maxHeightM) ??
-                    normalizedPreviewMesh?.maxHeightM ??
-                    0.1
-            );
+    let normalizedMetrology: NormalizedInSituMetrology | null = null;
+    if (rawMetObj) {
+        const m = rawMetObj;
+        const volumeM3 = toFinite(m.volumeM3);
+        const rawGrade = typeof m.metrologyGrade === 'string' ? m.metrologyGrade : 'VALID_IN_SITU';
+        const metrologyGrade =
+            rawGrade === 'VALID_IN_SITU' ||
+            rawGrade === 'LOW_CONFIDENCE_RECAPTURE' ||
+            rawGrade === 'REJECTED'
+                ? rawGrade
+                : 'VALID_IN_SITU';
+
+        const metSlopeProfile = parseSlopeProfile(m.slopeProfile) ?? topSlopeProfile;
+        const metSigmaGroundM = toNonNegativeFinite(m.sigmaGroundM) ?? topSigmaGroundM;
+        const metVisualHullViews = toNonNegativeInt(m.visualHullViews) ?? topVisualHullViews;
+        const metDepthSamplesCount = toNonNegativeInt(m.depthSamplesCount) ?? topDepthSamplesCount;
+        const v220MetExtras: SpatialMetrologyDiagnosticsV220 = {
+            ...(metSlopeProfile !== undefined ? { slopeProfile: metSlopeProfile } : {}),
+            ...(metSigmaGroundM !== undefined ? { sigmaGroundM: metSigmaGroundM } : {}),
+            ...(metVisualHullViews !== undefined ? { visualHullViews: metVisualHullViews } : {}),
+            ...(metDepthSamplesCount !== undefined
+                ? { depthSamplesCount: metDepthSamplesCount }
+                : {}),
+        };
+
+        const dims =
+            m.dimensionsM && typeof m.dimensionsM === 'object'
+                ? (m.dimensionsM as Record<string, unknown>)
+                : null;
+        const rawGp =
+            m.groundPlane && typeof m.groundPlane === 'object'
+                ? (m.groundPlane as Record<string, unknown>)
+                : null;
+
+        const rawBaseLengthM =
+            toFinite(m.baseLengthM) ?? toFinite(dims?.a) ?? toFinite(dims?.lengthM);
+        const rawBaseWidthM =
+            toFinite(m.baseWidthM) ?? toFinite(dims?.b) ?? toFinite(dims?.widthM);
+        const rawHeightMaxM =
+            toFinite(m.heightMaxM) ??
+            toFinite(dims?.h) ??
+            toFinite(dims?.heightM) ??
+            toFinite(m.maxHeightM) ??
+            normalizedPreviewMesh?.maxHeightM;
+
+        const sectorsCovered = toFinite(m.sectorsCovered) ?? toFinite(raw.sectorsCovered);
+        const sectorsTotal = Math.max(
+            1,
+            toFinite(m.sectorsTotal) ?? toFinite(raw.sectorsTotal) ?? 16
+        );
+        const coveragePct = Math.min(
+            100,
+            Math.max(
+                0,
+                toFinite(m.coveragePct) ??
+                    toFinite(raw.coveragePct) ??
+                    (sectorsCovered !== undefined
+                        ? Number(((sectorsCovered / sectorsTotal) * 100).toFixed(1))
+                        : 0)
+            )
+        );
+        const toeScore = Math.min(
+            100,
+            Math.max(0, toFinite(m.toeScore) ?? toFinite(rawGp?.toeScore) ?? 0)
+        );
+        const groundSlopeDeg = Math.min(
+            90,
+            Math.max(
+                0,
+                toFinite(m.groundSlopeDeg) ??
+                    toFinite(rawGp?.slopeDeg) ??
+                    toFinite(normalizedPreviewMesh?.groundPlane?.slopeDeg) ??
+                    0
+            )
+        );
+        const groundPlane = {
+            a: toFinite(rawGp?.a) ?? toFinite(normalizedPreviewMesh?.groundPlane?.a) ?? 0,
+            b: toFinite(rawGp?.b) ?? toFinite(normalizedPreviewMesh?.groundPlane?.b) ?? 0,
+            d: toFinite(rawGp?.d) ?? toFinite(normalizedPreviewMesh?.groundPlane?.d) ?? 0,
+            slopeDeg: groundSlopeDeg,
+            toeScore,
+            ...(toFinite(rawGp?.residualRmsM) !== undefined
+                ? { residualRmsM: toFinite(rawGp?.residualRmsM) }
+                : {}),
+        };
+        const rawOccludedVolumePct = toFinite(m.occludedVolumePct);
+        const safeOccludedVolumePct =
+            rawOccludedVolumePct !== undefined
+                ? Math.min(100, Math.max(0, rawOccludedVolumePct))
+                : undefined;
+
+        if (volumeM3 !== undefined && volumeM3 > 0) {
+            const baseLengthM = Math.max(0.05, rawBaseLengthM ?? 0.5);
+            const baseWidthM = Math.max(0.05, rawBaseWidthM ?? baseLengthM);
+            const heightMaxM = Math.max(0.02, rawHeightMaxM ?? 0.1);
             const footprintAreaM2 = Math.max(
                 0,
                 toFinite(m.footprintAreaM2) ??
                     Number((Math.PI * (baseLengthM * 0.5) * (baseWidthM * 0.5)).toFixed(2))
             );
-            const sectorsCovered = toFinite(m.sectorsCovered) ?? toFinite(raw.sectorsCovered);
-            const sectorsTotal = Math.max(1, toFinite(m.sectorsTotal) ?? toFinite(raw.sectorsTotal) ?? 16);
-            const coveragePct = Math.min(
-                100,
-                Math.max(
-                    0,
-                    toFinite(m.coveragePct) ??
-                        toFinite(raw.coveragePct) ??
-                        (sectorsCovered !== undefined
-                            ? Number(((sectorsCovered / sectorsTotal) * 100).toFixed(1))
-                            : 0)
-                )
-            );
-            const toeScore = Math.min(
-                100,
-                Math.max(0, toFinite(m.toeScore) ?? toFinite(rawGp?.toeScore) ?? 0)
-            );
-            const groundSlopeDeg = Math.min(
-                90,
-                Math.max(
-                    0,
-                    toFinite(m.groundSlopeDeg) ??
-                        toFinite(rawGp?.slopeDeg) ??
-                        toFinite(normalizedPreviewMesh?.groundPlane?.slopeDeg) ??
-                        0
-                )
-            );
-            const groundPlane = {
-                a: toFinite(rawGp?.a) ?? toFinite(normalizedPreviewMesh?.groundPlane?.a) ?? 0,
-                b: toFinite(rawGp?.b) ?? toFinite(normalizedPreviewMesh?.groundPlane?.b) ?? 0,
-                d: toFinite(rawGp?.d) ?? toFinite(normalizedPreviewMesh?.groundPlane?.d) ?? 0,
-                slopeDeg: groundSlopeDeg,
-                toeScore,
-                ...(toFinite(rawGp?.residualRmsM) !== undefined
-                    ? { residualRmsM: toFinite(rawGp?.residualRmsM) }
-                    : {}),
-            };
-            const rawGrade = typeof m.metrologyGrade === 'string' ? m.metrologyGrade : 'VALID_IN_SITU';
-            const metrologyGrade =
-                rawGrade === 'VALID_IN_SITU' ||
-                rawGrade === 'LOW_CONFIDENCE_RECAPTURE' ||
-                rawGrade === 'REJECTED'
-                    ? rawGrade
-                    : 'VALID_IN_SITU';
+
+            const {
+                occludedVolumePct: _rawOccl,
+                slopeProfile: _mSlopeProfile,
+                sigmaGroundM: _mSigmaGroundM,
+                visualHullViews: _mVisualHullViews,
+                depthSamplesCount: _mDepthSamplesCount,
+                ...restMet
+            } = m;
 
             const parsedMetrology = InSituMetrologySchema.safeParse({
-                ...m,
+                ...restMet,
                 volumeM3,
                 footprintAreaM2,
                 heightMaxM,
@@ -965,8 +1042,13 @@ export function normalizeNativeSpatialScan(rawInput: unknown): SpatialScanNative
                 groundSlopeDeg,
                 uncertaintyPct: Math.min(100, Math.max(0, toFinite(m.uncertaintyPct) ?? 15)),
                 coveragePct,
-                ...(sectorsCovered !== undefined ? { sectorsCovered: Math.round(sectorsCovered) } : {}),
+                ...(sectorsCovered !== undefined
+                    ? { sectorsCovered: Math.round(sectorsCovered) }
+                    : {}),
                 toeScore,
+                ...(safeOccludedVolumePct !== undefined
+                    ? { occludedVolumePct: safeOccludedVolumePct }
+                    : {}),
                 ...(typeof (m.loopClosed ?? raw.loopClosed) === 'boolean'
                     ? { loopClosed: Boolean(m.loopClosed ?? raw.loopClosed) }
                     : {}),
@@ -974,18 +1056,70 @@ export function normalizeNativeSpatialScan(rawInput: unknown): SpatialScanNative
                 metrologyGrade,
             });
             if (parsedMetrology.success) {
-                normalizedMetrology = parsedMetrology.data;
+                normalizedMetrology = {
+                    ...parsedMetrology.data,
+                    ...v220MetExtras,
+                };
             }
+        } else if (metrologyGrade === 'REJECTED' && volumeM3 === 0) {
+            const safeDimA = rawBaseLengthM !== undefined && rawBaseLengthM > 0 ? rawBaseLengthM : 0;
+            const safeDimB = rawBaseWidthM !== undefined && rawBaseWidthM > 0 ? rawBaseWidthM : 0;
+            const safeDimH = rawHeightMaxM !== undefined && rawHeightMaxM > 0 ? rawHeightMaxM : 0;
+            normalizedMetrology = {
+                volumeM3: 0,
+                footprintAreaM2: Math.max(0, toFinite(m.footprintAreaM2) ?? 0),
+                heightMaxM: safeDimH,
+                baseLengthM: safeDimA,
+                baseWidthM: safeDimB,
+                ...(safeDimA > 0 || safeDimB > 0 || safeDimH > 0
+                    ? {
+                          dimensionsM: {
+                              a: Number(safeDimA.toFixed(2)),
+                              b: Number(safeDimB.toFixed(2)),
+                              h: Number(safeDimH.toFixed(2)),
+                          },
+                      }
+                    : {}),
+                groundPlane,
+                groundSlopeDeg,
+                uncertaintyPct: Math.min(100, Math.max(0, toFinite(m.uncertaintyPct) ?? 100)),
+                coveragePct,
+                ...(sectorsCovered !== undefined
+                    ? { sectorsCovered: Math.round(sectorsCovered) }
+                    : {}),
+                toeScore,
+                ...(safeOccludedVolumePct !== undefined
+                    ? { occludedVolumePct: safeOccludedVolumePct }
+                    : {}),
+                ...(typeof (m.loopClosed ?? raw.loopClosed) === 'boolean'
+                    ? { loopClosed: Boolean(m.loopClosed ?? raw.loopClosed) }
+                    : {}),
+                computedAt: toFinite(m.computedAt) ? Math.round(toFinite(m.computedAt)!) : Date.now(),
+                metrologyGrade: 'REJECTED',
+                ...v220MetExtras,
+            };
         }
     }
 
+    const {
+        slopeProfile: _rawSlopeProfile,
+        sigmaGroundM: _rawSigmaGroundM,
+        visualHullViews: _rawVisualHullViews,
+        depthSamplesCount: _rawDepthSamplesCount,
+        ...restRaw
+    } = raw;
+
     return {
-        ...(raw as unknown as SpatialScanNativeResult),
+        ...(restRaw as unknown as SpatialScanNativeResult),
         ...(normalizedKeyframesV2.length > 0 ? { keyframesV2: normalizedKeyframesV2 } : {}),
         ...(normalizedWalkRingPoses ? { walkRingPoses: normalizedWalkRingPoses } : {}),
         inSituMetrology: normalizedMetrology,
         localPreviewMesh: normalizedPreviewMesh,
         ...(captureImuPitchDeg !== undefined ? { captureImuPitchDeg } : {}),
+        ...(topSlopeProfile !== undefined ? { slopeProfile: topSlopeProfile } : {}),
+        ...(topSigmaGroundM !== undefined ? { sigmaGroundM: topSigmaGroundM } : {}),
+        ...(topVisualHullViews !== undefined ? { visualHullViews: topVisualHullViews } : {}),
+        ...(topDepthSamplesCount !== undefined ? { depthSamplesCount: topDepthSamplesCount } : {}),
     };
 }
 

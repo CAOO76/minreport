@@ -78,6 +78,148 @@ export interface MobileScannerProps {
 
 type ScannerStage = 'READY' | 'ANALYZING' | 'RESULT' | 'REJECTED' | 'ERROR';
 
+export interface RejectedMetrologyDiagnostics {
+    volumeM3?: number;
+    dimAM?: number;
+    dimHM?: number;
+    coveragePct?: number;
+    occludedVolumePct?: number;
+    toeScore?: number;
+    uncertaintyPct?: number;
+    visualHullViews?: number;
+}
+
+export interface DiagnosticMetricToken {
+    key:
+        | 'volume'
+        | 'dimA'
+        | 'dimH'
+        | 'coverage'
+        | 'occluded'
+        | 'toe'
+        | 'uncertainty'
+        | 'visualHull';
+    label: string;
+    alert: boolean;
+}
+
+export function extractRejectedDiagnostics(
+    scan: SpatialScanNativeResult | null | undefined
+): RejectedMetrologyDiagnostics | null {
+    const m = scan?.inSituMetrology;
+    if (!m) return null;
+    if (m.metrologyGrade !== 'REJECTED' && m.volumeM3 > 0) return null;
+
+    const finiteNonNeg = (v: unknown): number | undefined =>
+        typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : undefined;
+    const finitePos = (v: unknown): number | undefined =>
+        typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : undefined;
+
+    const volumeM3 = finiteNonNeg(m.volumeM3);
+    const dimAM = finitePos(m.dimensionsM?.a) ?? finitePos(m.baseLengthM);
+    const dimHM = finitePos(m.dimensionsM?.h) ?? finitePos(m.heightMaxM);
+    const coveragePct = finiteNonNeg(m.coveragePct) ?? finiteNonNeg(scan?.coveragePct);
+    const occludedVolumePct = finiteNonNeg(m.occludedVolumePct);
+    const toeScore = finiteNonNeg(m.toeScore) ?? finiteNonNeg(m.groundPlane?.toeScore);
+    const uncertaintyPct = finiteNonNeg(m.uncertaintyPct);
+    const visualHullViews = finiteNonNeg(m.visualHullViews) ?? finiteNonNeg(scan?.visualHullViews);
+
+    const snapshot: RejectedMetrologyDiagnostics = {
+        ...(volumeM3 !== undefined ? { volumeM3 } : {}),
+        ...(dimAM !== undefined ? { dimAM } : {}),
+        ...(dimHM !== undefined ? { dimHM } : {}),
+        ...(coveragePct !== undefined ? { coveragePct } : {}),
+        ...(occludedVolumePct !== undefined ? { occludedVolumePct } : {}),
+        ...(toeScore !== undefined ? { toeScore } : {}),
+        ...(uncertaintyPct !== undefined ? { uncertaintyPct } : {}),
+        ...(visualHullViews !== undefined ? { visualHullViews } : {}),
+    };
+
+    return Object.keys(snapshot).length > 0 ? snapshot : null;
+}
+
+export function buildRejectedDiagnosticTokens(
+    diag: RejectedMetrologyDiagnostics | null | undefined
+): DiagnosticMetricToken[] {
+    if (!diag) return [];
+    const tokens: DiagnosticMetricToken[] = [];
+
+    if (typeof diag.volumeM3 === 'number' && Number.isFinite(diag.volumeM3) && diag.volumeM3 >= 0) {
+        tokens.push({
+            key: 'volume',
+            label: `V ${formatStockpileVolumeM3(diag.volumeM3)} m³`,
+            alert: diag.volumeM3 <= 0.003,
+        });
+    }
+    if (typeof diag.dimAM === 'number' && Number.isFinite(diag.dimAM) && diag.dimAM > 0) {
+        tokens.push({
+            key: 'dimA',
+            label: `Ø ${diag.dimAM.toFixed(2)} m`,
+            alert: false,
+        });
+    }
+    if (typeof diag.dimHM === 'number' && Number.isFinite(diag.dimHM) && diag.dimHM > 0) {
+        tokens.push({
+            key: 'dimH',
+            label: `H ${diag.dimHM.toFixed(2)} m`,
+            alert: false,
+        });
+    }
+    if (
+        typeof diag.coveragePct === 'number' &&
+        Number.isFinite(diag.coveragePct) &&
+        diag.coveragePct >= 0
+    ) {
+        tokens.push({
+            key: 'coverage',
+            label: `COB ${Math.round(diag.coveragePct)}%`,
+            alert: false,
+        });
+    }
+    if (
+        typeof diag.occludedVolumePct === 'number' &&
+        Number.isFinite(diag.occludedVolumePct) &&
+        diag.occludedVolumePct >= 0
+    ) {
+        tokens.push({
+            key: 'occluded',
+            label: `OCL ${Math.round(diag.occludedVolumePct)}%`,
+            alert: diag.occludedVolumePct > 40,
+        });
+    }
+    if (typeof diag.toeScore === 'number' && Number.isFinite(diag.toeScore) && diag.toeScore >= 0) {
+        tokens.push({
+            key: 'toe',
+            label: `TOE ${Math.round(diag.toeScore)}`,
+            alert: diag.toeScore < 45,
+        });
+    }
+    if (
+        typeof diag.uncertaintyPct === 'number' &&
+        Number.isFinite(diag.uncertaintyPct) &&
+        diag.uncertaintyPct >= 0
+    ) {
+        tokens.push({
+            key: 'uncertainty',
+            label: `±${Math.round(diag.uncertaintyPct)}%`,
+            alert: diag.uncertaintyPct > 25,
+        });
+    }
+    if (
+        typeof diag.visualHullViews === 'number' &&
+        Number.isFinite(diag.visualHullViews) &&
+        diag.visualHullViews >= 0
+    ) {
+        tokens.push({
+            key: 'visualHull',
+            label: `VH ${Math.round(diag.visualHullViews)}`,
+            alert: false,
+        });
+    }
+
+    return tokens;
+}
+
 const GRANULOMETRY_DENSITY_TABLE: Record<'COLPAS' | 'GRANSA' | 'MIXTO' | 'FINOS', number> = {
     COLPAS: 1.55,
     GRANSA: 1.65,
@@ -273,6 +415,8 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
     const [isRequestingArCore, setIsRequestingArCore] = useState<boolean>(false);
     const [uploadProgress, setUploadProgress] = useState<number>(0);
     const [rejectionMessage, setRejectionMessage] = useState<string | null>(null);
+    const [rejectedDiagnostics, setRejectedDiagnostics] =
+        useState<RejectedMetrologyDiagnostics | null>(null);
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
     const [statusMessage, setStatusMessage] = useState<InlineStatusMessage | null>(null);
 
@@ -330,6 +474,7 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
         );
         setAiDensityDismissed(false);
         setRejectionMessage(null);
+        setRejectedDiagnostics(null);
         setErrorMessage(null);
         setStatusMessage(null);
         setStage('READY');
@@ -354,6 +499,7 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
             extras: Blob[]
         ) => {
             setRejectionMessage(null);
+            setRejectedDiagnostics(null);
             setErrorMessage(null);
             setOfflinePendingSpatial(false);
 
@@ -366,6 +512,7 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                     setInSituMetrology(null);
                     setLocalPreviewMesh(null);
                     setSpatialResult(null);
+                    setRejectedDiagnostics(extractRejectedDiagnostics(scan));
                     setRejectionMessage(
                         t(
                             'scanner.insitu_rejected',
@@ -445,6 +592,7 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
         scanningSpatialRef.current = true;
         setIsScanningSpatial(true);
         setRejectionMessage(null);
+        setRejectedDiagnostics(null);
         setErrorMessage(null);
         setStatusMessage(null);
         void triggerFieldImpact('MEDIUM');
@@ -1031,6 +1179,11 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
         return list;
     }, [extraPhotos, photoPreview]);
 
+    const rejectedDiagnosticTokens = useMemo(
+        () => buildRejectedDiagnosticTokens(rejectedDiagnostics),
+        [rejectedDiagnostics]
+    );
+
     const suppressScannerChrome =
         (capabilityLoading && !effectiveCapability) ||
         (stage === 'READY' && isSpatialCapable && (autoStartScan || isScanningSpatial));
@@ -1230,6 +1383,38 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                             <p className="font-mono text-[20px] font-bold leading-snug text-[#0F172A] dark:text-[#F3F4F6]">
                                 {rejectionMessage}
                             </p>
+                            {rejectedDiagnosticTokens.length > 0 && (
+                                <div
+                                    data-testid="rejected-diagnostics-strip"
+                                    className="pt-fib-13 font-mono tabular-nums text-[12px] rounded-none shadow-none border-t border-[#E2E8F0] dark:border-[#12151C] flex flex-wrap items-center gap-x-fib-8 gap-y-1 text-[#475569] dark:text-[#8A93A6]"
+                                >
+                                    {rejectedDiagnosticTokens.map((token, idx) => (
+                                        <React.Fragment key={token.key}>
+                                            {idx > 0 && (
+                                                <span
+                                                    aria-hidden="true"
+                                                    className="text-[#94A3B8] dark:text-[#5A6072]"
+                                                >
+                                                    ·
+                                                </span>
+                                            )}
+                                            <span
+                                                data-diagnostic-key={token.key}
+                                                data-diagnostic-alert={
+                                                    token.alert ? 'true' : 'false'
+                                                }
+                                                className={
+                                                    token.alert
+                                                        ? 'font-bold text-[#C68346]'
+                                                        : 'text-[#475569] dark:text-[#8A93A6]'
+                                                }
+                                            >
+                                                {token.label}
+                                            </span>
+                                        </React.Fragment>
+                                    ))}
+                                </div>
+                            )}
                         </div>
 
                         <div className="shrink-0 h-[64px] border-t border-[#E2E8F0] dark:border-[#12151C] flex items-center justify-center pb-[env(safe-area-inset-bottom)]">
