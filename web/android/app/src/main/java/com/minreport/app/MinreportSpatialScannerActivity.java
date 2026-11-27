@@ -514,6 +514,7 @@ public class MinreportSpatialScannerActivity
 
     // Pre-capture Target Object Selector state (READY_TRACKING only -> MBUX Zero-Layer hidden on PLAY)
     private Anchor targetAnchor = null;
+    private final List<Anchor> pendingDetachAnchors = new ArrayList<>(4);
     private TargetVolumeConstraint targetConstraint = TargetVolumeConstraint.inactive();
     private TargetEditMode targetEditMode = TargetEditMode.ANCHOR;
     private final List<float[]> targetPolygonVerticesXZ = new ArrayList<>(TargetVolumeConstraint.MAX_POLYGON_VERTICES);
@@ -708,12 +709,10 @@ public class MinreportSpatialScannerActivity
         }
         synchronized (stateLock) {
             if (targetAnchor != null) {
-                try {
-                    targetAnchor.detach();
-                } catch (Exception ignored) {
-                }
+                pendingDetachAnchors.add(targetAnchor);
                 targetAnchor = null;
             }
+            drainPendingDetachAnchorsLocked();
         }
         if (session != null) {
             try {
@@ -1302,11 +1301,9 @@ public class MinreportSpatialScannerActivity
             if (currentStep != FlowStep.READY_TRACKING || finishing) {
                 return;
             }
+            // Defer Anchor.detach() strictly to the GL thread (onArFrame) to avoid native ARCore Session/Anchor races
             if (targetAnchor != null) {
-                try {
-                    targetAnchor.detach();
-                } catch (Exception ignored) {
-                }
+                pendingDetachAnchors.add(targetAnchor);
                 targetAnchor = null;
             }
             targetPolygonVerticesXZ.clear();
@@ -1320,6 +1317,22 @@ public class MinreportSpatialScannerActivity
         }
         triggerShortHaptic();
         updateHudFromState(true);
+    }
+
+    private void drainPendingDetachAnchorsLocked() {
+        if (pendingDetachAnchors.isEmpty()) {
+            return;
+        }
+        for (int i = 0; i < pendingDetachAnchors.size(); i++) {
+            final Anchor a = pendingDetachAnchors.get(i);
+            if (a != null) {
+                try {
+                    a.detach();
+                } catch (Exception ignored) {
+                }
+            }
+        }
+        pendingDetachAnchors.clear();
     }
 
     private void onPrimaryActionClick() {
@@ -1512,6 +1525,7 @@ public class MinreportSpatialScannerActivity
 
         synchronized (stateLock) {
             final long nowMs = SystemClock.elapsedRealtime();
+            drainPendingDetachAnchorsLocked();
             lastTrackingState = trackingState;
             lastTrackingFailureReason = failureReason;
             if (finishing) {
@@ -1793,11 +1807,10 @@ public class MinreportSpatialScannerActivity
             hasPendingPadReferenceY = true;
             pendingPadReferenceY = tr[1];
             targetEditMode = TargetEditMode.ANCHOR;
-            if (targetConstraint.active) {
-                targetConstraint = targetConstraint.withPadReferenceY(tr[1]);
-                if (renderer != null) {
-                    renderer.updateTargetVolumeConstraint(targetConstraint);
-                }
+            // Apply padReferenceY even if !targetConstraint.active so pressing PLAY directly still honors patio Y
+            targetConstraint = targetConstraint.withPadReferenceY(tr[1]);
+            if (renderer != null && targetConstraint.active) {
+                renderer.updateTargetVolumeConstraint(targetConstraint);
             }
             return true;
         }
@@ -2737,9 +2750,9 @@ public class MinreportSpatialScannerActivity
         root.put("inSituMetrology", metObj);
         root.put("slopeProfile", m.slopeProfile);
 
-        if (targetSnap != null && targetSnap.active) {
+        if (targetSnap != null && (targetSnap.active || targetSnap.hasPadReferenceY)) {
             final JSONObject tgtObj = new JSONObject();
-            tgtObj.put("active", true);
+            tgtObj.put("active", targetSnap.active);
             tgtObj.put("anchorX", round3(targetSnap.anchorX));
             tgtObj.put("anchorY", round3(targetSnap.anchorY));
             tgtObj.put("anchorZ", round3(targetSnap.anchorZ));

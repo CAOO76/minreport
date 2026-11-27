@@ -770,7 +770,7 @@ public final class WalkRingToeSolver {
             planeA,
             planeB,
             planeD,
-            hasTarget && targetConstraint.hasPadReferenceY
+            targetConstraint != null && targetConstraint.hasPadReferenceY && Float.isFinite(targetConstraint.padReferenceY)
         );
         int anchoredSectors = 0;
         for (boolean anchored : toeSectorAnchored) {
@@ -945,7 +945,10 @@ public final class WalkRingToeSolver {
         final double walkRingSlopeDeg,
         final TargetVolumeConstraint targetConstraint
     ) {
-        final boolean hasPadRef = targetConstraint != null && targetConstraint.active && targetConstraint.hasPadReferenceY;
+        final boolean hasPadRef =
+            targetConstraint != null &&
+            targetConstraint.hasPadReferenceY &&
+            Float.isFinite(targetConstraint.padReferenceY);
         final double padRefY = hasPadRef ? targetConstraint.padReferenceY : 0.0;
 
         final List<float[]> candidates = new ArrayList<>();

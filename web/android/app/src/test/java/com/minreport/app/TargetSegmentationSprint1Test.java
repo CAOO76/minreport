@@ -243,6 +243,17 @@ public class TargetSegmentationSprint1Test {
             res.volumeM3 >= exactVol * 0.72 && res.volumeM3 <= exactVol * 1.15
         );
         assertTrue("Explicit padReferenceY must yield high toeScore", res.toeScore >= 75.0);
+
+        // Standalone padReferenceY WITHOUT active target anchor (operator tapped vertical_align_bottom then PLAY)
+        final TargetVolumeConstraint padOnlyTarget = TargetVolumeConstraint.inactive().withPadReferenceY(truePadY);
+        assertFalse(padOnlyTarget.active);
+        assertTrue(padOnlyTarget.hasPadReferenceY);
+        final WalkRingToeSolver.MetrologyResult resPadOnly = WalkRingToeSolver.solve(
+            points, walkPoses, sparseGround, false, 0.5, padOnlyTarget
+        );
+        assertEquals("Standalone padReferenceY must lock planeD even when active=false", truePadY, resPadOnly.planeD, 0.03);
+        assertEquals("Standalone padReferenceY height must be ~1.60 m", heightM, resPadOnly.dimH, 0.10);
+        assertTrue("Standalone padReferenceY must yield high toeScore", resPadOnly.toeScore >= 75.0);
     }
 
     @Test
