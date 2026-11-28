@@ -116,8 +116,8 @@ public class MinreportSpatialScannerActivity
     public static final String PREFS_CALIBRATION_NAME = "minreport_spatial_calibration";
 
     private static final String TAG = "MinreportSpatialScanner";
-    private static final String SCANNER_ENGINE_VERSION = "2.3.0-trimodal-hull-java";
-    private static final String HUD_APP_VERSION = "2.3.0";
+    private static final String SCANNER_ENGINE_VERSION = "2.3.1-trimodal-hull-java";
+    private static final String HUD_APP_VERSION = "2.3.1";
     private static final int KEYCODE_XCOVER_KEY = 1015;
     private static final int KEYCODE_XCOVER_TOP_KEY = 1079;
 
@@ -129,6 +129,8 @@ public class MinreportSpatialScannerActivity
     private static final float PRE_PLAY_REFRESH_MIN_POS_M = 0.45f;
     private static final float PRE_PLAY_REFRESH_MIN_YAW_DEG = 20.0f;
     private static final long WALK_SEG_REFRESH_INTERVAL_MS = 650L;
+    private static final long DIRECT_TAP_WARMUP_RETRY_DELAY_MS = 350L;
+    private static final long WARMUP_RECENT_WINDOW_MS = 4000L;
     private static final int MAX_PHOTO_DIMENSION_PX = 1280;
     private static final int WEBP_QUALITY = 76;
     private static final int MVS_LUMA_W = 320;
@@ -571,11 +573,17 @@ public class MinreportSpatialScannerActivity
     private long lastWalkSegRefreshAtMs = 0L;
     private boolean pendingSegGlFallback = false;
     private boolean pendingSegIsDirectTap = false;
+    private boolean pendingSegIsAutoRetry = false;
     private float pendingSegViewTapX = -1.0f;
     private float pendingSegViewTapY = -1.0f;
     private int pendingSegGen = 0;
     private int pendingSegGlWaitFrames = 0;
     private int consecutiveSegAcquireFails = 0;
+    private boolean pendingDirectSegRetry = false;
+    private float pendingRetryTapX = -1.0f;
+    private float pendingRetryTapY = -1.0f;
+    private int pendingRetryGen = -1;
+    private int lastRetriedSegGen = -1;
     private String lastSegDiagCode = null;
     private long lastSegDiagAtMs = 0L;
     private TargetEditMode targetEditMode = TargetEditMode.ANCHOR;
@@ -1412,6 +1420,8 @@ public class MinreportSpatialScannerActivity
             targetBoundsRefinedFromSeg = false;
             latestHullCentroid = null;
             pendingSegGlFallback = false;
+            pendingSegIsAutoRetry = false;
+            pendingDirectSegRetry = false;
             consecutiveSegAcquireFails = 0;
             lastSegDiagCode = null;
             targetPolygonVerticesXZ.clear();
@@ -1569,6 +1579,7 @@ public class MinreportSpatialScannerActivity
         lastPrePlayDepthCamFwdXZ = null;
         latestHullCentroid = null;
         lastWalkSegRefreshAtMs = 0L;
+        pendingDirectSegRetry = false;
         consecutiveSegAcquireFails = 0;
         // Preserve in-flight targetSegGeneration from READY_TRACKING tap so pressing PLAY during warmUp() never drops the first mask!
         hasScaleAnchor = hasActiveCalibration || Math.abs(calibrationScaleFactor - 1.0f) > 1e-4f;
@@ -1715,11 +1726,34 @@ public class MinreportSpatialScannerActivity
                 }
                 if (pendingViewportTap) {
                     pendingViewportTap = false;
+                    pendingDirectSegRetry = false;
                     final float tx = pendingTapX;
                     final float ty = pendingTapY;
                     if (handleTargetViewportTapLocked(activeSession, frame, tx, ty)) {
                         fireShortPulse = true;
                         forceHud = true;
+                    }
+                } else if (pendingDirectSegRetry) {
+                    pendingDirectSegRetry = false;
+                    if (
+                        pendingRetryGen == targetSegGeneration.get() &&
+                        targetConstraint.active &&
+                        !targetConstraint.hasValidPolygon()
+                    ) {
+                        final float rx = pendingRetryTapX;
+                        final float ry = pendingRetryTapY;
+                        final float[] retryImgNorm = resolveTapImageNormalized(frame, rx, ry);
+                        scheduleTargetSegmentationLocked(
+                            activeSession,
+                            frame,
+                            retryImgNorm[0],
+                            retryImgNorm[1],
+                            rx,
+                            ry,
+                            true,
+                            null,
+                            true
+                        );
                     }
                 } else if (targetConstraint.active && !targetConstraint.hasValidPolygon()) {
                     maybeSchedulePrePlayTargetRefreshLocked(activeSession, frame, camera);
@@ -2030,6 +2064,8 @@ public class MinreportSpatialScannerActivity
         targetBoundsRefinedFromSeg = false;
         latestHullCentroid = null;
         pendingSegGlFallback = false;
+        pendingSegIsAutoRetry = false;
+        pendingDirectSegRetry = false;
         consecutiveSegAcquireFails = 0;
         lastSegDiagCode = null;
         final float prevRadius = targetConstraint.active
@@ -2254,17 +2290,20 @@ public class MinreportSpatialScannerActivity
         }
         if (glFallback != null && glFallback.rgbaBytes != null && glFallback.width > 0 && glFallback.height > 0) {
             final boolean isDirect = pendingSegIsDirectTap;
+            final boolean isRetry = pendingSegIsAutoRetry;
             final float vx = pendingSegViewTapX;
             final float vy = pendingSegViewTapY;
             pendingSegGlFallback = false;
+            pendingSegIsAutoRetry = false;
             pendingSegGlWaitFrames = 0;
-            scheduleTargetSegmentationLocked(activeSession, frame, 0.5f, 0.5f, vx, vy, isDirect, glFallback);
+            scheduleTargetSegmentationLocked(activeSession, frame, 0.5f, 0.5f, vx, vy, isDirect, glFallback, isRetry);
             return;
         }
         pendingSegGlWaitFrames++;
         if (pendingSegGlWaitFrames >= 3) {
             final boolean wasDirect = pendingSegIsDirectTap;
             pendingSegGlFallback = false;
+            pendingSegIsAutoRetry = false;
             pendingSegGlWaitFrames = 0;
             if (wasDirect) {
                 lastSegDiagCode = "SEG · NYA";
@@ -2287,6 +2326,30 @@ public class MinreportSpatialScannerActivity
         final float viewTapY,
         final boolean isDirectTap,
         final ArCoreCameraRenderer.GlFallbackFrame glFallbackOverride
+    ) {
+        scheduleTargetSegmentationLocked(
+            activeSession,
+            frame,
+            tapImgNormX,
+            tapImgNormY,
+            viewTapX,
+            viewTapY,
+            isDirectTap,
+            glFallbackOverride,
+            false
+        );
+    }
+
+    private void scheduleTargetSegmentationLocked(
+        final Session activeSession,
+        final Frame frame,
+        final float tapImgNormX,
+        final float tapImgNormY,
+        final float viewTapX,
+        final float viewTapY,
+        final boolean isDirectTap,
+        final ArCoreCameraRenderer.GlFallbackFrame glFallbackOverride,
+        final boolean isAutoRetry
     ) {
         if (visionExecutor == null || visionExecutor.isShutdown() || objectSegmenter == null) {
             if (isDirectTap && overlayRenderer != null) {
@@ -2363,6 +2426,7 @@ public class MinreportSpatialScannerActivity
                     : targetSegGeneration.get();
                 pendingSegGlFallback = true;
                 pendingSegIsDirectTap = isDirectTap;
+                pendingSegIsAutoRetry = isAutoRetry;
                 pendingSegViewTapX = viewTapX;
                 pendingSegViewTapY = viewTapY;
                 pendingSegGen = genForFallback;
@@ -2448,12 +2512,13 @@ public class MinreportSpatialScannerActivity
             }
         }
 
-        // On-demand ARCore Depth snapshot (skipped when fromGlFallback uses display-cropped FOV)
+        // On-demand ARCore Depth snapshot: prioritize Raw Depth (sharp object edges) FIRST,
+        // falling back to Smooth Depth ONLY if Raw Depth is null (prevents BFS leaking into floor shadows).
         DepthSnapshot depthSnap = null;
         if (!fromGlFallback) {
-            depthSnap = acquireDepthSnapshotOnDemand(frame, false, isDirectTap);
+            depthSnap = acquireDepthSnapshotOnDemand(frame, true, isDirectTap);
             if (depthSnap == null) {
-                depthSnap = acquireDepthSnapshotOnDemand(frame, true, isDirectTap);
+                depthSnap = acquireDepthSnapshotOnDemand(frame, false, isDirectTap);
             }
         }
 
@@ -2509,12 +2574,60 @@ public class MinreportSpatialScannerActivity
                     seg.segmentAtNormalizedPoint(bmpForBg, inferTapX, inferTapY);
                 if (!rawMask.valid) {
                     if (isDirectTap && gen == targetSegGeneration.get()) {
-                        synchronized (stateLock) {
-                            lastSegDiagCode = "SEG · ERR";
-                            lastSegDiagAtMs = SystemClock.elapsedRealtime();
+                        final long nowMs = SystemClock.elapsedRealtime();
+                        final long warmUpAt = seg.getWarmUpCompletedAtMs();
+                        final boolean recentlyWarmedUp =
+                            warmUpAt > 0L && (nowMs - warmUpAt) <= WARMUP_RECENT_WINDOW_MS;
+                        boolean scheduledRetry = false;
+                        if (!isAutoRetry && recentlyWarmedUp && viewTapX >= 0.0f && viewTapY >= 0.0f) {
+                            synchronized (stateLock) {
+                                if (
+                                    !finishing &&
+                                    currentStep == FlowStep.READY_TRACKING &&
+                                    gen == targetSegGeneration.get() &&
+                                    targetConstraint.active &&
+                                    !targetConstraint.hasValidPolygon() &&
+                                    lastRetriedSegGen != gen
+                                ) {
+                                    lastRetriedSegGen = gen;
+                                    scheduledRetry = true;
+                                    if (rawMask.lowLight) {
+                                        lastSegDiagCode = "SEG · LOW_LIGHT";
+                                        lastSegDiagAtMs = nowMs;
+                                    }
+                                }
+                            }
                         }
-                        if (overlayRenderer != null) {
-                            overlayRenderer.setTargetSegmenting(false);
+                        if (scheduledRetry) {
+                            final float retryX = viewTapX;
+                            final float retryY = viewTapY;
+                            final int retryBaseGen = gen;
+                            mainHandler.postDelayed(() -> {
+                                synchronized (stateLock) {
+                                    if (
+                                        !finishing &&
+                                        currentStep == FlowStep.READY_TRACKING &&
+                                        retryBaseGen == targetSegGeneration.get() &&
+                                        targetConstraint.active &&
+                                        !targetConstraint.hasValidPolygon()
+                                    ) {
+                                        pendingRetryTapX = retryX;
+                                        pendingRetryTapY = retryY;
+                                        pendingRetryGen = retryBaseGen;
+                                        pendingDirectSegRetry = true;
+                                    }
+                                }
+                            }, DIRECT_TAP_WARMUP_RETRY_DELAY_MS);
+                            mainHandler.post(() -> updateHudFromState(true));
+                        } else {
+                            synchronized (stateLock) {
+                                lastSegDiagCode = rawMask.lowLight ? "SEG · LOW_LIGHT" : "SEG · ERR";
+                                lastSegDiagAtMs = nowMs;
+                            }
+                            if (overlayRenderer != null) {
+                                overlayRenderer.setTargetSegmenting(false);
+                            }
+                            mainHandler.post(() -> updateHudFromState(true));
                         }
                     }
                     return;
@@ -3957,24 +4070,44 @@ public class MinreportSpatialScannerActivity
         }
         root.put("walkRingPoses", walkArr);
 
-        // Legacy keyframes + full V2 unrotated WebP keyframes with SE(3) + intrinsics + CAS stats
-        final JSONArray kfLegacyArr = new JSONArray();
-        final JSONArray kfV2Arr = new JSONArray();
+        // Legacy keyframes + full V2 unrotated WebP keyframes with SE(3) + intrinsics + CAS stats.
+        // Place the 4 angularly balanced perimeter quadrants (0 / 90 / 180 / 270 deg around centroid)
+        // at indices [0..3] so cover + perimeter gallery use 4 distinct sides while preserving ALL
+        // keyframes 100% intact for photogrammetry.
+        final List<KeyframeRecord> validKfs = new ArrayList<>(kfSnap.size());
         for (KeyframeRecord rec : kfSnap) {
             final File photoFile = new File(rec.photoPath);
-            if (!photoFile.exists() || photoFile.length() <= 0L) {
-                continue;
+            if (photoFile.exists() && photoFile.length() > 0L) {
+                validKfs.add(rec);
+            }
+        }
+        final List<KeyframeRecord> orderedKfs = orderKeyframesForPerimeterQuadrants(
+            validKfs,
+            m.anchorX,
+            m.anchorZ
+        );
+        final float[] finalCenterXZ = new float[] { m.anchorX, m.anchorZ };
+
+        final JSONArray kfLegacyArr = new JSONArray();
+        final JSONArray kfV2Arr = new JSONArray();
+        final JSONArray perimeterPathsArr = new JSONArray();
+        for (int outIdx = 0; outIdx < orderedKfs.size(); outIdx++) {
+            final KeyframeRecord rec = orderedKfs.get(outIdx);
+            final File photoFile = new File(rec.photoPath);
+            final double azimuthDeg = round1(computeSectorAngleDeg(rec.tWc, finalCenterXZ));
+            if (outIdx < 4) {
+                perimeterPathsArr.put(rec.photoPath);
             }
             final JSONObject legacyObj = new JSONObject();
             legacyObj.put("index", rec.index);
-            legacyObj.put("angleDeg", rec.angleDeg);
+            legacyObj.put("angleDeg", azimuthDeg);
             legacyObj.put("blurScore", rec.blurScore);
             legacyObj.put("photoPath", rec.photoPath);
             kfLegacyArr.put(legacyObj);
 
             final JSONObject v2Obj = new JSONObject();
             v2Obj.put("index", rec.index);
-            v2Obj.put("angleDeg", rec.angleDeg);
+            v2Obj.put("angleDeg", azimuthDeg);
             v2Obj.put("blurScore", rec.blurScore);
             v2Obj.put("photoPath", rec.photoPath);
             v2Obj.put("mimeType", "image/webp");
@@ -4008,6 +4141,10 @@ public class MinreportSpatialScannerActivity
             v2Obj.put("intrinsics", intrObj);
 
             kfV2Arr.put(v2Obj);
+        }
+        if (perimeterPathsArr.length() > 0) {
+            root.put("photoPath", perimeterPathsArr.getString(0));
+            root.put("perimeterPhotoPaths", perimeterPathsArr);
         }
         root.put("keyframes", kfLegacyArr);
         root.put("keyframesV2", kfV2Arr);
@@ -4922,6 +5059,73 @@ public class MinreportSpatialScannerActivity
         final float dy = b[1] - a[1];
         final float dz = b[2] - a[2];
         return (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
+    }
+
+    /**
+     * Reorders valid keyframes so indices [0..3] correspond to the keyframes angularly closest to
+     * the 4 perimeter quadrants (0, 90, 180, 270 deg relative to the starting view around centroid),
+     * followed by all remaining keyframes in chronological capture order (0 frames dropped).
+     */
+    private static List<KeyframeRecord> orderKeyframesForPerimeterQuadrants(
+        final List<KeyframeRecord> validKfs,
+        final float anchorX,
+        final float anchorZ
+    ) {
+        if (validKfs == null || validKfs.size() <= 1) {
+            return validKfs != null ? validKfs : new ArrayList<>();
+        }
+        final int n = validKfs.size();
+        final float[] centerXZ = new float[] { anchorX, anchorZ };
+        final double[] angles = new double[n];
+        for (int i = 0; i < n; i++) {
+            angles[i] = computeSectorAngleDeg(validKfs.get(i).tWc, centerXZ);
+        }
+        final double baseDeg = angles[0];
+        final double[] quadrantTargets = new double[] { 0.0, 90.0, 180.0, 270.0 };
+        final boolean[] picked = new boolean[n];
+        final List<KeyframeRecord> ordered = new ArrayList<>(n);
+
+        for (double qOffset : quadrantTargets) {
+            if (ordered.size() >= n) {
+                break;
+            }
+            final double targetDeg = (baseDeg + qOffset) % 360.0;
+            int bestIdx = -1;
+            double bestAngDiff = Double.POSITIVE_INFINITY;
+            double bestBlur = Double.NEGATIVE_INFINITY;
+            for (int i = 0; i < n; i++) {
+                if (picked[i]) {
+                    continue;
+                }
+                final double diff = circularAngleDiffDeg(angles[i], targetDeg);
+                final double blur = validKfs.get(i).blurScore;
+                if (
+                    bestIdx < 0 ||
+                    diff < bestAngDiff - 4.0 ||
+                    (Math.abs(diff - bestAngDiff) <= 4.0 && blur > bestBlur)
+                ) {
+                    bestIdx = i;
+                    bestAngDiff = diff;
+                    bestBlur = blur;
+                }
+            }
+            if (bestIdx >= 0) {
+                picked[bestIdx] = true;
+                ordered.add(validKfs.get(bestIdx));
+            }
+        }
+
+        for (int i = 0; i < n; i++) {
+            if (!picked[i]) {
+                ordered.add(validKfs.get(i));
+            }
+        }
+        return ordered;
+    }
+
+    private static double circularAngleDiffDeg(final double aDeg, final double bDeg) {
+        double d = Math.abs(aDeg - bDeg) % 360.0;
+        return d > 180.0 ? (360.0 - d) : d;
     }
 
     private static double computeSectorAngleDeg(final float[] camPos, final float[] centerXZ) {

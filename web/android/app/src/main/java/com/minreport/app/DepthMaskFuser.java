@@ -28,10 +28,10 @@ public final class DepthMaskFuser {
     private static final int EXTRACT_DEPTH_CONF_MIN = 128;
     private static final float MIN_DEPTH_M = 0.25f;
     private static final float MAX_DEPTH_M = 4.50f;
-    private static final float FLOOR_CLEARANCE_FUSE_M = 0.03f;
+    private static final float FLOOR_CLEARANCE_FUSE_M = 0.045f;
     private static final float FLOOR_CLEARANCE_EXTRACT_M = 0.025f;
-    private static final float BFS_MAX_DEPTH_STEP_M = 0.25f;
-    private static final float CONTOUR_MAX_SEGMENT_DIST_M = 0.25f;
+    private static final float BFS_MAX_DEPTH_STEP_M = 0.08f;
+    private static final float CONTOUR_MAX_SEGMENT_DIST_M = 0.15f;
     private static final float ASPECT_RATIO_CROP_EPS = 0.02f;
     private static final float FLOOR_RELAX_REJECT_RATIO = 0.80f;
     private static final float INWARD_CENTER_PUSH_FACTOR = 0.75f;
@@ -730,8 +730,8 @@ public final class DepthMaskFuser {
     }
 
     private static FusedTargetSurface buildDepthFusedResult(
-        final int[] bfsPixels,
-        final byte[] bfsMask,
+        final int[] rawBfsPixels,
+        final byte[] rawBfsMask,
         final float[] depthArr,
         final float[] worldX,
         final float[] worldY,
@@ -742,7 +742,76 @@ public final class DepthMaskFuser {
         final float effGroundY,
         final TargetVolumeConstraint baseConstraint
     ) {
+        // Stage 1: Depth outlier rejection (|d - medianD| > max(0.35 m, 0.25 * medianD))
+        int[] bfsPixels = rawBfsPixels;
+        final int rawCount = rawBfsPixels.length;
+        if (rawCount >= MIN_VALID_DEPTH_PIXELS) {
+            final float[] sortedD = new float[rawCount];
+            for (int i = 0; i < rawCount; i++) {
+                sortedD[i] = depthArr[rawBfsPixels[i]];
+            }
+            Arrays.sort(sortedD);
+            final float medianD = sortedD[rawCount / 2];
+            final float maxDepthDev = Math.max(0.35f, 0.25f * medianD);
+            final int[] depthFiltered = new int[rawCount];
+            int dKeep = 0;
+            for (int i = 0; i < rawCount; i++) {
+                final int idx = rawBfsPixels[i];
+                if (Math.abs(depthArr[idx] - medianD) <= maxDepthDev) {
+                    depthFiltered[dKeep++] = idx;
+                }
+            }
+            if (dKeep >= MIN_VALID_DEPTH_PIXELS && dKeep < rawCount) {
+                bfsPixels = Arrays.copyOf(depthFiltered, dKeep);
+            }
+        }
+
+        // Stage 2: Radial outlier rejection (r > 1.45 * p80R when count >= 30) to eliminate shadow/edge tails
+        if (bfsPixels.length >= 30) {
+            double preSumX = 0.0;
+            double preSumZ = 0.0;
+            final int nCur = bfsPixels.length;
+            for (int i = 0; i < nCur; i++) {
+                final int idx = bfsPixels[i];
+                preSumX += worldX[idx];
+                preSumZ += worldZ[idx];
+            }
+            final float preCx = (float) (preSumX / nCur);
+            final float preCz = (float) (preSumZ / nCur);
+            final float[] preR = new float[nCur];
+            for (int i = 0; i < nCur; i++) {
+                final int idx = bfsPixels[i];
+                preR[i] = (float) Math.hypot(worldX[idx] - preCx, worldZ[idx] - preCz);
+            }
+            final float[] sortedPreR = Arrays.copyOf(preR, nCur);
+            Arrays.sort(sortedPreR);
+            final float p80R = sortedPreR[Math.min(nCur - 1, (int) Math.floor((nCur - 1) * 0.80))];
+            if (p80R > 1e-4f) {
+                final float maxAllowedR = 1.45f * p80R;
+                final int[] radFiltered = new int[nCur];
+                int rKeep = 0;
+                for (int i = 0; i < nCur; i++) {
+                    if (preR[i] <= maxAllowedR) {
+                        radFiltered[rKeep++] = bfsPixels[i];
+                    }
+                }
+                if (rKeep >= MIN_VALID_DEPTH_PIXELS && rKeep < nCur) {
+                    bfsPixels = Arrays.copyOf(radFiltered, rKeep);
+                }
+            }
+        }
+
         final int count = bfsPixels.length;
+        final byte[] bfsMask;
+        if (count < rawCount) {
+            bfsMask = new byte[maskW * maskH];
+            for (int i = 0; i < count; i++) {
+                bfsMask[bfsPixels[i]] = 1;
+            }
+        } else {
+            bfsMask = rawBfsMask;
+        }
+
         double sumWx = 0.0;
         double sumWz = 0.0;
         double sumU = 0.0;
@@ -781,11 +850,12 @@ public final class DepthMaskFuser {
         Arrays.sort(radii);
         Arrays.sort(heights);
 
-        final float p95R = radii[Math.min(count - 1, (int) Math.floor((count - 1) * 0.95))];
+        // Use p85R (immune to shadow tails inflating p95R) scaled by 1/0.85 to recover full frontal-skin radius
+        final float p85R = radii[Math.min(count - 1, (int) Math.floor((count - 1) * 0.85))];
         final float p98H = heights[Math.min(count - 1, (int) Math.floor((count - 1) * 0.98))];
 
         final float rApp = clamp(
-            p95R,
+            p85R / 0.85f,
             TargetVolumeConstraint.MIN_RADIUS_M,
             TargetVolumeConstraint.MAX_RADIUS_M
         );
@@ -933,26 +1003,26 @@ public final class DepthMaskFuser {
                 }
 
                 if (validCorners == 4) {
-                    if (isTriangleDepthContinuous(depthArr, i00, i01, i10)) {
+                    if (isTriangleDepthContinuous(depthArr, worldX, worldY, worldZ, i00, i01, i10)) {
                         outFloats = emitTriangle(tmp, outFloats, worldX, worldY, worldZ, i00, i01, i10);
                     }
-                    if (isTriangleDepthContinuous(depthArr, i10, i01, i11)) {
+                    if (isTriangleDepthContinuous(depthArr, worldX, worldY, worldZ, i10, i01, i11)) {
                         outFloats = emitTriangle(tmp, outFloats, worldX, worldY, worldZ, i10, i01, i11);
                     }
                 } else if (i00 >= 0 && i01 >= 0 && i10 >= 0) {
-                    if (isTriangleDepthContinuous(depthArr, i00, i01, i10)) {
+                    if (isTriangleDepthContinuous(depthArr, worldX, worldY, worldZ, i00, i01, i10)) {
                         outFloats = emitTriangle(tmp, outFloats, worldX, worldY, worldZ, i00, i01, i10);
                     }
                 } else if (i10 >= 0 && i01 >= 0 && i11 >= 0) {
-                    if (isTriangleDepthContinuous(depthArr, i10, i01, i11)) {
+                    if (isTriangleDepthContinuous(depthArr, worldX, worldY, worldZ, i10, i01, i11)) {
                         outFloats = emitTriangle(tmp, outFloats, worldX, worldY, worldZ, i10, i01, i11);
                     }
                 } else if (i00 >= 0 && i01 >= 0 && i11 >= 0) {
-                    if (isTriangleDepthContinuous(depthArr, i00, i01, i11)) {
+                    if (isTriangleDepthContinuous(depthArr, worldX, worldY, worldZ, i00, i01, i11)) {
                         outFloats = emitTriangle(tmp, outFloats, worldX, worldY, worldZ, i00, i01, i11);
                     }
                 } else if (i00 >= 0 && i10 >= 0 && i11 >= 0) {
-                    if (isTriangleDepthContinuous(depthArr, i00, i10, i11)) {
+                    if (isTriangleDepthContinuous(depthArr, worldX, worldY, worldZ, i00, i10, i11)) {
                         outFloats = emitTriangle(tmp, outFloats, worldX, worldY, worldZ, i00, i10, i11);
                     }
                 }
@@ -978,6 +1048,9 @@ public final class DepthMaskFuser {
 
     private static boolean isTriangleDepthContinuous(
         final float[] depthArr,
+        final float[] worldX,
+        final float[] worldY,
+        final float[] worldZ,
         final int a,
         final int b,
         final int c
@@ -987,7 +1060,28 @@ public final class DepthMaskFuser {
         final float dc = depthArr[c];
         final float minD = Math.min(da, Math.min(db, dc));
         final float maxD = Math.max(da, Math.max(db, dc));
-        return (maxD - minD) < BFS_MAX_DEPTH_STEP_M;
+        if ((maxD - minD) >= BFS_MAX_DEPTH_STEP_M) {
+            return false;
+        }
+        final float maxEdge = Math.max(0.14f, 0.14f * minD);
+        final float maxEdgeSq = maxEdge * maxEdge;
+        return
+            dist3DSq(worldX, worldY, worldZ, a, b) <= maxEdgeSq &&
+            dist3DSq(worldX, worldY, worldZ, b, c) <= maxEdgeSq &&
+            dist3DSq(worldX, worldY, worldZ, a, c) <= maxEdgeSq;
+    }
+
+    private static float dist3DSq(
+        final float[] worldX,
+        final float[] worldY,
+        final float[] worldZ,
+        final int a,
+        final int b
+    ) {
+        final float dx = worldX[b] - worldX[a];
+        final float dy = worldY[b] - worldY[a];
+        final float dz = worldZ[b] - worldZ[a];
+        return dx * dx + dy * dy + dz * dz;
     }
 
     private static int emitTriangle(

@@ -41,6 +41,7 @@ public final class Live3DOverlayRenderer {
 
     private static final float POINT_SIZE_TARGET_PX = 5.0f;
     private static final float POINT_SIZE_ENV_PX = 5.0f;
+    private static final float PRE_PLAY_FLOOR_CLEARANCE_M = 0.045f;
     private static final int MIN_DENSE_VERIFIED_MESH_VERTS = 36; // 12 real triangles
 
     private static final String VERT_SHADER =
@@ -361,7 +362,21 @@ public final class Live3DOverlayRenderer {
 
     public void setCaptureActive(final boolean active) {
         synchronized (snapshotLock) {
+            if (this.captureActive == active) {
+                return;
+            }
             this.captureActive = active;
+            if (rawLivePoints != null) {
+                final PartitionedPoints partitioned = partitionPointsByTarget(
+                    rawLivePoints,
+                    this.targetConstraint,
+                    this.currentGroundY,
+                    this.captureActive
+                );
+                this.pendingTargetLivePoints = partitioned.targetPointsXyz;
+                this.pendingEnvLivePoints = partitioned.envPointsXyz;
+                this.livePointsDirty = true;
+            }
         }
     }
 
@@ -382,7 +397,8 @@ public final class Live3DOverlayRenderer {
                 final PartitionedPoints partitioned = partitionPointsByTarget(
                     rawLivePoints,
                     this.targetConstraint,
-                    this.currentGroundY
+                    this.currentGroundY,
+                    this.captureActive
                 );
                 this.pendingTargetLivePoints = partitioned.targetPointsXyz;
                 this.pendingEnvLivePoints = partitioned.envPointsXyz;
@@ -559,7 +575,8 @@ public final class Live3DOverlayRenderer {
                 final PartitionedPoints partitioned = partitionPointsByTarget(
                     rawLivePoints,
                     safe,
-                    this.currentGroundY
+                    this.currentGroundY,
+                    this.captureActive
                 );
                 this.pendingTargetLivePoints = partitioned.targetPointsXyz;
                 this.pendingEnvLivePoints = partitioned.envPointsXyz;
@@ -595,7 +612,8 @@ public final class Live3DOverlayRenderer {
                 final PartitionedPoints partitioned = partitionPointsByTarget(
                     capped,
                     this.targetConstraint,
-                    this.currentGroundY
+                    this.currentGroundY,
+                    this.captureActive
                 );
                 this.pendingTargetLivePoints = partitioned.targetPointsXyz;
                 this.pendingEnvLivePoints = partitioned.envPointsXyz;
@@ -786,7 +804,7 @@ public final class Live3DOverlayRenderer {
         final float[] allXyz,
         final TargetVolumeConstraint c
     ) {
-        return partitionPointsByTarget(allXyz, c, Float.NaN);
+        return partitionPointsByTarget(allXyz, c, Float.NaN, true);
     }
 
     /**
@@ -798,33 +816,72 @@ public final class Live3DOverlayRenderer {
         final TargetVolumeConstraint c,
         final float groundY
     ) {
+        return partitionPointsByTarget(allXyz, c, groundY, true);
+    }
+
+    /**
+     * Partitions packed XYZ points with capture-state awareness: while pre-capture (!captureActive)
+     * and ground elevation is known, strictly discards floor points (wy <= floorY + 0.045 m) from
+     * targetPointsXyz and hides envPointsXyz when targetConstraint is active so pavement stays clean.
+     */
+    public static PartitionedPoints partitionPointsByTarget(
+        final float[] allXyz,
+        final TargetVolumeConstraint c,
+        final float groundY,
+        final boolean captureActive
+    ) {
         if (allXyz == null || allXyz.length < FLOATS_PER_VERTEX) {
             return new PartitionedPoints(null, null);
         }
-        if (c == null || !c.active) {
-            return new PartitionedPoints(allXyz, null);
+        final boolean hasActiveTarget = c != null && c.active;
+        final boolean hasExplicitGround = Float.isFinite(groundY);
+        final float prePlayFloorY = (hasActiveTarget && c.hasPadReferenceY)
+            ? c.padReferenceY
+            : groundY;
+        final boolean filterPrePlayFloor = !captureActive && Float.isFinite(prePlayFloorY);
+        final float prePlayMinY = prePlayFloorY + PRE_PLAY_FLOOR_CLEARANCE_M;
+
+        if (!hasActiveTarget) {
+            if (!filterPrePlayFloor) {
+                return new PartitionedPoints(allXyz, null);
+            }
+            final int nPts = allXyz.length / FLOATS_PER_VERTEX;
+            final float[] aboveFloorTmp = new float[nPts * FLOATS_PER_VERTEX];
+            int tLen = 0;
+            for (int i = 0; i + 2 < allXyz.length; i += FLOATS_PER_VERTEX) {
+                final float py = allXyz[i + 1];
+                if (Float.isFinite(py) && py > prePlayMinY) {
+                    aboveFloorTmp[tLen++] = allXyz[i];
+                    aboveFloorTmp[tLen++] = py;
+                    aboveFloorTmp[tLen++] = allXyz[i + 2];
+                }
+            }
+            return new PartitionedPoints(tLen > 0 ? Arrays.copyOf(aboveFloorTmp, tLen) : null, null);
         }
+
+        final boolean hideEnvPrePlay = !captureActive && hasExplicitGround;
         final int nPts = allXyz.length / FLOATS_PER_VERTEX;
         final float[] targetTmp = new float[nPts * FLOATS_PER_VERTEX];
-        final float[] envTmp = new float[nPts * FLOATS_PER_VERTEX];
+        final float[] envTmp = hideEnvPrePlay ? null : new float[nPts * FLOATS_PER_VERTEX];
         int tLen = 0;
         int eLen = 0;
         for (int i = 0; i + 2 < allXyz.length; i += FLOATS_PER_VERTEX) {
             final float px = allXyz[i];
             final float py = allXyz[i + 1];
             final float pz = allXyz[i + 2];
-            if (c.contains3DForVisual(px, py, pz, groundY)) {
+            final boolean abovePrePlayFloor = !filterPrePlayFloor || (Float.isFinite(py) && py > prePlayMinY);
+            if (abovePrePlayFloor && c.contains3DForVisual(px, py, pz, groundY)) {
                 targetTmp[tLen++] = px;
                 targetTmp[tLen++] = py;
                 targetTmp[tLen++] = pz;
-            } else {
+            } else if (envTmp != null) {
                 envTmp[eLen++] = px;
                 envTmp[eLen++] = py;
                 envTmp[eLen++] = pz;
             }
         }
         final float[] targetOut = tLen > 0 ? Arrays.copyOf(targetTmp, tLen) : null;
-        final float[] envOut = eLen > 0 ? Arrays.copyOf(envTmp, eLen) : null;
+        final float[] envOut = (envTmp != null && eLen > 0) ? Arrays.copyOf(envTmp, eLen) : null;
         return new PartitionedPoints(targetOut, envOut);
     }
 
@@ -912,7 +969,7 @@ public final class Live3DOverlayRenderer {
         }
         if (updatePoints) {
             uploadVbo(5, targetPtsToUpload, MAX_LIVE_POINTS);
-            uploadVbo(7, envPtsToUpload, MAX_LIVE_POINTS);
+            uploadVbo(7, (hasActiveTarget && !isCapturing) ? null : envPtsToUpload, MAX_LIVE_POINTS);
         }
         if (updatePlanes) {
             uploadVbo(6, planesToUpload, MAX_VERTICES_PER_BUFFER);
