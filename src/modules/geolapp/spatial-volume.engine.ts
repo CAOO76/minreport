@@ -2077,25 +2077,37 @@ function fillInteriorHolesDelaunay(
 }
 
 function computePrincipalFootprintAxes(
-    cells: ReadonlyArray<{ x: number; z: number }>,
-    cellSizeM: number
+    cells: ReadonlyArray<{ x: number; z: number; h?: number }>,
+    cellSizeM: number,
+    dimH = 0,
+    filterLowShadowFringe = false
 ): { baseLengthM: number; baseWidthM: number; axisU: [number, number]; axisV: [number, number] } {
     if (cells.length === 0) {
         return { baseLengthM: 0, baseWidthM: 0, axisU: [1, 0], axisV: [0, 1] };
     }
+    const minBodyH = Math.max(0.05, 0.15 * dimH);
+    const bodyCells =
+        filterLowShadowFringe && dimH > 0
+            ? cells.filter((c) => typeof c.h === 'number' && c.h >= minBodyH)
+            : cells;
+    const sourceCells =
+        filterLowShadowFringe && bodyCells.length >= 4 && bodyCells.length >= cells.length * 0.4
+            ? bodyCells
+            : cells;
+
     let meanX = 0;
     let meanZ = 0;
-    for (const c of cells) {
+    for (const c of sourceCells) {
         meanX += c.x;
         meanZ += c.z;
     }
-    meanX /= cells.length;
-    meanZ /= cells.length;
+    meanX /= sourceCells.length;
+    meanZ /= sourceCells.length;
 
     let cxx = 0;
     let czz = 0;
     let cxz = 0;
-    for (const c of cells) {
+    for (const c of sourceCells) {
         const dx = c.x - meanX;
         const dz = c.z - meanZ;
         cxx += dx * dx;
@@ -2114,7 +2126,7 @@ function computePrincipalFootprintAxes(
     let minV = Infinity;
     let maxV = -Infinity;
 
-    for (const c of cells) {
+    for (const c of sourceCells) {
         const dx = c.x - meanX;
         const dz = c.z - meanZ;
         const u = dx * ux + dz * uz;
@@ -2125,8 +2137,8 @@ function computePrincipalFootprintAxes(
         if (v > maxV) maxV = v;
     }
 
-    const spanU = maxU - minU + cellSizeM;
-    const spanV = maxV - minV + cellSizeM;
+    const spanU = Math.max(cellSizeM, maxU - minU + 0.5 * cellSizeM);
+    const spanV = Math.max(cellSizeM, maxV - minV + 0.5 * cellSizeM);
 
     if (spanU >= spanV) {
         return {
@@ -2772,7 +2784,7 @@ export function computeSpatialStockpileVolume(input: SpatialVolumeInput): Spatia
     let interpolatedVolume = 0;
     let maxH = 0;
     const activeHeights: number[] = [];
-    const activeFootprintCells: Array<{ x: number; z: number }> = [];
+    const activeFootprintCells: Array<{ x: number; z: number; h: number }> = [];
 
     for (let iz = 0; iz < nz; iz++) {
         for (let ix = 0; ix < nx; ix++) {
@@ -2792,6 +2804,7 @@ export function computeSpatialStockpileVolume(input: SpatialVolumeInput): Spatia
                 activeFootprintCells.push({
                     x: originX + ix * cellSizeM,
                     z: originZ + iz * cellSizeM,
+                    h,
                 });
             }
         }
@@ -2805,10 +2818,26 @@ export function computeSpatialStockpileVolume(input: SpatialVolumeInput): Spatia
     }
 
     activeHeights.sort((a, b) => a - b);
-    const p99H = activeHeights.length >= 10 ? percentile(activeHeights, 0.99) : maxH;
+    let repH = maxH;
+    let isPlateauOrSteepBody = false;
+    if (activeHeights.length >= 16) {
+        const p75H = percentile(activeHeights, 0.75);
+        const p95H = percentile(activeHeights, 0.95);
+        const p99H = percentile(activeHeights, 0.99);
+        isPlateauOrSteepBody = p95H > 1e-4 && p75H >= 0.8 * p95H;
+        if (isPlateauOrSteepBody && p99H > 1e-4 && p95H >= 0.86 * p99H) {
+            // Meseta plana / paredes verticales: p96 evita saltos por una celda aislada de borde
+            repH = percentile(activeHeights, 0.96);
+        } else {
+            // Cono puntiagudo / cresta aguda: preserva ápice
+            repH = p99H;
+        }
+    } else if (activeHeights.length >= 10) {
+        repH = percentile(activeHeights, 0.99);
+    }
 
     const volumeM3 = rawVolume < 1.0 ? round4(rawVolume) : round2(rawVolume);
-    const heightM = round2(p99H);
+    const heightM = round2(repH);
     const rawFootprintArea = activeFootprintCells.length * cellArea;
     const footprintAreaM2 = rawFootprintArea < 1.0 ? round4(rawFootprintArea) : round2(rawFootprintArea);
     const occludedVolumePct =
@@ -2816,7 +2845,9 @@ export function computeSpatialStockpileVolume(input: SpatialVolumeInput): Spatia
 
     const { baseLengthM, baseWidthM, axisV } = computePrincipalFootprintAxes(
         activeFootprintCells,
-        cellSizeM
+        cellSizeM,
+        repH,
+        isPlateauOrSteepBody
     );
 
     const objectCenterX =

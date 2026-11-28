@@ -1073,4 +1073,191 @@ public class ObjectMaskAndHullTest {
         assertTrue("Overestimated floor must trigger relaxation and retain usedDepth=true", relaxed.usedDepth);
         assertTrue("Relaxed fusion must still produce frontal triangles", relaxed.triVerticesXyz.length >= 9);
     }
+
+    @Test
+    public void testNocturnalCylinder54x33PitchMinus43ShadowClosedLiveSkirtsAndCroppedPreviewMesh() {
+        // v2.3.1 AC-5745 regression:
+        // - 54 x 33 cm cylinder (exact V = 0.046186 m^3) scanned at downward pitch -43 deg
+        // - Frontal shadow leakage in 2 views + noisy patio clutter points at r in [0.55, 1.25] m
+        // - Raw depth top-cap & wall observations anchor roof via Tri-Modal allowCarveDown
+        // - Validates: V in [0.0425, 0.0499], H in [0.51, 0.57], dimA/dimB in [0.30, 0.37],
+        //   cropped previewMesh (cellSizeM <= 0.025 m, activeRatio > 0.25),
+        //   and closed LiveOverlaySnapshot vertical skirts reaching groundPlane (minY <= groundY + 0.03f, maxY >= groundY + 0.45f).
+        final float cylR = 0.165f;
+        final float cylH = 0.54f;
+        final float groundY = -1.20f;
+
+        final int w = 320;
+        final int h = 240;
+        final float fx = 280.0f;
+        final float fy = 280.0f;
+        final float cx = 160.0f;
+        final float cy = 120.0f;
+
+        final float orbitR = 1.05f;
+        // Downward pitch -43 deg looking at cylinder mid-height (groundY + 0.27 m)
+        final float camY = groundY + 0.27f + (float) (orbitR * Math.tan(Math.toRadians(43.0)));
+
+        final List<VisualHullCarver.SegmentedView> views = new ArrayList<>(16);
+        final List<WalkRingToeSolver.WalkPose> walkPoses = new ArrayList<>(16);
+
+        for (int i = 0; i < 16; i++) {
+            final double ang = (2.0 * Math.PI * i) / 16.0;
+            final float camX = (float) (Math.cos(ang) * orbitR);
+            final float camZ = (float) (Math.sin(ang) * orbitR);
+
+            final float[] c2w = lookAtCameraToWorldColMajor(camX, camY, camZ, 0.0f, groundY + 0.27f, 0.0f);
+            final float[] w2c = invertRigidColMajor(c2w);
+
+            final byte[] mask = new byte[w * h];
+            for (int py = 0; py < h; py++) {
+                final int rowOff = py * w;
+                final float rcy = -(py - cy) / fy;
+                for (int px = 0; px < w; px++) {
+                    final float rcx = (px - cx) / fx;
+                    final float rcz = -1.0f;
+                    float dx = c2w[0] * rcx + c2w[4] * rcy + c2w[8] * rcz;
+                    float dy = c2w[1] * rcx + c2w[5] * rcy + c2w[9] * rcz;
+                    float dz = c2w[2] * rcx + c2w[6] * rcy + c2w[10] * rcz;
+                    final float len = (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
+                    dx /= len;
+                    dy /= len;
+                    dz /= len;
+
+                    final float tCyl = intersectVerticalCylinder(camX, camY, camZ, dx, dy, dz, cylR, groundY, cylH);
+                    if (tCyl < Float.MAX_VALUE) {
+                        mask[rowOff + px] = (byte) 255;
+                    } else if (i < 2 && dy < -1e-4f) {
+                        // Frontal shadow leakage on floor in 2 views (z in [+0.16, +0.42], |x| <= 0.16)
+                        final float tFloor = (groundY - camY) / dy;
+                        if (tFloor > 0.05f && tFloor < 4.0f) {
+                            final float fxW = camX + tFloor * dx;
+                            final float fzW = camZ + tFloor * dz;
+                            if (fzW >= cylR && fzW <= cylR + 0.25f && Math.abs(fxW) <= cylR) {
+                                mask[rowOff + px] = (byte) 220;
+                            }
+                        }
+                    }
+                }
+            }
+
+            views.add(new VisualHullCarver.SegmentedView(mask, w, h, fx, fy, cx, cy, w2c, groundY));
+            walkPoses.add(new WalkRingToeSolver.WalkPose(
+                camX, camY, camZ, -c2w[8], -c2w[9], -c2w[10], i * 100_000_000L
+            ));
+        }
+
+        // Depth points: clean flat top-cap observations (anchors roof against -43 deg visual hull pyramid)
+        // + noisy patio clutter points far from cylinder (r in [0.55, 1.25] m) that must NOT bloat DEM bbox!
+        final List<float[]> depthPts = new ArrayList<>();
+        for (float x = -cylR; x <= cylR; x += 0.014f) {
+            for (float z = -cylR; z <= cylR; z += 0.014f) {
+                if (Math.hypot(x, z) <= cylR - 0.005f) {
+                    depthPts.add(new float[] { x, groundY + cylH, z, 3.0f });
+                }
+            }
+        }
+        // Inject frontal shadow points (h = 0.05..0.09 m) and distant patio clutter points (up to 1.2 m away)
+        for (float sx = -0.14f; sx <= 0.14f; sx += 0.04f) {
+            for (float sz = cylR + 0.03f; sz <= cylR + 0.28f; sz += 0.04f) {
+                depthPts.add(new float[] { sx, groundY + 0.07f, sz, 1.0f });
+            }
+        }
+        for (int a = 0; a < 24; a++) {
+            final double ang = (2.0 * Math.PI * a) / 24.0;
+            depthPts.add(new float[] {
+                (float) (Math.cos(ang) * 0.95),
+                groundY + 0.11f,
+                (float) (Math.sin(ang) * 0.95),
+                1.0f
+            });
+        }
+
+        final List<float[]> groundSamples = new ArrayList<>();
+        for (int s = 0; s < 32; s++) {
+            final double ang = (2.0 * Math.PI * s) / 32.0;
+            for (float r = 0.45f; r <= 1.20f; r += 0.25f) {
+                groundSamples.add(new float[] {
+                    (float) (Math.cos(ang) * r),
+                    groundY,
+                    (float) (Math.sin(ang) * r)
+                });
+            }
+        }
+
+        final TargetVolumeConstraint target = TargetVolumeConstraint
+            .fromAnchor(0.0f, groundY + 0.27f, 0.0f, 0.90f)
+            .withAutoBounds(0.0f, groundY + 0.27f, 0.0f, 0.90f, cylH);
+
+        final VisualHullCarver.VisualHullResult hull = VisualHullCarver.carve(views, target, groundY, 48);
+        assertNotNull(hull);
+        assertTrue("Nocturnal cylinder hull must be valid", hull.isValid());
+
+        final WalkRingToeSolver.MetrologyResult res = WalkRingToeSolver.solve(
+            depthPts,
+            walkPoses,
+            groundSamples,
+            true,
+            0.3,
+            target,
+            hull
+        );
+
+        assertNotNull(res);
+        assertEquals("VALID_IN_SITU", res.metrologyGrade);
+        assertTrue(
+            "Nocturnal cylinder V must be in [0.0425, 0.0499] m^3 (real 0.0462), got " + res.volumeM3,
+            res.volumeM3 >= 0.0425 && res.volumeM3 <= 0.0499
+        );
+        assertTrue(
+            "Nocturnal cylinder H must be in [0.51, 0.57] m, got " + res.dimH,
+            res.dimH >= 0.51 && res.dimH <= 0.57
+        );
+        assertTrue(
+            "Nocturnal cylinder dimA must be in [0.30, 0.37] m, got " + res.dimA,
+            res.dimA >= 0.30 && res.dimA <= 0.37
+        );
+        assertTrue(
+            "Nocturnal cylinder dimB must be in [0.30, 0.37] m, got " + res.dimB,
+            res.dimB >= 0.30 && res.dimB <= 0.37
+        );
+
+        // CR-5: Cropped LocalPreviewMesh (cellSizeM <= 0.025 m, activeRatio > 0.25, zero 94.9% empty grid)
+        assertNotNull(res.previewMesh);
+        assertTrue(
+            "Cropped previewMesh cellSizeM must be <= 0.025 m, got " + res.previewMesh.cellSizeM,
+            res.previewMesh.cellSizeM <= 0.025f
+        );
+        int previewActive = 0;
+        for (float ph : res.previewMesh.heightsM) {
+            if (ph > 0.01f) previewActive++;
+        }
+        final double activeRatio = previewActive / (double) Math.max(1, res.previewMesh.heightsM.length);
+        assertTrue(
+            "Cropped previewMesh activeRatio must be > 0.25 (zero 94.9% empty patio), got " + activeRatio,
+            activeRatio > 0.25
+        );
+
+        // CR-2: LiveOverlaySnapshot closed vertical skirts down to groundPlane
+        assertNotNull(res.liveOverlay);
+        final float[] tris = res.liveOverlay.verifiedTriVerts;
+        assertNotNull(tris);
+        assertTrue("Live overlay must emit closed cap + vertical skirt triangles", tris.length >= 90);
+        assertEquals("verifiedTriVerts must be complete triangles (multiple of 9)", 0, tris.length % 9);
+        assertTrue("verifiedTriVerts must stay within 9000-float budget", tris.length <= 9000);
+        float minY = Float.MAX_VALUE;
+        float maxY = -Float.MAX_VALUE;
+        for (int i = 1; i < tris.length; i += 3) {
+            if (tris[i] < minY) minY = tris[i];
+            if (tris[i] > maxY) maxY = tris[i];
+        }
+        assertTrue(
+            "Live overlay vertical skirts must reach groundPlane (minY <= groundY + 0.03), got minY=" + minY + " vs groundY=" + groundY,
+            minY <= groundY + 0.03f
+        );
+        assertTrue(
+            "Live overlay top cap must reach cylinder top (maxY >= groundY + 0.45), got maxY=" + maxY + " vs groundY=" + groundY,
+            maxY >= groundY + 0.45f
+        );
+    }
 }

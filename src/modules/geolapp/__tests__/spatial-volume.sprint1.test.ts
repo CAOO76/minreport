@@ -584,3 +584,69 @@ test('(e) Multi-sólido v2.3.0: caja rectangular 0.60x0.40x0.45 m, acopio con mo
         `Acopio con mordida cóncava debe estar dentro de ±8% (exacto=${exactConcaveVol.toFixed(2)}, obtenido=${resConcave.volumeM3}, err=${concaveErrPct.toFixed(2)}%)`
     );
 });
+
+test('(f) Regresión v2.3.1 CR-6/CR-7: dimH inmune a pico aislado en borde y dimA/dimB inmunes a flecos de sombra (preservando ápice en cono)', () => {
+    const { pointsM, groundSamplesM } = generateCylinderOnNoisyFloor({
+        heightM: 0.54,
+        diameterM: 0.33,
+        floorSpanM: 2.0,
+        floorNoiseM: 0.015,
+        includeSideWall: true,
+        seed: 0x57452026,
+    });
+
+    // Inyectar pico aislado +10 cm en 1 celda de borde (0.641 m) y fleco de sombra bajo (6-7 cm) adherido al pie
+    const contaminatedPts: SpatialPoint3D[] = [
+        ...pointsM,
+        [0.14, 0.641, 0.0],
+        [0.142, 0.641, 0.002],
+        // Fleco de sombra frontal bajo (6-7 cm) conectado en +Z hasta +0.36 m
+        [0.0, 0.065, 0.21],
+        [0.0, 0.065, 0.24],
+        [0.0, 0.065, 0.27],
+        [0.0, 0.065, 0.30],
+        [0.0, 0.065, 0.33],
+        [0.02, 0.065, 0.24],
+        [-0.02, 0.065, 0.24],
+    ];
+
+    const resCyl = computeSpatialStockpileVolume({
+        pointsM: contaminatedPts,
+        groundSamplesM,
+        targetConstraint: {
+            anchorXZ: [0, 0],
+            radiusM: 0.5,
+        },
+        coveragePct: 95,
+        sectorsCovered: 16,
+        loopClosed: true,
+        depthMode: 'KNOWN_POSE_MVS_OFFLINE',
+    });
+
+    assert.ok(
+        resCyl.heightM >= 0.51 && resCyl.heightM <= 0.57,
+        `dimH debe rechazar pico aislado 0.641 m y mantenerse en [0.51, 0.57] m, obtenido=${resCyl.heightM}`
+    );
+    assert.ok(
+        resCyl.baseLengthM >= 0.28 && resCyl.baseLengthM <= 0.38 && resCyl.baseWidthM >= 0.28 && resCyl.baseWidthM <= 0.38,
+        `dimA/dimB deben filtrar fleco de sombra 6-7 cm y mantenerse en [0.28, 0.38] m, obtenido=${resCyl.baseLengthM}x${resCyl.baseWidthM}`
+    );
+
+    // Cono puntiagudo 35° debe preservar su ápice sin recorte por p96 de meseta
+    const cone35 = generateConeStockpile({
+        radiusM: 3.0,
+        slopeDeg: 35,
+        floorNoiseM: 0.01,
+    });
+    const resCone = computeSpatialStockpileVolume({
+        pointsM: cone35.pointsM,
+        groundSamplesM: cone35.groundSamplesM,
+        coveragePct: 96,
+        sectorsCovered: 16,
+        loopClosed: true,
+    });
+    assert.ok(
+        resCone.heightM >= cone35.heightM * 0.88 && resCone.heightM <= cone35.heightM * 1.05,
+        `Cono 35° debe preservar ápice (~${cone35.heightM.toFixed(2)} m), obtenido=${resCone.heightM} m`
+    );
+});

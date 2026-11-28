@@ -35,9 +35,9 @@ public final class VisualHullCarver {
     private static final int MASK_THRESHOLD = 128;
     private static final float NEAR_PLANE_Z_NEG = -0.15f;
     private static final float CORE_WEIGHT = 1.0f;
-    private static final float HALO_WEIGHT = 0.6f;
-    private static final float MIN_IN_MASK_SCORE_RATIO = 0.78f;
-    private static final float MAX_HARD_OUT_RATIO = 0.18f;
+    private static final float HALO_WEIGHT = 0.35f;
+    private static final float MIN_IN_MASK_SCORE_RATIO = 0.86f;
+    private static final float MAX_HARD_OUT_RATIO = 0.10f;
     private static final float SILHOUETTE_BBOX_MARGIN = 1.35f;
     private static final float TRUNCATION_BORDER_RATIO = 0.02f;
     private static final float AUTO_EXPAND_FACTOR = 1.60f;
@@ -582,6 +582,8 @@ public final class VisualHullCarver {
         final float[] stepZc = new float[nViews];
         final int[] hardOutViews = new int[nViews];
         final boolean[] colSurvives = new boolean[res];
+        final float[] colScoreRatio = new float[res];
+        final int[] colVisCount = new int[res];
         for (int vi = 0; vi < nViews; vi++) {
             final PreparedView pv = views[vi];
             stepXc[vi] = pv.m4 * dy;
@@ -683,10 +685,15 @@ public final class VisualHullCarver {
 
                     if (!earlyReject && visCount >= minVisRequired) {
                         final int maxHardOutForVis = (int) Math.floor(visCount * MAX_HARD_OUT_RATIO + 1e-6f);
+                        final float scoreRatio = inMaskScore / (float) visCount;
+                        colScoreRatio[iy] = scoreRatio;
+                        colVisCount[iy] = visCount;
                         colSurvives[iy] =
                             hardOutCount <= maxHardOutForVis &&
-                            (inMaskScore / (float) visCount) >= MIN_IN_MASK_SCORE_RATIO;
+                            scoreRatio >= MIN_IN_MASK_SCORE_RATIO;
                     } else {
+                        colScoreRatio[iy] = 0.0f;
+                        colVisCount[iy] = 0;
                         colSurvives[iy] = false;
                     }
                 }
@@ -710,6 +717,21 @@ public final class VisualHullCarver {
                     } else {
                         break;
                     }
+                }
+
+                // Trim up to 2 marginal top voxels (artificial downward-pitch silhouette "hat" tip)
+                final int marginalVisCeil = nViews >= 6
+                    ? Math.max(minVisRequired, (int) Math.floor(nViews * 0.45f))
+                    : minVisRequired;
+                int trimmedTop = 0;
+                while (
+                    trimmedTop < 2 &&
+                    maxSurvivingIy > baseStart + 1 &&
+                    (colScoreRatio[maxSurvivingIy] < 0.90f ||
+                        (nViews >= 6 && colVisCount[maxSurvivingIy] <= marginalVisCeil))
+                ) {
+                    maxSurvivingIy--;
+                    trimmedTop++;
                 }
 
                 final boolean xzBorder = rowOnBorder || c == 0 || c == res - 1;
