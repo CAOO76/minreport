@@ -169,22 +169,27 @@ service cloud.firestore {
     }
 
     // Layout A (real dev.controller.ts): /test_pilots/{pilotAccountId} con prefijo pilot-, userId == uid y status == 'ACTIVE'
+    function isValidAccountKeyedPilotData(pilotData) {
+      return pilotData is map &&
+        pilotData.get('userId', '') == request.auth.uid &&
+        isActiveTestPilotDocData(pilotData);
+    }
+
     function isValidAccountKeyedTestPilotDoc(pilotAccountId) {
       return isPilotAccountIdFormat(pilotAccountId) &&
         exists(/databases/$(database)/documents/test_pilots/$(pilotAccountId)) &&
-        get(/databases/$(database)/documents/test_pilots/$(pilotAccountId)).data is map &&
-        get(/databases/$(database)/documents/test_pilots/$(pilotAccountId)).data.get('userId', '') == request.auth.uid &&
-        isActiveTestPilotDocData(get(/databases/$(database)/documents/test_pilots/$(pilotAccountId)).data);
+        isValidAccountKeyedPilotData(get(/databases/$(database)/documents/test_pilots/$(pilotAccountId)).data);
     }
 
     // Layout B (fallback legacy / tests): /test_pilots/{uid} con status == 'ACTIVE' y expiración vigente
+    function isValidUidKeyedPilotData(pilotData) {
+      return isActiveTestPilotDocData(pilotData) &&
+        (!('userId' in pilotData) || pilotData.userId == request.auth.uid);
+    }
+
     function isValidUidKeyedTestPilotDoc() {
       return exists(/databases/$(database)/documents/test_pilots/$(request.auth.uid)) &&
-        isActiveTestPilotDocData(get(/databases/$(database)/documents/test_pilots/$(request.auth.uid)).data) &&
-        (
-          !('userId' in get(/databases/$(database)/documents/test_pilots/$(request.auth.uid)).data) ||
-          get(/databases/$(database)/documents/test_pilots/$(request.auth.uid)).data.userId == request.auth.uid
-        );
+        isValidUidKeyedPilotData(get(/databases/$(database)/documents/test_pilots/$(request.auth.uid)).data);
     }
 
     // Resuelve candidato pilotAccountId desde token (`activeAccountId`/`tenantId`) o `/users/{uid}.primaryAccountId`
@@ -236,11 +241,6 @@ service cloud.firestore {
         (!isPilotIdentity() || isTestPilot());
     }
 
-    // Gobierno Administrativo Superior (1º DEV + 2º ADMIN)
-    function isAdmin() {
-      return isDevRoot() || isSuperAdmin();
-    }
-
     // Privilegio Transversal de Sistema (EXCLUSIVO 1º DEV + 2º ADMIN; 3º TEST-PILOT hermético a su propio sandbox pilot-*)
     function isSystemPrivileged() {
       return request.auth != null && (
@@ -254,6 +254,11 @@ service cloud.firestore {
         ) ||
         hasServerAssignedRole(['DEV_ROOT', 'SUPER_ADMIN'])
       );
+    }
+
+    // Gobierno Administrativo Superior (1º DEV + 2º ADMIN)
+    function isAdmin() {
+      return isSystemPrivileged();
     }
 
     // Curación Técnica de Ingeniería OPERMAQ (exclusiva 1º DEV; 2º ADMIN solo lectura comercial, 3º TEST-PILOT sin curación de catálogo maestro)
@@ -281,6 +286,16 @@ service cloud.firestore {
         isActiveMemberData(get(/databases/$(database)/documents/accounts/$(accountId)/members/$(request.auth.uid)).data);
     }
 
+    function isActiveAdminMemberData(memberData) {
+      return isActiveMemberData(memberData) &&
+        memberData.get('role', '') in ['OWNER', 'ADMIN'];
+    }
+
+    function isActiveAdminMemberDoc(tenantId) {
+      return exists(/databases/$(database)/documents/accounts/$(tenantId)/members/$(request.auth.uid)) &&
+        isActiveAdminMemberData(get(/databases/$(database)/documents/accounts/$(tenantId)/members/$(request.auth.uid)).data);
+    }
+
     // Pertenencia directa B2B / EDU con verificación de membresía ACTIVA (bloquea suspendidos/revocados, claims obsoletos y TEST_PILOT)
     function isDirectAccountMember(accountId) {
       return request.auth != null &&
@@ -301,12 +316,17 @@ service cloud.firestore {
         );
     }
 
-    // 4º y 5º Jerarquía Soberana — Pertenencia estricta a cuenta B2B / EDU, sandbox propio 3º TEST-PILOT o Gobierno 1º DEV / 2º ADMIN
-    function isAccountMember(accountId) {
+    // Pertenencia a cuenta B2B / EDU o sandbox propio 3º TEST-PILOT (sin re-evaluar isSystemPrivileged)
+    function isTenantMemberOrSandbox(accountId) {
       return accountId is string &&
         accountId.size() > 0 &&
         accountId.size() <= 128 &&
-        (isDirectAccountMember(accountId) || isMatchingTestPilotSandbox(accountId) || isSystemPrivileged());
+        (isDirectAccountMember(accountId) || isMatchingTestPilotSandbox(accountId));
+    }
+
+    // 4º y 5º Jerarquía Soberana — Pertenencia estricta a cuenta B2B / EDU, sandbox propio 3º TEST-PILOT o Gobierno 1º DEV / 2º ADMIN
+    function isAccountMember(accountId) {
+      return isTenantMemberOrSandbox(accountId) || isSystemPrivileged();
     }
 
     // Administración Interna de Cuenta / Tenant (Global Admin, Titular ownerId, o Miembro ACTIVO/Claim vigente con rol OWNER/ADMIN; excluye TEST_PILOT y suspendidos/revocados)
@@ -322,10 +342,7 @@ service cloud.firestore {
             isNotRevokedUser() &&
             isNotSuspendedOrRevokedMember(tenantId) &&
             (
-              (
-                hasActiveAccountMemberDoc(tenantId) &&
-                get(/databases/$(database)/documents/accounts/$(tenantId)/members/$(request.auth.uid)).data.get('role', '') in ['OWNER', 'ADMIN']
-              ) ||
+              isActiveAdminMemberDoc(tenantId) ||
               (
                 exists(/databases/$(database)/documents/accounts/$(tenantId)) &&
                 get(/databases/$(database)/documents/accounts/$(tenantId)).data.get('ownerId', '') == request.auth.uid
@@ -433,10 +450,9 @@ service cloud.firestore {
 
     // Evalúa lectura multi-tenant alineada con el planificador estático de queries de Firestore
     function canReadTenantDoc(data) {
-      return (docTenantId(data) is string && isAccountMember(docTenantId(data))) ||
-        ('tenantId' in data && data.tenantId is string && isAccountMember(data.tenantId)) ||
-        ('tenant_id' in data && data.tenant_id is string && isAccountMember(data.tenant_id)) ||
-        ('accountId' in data && data.accountId is string && isAccountMember(data.accountId));
+      return ('tenantId' in data && isTenantMemberOrSandbox(data.tenantId)) ||
+        ('tenant_id' in data && isTenantMemberOrSandbox(data.tenant_id)) ||
+        ('accountId' in data && isTenantMemberOrSandbox(data.accountId));
     }
 
     // Evalúa lectura de auditoría por tenant exclusiva para OWNER/ADMIN sin cruce multi-tenant ni shard global
@@ -1469,25 +1485,13 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
-    match /event_ledger/{eventId} {
-      allow read: if isAdmin() || (isAuthenticated() && canReadTenantDoc(resource.data));
-      allow create: if isAuthenticated() &&
+    match /{collection}/{docId} {
+      allow read: if collection in ['event_ledger', 'financial_ledger'] &&
+        (isAdmin() || (isAuthenticated() && canReadTenantDoc(resource.data)));
+      allow create: if collection in ['event_ledger', 'financial_ledger'] &&
+        isAuthenticated() &&
         isBoundedPayload(request.resource.data) &&
-        (
-          isAdmin() ||
-          (docTenantId(request.resource.data) is string && isAccountMember(docTenantId(request.resource.data)))
-        );
-      allow update, delete: if false;
-    }
-
-    match /financial_ledger/{eventId} {
-      allow read: if isAdmin() || (isAuthenticated() && canReadTenantDoc(resource.data));
-      allow create: if isAuthenticated() &&
-        isBoundedPayload(request.resource.data) &&
-        (
-          isAdmin() ||
-          (docTenantId(request.resource.data) is string && isAccountMember(docTenantId(request.resource.data)))
-        );
+        (isAdmin() || isTenantMatchCreate(request.resource.data));
       allow update, delete: if false;
     }
 
@@ -1495,28 +1499,63 @@ service cloud.firestore {
     // 7. Colecciones Operativas Multi-Tenant Simétricas (SyncQueueEngine & Módulos)
     // ===============================================================
 
-    match /tenant_assets/{assetId} {
-      allow read: if isAuthenticated() && (isSystemPrivileged() || canReadTenantDoc(resource.data));
-      allow create: if isAuthenticated() &&
+    match /{collection}/{docId} {
+      allow read: if collection in [
+          'tenant_assets',
+          'fleet_inspections',
+          'machinery_fleet',
+          'equipment_inspections',
+          'job_profiles',
+          'project_profiles',
+          'report_templates',
+          'generated_reports',
+          'edu_sandbox_fleet'
+        ] &&
+        isAuthenticated() &&
+        (isSystemPrivileged() || canReadTenantDoc(resource.data));
+      allow create: if collection in [
+          'tenant_assets',
+          'fleet_inspections',
+          'machinery_fleet',
+          'equipment_inspections',
+          'job_profiles',
+          'project_profiles',
+          'report_templates',
+          'generated_reports',
+          'edu_sandbox_fleet'
+        ] &&
+        isAuthenticated() &&
         isBoundedPayload(request.resource.data) &&
-        (
-          isSystemPrivileged() ||
-          (docTenantId(request.resource.data) is string && isAccountMember(docTenantId(request.resource.data)))
-        );
-      allow update: if isAuthenticated() &&
+        (isSystemPrivileged() || isTenantMatchCreate(request.resource.data));
+      allow update: if collection in [
+          'tenant_assets',
+          'fleet_inspections',
+          'machinery_fleet',
+          'equipment_inspections',
+          'job_profiles',
+          'project_profiles',
+          'report_templates',
+          'generated_reports',
+          'edu_sandbox_fleet'
+        ] &&
+        isAuthenticated() &&
         isBoundedPayload(request.resource.data) &&
-        (
-          isSystemPrivileged() ||
-          (
-            docTenantId(resource.data) is string &&
-            isAccountMember(docTenantId(resource.data)) &&
-            docTenantId(request.resource.data) == docTenantId(resource.data)
-          )
+        (isSystemPrivileged() || isTenantMatchUpdate(resource.data, request.resource.data));
+      allow delete: if collection in [
+          'tenant_assets',
+          'fleet_inspections',
+          'machinery_fleet',
+          'equipment_inspections',
+          'job_profiles',
+          'project_profiles',
+          'report_templates',
+          'generated_reports',
+          'edu_sandbox_fleet'
+        ] &&
+        isAuthenticated() && (
+          isAdmin() ||
+          (docTenantId(resource.data) is string && isTenantAdminOrOwner(docTenantId(resource.data)))
         );
-      allow delete: if isAuthenticated() && (
-        isAdmin() ||
-        (docTenantId(resource.data) is string && isTenantAdminOrOwner(docTenantId(resource.data)))
-      );
     }
 
     match /tenant_catalogs/{catalogId} {
@@ -1628,78 +1667,6 @@ service cloud.firestore {
       }
     }
 
-    match /fleet_inspections/{inspectionId} {
-      allow read: if isAuthenticated() && (isSystemPrivileged() || canReadTenantDoc(resource.data));
-      allow create: if isAuthenticated() &&
-        isBoundedPayload(request.resource.data) &&
-        (
-          isSystemPrivileged() ||
-          (docTenantId(request.resource.data) is string && isAccountMember(docTenantId(request.resource.data)))
-        );
-      allow update: if isAuthenticated() &&
-        isBoundedPayload(request.resource.data) &&
-        (
-          isSystemPrivileged() ||
-          (
-            docTenantId(resource.data) is string &&
-            isAccountMember(docTenantId(resource.data)) &&
-            docTenantId(request.resource.data) == docTenantId(resource.data)
-          )
-        );
-      allow delete: if isAuthenticated() && (
-        isAdmin() ||
-        (docTenantId(resource.data) is string && isTenantAdminOrOwner(docTenantId(resource.data)))
-      );
-    }
-
-    match /machinery_fleet/{assetId} {
-      allow read: if isAuthenticated() && (isSystemPrivileged() || canReadTenantDoc(resource.data));
-      allow create: if isAuthenticated() &&
-        isBoundedPayload(request.resource.data) &&
-        (
-          isSystemPrivileged() ||
-          (docTenantId(request.resource.data) is string && isAccountMember(docTenantId(request.resource.data)))
-        );
-      allow update: if isAuthenticated() &&
-        isBoundedPayload(request.resource.data) &&
-        (
-          isSystemPrivileged() ||
-          (
-            docTenantId(resource.data) is string &&
-            isAccountMember(docTenantId(resource.data)) &&
-            docTenantId(request.resource.data) == docTenantId(resource.data)
-          )
-        );
-      allow delete: if isAuthenticated() && (
-        isAdmin() ||
-        (docTenantId(resource.data) is string && isTenantAdminOrOwner(docTenantId(resource.data)))
-      );
-    }
-
-    match /equipment_inspections/{inspectionId} {
-      allow read: if isAuthenticated() && (isSystemPrivileged() || canReadTenantDoc(resource.data));
-      allow create: if isAuthenticated() &&
-        isBoundedPayload(request.resource.data) &&
-        (
-          isSystemPrivileged() ||
-          (docTenantId(request.resource.data) is string && isAccountMember(docTenantId(request.resource.data)))
-        );
-      allow update: if isAuthenticated() &&
-        isBoundedPayload(request.resource.data) &&
-        (
-          isSystemPrivileged() ||
-          (
-            docTenantId(resource.data) is string &&
-            isAccountMember(docTenantId(resource.data)) &&
-            docTenantId(request.resource.data) == docTenantId(resource.data)
-          )
-        );
-      allow delete: if isAuthenticated() && (
-        isAdmin() ||
-        (docTenantId(resource.data) is string && isTenantAdminOrOwner(docTenantId(resource.data)))
-      );
-    }
-
     match /stockpiles/{stkId} {
       allow read: if isAuthenticated() && (isSystemPrivileged() || canReadTenantDoc(resource.data));
       allow create: if isAuthenticated() &&
@@ -1766,15 +1733,15 @@ service cloud.firestore {
       allow delete: if isAuthenticated() && isAdmin();
     }
 
-    // Registros inmutables de ground-truth en terreno y desviaciones Δ% (MINREPORT · ACOPIOS 2.3.0 — Lectura tenant-scoped; escritura exclusiva Cloud Run Admin SDK)
-    match /stockpile_ground_truth/{gtId} {
-      allow read: if isAuthenticated() && (isSystemPrivileged() || canReadTenantDoc(resource.data));
-      allow create, update, delete: if false;
-    }
-
-    // Perfiles de calibración geométrica y aprendizaje LOOCV + diagnóstico IA (MINREPORT · ACOPIOS 2.3.0 — Lectura tenant-scoped; escritura exclusiva Cloud Run Admin SDK)
-    match /stockpile_calibration_profiles/{profileId} {
-      allow read: if isAuthenticated() && (isSystemPrivileged() || canReadTenantDoc(resource.data));
+    // Registros inmutables de ground-truth, perfiles LOOCV y sellos georreferenciados (Lectura tenant-scoped; escritura exclusiva Cloud Run Admin SDK)
+    match /{collection}/{docId} {
+      allow read: if collection in [
+          'stockpile_ground_truth',
+          'stockpile_calibration_profiles',
+          'geo_report_stamps'
+        ] &&
+        isAuthenticated() &&
+        (isSystemPrivileged() || canReadTenantDoc(resource.data));
       allow create, update, delete: if false;
     }
 
@@ -1797,127 +1764,6 @@ service cloud.firestore {
           )
         );
       allow update, delete: if false;
-    }
-
-    match /job_profiles/{profileId} {
-      allow read: if isAuthenticated() && (isSystemPrivileged() || canReadTenantDoc(resource.data));
-      allow create: if isAuthenticated() &&
-        isBoundedPayload(request.resource.data) &&
-        (
-          isSystemPrivileged() ||
-          (docTenantId(request.resource.data) is string && isAccountMember(docTenantId(request.resource.data)))
-        );
-      allow update: if isAuthenticated() &&
-        isBoundedPayload(request.resource.data) &&
-        (
-          isSystemPrivileged() ||
-          (
-            docTenantId(resource.data) is string &&
-            isAccountMember(docTenantId(resource.data)) &&
-            docTenantId(request.resource.data) == docTenantId(resource.data)
-          )
-        );
-      allow delete: if isAuthenticated() && (
-        isAdmin() ||
-        (docTenantId(resource.data) is string && isTenantAdminOrOwner(docTenantId(resource.data)))
-      );
-    }
-
-    match /project_profiles/{profileId} {
-      allow read: if isAuthenticated() && (isSystemPrivileged() || canReadTenantDoc(resource.data));
-      allow create: if isAuthenticated() &&
-        isBoundedPayload(request.resource.data) &&
-        (
-          isSystemPrivileged() ||
-          (docTenantId(request.resource.data) is string && isAccountMember(docTenantId(request.resource.data)))
-        );
-      allow update: if isAuthenticated() &&
-        isBoundedPayload(request.resource.data) &&
-        (
-          isSystemPrivileged() ||
-          (
-            docTenantId(resource.data) is string &&
-            isAccountMember(docTenantId(resource.data)) &&
-            docTenantId(request.resource.data) == docTenantId(resource.data)
-          )
-        );
-      allow delete: if isAuthenticated() && (
-        isAdmin() ||
-        (docTenantId(resource.data) is string && isTenantAdminOrOwner(docTenantId(resource.data)))
-      );
-    }
-
-    match /report_templates/{templateId} {
-      allow read: if isAuthenticated() && (isSystemPrivileged() || canReadTenantDoc(resource.data));
-      allow create: if isAuthenticated() &&
-        isBoundedPayload(request.resource.data) &&
-        (
-          isSystemPrivileged() ||
-          (docTenantId(request.resource.data) is string && isAccountMember(docTenantId(request.resource.data)))
-        );
-      allow update: if isAuthenticated() &&
-        isBoundedPayload(request.resource.data) &&
-        (
-          isSystemPrivileged() ||
-          (
-            docTenantId(resource.data) is string &&
-            isAccountMember(docTenantId(resource.data)) &&
-            docTenantId(request.resource.data) == docTenantId(resource.data)
-          )
-        );
-      allow delete: if isAuthenticated() && (
-        isAdmin() ||
-        (docTenantId(resource.data) is string && isTenantAdminOrOwner(docTenantId(resource.data)))
-      );
-    }
-
-    match /generated_reports/{reportId} {
-      allow read: if isAuthenticated() && (isSystemPrivileged() || canReadTenantDoc(resource.data));
-      allow create: if isAuthenticated() &&
-        isBoundedPayload(request.resource.data) &&
-        (
-          isSystemPrivileged() ||
-          (docTenantId(request.resource.data) is string && isAccountMember(docTenantId(request.resource.data)))
-        );
-      allow update: if isAuthenticated() &&
-        isBoundedPayload(request.resource.data) &&
-        (
-          isSystemPrivileged() ||
-          (
-            docTenantId(resource.data) is string &&
-            isAccountMember(docTenantId(resource.data)) &&
-            docTenantId(request.resource.data) == docTenantId(resource.data)
-          )
-        );
-      allow delete: if isAuthenticated() && (
-        isAdmin() ||
-        (docTenantId(resource.data) is string && isTenantAdminOrOwner(docTenantId(resource.data)))
-      );
-    }
-
-    // Flota aislada Sandbox Académico (5º EDU — OPERMAQ v3.0)
-    match /edu_sandbox_fleet/{unitId} {
-      allow read: if isAuthenticated() && (isSystemPrivileged() || canReadTenantDoc(resource.data));
-      allow create: if isAuthenticated() &&
-        isBoundedPayload(request.resource.data) &&
-        (
-          isSystemPrivileged() ||
-          (docTenantId(request.resource.data) is string && isAccountMember(docTenantId(request.resource.data)))
-        );
-      allow update: if isAuthenticated() &&
-        isBoundedPayload(request.resource.data) &&
-        (
-          isSystemPrivileged() ||
-          (
-            docTenantId(resource.data) is string &&
-            isAccountMember(docTenantId(resource.data)) &&
-            docTenantId(request.resource.data) == docTenantId(resource.data)
-          )
-        );
-      allow delete: if isAuthenticated() && (
-        isAdmin() ||
-        (docTenantId(resource.data) is string && isTenantAdminOrOwner(docTenantId(resource.data)))
-      );
     }
 
     // Solicitudes operativas de onboarding de equipos (Lectura multi-tenant/privilegiada; escritura exclusiva Admin SDK)
@@ -2226,33 +2072,29 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // Perfiles provisorios y casillas WhatsApp (V3-E02 — `phoneCiphertext` AES-256-GCM; mutación exclusiva Core API + AuditLedger)
-    match /supply_channel_grants/{grantId} {
-      allow read: if isAdmin() || (
-        isActiveAuthenticatedUser() &&
-        resource != null &&
-        canReadSupplyTenantOrAccountDoc(resource.data)
-      );
+    // Perfiles provisorios, mapeo SKU proveedor, bodegas y discrepancias de recepción (V3-E02/V3-E04/V3-E05 — lectura miembros activos del `accountId`/`tenantId`; mutación exclusiva Core API + AuditLedger)
+    match /{collection}/{docId} {
+      allow read: if collection in [
+          'supply_channel_grants',
+          'tenant_supplier_sku_map',
+          'supply_warehouses',
+          'supply_reception_discrepancies'
+        ] && (
+          isAdmin() ||
+          (isActiveAuthenticatedUser() && resource != null && canReadSupplyTenantOrAccountDoc(resource.data))
+        );
       allow write: if false;
     }
 
-    // Hilos conversacionales auditables SHA-256 (V3-E03/V3-E04 — retención tributaria 6 años / LEGAL_HOLD; mutación exclusiva Admin SDK)
-    match /supply_conversation_threads/{threadId} {
-      allow read: if isAdmin() || (
-        isActiveAuthenticatedUser() &&
-        resource != null &&
-        canReadSupplyConversationDoc(resource.data)
-      );
-      allow create, update, delete: if false;
-    }
-
-    // Turnos conversacionales inmutables append-only SHA-256 (V3-E03/V3-E04 — 100% Admin SDK + verificación criptográfica; ni cliente ni titular puede alterar o borrar bajo LEGAL_HOLD)
-    match /supply_conversation_turns/{turnId} {
-      allow read: if isAdmin() || (
-        isActiveAuthenticatedUser() &&
-        resource != null &&
-        canReadSupplyConversationDoc(resource.data)
-      );
+    // Hilos y turnos conversacionales inmutables SHA-256 (V3-E03/V3-E04 — retención tributaria 6 años / LEGAL_HOLD; mutación exclusiva Admin SDK)
+    match /{collection}/{docId} {
+      allow read: if collection in [
+          'supply_conversation_threads',
+          'supply_conversation_turns'
+        ] && (
+          isAdmin() ||
+          (isActiveAuthenticatedUser() && resource != null && canReadSupplyConversationDoc(resource.data))
+        );
       allow create, update, delete: if false;
     }
 
@@ -2273,49 +2115,23 @@ service cloud.firestore {
     // hermético a su propio sandbox `pilot-*`); toda mutación cliente bloqueada (`create, update, delete == false` / `write == false`) para
     // garantizar contratos Zod, AuditLedger SHA-256, MediaDigestorServer CAS, anti-duplicación SII y HITL "ACTUALIZAR".
 
-    match /tenant_suppliers/{docId} {
-      allow read: if isAdmin() || (isAuthenticated() && resource != null && canReadSupplyTenantDoc(resource.data));
+    match /{collection}/{docId} {
+      allow read: if collection in [
+          'tenant_suppliers',
+          'supply_sites',
+          'supply_inventory_items',
+          'supply_requisition_lines',
+          'supply_purchase_lines',
+          'supply_fulfillment_allocations',
+          'supply_assets',
+          'supply_stock_ledger',
+          'supply_cash_ledger',
+          'supply_sii_documents',
+          'supply_expense_reports',
+          'supply_demand_forecasts'
+        ] &&
+        (isAdmin() || (isAuthenticated() && resource != null && canReadSupplyTenantDoc(resource.data)));
       allow create, update, delete: if false;
-    }
-
-    // Mapeo privado por tenant de SKUs de proveedor a catálogo canónico (V3-E05; lectura miembros activos del tenant + DEV_ROOT/SUPER_ADMIN; escritura exclusiva Core API + AuditLedger)
-    match /tenant_supplier_sku_map/{mapId} {
-      allow read: if isAdmin() || (
-        isActiveAuthenticatedUser() &&
-        resource != null &&
-        canReadSupplyTenantOrAccountDoc(resource.data)
-      );
-      allow write: if false;
-    }
-
-    match /supply_sites/{siteId} {
-      allow read: if isAdmin() || (isAuthenticated() && resource != null && canReadSupplyTenantDoc(resource.data));
-      allow create, update, delete: if false;
-    }
-
-    // Bodegas y almacenes multi-tenant (V3-E04/V3-E05 — lectura miembros activos del `accountId`/`tenantId`; mutación exclusiva Core API + AuditLedger)
-    match /supply_warehouses/{warehouseId} {
-      allow read: if isAdmin() || (
-        isActiveAuthenticatedUser() &&
-        resource != null &&
-        canReadSupplyTenantOrAccountDoc(resource.data)
-      );
-      allow create, update, delete: if false;
-    }
-
-    match /supply_inventory_items/{itemId} {
-      allow read: if isAdmin() || (isAuthenticated() && resource != null && canReadSupplyTenantDoc(resource.data));
-      allow create, update, delete: if false;
-    }
-
-    // Discrepancias de recepción física en bodega vs OC/DTE (V3-E05; lectura miembros activos del `accountId`/`tenantId` + DEV_ROOT/SUPER_ADMIN; escritura exclusiva Core API + AuditLedger)
-    match /supply_reception_discrepancies/{discrepancyId} {
-      allow read: if isAdmin() || (
-        isActiveAuthenticatedUser() &&
-        resource != null &&
-        canReadSupplyTenantOrAccountDoc(resource.data)
-      );
-      allow write: if false;
     }
 
     match /supply_requisitions/{reqId} {
@@ -2333,11 +2149,6 @@ service cloud.firestore {
       }
     }
 
-    match /supply_requisition_lines/{lineId} {
-      allow read: if isAdmin() || (isAuthenticated() && resource != null && canReadSupplyTenantDoc(resource.data));
-      allow create, update, delete: if false;
-    }
-
     match /supply_purchases/{purchaseId} {
       allow read: if isAdmin() || (isAuthenticated() && resource != null && canReadSupplyTenantDoc(resource.data));
       allow create, update, delete: if false;
@@ -2353,90 +2164,37 @@ service cloud.firestore {
       }
     }
 
-    match /supply_purchase_lines/{lineId} {
-      allow read: if isAdmin() || (isAuthenticated() && resource != null && canReadSupplyTenantDoc(resource.data));
-      allow create, update, delete: if false;
-    }
-
-    // Ledger append-only de asignaciones/cumplimiento (mutación exclusiva Admin SDK)
-    match /supply_fulfillment_allocations/{allocId} {
-      allow read: if isAdmin() || (isAuthenticated() && resource != null && canReadSupplyTenantDoc(resource.data));
-      allow create, update, delete: if false;
-    }
-
-    match /supply_assets/{assetId} {
-      allow read: if isAdmin() || (isAuthenticated() && resource != null && canReadSupplyTenantDoc(resource.data));
-      allow create, update, delete: if false;
-    }
-
-    // Ledger append-only de movimientos de inventario/stock (mutación exclusiva Admin SDK)
-    match /supply_stock_ledger/{movId} {
-      allow read: if isAdmin() || (isAuthenticated() && resource != null && canReadSupplyTenantDoc(resource.data));
-      allow create, update, delete: if false;
-    }
-
-    // Ledger append-only de movimientos de caja/fondos por rendir (mutación exclusiva Admin SDK)
-    match /supply_cash_ledger/{cashMovId} {
-      allow read: if isAdmin() || (isAuthenticated() && resource != null && canReadSupplyTenantDoc(resource.data));
-      allow create, update, delete: if false;
-    }
-
-    // Documentos tributarios SII (mutación exclusiva Admin SDK para preservar llave anti-duplicación `rut#tipo#folio` y AuditLedger)
-    match /supply_sii_documents/{docId} {
-      allow read: if isAdmin() || (isAuthenticated() && resource != null && canReadSupplyTenantDoc(resource.data));
-      allow create, update, delete: if false;
-    }
-
-    // Rendiciones de gastos (mutación exclusiva Admin SDK con gate HITL vía `/api/supply/sii/expense-reports`)
-    match /supply_expense_reports/{reportId} {
-      allow read: if isAdmin() || (isAuthenticated() && resource != null && canReadSupplyTenantDoc(resource.data));
-      allow create, update, delete: if false;
-    }
-
-    // Pronósticos de demanda computados en servidor (mutación exclusiva Admin SDK)
-    match /supply_demand_forecasts/{forecastId} {
-      allow read: if isAdmin() || (isAuthenticated() && resource != null && canReadSupplyTenantDoc(resource.data));
-      allow create, update, delete: if false;
-    }
-
     // ===============================================================
     // 9. Colecciones Legacy Blindadas (Lectura Auth, Escritura Privilegiada)
     // ===============================================================
 
-    match /equipment_manuals/{docId} {
-      allow read: if isAuthenticated();
-      allow create, update: if isSystemPrivileged() && isBoundedPayload(request.resource.data);
-      allow delete: if isSystemPrivileged();
-    }
-
-    match /operational_guides/{docId} {
-      allow read: if isAuthenticated();
-      allow create, update: if isSystemPrivileged() && isBoundedPayload(request.resource.data);
-      allow delete: if isSystemPrivileged();
-    }
-
-    match /preventive_maintenance/{docId} {
-      allow read: if isAuthenticated();
-      allow create, update: if isSystemPrivileged() && isBoundedPayload(request.resource.data);
-      allow delete: if isSystemPrivileged();
-    }
-
-    match /risk_matrices/{docId} {
-      allow read: if isAuthenticated();
-      allow create, update: if isSystemPrivileged() && isBoundedPayload(request.resource.data);
-      allow delete: if isSystemPrivileged();
-    }
-
-    match /pre_operational_checklists/{docId} {
-      allow read: if isAuthenticated();
-      allow create, update: if isSystemPrivileged() && isBoundedPayload(request.resource.data);
-      allow delete: if isSystemPrivileged();
-    }
-
-    match /global_symbology/{docId} {
-      allow read: if isAuthenticated();
-      allow create, update: if isSystemPrivileged() && isBoundedPayload(request.resource.data);
-      allow delete: if isSystemPrivileged();
+    match /{collection}/{docId} {
+      allow read: if collection in [
+          'equipment_manuals',
+          'operational_guides',
+          'preventive_maintenance',
+          'risk_matrices',
+          'pre_operational_checklists',
+          'global_symbology'
+        ] && isAuthenticated();
+      allow create, update: if collection in [
+          'equipment_manuals',
+          'operational_guides',
+          'preventive_maintenance',
+          'risk_matrices',
+          'pre_operational_checklists',
+          'global_symbology'
+        ] &&
+        isSystemPrivileged() &&
+        isBoundedPayload(request.resource.data);
+      allow delete: if collection in [
+          'equipment_manuals',
+          'operational_guides',
+          'preventive_maintenance',
+          'risk_matrices',
+          'pre_operational_checklists',
+          'global_symbology'
+        ] && isSystemPrivileged();
     }
 
     // ===============================================================
@@ -2447,12 +2205,6 @@ service cloud.firestore {
     match /geo_resolve_cache/{cacheKey} {
       allow read: if isAdmin();
       allow write: if false;
-    }
-
-    // Sellos georreferenciados auditables inmutables (POST /api/geo/report-stamp; accountId / tenantId, stampHashSha256, retención legal 6 años)
-    match /geo_report_stamps/{stampId} {
-      allow read: if isAdmin() || (isAuthenticated() && canReadTenantDoc(resource.data));
-      allow create, update, delete: if false;
     }
 
     // ===============================================================
